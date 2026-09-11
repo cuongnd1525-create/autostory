@@ -1,5 +1,13 @@
-node_modules
-release
-dist
+node_modules/
+.npm-cache/
+.tmp/
+
+.env
+.env.*
+!.env.example
+
 *.log
-Projects
+
+dist/
+build/
+release/
