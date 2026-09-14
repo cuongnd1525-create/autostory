@@ -2132,6 +2132,7 @@ function syncConfiguredAiWorkflowUi() {
 }
 
 function addLog(message, level = "INFO") {
+  window.previewLog?.append(message, level);
   const line = `[${level}] ${message}`;
   state.logLines.push(line);
   state.logLines = state.logLines.slice(-260);
@@ -6683,7 +6684,7 @@ function getSegmentReviewStatus({ review, text, isReviewing }) {
 function renderHighlightVariantBar(project = state.currentProject) {
   const variants = getHighlightVariants(project);
   if (!el.highlightVariantBar) return;
-  const shouldShow = project?.mode === "highlight_cut" && variants.length > 1;
+  const shouldShow = project?.mode === "highlight_cut" && variants.length > 0;
   el.highlightVariantBar.classList.toggle("hidden", !shouldShow);
   if (!shouldShow) {
     el.highlightVariantBar.innerHTML = "";
@@ -7294,6 +7295,7 @@ function renderAutoStoryStatus() {
   const labels = { planning: "Đang chọn câu chuyện", editing: "Đang tạo kịch bản và đo voice", ready_to_render: "Kịch bản đã sẵn sàng",
     rendering: "Đang dựng draft", reviewing: "Đang review video thật", review_failed: "Review bị lỗi, draft được giữ lại", render_failed: "Dựng bị gián đoạn", failed: "Xử lý bị lỗi", cancelled: "Đã dừng", complete: errors ? "Có bước cần thử lại" : "Đã hoàn tất" };
   labels.verifying = "Đang kiểm tra bản cuối";
+  if (job.phase === "review_failed" && !drafts) labels.review_failed = "Xử lý bị lỗi trước khi có draft hoàn chỉnh";
   const label = state.busy && project.autoStoryProduction && !project.autoStoryProduction.finished ? "Đang sản xuất video · Kết quả sẵn sàng theo từng script" : job.phase === "complete" ? (state.busy ? "Đang kết thúc tác vụ" : missingScripts ? `Đã xử lý ${scripts}/${requested} · Còn thiếu ${requested - scripts} kịch bản` : errors ? "Có bước cần thử lại" : pendingFinal ? "Còn bản cuối cần kiểm tra" : "Đã hoàn tất xử lý · Xem kết quả từng script") : labels[job.phase] || "Chưa chạy Auto Story";
   const paused = unfinished && !state.busy && ["planning", "editing", "rendering", "reviewing"].includes(job.phase);
   const lines = [`${paused ? "Đã gián đoạn: " : ""}${label}`, `Yêu cầu ${requested} video · Kịch bản ${scripts}/${requested} · Draft ${drafts}/${scripts} · Review ${reviewed}/${scripts}`];
@@ -7315,7 +7317,9 @@ function renderAutoStoryStatus() {
   }
   if (job.error) lines.push(job.error);
   if (project.autoStoryCapacityWarning && !/^(null|undefined)$/i.test(String(project.autoStoryCapacityWarning).trim())) lines.push(project.autoStoryCapacityWarning);
-  if (scripts && missingScripts) lines.push("Bấm Tiếp tục để bổ sung kịch bản còn thiếu hoặc thử lại script lỗi; giữ nguyên draft đã có.");
+  if (scripts && missingScripts) lines.push(job.boundedRun
+    ? "Lượt xử lý đã giữ các bản tạo được. Xem lỗi từng script trước khi chủ động thử lại; tool không tự gọi AI vô hạn."
+    : "Bấm Tiếp tục để bổ sung kịch bản còn thiếu hoặc thử lại script lỗi; giữ nguyên draft đã có.");
   for (const failure of job.failures || []) lines.push(`Script ${failure.scriptId}: ${failure.error}`);
   for (const variant of variants) {
     const audit = audits.find(a => a.scriptId === Number(variant.scriptId));
@@ -7330,7 +7334,7 @@ function renderAutoStoryStatus() {
   }
   let scriptList;
   if (panel) {
-    const open = panel.dataset.projectId === project.id && panel.querySelector(".auto-story-script-list")?.open;
+    const open = panel.dataset.projectId !== project.id || !panel.querySelector(".auto-story-script-list") || panel.querySelector(".auto-story-script-list").open;
     const diagnosticsOpen = panel.dataset.projectId === project.id && panel.querySelector(".auto-story-diagnostics")?.open;
     panel.dataset.projectId = project.id;
     panel.innerHTML = `<div class="auto-story-heading"><strong>${escapeHtml(lines[0])}</strong><span>${escapeHtml(lines[2])}</span></div>
@@ -7370,7 +7374,7 @@ function renderAutoStoryStatus() {
     else if (a?.complete && a.rhythmPolicyVersion !== 1) action("Kiểm tra nhịp kể theo tiêu chí âm gốc mới", "Kiểm tra nhịp", () => resumeAutoStoryProject(id), true);
     scriptList.append(row);
   }
-  if (button) { button.classList.toggle("hidden", !unfinished); button.disabled = state.busy; button.textContent = state.busy ? "Đang xử lý Auto Story…" : "Tiếp tục / Sửa lỗi tự động"; }
+  if (button) { button.classList.toggle("hidden", !unfinished); button.disabled = state.busy; button.textContent = state.busy ? "Đang xử lý Auto Story…" : job.boundedRun ? "Thử lại bước chưa hoàn tất" : "Tiếp tục / Sửa lỗi tự động"; }
 }
 
 function renderStudio() {
@@ -9136,6 +9140,11 @@ async function autoCheckConfiguration() {
   }
 }
 
+window.initProductionQueue?.(project => {
+  showStudio(project);
+  addLog(`Đã mở kết quả hàng đợi: ${project.title || project.id}`);
+});
+
 async function resumeAutoStoryProject(scriptId = null) {
   if (typeof scriptId !== "number") scriptId = null;
   if (state.busy || state.currentProject?.analysisWorkflow !== "vertex_auto_story") return;
@@ -10539,6 +10548,7 @@ async function bootstrap() {
   autoCheckConfiguration();
 
   window.cineviral.onProgress((payload) => {
+    window.previewLog?.progress(payload);
     if (payload.autoStoryDraftReady && payload.project) {
       state.currentProject = payload.project;
       showStudio(payload.project);
@@ -10547,7 +10557,7 @@ async function bootstrap() {
       setVariantExportQueue(payload.variantBatch.items);
     }
     if (payload.message) {
-      addLog(`${payload.step}: ${payload.message}`);
+      addLog([payload.stage || payload.step, payload.message].filter(Boolean).join(': '), payload.level || 'INFO');
     }
     if (["antigravity_stage1", "configured_ai_stage1"].includes(payload.step) && el.manualAntigravityStage1Status) {
       el.manualAntigravityStage1Status.textContent = `${Math.round(Number(payload.percent || 0))}% · ${payload.message || "AI đang xử lý GĐ1..."}`;
@@ -10556,7 +10566,8 @@ async function bootstrap() {
       el.draftReviewStatus.textContent = `${Math.round(Number(payload.percent || 0))}% · ${payload.message || "AI đang review draft..."}`;
     }
     if (typeof payload.percent === "number") {
-      const label = payload.step ? `${payload.step}: ${payload.message || ""}` : state.activeOperation || "Đang xử lý";
+      const step = payload.stage || payload.step;
+      const label = payload.message || step || state.activeOperation || "Đang xử lý";
       setExportProgress(payload.percent, label.trim());
     }
     if (payload.project) {

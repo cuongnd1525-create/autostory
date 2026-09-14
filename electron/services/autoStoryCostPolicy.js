@@ -1,4 +1,5 @@
 function taskFor(key) {
+  if (key.startsWith('edit-repair-')) return 'auto_story_repair';
   if (key.startsWith('story-plan')) return 'auto_story_plan';
   if (key.startsWith('final-check')) return 'auto_story_final';
   if (key.startsWith('review-')) return 'auto_story_review';

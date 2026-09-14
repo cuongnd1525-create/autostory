@@ -5444,6 +5444,11 @@ input[type="range"]::-moz-range-thumb {
 }
 #auto-story-status { display: block; padding: 10px 16px; }
 #auto-story-status.hidden { display: none; }
+#stats-tab #auto-story-status { padding: 0 0 16px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+#stats-tab .auto-story-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+#stats-tab .auto-story-row .auto-story-actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
+#stats-tab .auto-story-name strong { white-space: normal; overflow-wrap: anywhere; }
+#stats-tab .auto-story-rows, #stats-tab .auto-story-diagnostics > div { max-height: none; overflow: visible; }
 .auto-story-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; font-size: 12px; }
 .auto-story-heading span { color: #a6b7c5; }
 .auto-story-script-list > summary, .auto-story-diagnostics > summary { cursor: pointer; padding: 8px 0; font-size: 12px; color: #afc1ce; }

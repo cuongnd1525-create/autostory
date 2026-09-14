@@ -44,6 +44,20 @@ let mainWindowRendererReady = false;
 let rendererRecoveryAttempts = [];
 let recoveredRenderJobs = [];
 let renderRecoveryScanned = false;
+let productionQueue;
+let foregroundOperations = 0;
+function handleIpc(channel, listener) {
+  ipcMain.handle(channel, async (event, ...args) => {
+    const readOnly = new Set(['project:list', 'project:get', 'project:openFolder', 'project:openOutput', 'project:audioPlan', 'project:getViralRepairContext']);
+    const mutating = (channel.startsWith('project:') && !readOnly.has(channel)) || channel === 'autoStory:run'
+      || (channel.startsWith('analysis:') && channel !== 'analysis:inspectGeminiJsonFiles')
+      || ['voice:test', 'voice:calibrate', 'video:mirrorFlip', 'source:downloadUrl', 'translation:prepareHyMt2'].includes(channel);
+    if (mutating && productionQueue?.isRunning()) throw new Error('Hàng đợi đang xử lý. Tạm dừng nhận việc mới và đợi các video đang chạy hoàn tất trước khi chỉnh sửa hoặc chạy thủ công.');
+    if (mutating) foregroundOperations++;
+    try { return await listener(event, ...args); }
+    finally { if (mutating) foregroundOperations--; }
+  });
+}
 
 app.commandLine.appendSwitch("autoplay-policy", "no-user-gesture-required");
 
@@ -457,12 +471,15 @@ app.whenReady().then(async () => {
   dubbingService = new DubbingService(projectStore);
   geminiDraftReviewService = new GeminiDraftReviewService(projectStore);
   ollamaService = new OllamaService();
+  productionQueue = require('./services/productionQueueIpc').install({ ipcMain, dialog, app, BrowserWindow,
+    store: projectStore, dubbing: dubbingService, getSettings: () => configStore.getSettings(), getWorkspaceRoot,
+    isForegroundBusy: () => foregroundOperations > 0 });
 
   createWindow();
 
-  ipcMain.handle("app:bootstrap", async () => bootstrapState());
+  handleIpc("app:bootstrap", async () => bootstrapState());
 
-  ipcMain.handle("dialog:pickVideo", async () => {
+  handleIpc("dialog:pickVideo", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
         title: "Ch?n video ngu?n",
       properties: ["openFile"],
@@ -473,7 +490,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle("dialog:pickAudio", async () => {
+  handleIpc("dialog:pickAudio", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Ch?n file gi?ng m?u",
       properties: ["openFile"],
@@ -484,7 +501,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle("dialog:pickSubtitle", async () => {
+  handleIpc("dialog:pickSubtitle", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
         title: "Ch?n t?p ph? d?",
       properties: ["openFile"],
@@ -495,7 +512,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle("dialog:pickJson", async () => {
+  handleIpc("dialog:pickJson", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Ch?n k?ch b?n JSON",
       properties: ["openFile"],
@@ -506,7 +523,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle("dialog:pickJsonFiles", async () => {
+  handleIpc("dialog:pickJsonFiles", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       title: "Chon mot hoac nhieu kich ban JSON",
       properties: ["openFile", "multiSelections"],
@@ -517,7 +534,7 @@ app.whenReady().then(async () => {
     return result.canceled ? [] : result.filePaths;
   });
 
-  ipcMain.handle("dialog:pickFolder", async () => {
+  handleIpc("dialog:pickFolder", async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
         title: "Ch?n thu m?c luu d? �n",
       properties: ["openDirectory", "createDirectory"]
@@ -525,7 +542,7 @@ app.whenReady().then(async () => {
     return result.canceled ? null : result.filePaths[0];
   });
 
-  ipcMain.handle("source:downloadUrl", async (event, payload) => {
+  handleIpc("source:downloadUrl", async (event, payload) => {
     const service = new SourceDownloadService(configStore.getSettings());
     return service.download({
       ...(payload || {}),
@@ -533,7 +550,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("file:open", async (_event, filePath) => {
+  handleIpc("file:open", async (_event, filePath) => {
     if (!filePath) {
       return false;
     }
@@ -541,9 +558,9 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  ipcMain.handle("settings:get", async () => configStore.getSettings());
+  handleIpc("settings:get", async () => configStore.getSettings());
 
-  ipcMain.handle("settings:save", async (_event, payload) => {
+  handleIpc("settings:save", async (_event, payload) => {
     const previousWorkspaceRoot = configStore.getSettings().workspaceRoot;
     const saved = await configStore.saveSettings(payload);
     if (saved.workspaceRoot !== previousWorkspaceRoot) {
@@ -554,7 +571,7 @@ app.whenReady().then(async () => {
     return { settings: saved, projects };
   });
 
-  ipcMain.handle("settings:check", async (_event, payload) => {
+  handleIpc("settings:check", async (_event, payload) => {
     const settings = {
       ...configStore.getSettings(),
       ...(payload || {})
@@ -562,25 +579,25 @@ app.whenReady().then(async () => {
     return checkConfiguration(settings);
   });
 
-  ipcMain.handle("vertex:test", async (_event, payload) => {
+  handleIpc("vertex:test", async (_event, payload) => {
     const settings = { ...configStore.getSettings(), ...(payload || {}) };
     return new VertexAiService(settings).testConnection();
   });
 
-  ipcMain.handle("vertex:budgetStatus", async (_event, payload) => {
+  handleIpc("vertex:budgetStatus", async (_event, payload) => {
     const settings = { ...configStore.getSettings(), ...(payload || {}) };
     return new VertexAiService(settings).budgetStatus();
   });
 
-  ipcMain.handle("ollama:listModels", async () => ollamaService.listModels());
+  handleIpc("ollama:listModels", async () => ollamaService.listModels());
 
-  ipcMain.handle("ollama:modelInfo", async (_event, modelName) => ollamaService.getModelInfo(modelName));
+  handleIpc("ollama:modelInfo", async (_event, modelName) => ollamaService.getModelInfo(modelName));
 
-  ipcMain.handle("translation:prepareHyMt2", async (_event, modelName) => (
+  handleIpc("translation:prepareHyMt2", async (_event, modelName) => (
     ollamaService.pullModel(modelName || "hf.co/unsloth/Hy-MT2-7B-GGUF:UD-Q4_K_XL")
   ));
 
-  ipcMain.handle("analysis:createManualGeminiPack", async (event, payload) => {
+  handleIpc("analysis:createManualGeminiPack", async (event, payload) => {
     const settings = configStore.getSettings();
     const service = payload?.workflow === PodcastViralService.WORKFLOW
       ? new PodcastViralService(settings)
@@ -592,7 +609,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("analysis:runManualAntigravityStage1", async (event, payload) => {
+  handleIpc("analysis:runManualAntigravityStage1", async (event, payload) => {
     if (manualAntigravityStage1Service) {
       throw new Error("Antigravity đang phân tích một gói GĐ1 khác. Hãy đợi hoặc bấm Dừng.");
     }
@@ -608,11 +625,11 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("analysis:cancelManualAntigravityStage1", async () => ({
+  handleIpc("analysis:cancelManualAntigravityStage1", async () => ({
     cancelled: Boolean(manualAntigravityStage1Service?.cancel())
   }));
 
-  ipcMain.handle("analysis:runConfiguredAiStage1", async (event, payload) => {
+  handleIpc("analysis:runConfiguredAiStage1", async (event, payload) => {
     if (configuredAiWorkflowService) {
       throw new Error("AI đang xử lý một tác vụ khác. Hãy đợi hoặc bấm Dừng.");
     }
@@ -627,17 +644,17 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("analysis:cancelConfiguredAi", async () => ({
+  handleIpc("analysis:cancelConfiguredAi", async () => ({
     cancelled: Boolean(configuredAiWorkflowService?.cancel())
   }));
 
-  ipcMain.handle("analysis:importManualGeminiEvidence", async (_event, payload) => {
+  handleIpc("analysis:importManualGeminiEvidence", async (_event, payload) => {
     const settings = configStore.getSettings();
     const service = new ManualGeminiPackService(settings);
     return service.importEvidence(payload || {});
   });
 
-  ipcMain.handle("analysis:importPodcastCandidates", async (event, payload) => {
+  handleIpc("analysis:importPodcastCandidates", async (event, payload) => {
     const settings = configStore.getSettings();
     const service = new PodcastCandidateService(settings);
     return service.importCandidates({
@@ -646,17 +663,17 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("analysis:importManualGeminiBlueprint", async (_event, payload) => {
+  handleIpc("analysis:importManualGeminiBlueprint", async (_event, payload) => {
     const settings = configStore.getSettings();
     const service = new ManualGeminiPackService(settings);
     return service.importBlueprint(payload || {});
   });
 
-  ipcMain.handle("analysis:inspectGeminiJsonFiles", async (_event, filePaths) => (
+  handleIpc("analysis:inspectGeminiJsonFiles", async (_event, filePaths) => (
     inspectGeminiJsonFiles(Array.isArray(filePaths) ? filePaths : [])
   ));
 
-  ipcMain.handle("project:create", async (_event, payload) => {
+  handleIpc("project:create", async (_event, payload) => {
     const settings = configStore.getSettings();
     const project = await projectStore.createProject(getWorkspaceRoot(), {
       ...payload,
@@ -667,7 +684,7 @@ app.whenReady().then(async () => {
     return { project, projects };
   });
 
-  ipcMain.handle("autoStory:run", async (event, projectId, options = {}) => {
+  handleIpc("autoStory:run", async (event, projectId, options = {}) => {
     const scriptId = options.scriptId == null ? null : Number(options.scriptId);
     if (scriptId !== null && (!Number.isInteger(scriptId) || scriptId < 1 || scriptId > 5)) throw new Error("Script ID không hợp lệ.");
     const settings = configStore.getSettings();
@@ -782,16 +799,16 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("autoStory:cancel", async () => {
+  handleIpc("autoStory:cancel", async () => {
     const cancelled = cancelActiveOperation("Đã dừng True Crime Auto Story theo yêu cầu của user.");
     return { cancelled };
   });
 
-  ipcMain.handle("project:list", async () => projectStore.listProjects(getWorkspaceRoot()));
+  handleIpc("project:list", async () => projectStore.listProjects(getWorkspaceRoot()));
 
-  ipcMain.handle("project:get", async (_event, projectId) => projectStore.getProject(getWorkspaceRoot(), projectId));
+  handleIpc("project:get", async (_event, projectId) => projectStore.getProject(getWorkspaceRoot(), projectId));
 
-  ipcMain.handle("project:plan", async (_event, projectId) => {
+  handleIpc("project:plan", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return pipelineService.planProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -801,7 +818,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:ingestDubbing", async (_event, projectId) => {
+  handleIpc("project:ingestDubbing", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.ingestProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -811,7 +828,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:translateDubbing", async (_event, projectId) => {
+  handleIpc("project:translateDubbing", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.translateProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -821,7 +838,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:rewriteScript", async (_event, projectId) => {
+  handleIpc("project:rewriteScript", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.rewriteScriptProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -831,7 +848,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:importStorytime", async (_event, projectId) => {
+  handleIpc("project:importStorytime", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.importStorytimeProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -841,7 +858,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:importHighlightCut", async (_event, projectId) => {
+  handleIpc("project:importHighlightCut", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.importHighlightCutProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -851,7 +868,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:importReviewedScript", async (_event, projectId, jsonPath) => {
+  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath) => {
     const settings = configStore.getSettings();
     return dubbingService.importReviewedScriptProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -861,7 +878,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:createGeminiDraftReviewPackage", async (_event, projectId) => (
+  handleIpc("project:createGeminiDraftReviewPackage", async (_event, projectId) => (
     geminiDraftReviewService.createPackage({
       workspaceRoot: getWorkspaceRoot(),
       projectId,
@@ -869,7 +886,7 @@ app.whenReady().then(async () => {
     })
   ));
 
-  ipcMain.handle("project:runConfiguredAiDraftReview", async (event, projectId, packageDir) => {
+  handleIpc("project:runConfiguredAiDraftReview", async (event, projectId, packageDir) => {
     if (configuredAiWorkflowService) {
       throw new Error("AI đang xử lý một tác vụ khác. Hãy đợi hoặc bấm Dừng.");
     }
@@ -886,14 +903,14 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("project:getViralRepairContext", async (_event, projectId) => {
+  handleIpc("project:getViralRepairContext", async (_event, projectId) => {
     return dubbingService.getViralRepairContext({
       workspaceRoot: getWorkspaceRoot(),
       projectId
     });
   });
 
-  ipcMain.handle("project:diarizeDubbing", async (_event, projectId) => {
+  handleIpc("project:diarizeDubbing", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.diarizeProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -903,7 +920,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:updateDubbingSegments", async (_event, projectId, segments) => {
+  handleIpc("project:updateDubbingSegments", async (_event, projectId, segments) => {
     return dubbingService.updateSegments({
       workspaceRoot: getWorkspaceRoot(),
       projectId,
@@ -911,7 +928,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:updatePlan", async (_event, projectId, analysis) => {
+  handleIpc("project:updatePlan", async (_event, projectId, analysis) => {
     return pipelineService.updateProjectPlan({
       workspaceRoot: getWorkspaceRoot(),
       projectId,
@@ -919,11 +936,11 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:updateSettings", async (_event, projectId, partial) => {
+  handleIpc("project:updateSettings", async (_event, projectId, partial) => {
     return projectStore.updateProject(getWorkspaceRoot(), projectId, partial || {});
   });
 
-  ipcMain.handle("project:reviewSceneScript", async (_event, projectId, segmentIndex) => {
+  handleIpc("project:reviewSceneScript", async (_event, projectId, segmentIndex) => {
     const settings = configStore.getSettings();
     return pipelineService.reviewSceneScript({
       workspaceRoot: getWorkspaceRoot(),
@@ -933,7 +950,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:rewriteFailedScenes", async (_event, projectId) => {
+  handleIpc("project:rewriteFailedScenes", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return pipelineService.rewriteFailedSceneScripts({
       workspaceRoot: getWorkspaceRoot(),
@@ -942,7 +959,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:preview", async (_event, projectId) => {
+  handleIpc("project:preview", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return pipelineService.previewProject({
       workspaceRoot: getWorkspaceRoot(),
@@ -952,13 +969,13 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:openFolder", async (_event, projectId) => {
+  handleIpc("project:openFolder", async (_event, projectId) => {
     const projectPaths = projectStore.getProjectPaths(getWorkspaceRoot(), projectId);
     await shell.openPath(projectPaths.rootDir);
     return true;
   });
 
-  ipcMain.handle("project:openOutput", async (_event, projectId) => {
+  handleIpc("project:openOutput", async (_event, projectId) => {
     const project = await projectStore.getProject(getWorkspaceRoot(), projectId);
     if (!project?.artifacts?.finalVideoPath) {
       return false;
@@ -967,12 +984,12 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  ipcMain.handle("voice:list", async (_event, provider) => {
+  handleIpc("voice:list", async (_event, provider) => {
     const settings = configStore.getSettings();
     return pipelineService.listVoices(settings, provider);
   });
 
-  ipcMain.handle("voice:test", async (event, payload) => {
+  handleIpc("voice:test", async (event, payload) => {
     const settings = configStore.getSettings();
     const provider = payload?.provider || settings.defaultVoiceProvider || "edge_neural";
     const sampleText = payload?.text || "Xin chào, đây là bản thử giọng thuyết minh cho video.";
@@ -1046,7 +1063,7 @@ app.whenReady().then(async () => {
     return { outputPath };
   });
 
-  ipcMain.handle("voice:calibrate", async (event, payload) => {
+  handleIpc("voice:calibrate", async (event, payload) => {
     const settings = configStore.getSettings();
     return dubbingService.calibrateVoiceProfile({
       workspaceRoot: getWorkspaceRoot(),
@@ -1059,7 +1076,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("voice:getProfile", async (_event, payload) => {
+  handleIpc("voice:getProfile", async (_event, payload) => {
     const settings = configStore.getSettings();
     return dubbingService.getVoiceProfileContext({
       workspaceRoot: getWorkspaceRoot(),
@@ -1068,14 +1085,14 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("video:probe", async (_event, videoPath) => {
+  handleIpc("video:probe", async (_event, videoPath) => {
     const settings = configStore.getSettings();
     const FfmpegService = require("./services/ffmpegService");
     const ffmpeg = new FfmpegService(settings);
     return await ffmpeg.probeVideo(videoPath);
   });
 
-  ipcMain.handle("video:mirrorFlip", async (_event, payload) => {
+  handleIpc("video:mirrorFlip", async (_event, payload) => {
     const inputPath = String(payload?.inputPath || "");
     const intervalSec = Math.max(0.5, Number(payload?.intervalSec || 3));
     if (!inputPath) {
@@ -1090,7 +1107,7 @@ app.whenReady().then(async () => {
     return { outputPath, intervalSec };
   });
 
-  ipcMain.handle("video:openOutputFile", async (_event, outputPath) => {
+  handleIpc("video:openOutputFile", async (_event, outputPath) => {
     if (!outputPath) {
       return false;
     }
@@ -1098,7 +1115,7 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  ipcMain.handle("project:render", async (event, projectId) => {
+  handleIpc("project:render", async (event, projectId) => {
     const settings = configStore.getSettings();
     const project = await projectStore.getProject(getWorkspaceRoot(), projectId);
     const token = createCancelToken("render");
@@ -1140,7 +1157,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("project:resumeRender", async (event, projectId) => {
+  handleIpc("project:resumeRender", async (event, projectId) => {
     const settings = configStore.getSettings();
     const project = await projectStore.getProject(getWorkspaceRoot(), projectId);
     const interrupted = await renderJobService.prepareResume({
@@ -1195,9 +1212,9 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("project:cancelRender", async () => cancelActiveOperation("Đã dừng xuất video theo yêu cầu của user."));
+  handleIpc("project:cancelRender", async () => cancelActiveOperation("Đã dừng xuất video theo yêu cầu của user."));
 
-  ipcMain.handle("project:audioPlan", async (_event, projectId) => {
+  handleIpc("project:audioPlan", async (_event, projectId) => {
     const settings = configStore.getSettings();
     return dubbingService.buildAudioPlan({
       workspaceRoot: getWorkspaceRoot(),
@@ -1206,7 +1223,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:renderSegmentVoice", async (_event, projectId, segmentIndex) => {
+  handleIpc("project:renderSegmentVoice", async (_event, projectId, segmentIndex) => {
     const settings = configStore.getSettings();
     return dubbingService.renderSegmentVoice({
       workspaceRoot: getWorkspaceRoot(),
@@ -1217,7 +1234,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:renderSegmentPreview", async (_event, projectId, segmentIndex) => {
+  handleIpc("project:renderSegmentPreview", async (_event, projectId, segmentIndex) => {
     const settings = configStore.getSettings();
     const project = await projectStore.getProject(getWorkspaceRoot(), projectId);
     if (project.mode === "highlight_cut") {
@@ -1238,7 +1255,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:renderFastDraft", async (event, projectId) => {
+  handleIpc("project:renderFastDraft", async (event, projectId) => {
     const settings = configStore.getSettings();
     const project = await projectStore.getProject(getWorkspaceRoot(), projectId);
     const onProgress = createPipelineProgressSender(event);
@@ -1259,7 +1276,7 @@ app.whenReady().then(async () => {
     });
   });
 
-  ipcMain.handle("project:renderHighlightDraftVariants", async (event, projectId) => {
+  handleIpc("project:renderHighlightDraftVariants", async (event, projectId) => {
     const settings = configStore.getSettings();
     const token = createCancelToken("renderHighlightDraftVariants");
     const onProgress = createPipelineProgressSender(event);
@@ -1275,7 +1292,7 @@ app.whenReady().then(async () => {
     }
   });
 
-  ipcMain.handle("project:renderHighlightVariants", async (event, projectId) => {
+  handleIpc("project:renderHighlightVariants", async (event, projectId) => {
     const settings = configStore.getSettings();
     const token = createCancelToken("renderHighlightVariants");
     const job = await renderJobService.start({

@@ -229,13 +229,16 @@ class LocalTranslationService {
       }))
       .filter((segment) => segment.text);
     if (!cleanSegments.length) return [];
-    const worker = getWorker(this.settings, this.model, this.device);
-    const result = await worker.enqueue({
+    const result = await require('./productionResourcePool').withSlot('local-translation', 1, getCancelToken()?.abortController?.signal, async () => {
+      throwIfCancelled();
+      const worker = getWorker(this.settings, this.model, this.device);
+      return worker.enqueue({
       segments: cleanSegments,
       batchSize: Number(this.settings.localTranslationBatchSize || 8)
     }, {
       onProgress,
       timeoutMs: Number(this.settings.localTranslationTimeoutMs || 10 * 60 * 1000)
+      });
     });
     const translated = new Map((result.segments || []).map((segment) => [segment.id, segment.text]));
     return segments.map((segment, index) => {

@@ -93,15 +93,16 @@ function validateEdit(script, story, evidence, config) {
     if (!selected.sourceUnitIds.some(id => {
       const unit = clip?.sourceUnits?.find(u => u.id === id);
       return unit && clip.sourceStart + first.start < unit.end && clip.sourceStart + first.end > unit.start;
-    })) throw new Error("Hook đã dựng không khớp vùng nguồn của ứng viên được chọn.");
+    })) throw new Error(`Hook đã dựng không khớp vùng nguồn của ứng viên được chọn. Selected candidate: ${selected.id}; allowed SOURCE units: ${JSON.stringify(selected.sourceUnitIds)}. Actual opening: evidenceId=${first.evidenceId}, CLIP-LOCAL ${first.start}-${first.end}s, SOURCE offset=${clip?.sourceStart}. Inspect the candidate footage again: use clip-local timestamps, not source or reel timestamps. If choosing another verified candidate, update hookAudit and openingAudit together. Do not relabel unrelated footage to pass.`);
   }
   const ids = new Set();
   for (const s of script.segments) {
     const e = byId.get(s.evidenceId);
-    if (!s.id || ids.has(s.id) || !e || !Number.isFinite(s.start) || !Number.isFinite(s.end) || s.start < 0 || s.end <= s.start || s.end > e.duration + 0.05) throw new Error(`${s.id}: điểm cắt ngoài evidence clip.`);
+    if (!s.id || ids.has(s.id) || !e || !Number.isFinite(s.start) || !Number.isFinite(s.end) || s.start < 0 || s.end <= s.start || s.end > e.duration + 0.05) throw new Error(`${s.id}: điểm cắt ngoài evidence clip. evidenceId=${s.evidenceId}; received start=${s.start}, end=${s.end}; valid CLIP-LOCAL interval=0-${e?.duration ?? 'unknown'}s; SOURCE offset=${e?.sourceStart ?? 'unknown'}s; duplicateId=${ids.has(s.id)}. Reinspect supplied media and correct the coordinate system or evidenceId. Never clamp timestamps blindly or invent unseen footage.`);
     ids.add(s.id);
     if (String(s.storyRole).trim().toLowerCase() === "hook" && s.audioMode !== "original_audio") {
-      throw new Error(`${s.id}: hook bắt buộc original_audio; chọn cảnh sạch phù hợp, không tự bật lại âm thanh ở cảnh narrator.`);
+      const alternatives = (story.hookCandidates || []).filter(c => c.id !== script.hookAudit?.selectedCandidateId);
+      throw new Error(`${s.id}: hook bắt buộc original_audio; chọn cảnh sạch phù hợp, không tự bật lại âm thanh ở cảnh narrator. HOOK SELECTION FAILED: candidate ${script.hookAudit?.selectedCandidateId || 'unknown'} was selected with narration. Replace the opening with a DIFFERENT verified clean candidate and update hookAudit AND openingAudit. Do not merely change audioMode/sourceNarratorPresent flags on this footage. Inspect these alternatives: ${JSON.stringify(alternatives)}. If none has clean source audio, report that limitation; never fabricate a clean hook.`);
     }
     if (!["original_audio", "voiceover_only"].includes(s.audioMode)) throw new Error(`${s.id}: audioMode sai.`);
     if (s.audioMode === "original_audio" && (s.voiceoverText?.trim() || s.sourceNarratorPresent !== false)) throw new Error(`${s.id}: âm gốc chứa narrator hoặc lời thuyết minh.`);
@@ -148,10 +149,13 @@ class AutoStoryFastService {
     try {
       const pending = await read(repairFile);
       if (pending.fingerprint === fingerprint) {
+        if (args.localRepair) {
+          const error = new Error(pending.error); error.invalidArtifact = pending.result; throw error;
+        }
         args = repairArgs(pending.result, pending.error);
         onProgress?.({ stage: key, message: `${key}: tiếp tục sửa JSON đã lưu, giữ phần đã đạt` });
       }
-    } catch (_) { /* No compatible repair checkpoint. */ }
+    } catch (error) { if (error.invalidArtifact) throw error; /* No compatible repair checkpoint. */ }
     if (this.metricsRoot) {
       const estimate = await metrics.estimate(this.metricsRoot, key, this.vertex.getModel?.(args.taskType));
       const budget = await this.vertex.budgetStatus?.();
@@ -169,8 +173,9 @@ class AutoStoryFastService {
       try {
         this.apiCalls = ++this.callBudget.calls;
         onProgress?.({ stage: key, message: `${key} · ${this.vertex.getModel?.(args.taskType) || args.taskType} · yêu cầu ${this.apiCalls}/${limit}` });
-        const result = await this.vertex.generateJsonFromFiles({ ...args, strictRootJson: true, signal,
-          onProgress: p => onProgress?.({ ...p, stage: key }) });
+        const result = await require('./productionResourcePool').withSlot('auto-story-ai', 2, signal,
+          () => this.vertex.generateJsonFromFiles({ ...args, strictRootJson: true, signal,
+            onProgress: p => onProgress?.({ ...p, stage: key }) }));
         await this.recordCost(key, false); recorded = true;
         await write(path.join(root, `${key}-request-metadata.json`), this.vertex.lastResponseMetadata || {});
         await write(path.join(root, `${key}-last-response.json`), result);
@@ -199,12 +204,13 @@ class AutoStoryFastService {
         }
         if (signal?.aborted || attempt || /403|401|ENOTFOUND|timeout|budget|giới hạn|hard limit/i.test(error.message)) throw error;
         if (invalidResult !== undefined) {
+          if (args.localRepair) { error.invalidArtifact = invalidResult; throw error; }
           args = repairArgs(invalidResult, error.message);
           onProgress?.({ stage: key, message: `${key}: AI tự sửa lỗi dữ liệu (1/1): ${error.message}` });
           continue;
         }
-        if (args.filePaths?.length) throw error;
         args = { ...args, prompt: `${args.prompt}\nLOCAL VALIDATION: ${error.message}. Return the complete corrected artifact. Do not invent evidence or mark access true to pass validation.` };
+        if (args.filePaths?.length && invalidResult === undefined) throw error;
       }
     }
   }
@@ -283,11 +289,12 @@ class AutoStoryFastService {
     let current = script;
     let availableEvidence = evidence;
         const relocated = new Set();
-    for (let attempt = 0; attempt < 4; attempt++) {
+    const maxAttempts = this.settings.autoStoryBoundedRun ? 2 : 4;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
       signal?.throwIfAborted();
       try { return await this.measure(current, story, availableEvidence, config, project, root, signal); }
       catch (error) {
-        if (signal?.aborted || attempt === 3 || !error.measurements) throw error;
+        if (signal?.aborted || attempt === maxAttempts - 1 || !error.measurements) throw error;
         // Exhaust relevant footage choices before asking for a shorter sentence.
         if (error.segmentId && relocated.has(error.segmentId)) {
           current = await this.repairVoice(current, error, story, evidence, config, root, onProgress, signal);
@@ -340,6 +347,7 @@ MEASURED INPUT: ${JSON.stringify(input)}`
     }
   }
   async fitRhythm(script, story, evidence, config, project, root, packed, onProgress, signal) {
+    if (this.settings.autoStoryBoundedRun) return this.fitReviewed(script, story, evidence, config, project, root, packed, onProgress, signal);
     const measured = await this.fitMeasured(script, story, evidence, config, project, root, packed, onProgress, signal);
     const report = rhythm.analyze(measured);
     if (report.needsReview) onProgress?.({ message: `Script ${story.scriptId}: kiểm tra nhịp sẽ gộp vào review draft, không gọi AI riêng.` });
@@ -348,11 +356,12 @@ MEASURED INPUT: ${JSON.stringify(input)}`
   async fitReviewed(script, story, evidence, config, project, root, packed, onProgress, signal, checkpoint) {
     let current = script;
     const patches = require("./autoStoryReviewPatch");
-    for (let pass = 0; pass < 3; pass++) {
+    const maxPasses = this.settings.autoStoryBoundedRun ? 2 : 3;
+    for (let pass = 0; pass < maxPasses; pass++) {
       current = await this.fitMeasured(current, story, evidence, config, project, root, packed, onProgress, signal, checkpoint);
       const runs = rhythm.analyze(current).runs.filter(r => r.duration > 20.25);
       if (!runs.length) return current;
-      if (pass === 2) throw new Error("Bản sửa vẫn còn narrator liên tục trên 20s; giữ draft trước, chưa render bản không đạt.");
+      if (pass === maxPasses - 1) throw new Error("Bản sửa vẫn còn narrator liên tục trên 20s; giữ draft trước, chưa render bản không đạt.");
       onProgress?.({ stage: "rhythm_repair", message: `Sửa ${runs.length} khối narrator dài trước khi render (${pass + 1}/2)` });
       const result = await this.stage(root, `rhythm-${story.scriptId}`, { current, runs, evidence }, {
         filePaths: packed.filePaths, videoFpsByPath: packed.videoFpsByPath, videoFps: 1, taskType: "quality", temperature: 0.1,
@@ -588,6 +597,8 @@ ${JSON.stringify(context)}`;
             scriptPaths.push(project.analysis.highlightVariants.find(v => Number(v.scriptId) === story.scriptId).sourceJsonPath);
             continue;
           }
+          // stage revalidates cached edits and resumes invalid-artifact repairs.
+          // Do not erase a valid edit just because a later voice/network step failed.
           await status("editing", { scriptId: story.scriptId });
           const evidence = [];
           for (const r of evidenceRanges(story, units, media.duration)) {
@@ -607,11 +618,11 @@ ${JSON.stringify(context)}`;
           const prompt = editorial.editPrompt(config, story, evidence);
           const args = { filePaths: packed.filePaths, videoFpsByPath: packed.videoFpsByPath, prompt, responseSchema: editorial.scriptSchemaFor(story, evidence),
             taskType: "quality", temperature: 0.2, videoFps: 1 };
-          let result = await this.stage(sourceCache, `edit-${story.scriptId}`, { story, evidence, config }, args,
+          const result = await require('./autoStoryEditRecovery').generate(this, sourceCache, story, evidence, config, args,
             v => { assertAccess(v); validateEdit(v.script, story, evidence, config); },
             p => emit(30 + Math.round(((index + (p.percent || 0) / 100) / plan.stories.length) * 60), p.message), signal);
           const measured = await this.fitRhythm(result.script, story, evidence, config, project, sourceCache,
-            packed, p => emit(90, p.message), signal);
+            packed, p => emit(Math.min(99, 90 + Math.round(Number(p.percent || 0) * 0.09)), p.message), signal);
           await write(path.join(root, `edit-${story.scriptId}.json`), measured);
           narrationTranslations.push(...measured.segments.filter(s => s.audioMode === "voiceover_only").map(s => ({ text: s.voiceoverText.trim(), vi: s.previewVi })));
           const scriptPath = path.join(root, `script-${story.scriptId}.json`);
@@ -766,7 +777,7 @@ ${JSON.stringify(context)}`;
         evidence: await read(path.join(root, `evidence-${audit.scriptId}.json`)), config, root, signal, onProgress });
       await write(path.join(root, `review-state-${audit.scriptId}.json`), audits[i]);
     }
-    if (recoveryDepth < 1) {
+    if (!this.settings.autoStoryBoundedRun && recoveryDepth < 1) {
       for (let i = 0; i < audits.length; i++) {
         const a = audits[i];
         if ((scriptId && a.scriptId !== scriptId) || a.finalCheck?.verdict !== "NEEDS_ATTENTION" || !a.finalCheck.issues?.length) continue;

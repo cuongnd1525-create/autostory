@@ -24,7 +24,7 @@ assert(renderer.includes("runManualAntigravityStage1"));
 assert(renderer.includes("cancelManualAntigravityStage1"));
 assert(preload.includes('analysis:runManualAntigravityStage1'));
 assert(preload.includes('analysis:cancelManualAntigravityStage1'));
-assert(main.includes('ipcMain.handle("analysis:runManualAntigravityStage1"'));
-assert(main.includes('ipcMain.handle("analysis:cancelManualAntigravityStage1"'));
+assert(main.includes('handleIpc("analysis:runManualAntigravityStage1"'));
+assert(main.includes('handleIpc("analysis:cancelManualAntigravityStage1"'));
 
 console.log("manualAntigravityStage1Ui tests passed");

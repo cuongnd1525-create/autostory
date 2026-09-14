@@ -4,6 +4,7 @@ const path = require("path");
 const { spawn } = require("child_process");
 
 const { buildCliEnv } = require("./cliEnv");
+const { throwIfCancelled, trackChild } = require('./cancelToken');
 const { fetchYoutubeSubtitle, parseSrt } = require("./podcastViralService");
 
 const VIDEO_EXTENSIONS = new Set([".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"]);
@@ -43,6 +44,7 @@ function validateSourceUrl(value) {
 }
 
 function runExternal(command, args, { timeoutMs = 2 * 60 * 60 * 1000, onLine } = {}) {
+  throwIfCancelled();
   return new Promise((resolve, reject) => {
     const stdout = [];
     const stderr = [];
@@ -51,6 +53,7 @@ function runExternal(command, args, { timeoutMs = 2 * 60 * 60 * 1000, onLine } =
       windowsHide: true,
       env: buildCliEnv()
     });
+    const untrack = trackChild(child);
     let stdoutBuffer = "";
     let stderrBuffer = "";
     const consume = (chunk, target, bufferName) => {
@@ -68,17 +71,20 @@ function runExternal(command, args, { timeoutMs = 2 * 60 * 60 * 1000, onLine } =
       if (settled) return;
       settled = true;
       child.kill("SIGKILL");
+      untrack();
       reject(new Error(`${command} timed out while downloading the source video.`));
     }, timeoutMs);
     child.stdout.on("data", (chunk) => consume(chunk, stdout, "stdout"));
     child.stderr.on("data", (chunk) => consume(chunk, stderr, "stderr"));
     child.on("error", (error) => {
+      untrack();
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       reject(error);
     });
     child.on("close", (code) => {
+      untrack();
       if (settled) return;
       settled = true;
       clearTimeout(timer);
@@ -194,6 +200,7 @@ class SourceDownloadService {
   }
 
   async download({ url, onProgress } = {}) {
+    throwIfCancelled();
     const source = validateSourceUrl(url);
     const command = this.settings.ytDlpCommand || "yt-dlp";
     const destinationRoot = this.settings.sourceDownloadRoot
@@ -212,6 +219,7 @@ class SourceDownloadService {
       "--dump-single-json",
       source.url
     ], { timeoutMs: 120000 });
+    throwIfCancelled();
     const metadata = parseMetadata(metadataResult.stdout);
     const sourceId = slugify(metadata.id || `${source.platform}-${Date.now()}`);
     const title = safeText(metadata.title || `${source.platform}-${sourceId}`);
@@ -269,6 +277,7 @@ class SourceDownloadService {
     let subtitlePath = "";
     let subtitleProvider = "";
     const warnings = [];
+    throwIfCancelled();
     progress("transcript", 88, "Đang tìm transcript tiếng Anh có sẵn");
     try {
       const subtitle = await this.fetchEnglishSubtitle({
@@ -283,6 +292,7 @@ class SourceDownloadService {
       warnings.push(`Video không có transcript tiếng Anh tải được: ${safeText(error.message)}`);
     }
 
+    throwIfCancelled();
     progress("complete", 100, subtitlePath
       ? "Đã tải video và transcript tiếng Anh"
       : "Đã tải video; không tìm thấy transcript tiếng Anh");

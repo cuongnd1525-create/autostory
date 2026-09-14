@@ -539,14 +539,20 @@ class VertexAiService {
       }), {
         label: `Vertex AI model ${model}`,
         attempts: 3,
-        retryCodes: ["ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH"],
+        retryCodes: ["ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ECONNRESET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"],
         retryDelayMs: 1500,
         onRetry: ({ nextAttempt, code }) => onProgress?.({
           percent: 45,
           message: `Kết nối Vertex tạm gián đoạn (${code}); đang thử lại ${nextAttempt}/3`
         })
       });
-      if (!response.ok) throw formatVertexApiError(response.status, await response.text(), this.projectId);
+      if (!response.ok) {
+        const body = await response.text();
+        this.lastResponseMetadata = { model, httpStatus: response.status,
+          prepareMs: preparedAt - startedAt, modelMs: Date.now() - preparedAt,
+          providerError: body.slice(0, 20000) };
+        throw formatVertexApiError(response.status, body, this.projectId);
+      }
       const payload = await response.json();
       const completedAt = Date.now();
       const usage = estimateUsageCost(model, payload.usageMetadata || {});

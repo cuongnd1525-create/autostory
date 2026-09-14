@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>RecapTool Studio</title>
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./productionQueue.css" />
+    <link rel="stylesheet" href="./previewLog.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -19,6 +21,7 @@
         <div class="top-actions">
           <span id="sidecar-status" class="connection-dot">Bộ xử lý cục bộ: Sẵn sàng</span>
           <button id="show-help" class="icon-button" title="Trợ giúp">?</button>
+          <button id="open-production-queue" class="top-text-button" title="Hàng đợi Auto Story">Hàng đợi</button>
           <button id="open-settings" class="top-text-button" title="Cài đặt">Cài đặt</button>
           <button id="back-to-setup" class="ghost-button hidden">Quay lại thiết lập</button>
           <button id="render-video" class="primary-button hidden">Xuất video</button>
@@ -1212,6 +1215,7 @@
           </div>
 
           <div id="stats-tab" class="tab-panel hidden">
+            <div id="auto-story-status" class="preview-workflow-status hidden" aria-live="polite"></div>
             <h2>Thông số dự án (KPI)</h2>
             <div class="kpi-grid">
               <div><span>Cảnh chọn</span><strong id="kpi-scenes">0</strong></div>
@@ -1271,10 +1275,16 @@
           </div>
         </section>
 
-        <aside class="inspector-panel">
-          <nav class="tabs small">
-            <button class="tab active" data-inspector="segment">Phân đoạn</button>
-          </nav>
+        <aside class="inspector-panel preview-log-panel" aria-label="Nhật ký xử lý">
+          <header class="preview-log-header"><strong>Nhật ký xử lý</strong><button id="preview-log-copy" class="icon-button" type="button" title="Sao chép nhật ký" aria-label="Sao chép nhật ký">⧉</button></header>
+          <div class="preview-log-current"><span id="preview-log-stage">Chưa có hoạt động</span><small id="preview-log-time">Nhật ký phiên làm việc</small></div>
+          <div class="preview-log-toolbar">
+            <select id="preview-log-filter" aria-label="Lọc nhật ký"><option value="all">Tất cả</option><option value="issues">Lỗi và cảnh báo</option><option value="ERROR">Lỗi</option></select>
+            <label><input id="preview-log-follow" type="checkbox" checked /> Tự cuộn</label>
+          </div>
+          <div id="preview-log-entries" class="preview-log-entries" tabindex="0" aria-label="Chi tiết nhật ký"></div>
+          <details id="segment-tools" class="segment-tools">
+            <summary>Chỉnh sửa cảnh đang chọn</summary>
           <div id="segment-inspector" class="inspector-section">
             <h3>Phân đoạn</h3>
             <div class="inspector-card">
@@ -1357,8 +1367,8 @@
               </details>
             </div>
           </div>
+          </details>
           <div id="preview-workflow-status" class="preview-workflow-status hidden" aria-live="polite"></div>
-          <div id="auto-story-status" class="preview-workflow-status hidden" aria-live="polite"></div>
           <div class="timeline-toolbar">
             <button id="play-preview" class="play-button">Phát</button>
             <strong id="timeline-label">Timeline: 0.000s</strong>
@@ -1614,6 +1624,8 @@
       </div>
     </div>
 
+    <script src="./productionQueueUi.js"></script>
+    <script src="./previewLog.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

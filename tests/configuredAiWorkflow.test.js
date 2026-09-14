@@ -54,7 +54,7 @@ assert(renderer.includes("reviewAllDraftVariantsWithConfiguredAi"));
 assert(renderer.includes("skipConfirm: true"));
 assert(preload.includes('analysis:runConfiguredAiStage1'));
 assert(preload.includes('project:runConfiguredAiDraftReview'));
-assert(main.includes('ipcMain.handle("analysis:runConfiguredAiStage1"'));
-assert(main.includes('ipcMain.handle("project:runConfiguredAiDraftReview"'));
+assert(main.includes('handleIpc("analysis:runConfiguredAiStage1"'));
+assert(main.includes('handleIpc("project:runConfiguredAiDraftReview"'));
 
 console.log("configuredAiWorkflow tests passed");

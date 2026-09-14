@@ -26,7 +26,8 @@ const { serial } = require('../electron/services/autoStoryWorkQueue');
     const revised = patches.apply({ verdict: 'MINOR_REVISE', patch: { order: ['a', 'b'], changedSegments: [{ id: 'b', text: 'after' }] } }, original);
     assert.deepEqual(revised.revisedScript.segments[0], original.segments[0]);
     assert.equal(original.segments[1].text, 'before');
-    assert.throws(() => patches.apply({ verdict: 'PASS', patch: { order: ['b'], changedSegments: [] } }, original));
+    const passWithPatch = patches.apply({ verdict: 'PASS', patch: { order: ['b'], changedSegments: [] } }, original);
+    assert.equal(passWithPatch.verdict, 'MINOR_REVISE');
     assert.throws(() => patches.apply({ patch: { order: ['a', 'a'], changedSegments: [] } }, original));
     await Promise.all(Array.from({ length: 10 }, (_, i) => metrics.append(root, { scriptId: i, category: 'editing', usd: 1, cached: false })));
     const ledger = JSON.parse(await fs.readFile(path.join(root, 'run-costs.json')));
@@ -67,7 +68,7 @@ const { serial } = require('../electron/services/autoStoryWorkQueue');
         events.push(`render:${id}`);
         const v = project.analysis.highlightVariants.find(v => v.id === id);
         v.artifacts = { fastDraftVideoPath: `${id}.mp4` };
-        if (id === 'v1') { assert(!producerDone, 'first draft must not wait for all scripts'); firstDraft(); }
+        if (id === 'v1') { assert(producerDone, 'drafts start only after all scripts have been prepared'); firstDraft(); }
         renderActive--;
       }
     };
@@ -77,7 +78,6 @@ const { serial } = require('../electron/services/autoStoryWorkQueue');
       run: async ({ onScriptReady }) => {
         project.autoStoryPipelineVersion = 'editorial-v1';
         onScriptReady({ scriptId: 1, scriptPath: '1' });
-        await firstReady;
         onScriptReady({ scriptId: 2, scriptPath: '2' });
         onScriptReady({ scriptId: 3, scriptPath: '3' });
         producerDone = true;
@@ -106,6 +106,32 @@ const { serial } = require('../electron/services/autoStoryWorkQueue');
     events.length = 0;
     await new Runner({}, store, dubbing, make).run({ workspaceRoot: root, projectId: 'p', scriptId: 2 });
     assert.deepEqual(events, ['review:2'], 'retry keeps all existing drafts');
+    project = { id: 'p', analysisWorkflow: 'vertex_auto_story', autoStoryConfig: { outputCount: 3 }, analysis: { highlightVariants: [] } };
+    events.length = 0;
+    const generationCalls = [];
+    const recoverMissing = () => {
+      const service = make();
+      service.run = async ({ scriptId, onScriptReady }) => {
+        generationCalls.push(scriptId);
+        if (!scriptId) {
+          onScriptReady({ scriptId: 2, scriptPath: '2' });
+          return { failures: [{ scriptId: 1, error: 'invalid range' }, { scriptId: 3, error: 'ECONNRESET' }] };
+        }
+        onScriptReady({ scriptId, scriptPath: String(scriptId) });
+        return { failures: [] };
+      };
+      service.auditDrafts = async ({ scriptId }) => {
+        const audit = { scriptId, complete: true, verdict: 'PASS' };
+        await fs.writeFile(path.join(root, 'auto-story-fast', `review-state-${scriptId}.json`), JSON.stringify(audit));
+        return { audits: [audit] };
+      };
+      return service;
+    };
+    const recovered = await new Runner({}, store, dubbing, recoverMissing).run({ workspaceRoot: root, projectId: 'p' });
+    assert.deepEqual(generationCalls, [null, 1, 3], 'recover only missing scripts, never regenerate successful script 2');
+    assert.equal(recovered.project.analysis.highlightVariants.length, 3);
+    assert.equal(recovered.project.autoStoryState.phase, 'complete');
+    assert.deepEqual(recovered.project.autoStoryState.failures, []);
     console.log('Production overlap, failure isolation, patch, retry and usage tests passed');
   } finally { Dubbing.canReuseAutoStoryDraft = oldReuse; await fs.rm(root, { recursive: true, force: true }); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -1,6 +1,10 @@
 let activeToken = null;
+const context = new (require('async_hooks').AsyncLocalStorage)();
+function runWithCancelToken(token, work) { return context.run(token, work); }
+function createScopedToken(label) { return { label, cancelled: false, children: new Set(), abortController: new AbortController() }; }
 
 function createCancelToken(label = "operation") {
+  if (context.getStore()) return context.getStore();
   activeToken = {
     label,
     cancelled: false,
@@ -10,16 +14,18 @@ function createCancelToken(label = "operation") {
 }
 
 function getCancelToken() {
-  return activeToken;
+  return context.getStore() || activeToken;
 }
 
-function clearCancelToken(token = activeToken) {
+function clearCancelToken(token = getCancelToken()) {
   if (!token || token !== activeToken) return;
   activeToken = null;
 }
 
 function cancelActiveOperation(reason = "User cancelled operation.") {
-  const token = activeToken;
+  return cancelToken(activeToken, reason);
+}
+function cancelToken(token, reason = "User cancelled operation.") {
   if (!token) return false;
   token.cancelled = true;
   token.reason = reason;
@@ -38,13 +44,13 @@ function cancelActiveOperation(reason = "User cancelled operation.") {
   return true;
 }
 
-function throwIfCancelled(token = activeToken) {
+function throwIfCancelled(token = getCancelToken()) {
   if (token?.cancelled) {
     throw new Error(token.reason || "Đã dừng thao tác.");
   }
 }
 
-function trackChild(child, token = activeToken) {
+function trackChild(child, token = getCancelToken()) {
   if (!token || !child) return () => {};
   token.children.add(child);
   if (token.cancelled) {
@@ -63,5 +69,8 @@ module.exports = {
   clearCancelToken,
   cancelActiveOperation,
   throwIfCancelled,
-  trackChild
+  trackChild,
+  runWithCancelToken,
+  createScopedToken,
+  cancelToken
 };

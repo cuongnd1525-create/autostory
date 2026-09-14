@@ -42,7 +42,7 @@ async function verify(service, { record, story, script, beforeScript, evidence, 
     if (script.segments.some(s => s.measuredVoiceSec > s.end - s.start + 0.1)) throw new Error("Voice vượt thời lượng hình trong bản cuối.");
     await service.ffmpeg.run(service.ffmpeg.ffmpegPath, ["-v", "error", "-xerror", "-i", record.draft, "-f", "null", "-"], { captureStdout: false });
     const rhythmReport = rhythm.analyze(script);
-    const selected = record.verdict === "MAJOR_REVISE" || rhythmReport.needsReview ? { full: true, ids: [] } : scope(beforeScript, script);
+    const selected = record.patchRecovery || record.verdict === "MAJOR_REVISE" || rhythmReport.needsReview ? { full: true, ids: [] } : scope(beforeScript, script);
     let time = 0;
     const units = script.segments.map(s => {
       const start = time; time += s.end - s.start;

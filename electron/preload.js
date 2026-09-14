@@ -2,6 +2,16 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("cineviral", {
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
+  productionQueueList: () => ipcRenderer.invoke('production:list'),
+  productionQueueAdd: (ids) => ipcRenderer.invoke('production:add', ids),
+  productionQueueAddVideos: (templateId) => ipcRenderer.invoke('production:addVideos', templateId),
+  productionQueueAddUrls: (templateId, urls) => ipcRenderer.invoke('production:addUrls', templateId, urls),
+  productionQueueAction: (id, action) => ipcRenderer.invoke('production:action', id, action),
+  productionQueueOpen: (id) => ipcRenderer.invoke('production:open', id),
+  onProductionProgress: (callback) => {
+    ipcRenderer.removeAllListeners('production:progress');
+    ipcRenderer.on('production:progress', (_event, payload) => callback(payload));
+  },
   pickVideo: () => ipcRenderer.invoke("dialog:pickVideo"),
   pickAudio: () => ipcRenderer.invoke("dialog:pickAudio"),
   pickSubtitle: () => ipcRenderer.invoke("dialog:pickSubtitle"),
