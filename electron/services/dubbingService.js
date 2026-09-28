@@ -1,4 +1,4 @@
-﻿const fs = require("fs/promises");
+const fs = require("fs/promises");
 const path = require("path");
 const { spawn } = require("child_process");
 const crypto = require("crypto");
@@ -517,6 +517,10 @@ function getHighlightNarrationSourceVolume(project = {}) {
 
 function getHighlightAudioMode(segment = {}, hasVoice = Boolean(getHighlightVoiceText(segment)), project = {}) {
   if (!hasVoice) return "original_audio";
+  const requested = String(segment.audioMode || segment.audio_mode || segment.requestedAudioMode || "").toLowerCase();
+  if (requested === "voiceover_with_ambient" || requested === "mixed_ducking") {
+    return "voiceover_with_ambient";
+  }
   if (getHighlightNarrationSourceVolume(project) > 0) {
     return "voiceover_with_ambient";
   }
@@ -525,7 +529,10 @@ function getHighlightAudioMode(segment = {}, hasVoice = Boolean(getHighlightVoic
 
 function getHighlightAmbientVolume(segment = {}, project = {}) {
   if (getHighlightAudioMode(segment, Boolean(getHighlightVoiceText(segment)), project) !== "voiceover_with_ambient") return 0;
-  return getHighlightNarrationSourceVolume(project);
+  const projectVol = getHighlightNarrationSourceVolume(project);
+  if (projectVol > 0) return projectVol;
+  const segVol = safeNumber(segment.sourceAmbientVolume ?? segment.source_ambient_volume, 0.15);
+  return Math.max(0.08, Math.min(0.3, segVol));
 }
 
 function resolveHighlightVoiceFit(segment = {}, plannedDurationSec, actualVoiceDurationSec) {
@@ -1232,7 +1239,10 @@ function getSegmentVoiceRenderOptions(segment = {}) {
     pauseDurationMs: Math.max(0, Math.min(600, safeNumber(segment.pauseDurationMs ?? segment.pause_duration_ms, 0))),
     emphasisWords: Array.isArray(segment.emphasisWords || segment.emphasis_words)
       ? (segment.emphasisWords || segment.emphasis_words).map((value) => safeText(value)).filter(Boolean)
-      : []
+      : [],
+    // AutoStory v3 (Phase 12): carry storytelling intent to the TTS engines.
+    emotionTag: safeText(segment.emotionTag || segment.emotion_tag || segment.emotion || ""),
+    prosody: (segment.prosody && typeof segment.prosody === "object") ? segment.prosody : null
   };
 }
 
@@ -1287,6 +1297,8 @@ function getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOpt
     pauseAfterPhrase: safeText(voiceRenderOptions.pauseAfterPhrase || ""),
     pauseDurationMs: safeNumber(voiceRenderOptions.pauseDurationMs, 0),
     emphasisWords: Array.isArray(voiceRenderOptions.emphasisWords) ? voiceRenderOptions.emphasisWords : [],
+    // v3 only: keep the cache key byte-stable for existing v2 projects (no emotionTag).
+    ...(safeText(voiceRenderOptions.emotionTag || "") ? { emotionTag: safeText(voiceRenderOptions.emotionTag), prosody: voiceRenderOptions.prosody || null } : {}),
     cloneSourceVoice: Boolean(project.cloneSourceVoice),
     windowsVoiceRate: Number(project.windowsVoiceRate || settings.windowsVoiceRate || 0),
     edgeVoicePreset: settings.edgeVoicePreset || "natural",
@@ -1543,7 +1555,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
       throw new Error(`Highlight segment ${index + 1} vượt quá thời lượng video (${sourceEndSec.toFixed(2)}s > ${videoDuration.toFixed(2)}s).`);
     }
     let normalizedAudioMode = voiceoverText
-      ? (requestedAudioMode === "voiceover_with_ambient" ? "voiceover_with_ambient" : "voiceover_only")
+      ? (["voiceover_with_ambient", "mixed_ducking"].includes(requestedAudioMode) ? "voiceover_with_ambient" : "voiceover_only")
       : "original_audio";
     if (sourceNarratorDetected && normalizedAudioMode === "voiceover_with_ambient") {
       normalizedAudioMode = "voiceover_only";
@@ -3209,12 +3221,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         } : null
       });
       await this.projectStore.writeText(titleSvgPath, titleSvg);
-      titleOverlayPath = await this.createVideoTitleOverlay(
-        titleSvg,
-        path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.png`),
-        canvas.width,
-        canvas.height
-      );
+      try {
+        titleOverlayPath = await this.createVideoTitleOverlay(
+          titleSvg,
+          path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.png`),
+          canvas.width,
+          canvas.height
+        );
+      } catch (e) {
+        console.warn(`[VideoDecoration] HTML renderer failed: ${e.message}. Falling back to native FFmpeg drawtext.`);
+        titleOverlayPath = "";
+      }
     }
     const decorationInputPath = maskEnabled
       ? path.join(paths.tempDir, `${sanitizeFilePart(name)}-source-subtitle-masked.mp4`)
@@ -3238,7 +3255,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       width: canvas.width,
       height: canvas.height,
       preset: draft ? "ultrafast" : "fast",
-      crf: draft ? 29 : 21
+      crf: draft ? 29 : 21,
+      masterAudio: project.autoStoryContractVersion === 3 || Boolean(project.mixer?.masterAudio)
     });
     return outputPath;
   }
@@ -4432,6 +4450,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const language = inferFastDraftLanguage(text, project);
     const useCache = settings.voiceCacheEnabled !== false;
     const cache = getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOptions });
+    // AutoStory v3 (Phase 12): resolve storytelling intent once; null for v2 (no emotionTag) so behavior is unchanged.
+    const ttsIntentValue = voiceRenderOptions.emotionTag
+      ? require("./ttsIntent").resolveTtsIntent({ emotionTag: voiceRenderOptions.emotionTag, prosody: voiceRenderOptions.prosody })
+      : null;
     if (useCache) {
       try {
         const cacheStat = await fs.stat(cache.cachePath);
@@ -4466,13 +4488,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       return { outputPath, cacheHit: false, cachePath: cache.cachePath, cacheKey: cache.cacheKey, voiceRenderSpec: cache.spec };
     }
     if (provider === "kokoro") {
+      // AutoStory v3 (Phase 12): fold emotion rate into Kokoro's speed multiplier.
+      const kokoroOptions = ttsIntentValue
+        ? { ...voiceRenderOptions, speechRateMultiplier: Math.max(0.7, Math.min(1.3, safeNumber(voiceRenderOptions.speechRateMultiplier, 1) * (1 + ttsIntentValue.prosody.rateDelta))) }
+        : voiceRenderOptions;
       await this.synthesizeKokoroWithDelivery({
         settings,
         project,
         text,
         outputPath,
         language,
-        voiceRenderOptions,
+        voiceRenderOptions: kokoroOptions,
         onProgress
       });
       if (useCache) {
@@ -4502,7 +4528,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         voiceId: voiceId || settings.defaultVoiceId,
         outputPath,
         languageCode: language === "vi" || language === "auto" ? "vi" : language,
-        performanceMode: "story",
+        performanceMode: ttsIntentValue ? require("./ttsIntent").applyToEngine("elevenlabs", ttsIntentValue).performanceMode : "story",
         genreMode: project.genreMode || "drama"
       });
       if (useCache) {
@@ -4512,7 +4538,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       return { outputPath, cacheHit: false, cachePath: cache.cachePath, cacheKey: cache.cacheKey, voiceRenderSpec: cache.spec };
     }
     const edgeTts = new EdgeTtsService();
-    const edgeRate = getEdgeRateWithDelivery(project.edgeVoiceRate ?? settings.edgeVoiceRate, voiceRenderOptions);
+    let edgeRate = getEdgeRateWithDelivery(project.edgeVoiceRate ?? settings.edgeVoiceRate, voiceRenderOptions);
+    let edgePitch = project.edgeVoicePitchHz ?? settings.edgeVoicePitchHz;
+    let edgeVolume = project.edgeVoiceVolume ?? settings.edgeVoiceVolume;
+    // AutoStory v3 (Phase 12): fold emotion prosody deltas into Edge's numeric params.
+    if (ttsIntentValue) {
+      const p = ttsIntentValue.prosody;
+      edgeRate = Math.max(-50, Math.min(100, edgeRate + Math.round(p.rateDelta * 100)));
+      edgePitch = Math.max(-60, Math.min(60, safeNumber(edgePitch, 0) + Math.round(p.pitchDelta * 200)));
+      edgeVolume = Math.max(0, Math.min(100, safeNumber(edgeVolume, 100) + Math.round(p.volumeDelta * 100)));
+    }
     const edgeResult = await edgeTts.synthesizeSpeech({
       text,
       voiceName: voiceId,
@@ -4520,8 +4555,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       language,
       genreMode: project.genreMode || "drama",
       rate: edgeRate,
-      pitch: project.edgeVoicePitchHz ?? settings.edgeVoicePitchHz,
-      volume: project.edgeVoiceVolume ?? settings.edgeVoiceVolume,
+      pitch: edgePitch,
+      volume: edgeVolume,
       retries: 1,
       timeoutMs: 35000
     });
@@ -6103,7 +6138,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           outputPath: voicedClipPath,
           sourceVolume: getHighlightAmbientVolume(segment, project),
           voiceVolume: Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100),
-          limiter: true
+          limiter: true,
+          // AutoStory v3 (Phase 13): sidechain-duck the source instead of a flat mix.
+          duck: project.mixer?.narrationDuckDefault === true
         });
         draftVoiceReports[index] = {
           index,

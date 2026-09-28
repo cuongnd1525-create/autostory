@@ -135,7 +135,34 @@ class EdgeTtsService {
     }));
   }
 
-  async synthesizeOnce({ text, voiceName, outputPath, language, genreMode, rate, pitch, volume, timeoutMs = 45000 }) {
+  applyEmotionOffsets(emotionTag, baseRate, basePitch, baseVolume) {
+    let rateMod = 0, pitchMod = 0, volMod = 0;
+    switch (String(emotionTag || "").toUpperCase()) {
+      case "URGENT": rateMod = 15; pitchMod = 10; volMod = 10; break;
+      case "WHISPER": rateMod = -5; pitchMod = -10; volMod = -60; break;
+      case "SHOUT": rateMod = 5; pitchMod = 20; volMod = 50; break;
+      case "SAD": rateMod = -15; pitchMod = -15; volMod = -10; break;
+      default: break;
+    }
+    
+    // Parse current values (simple approximation for % and Hz)
+    const parseNum = (val, defaultVal) => {
+      const match = String(val).match(/[-+]?\d+(\.\d+)?/);
+      return match ? Number(match[0]) : defaultVal;
+    };
+    
+    let newRate = parseNum(baseRate, 0) + rateMod;
+    let newPitch = parseNum(basePitch, 0) + pitchMod;
+    let newVolume = (Number.isFinite(Number(baseVolume)) ? Number(baseVolume) : 100) + volMod;
+    
+    return {
+      rate: newRate === 0 ? "default" : `${newRate >= 0 ? '+' : ''}${newRate}%`,
+      pitch: newPitch === 0 ? "default" : `${newPitch >= 0 ? '+' : ''}${newPitch}Hz`,
+      volume: Math.max(0, Math.min(150, newVolume))
+    };
+  }
+
+  async synthesizeOnce({ text, voiceName, outputPath, language, genreMode, rate, pitch, volume, emotionTag, timeoutMs = 45000 }) {
     const token = getCancelToken();
     throwIfCancelled(token);
     const tts = new MsEdgeTTS();
@@ -148,10 +175,17 @@ class EdgeTtsService {
         { voiceLocale: inferLocaleFromVoice(resolvedVoice) || inferLocaleFromVoice(getDefaultVoice(language)) }
       );
 
+      const finalMods = this.applyEmotionOffsets(
+        emotionTag,
+        formatRelativePercent(rate, getRateForGenre(genreMode)),
+        formatPitch(pitch),
+        formatVolume(volume)
+      );
+
       const { audioStream } = await withTimeout(tts.toStream(escapeXml(text), {
-        rate: formatRelativePercent(rate, getRateForGenre(genreMode)),
-        volume: formatVolume(volume),
-        pitch: formatPitch(pitch)
+        rate: finalMods.rate,
+        volume: finalMods.volume,
+        pitch: finalMods.pitch
       }), timeoutMs, "Edge TTS stream");
 
       await withTimeout(pipeline(audioStream, fs.createWriteStream(outputPath)), timeoutMs, "Edge TTS audio write");
@@ -167,7 +201,7 @@ class EdgeTtsService {
     }
   }
 
-  async synthesizeSpeech({ text, voiceName, outputPath, language = "auto", genreMode = "thriller", rate, pitch, volume, retries = 3, timeoutMs = 45000 }) {
+  async synthesizeSpeech({ text, voiceName, outputPath, language = "auto", genreMode = "thriller", rate, pitch, volume, emotionTag, retries = 3, timeoutMs = 45000 }) {
     await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
     const preferredVoice = await this.resolveVoice(voiceName, language);
     const voiceAttempts = [
@@ -190,6 +224,7 @@ class EdgeTtsService {
             rate,
             pitch,
             volume,
+            emotionTag,
             timeoutMs
           });
           return {

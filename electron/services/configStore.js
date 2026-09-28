@@ -58,7 +58,7 @@ class ConfigStore {
       antigravityCommand: process.env.ANTIGRAVITY_COMMAND || "agy",
       antigravityArgs: process.env.ANTIGRAVITY_ARGS || "",
       antigravityModel: process.env.ANTIGRAVITY_MODEL || "",
-      antigravityTimeoutMs: Number(process.env.ANTIGRAVITY_TIMEOUT_MS || 300000),
+      antigravityTimeoutMs: Number(process.env.ANTIGRAVITY_TIMEOUT_MS || 900000),
       ytDlpCommand: process.env.YT_DLP_COMMAND || "yt-dlp",
       whisperEngine: process.env.WHISPER_ENGINE || "auto",
       whisperCommand: process.env.WHISPER_COMMAND || "whisper",
@@ -176,6 +176,10 @@ class ConfigStore {
           this.cache.whisperComputeType = "auto";
         }
         this.cache.asrConfigVersion = 2;
+        await this.persist(this.cache);
+      }
+      if (!parsed.antigravityTimeoutMs || Number(parsed.antigravityTimeoutMs) <= 300000) {
+        this.cache.antigravityTimeoutMs = 900000;
         await this.persist(this.cache);
       }
     } catch (_error) {

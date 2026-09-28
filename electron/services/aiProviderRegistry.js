@@ -19,13 +19,26 @@ function splitArgs(value) {
   return matches.map((part) => part.replace(/^"|"$/g, ""));
 }
 
+function terminateProcess(child) {
+  if (!child) return;
+  if (process.platform === "win32" && child.pid) {
+    try {
+      spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
+      return;
+    } catch (_error) {
+      // Fallback
+    }
+  }
+  child.kill("SIGKILL");
+}
+
 function runCliJson({ command, args, prompt, timeoutMs }) {
   return new Promise((resolve, reject) => {
     const stdoutChunks = [];
     const stderrChunks = [];
     const child = spawn(command, args, { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env: buildCliEnv() });
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      terminateProcess(child);
       reject(new Error(`${command} timed out after ${Math.round(timeoutMs / 1000)}s.`));
     }, timeoutMs);
 
@@ -713,8 +726,10 @@ class AntigravityCliProvider {
     this.command = commandParts[0] || "agy";
     this.commandArgs = commandParts.slice(1);
     this.argsTemplate = settings.antigravityArgs || process.env.ANTIGRAVITY_ARGS || "";
-    this.model = settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "";
-    this.timeoutMs = Math.max(15000, Number(settings.antigravityTimeoutMs || process.env.ANTIGRAVITY_TIMEOUT_MS || 300000));
+    const { normalizeAntigravityModel } = require("./manualAntigravityStage1Service");
+    this.model = normalizeAntigravityModel(settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "");
+    const rawTimeout = Number(settings.antigravityTimeoutMs || process.env.ANTIGRAVITY_TIMEOUT_MS || 900000);
+    this.timeoutMs = Math.max(15000, rawTimeout === 300000 ? 900000 : rawTimeout);
   }
 
   buildArgs(prompt) {

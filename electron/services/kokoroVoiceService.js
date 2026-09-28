@@ -252,18 +252,33 @@ class KokoroVoiceService {
     }));
   }
 
-  async synthesizeSpeech({ text, voiceName, outputPath, language = "en", speed, timeoutMs, onProgress }) {
+  async synthesizeSpeech({ text, voiceName, outputPath, language = "en", speed, emotionTag, timeoutMs, onProgress }) {
     if (!String(text || "").trim()) throw new Error("Kokoro text is empty.");
     await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.promises.rm(outputPath, { force: true }).catch(() => {});
     const worker = getPersistentWorker(this.settings, this.model, this.device);
+
+    let speedMod = 1.0;
+    switch (String(emotionTag || "").toUpperCase()) {
+      case "URGENT":
+      case "SHOUT":
+        speedMod = 1.15;
+        break;
+      case "WHISPER":
+      case "SAD":
+        speedMod = 0.85;
+        break;
+      default:
+        break;
+    }
+
     try {
       await worker.enqueue({
         text: String(text),
         voice: String(voiceName || DEFAULT_VOICE),
         outputPath,
         langCode: normalizeLanguage(language),
-        speed: Math.max(0.5, Math.min(2, Number(speed || this.speed)))
+        speed: Math.max(0.5, Math.min(2, Number(speed || this.speed) * speedMod))
       }, { onProgress, timeoutMs });
     } catch (error) {
       throwIfCancelled();

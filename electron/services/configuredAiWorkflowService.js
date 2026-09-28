@@ -31,7 +31,10 @@ function providerDescriptor(settings = {}) {
     };
   }
   if (provider === "antigravity_cli") {
-    return { provider, label: "Antigravity", model: settings.antigravityModel || "mặc định CLI" };
+    const model = ManualAntigravityStage1Service.normalizeAntigravityModel?.(settings.antigravityModel)
+      || settings.antigravityModel
+      || "mặc định CLI";
+    return { provider, label: "Antigravity", model };
   }
   if (provider === "ollama_local") {
     throw new Error("Ollama Local chưa được dùng cho phân tích package video đa phương thức. Hãy chọn Gemini hoặc Antigravity trong Cài đặt.");
@@ -241,7 +244,8 @@ class ConfiguredAiWorkflowService {
         ...config,
         prompt,
         cwd: folder,
-        onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" })
+        onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" }),
+        progressStep: "configured_ai_draft_review"
       });
       return result.stdout;
     } finally {
@@ -372,7 +376,16 @@ class ConfiguredAiWorkflowService {
       : descriptor.provider === "vertex_ai"
         ? vertexRun.response
         : await this.runAntigravity({ folder: inputDir, prompt: transportPrompt, onProgress });
-    const review = findObject(raw, (value) => value.artifactType === "gemini_draft_review");
+    let review = findObject(raw, (value) => value.artifactType === "gemini_draft_review");
+    if (!review) {
+      try {
+        review = await readJson(path.join(inputDir, "gemini-draft-review.json"), "gemini-draft-review.json");
+      } catch (_) {
+        try {
+          review = await readJson(path.join(resultDir, "gemini-draft-review.json"), "gemini-draft-review.json");
+        } catch (__) {}
+      }
+    }
     if (!review) throw new Error(`${descriptor.label} không trả về gemini_draft_review JSON hợp lệ.`);
     const expectedBinding = info.reviewTarget?.reviewBindingId;
     const actualBinding = review.reviewTarget?.reviewBindingId || review.review_target?.reviewBindingId;

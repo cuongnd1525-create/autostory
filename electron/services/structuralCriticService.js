@@ -1,0 +1,399 @@
+'use strict';
+
+/**
+ * AutoStory V4 — Structural Critic Service
+ *
+ * Post-render structural critic that evaluates the rendered draft in fixed ~5-8s windows.
+ * Now includes Media-Grounded Critic that actually watches the MP4 via AI.
+ */
+
+const { deduceVisualStateCluster, deduceSemanticFunction, computeStructuralViralScore } = require('./edlQualityValidator.js');
+const fs = require('fs');
+
+/**
+ * Legacy metadata-based critic (Phase 1)
+ */
+function critiqueRenderedTimeline(spine = {}, options = {}) {
+  // ... existing logic ...
+  // Since we are adding Media-Grounded, we'll keep this intact for backward compat if needed
+  const beats = Array.isArray(spine.beats) ? spine.beats : [];
+  const targetWindowSec = options.targetWindowSec ?? 5.5;
+
+  if (!beats.length) {
+    return {
+      windows: [],
+      weakWindows: [],
+      averageRetentionScore: 0,
+      isCompliant: false,
+      summary: 'No beats to evaluate.',
+      status: 'EMPTY'
+    };
+  }
+
+  // Build rendered timeline spans
+  let currentOutputTime = 0;
+  const beatSpans = beats.map((b, idx) => {
+    const dur = Math.max(0, Number(b.sourceEndSec) - Number(b.sourceStartSec));
+    const span = {
+      ...b,
+      beatIndex: idx,
+      beatId: b.beatId || `beat_${idx}`,
+      outputStartSec: Number(currentOutputTime.toFixed(2)),
+      outputEndSec: Number((currentOutputTime + dur).toFixed(2)),
+      duration: Number(dur.toFixed(2)),
+      visualCluster: deduceVisualStateCluster(b),
+      semanticFunction: deduceSemanticFunction(b)
+    };
+    currentOutputTime += dur;
+    return span;
+  });
+
+  const plannedDuration = currentOutputTime;
+  const actualMp4DurationSec = options.actualMp4DurationSec || plannedDuration;
+  const totalDuration = actualMp4DurationSec;
+
+  const numWindows = Math.max(1, Math.round(totalDuration / targetWindowSec));
+  const windowDuration = totalDuration / numWindows;
+
+  const lastWindowEnd = Number((numWindows * windowDuration).toFixed(2));
+  const auditCoverageRatio = Number((lastWindowEnd / actualMp4DurationSec).toFixed(3));
+
+  if (options.actualMp4DurationSec && (auditCoverageRatio < 0.98 || Math.abs(lastWindowEnd - actualMp4DurationSec) > 0.5)) {
+    return {
+      status: 'STRUCTURAL_CRITIC_INCOMPLETE',
+      isCompliant: false,
+      averageRetentionScore: 0,
+      windows: [],
+      weakWindows: [],
+      summary: `Critic failed coverage check. Covered ${lastWindowEnd}s of ${actualMp4DurationSec}s.`
+    };
+  }
+
+  const windows = [];
+  const weakWindows = [];
+  let maxPlateau = 0;
+
+  for (let w = 0; w < numWindows; w++) {
+    const wStart = Number((w * windowDuration).toFixed(2));
+    const wEnd = Number(((w + 1) === numWindows ? totalDuration : (w + 1) * windowDuration).toFixed(2));
+    const wDur = Number((wEnd - wStart).toFixed(2));
+
+    let overlappingBeats = beatSpans.filter(b => b.outputStartSec < wEnd - 0.05 && b.outputEndSec > wStart + 0.05);
+    if (overlappingBeats.length === 0 && wStart >= plannedDuration - 0.05) {
+      overlappingBeats = [beatSpans[beatSpans.length - 1]];
+    }
+    const primaryBeat = overlappingBeats[0] || beatSpans[0];
+
+    const plannedFunction = primaryBeat.narrativeRole || 'narrative_progression';
+    const observedFunction = deduceSemanticFunction(primaryBeat);
+
+    const isTail = wStart >= plannedDuration;
+    const infoPieces = isTail ? [] : overlappingBeats.map(b => b.newInformation).filter(Boolean);
+    const observedInformationGain = infoPieces.length ? infoPieces.join('; ') : (isTail ? '[POST-RENDER TAIL / SILENCE]' : 'None');
+    const stateChangeMagnitude = infoPieces.length > 0 ? 'high' : 'zero';
+    const observedViewerState = isTail ? 'Waiting for video to end' : `Tracking: ${observedInformationGain.slice(0, 30)}`;
+
+    let semanticStateRunSec = wDur;
+    if (w > 0) {
+      const prevWin = windows[w - 1];
+      if (prevWin.observedFunction === observedFunction) {
+        semanticStateRunSec = prevWin.semanticStateRunSec + wDur;
+      }
+    }
+    if (semanticStateRunSec > maxPlateau) maxPlateau = semanticStateRunSec;
+
+    let tensionDelta = 0;
+    const allText = overlappingBeats.map(b => `${b.newInformation} ${observedFunction}`).join(' ').toLowerCase();
+    if (/punch|batter|hit|weapon|gun|knife|taser|screaming|shout|escalat|struggle|resist/i.test(allText)) tensionDelta = 2;
+    else if (/handcuff|cuff|lock|order|interven|confront|plea|hurting|lie|contradict/i.test(allText)) tensionDelta = 1;
+
+    let windowScore = 8.5;
+    if (stateChangeMagnitude === 'zero') windowScore -= 3.0;
+    if (semanticStateRunSec > 10.0) windowScore = Math.min(windowScore, 7.0);
+    if (tensionDelta >= 1) windowScore += 1.0;
+    windowScore = Math.max(1, Math.min(10, Number(windowScore.toFixed(1))));
+
+    const retentionStatus = windowScore >= 8.0 ? 'STRONG' : windowScore >= 6.5 ? 'PASS' : 'WEAK';
+
+    const windowData = {
+      windowIndex: w,
+      outputRangeSec: [wStart, wEnd],
+      outputTimeFormatted: `${wStart.toFixed(1)}s - ${wEnd.toFixed(1)}s`,
+      durationSec: wDur,
+      beatsInWindow: overlappingBeats.map(b => b.beatId),
+      plannedFunction,
+      observedFunction,
+      newInformation: observedInformationGain,
+      observedViewerState,
+      tensionDelta,
+      stateChangeMagnitude,
+      semanticStateRunSec: Number(semanticStateRunSec.toFixed(1)),
+      retentionScore: windowScore,
+      retentionStatus,
+      whyWatchNext: isTail ? 'None (Tail)' : (tensionDelta > 0 ? 'Escalation' : 'Resolution')
+    };
+
+    windows.push(windowData);
+    if (retentionStatus === 'WEAK') weakWindows.push(windowData);
+  }
+
+  const postCliffhangerTailSec = Math.max(0, Number((totalDuration - plannedDuration).toFixed(2)));
+  let hookObs = 2.0; let causalObs = 2.0; let escObs = 2.0; let pulseObs = 1.5; let payoffObs = 1.5; let cohObs = 1.0;
+  
+  if (windows[0] && windows[0].stateChangeMagnitude === 'zero') hookObs -= 0.5;
+  if (maxPlateau > 10.0) pulseObs -= 0.8; else if (maxPlateau > 8.0) pulseObs -= 0.4;
+  if (postCliffhangerTailSec > 2.0) payoffObs -= 1.0;
+  if (postCliffhangerTailSec > 5.0) payoffObs -= 1.5;
+  
+  const lastWindow = scoredWindows[scoredWindows.length - 1];
+  if (lastWindow && !lastWindow.isForwardConsequence) {
+    payoffObs -= 2.0; // Penalty for backstory instead of forward consequence
+  }
+  
+  const zeroGainRatio = windows.filter(w => w.stateChangeMagnitude === 'zero').length / numWindows;
+  if (zeroGainRatio > 0.3) escObs -= 0.8;
+
+  const criticObservedScore = Number((Math.max(0, hookObs) + Math.max(0, causalObs) + Math.max(0, escObs) + Math.max(0, pulseObs) + Math.max(0, payoffObs) + Math.max(0, cohObs)).toFixed(1));
+  const directorPredictedScore = computeStructuralViralScore(spine, options)?.score || 0;
+  const scoreDiscrepancy = Math.abs(directorPredictedScore - criticObservedScore);
+  const avgScore = Number((windows.reduce((sum, win) => sum + win.retentionScore, 0) / windows.length).toFixed(1));
+  const isCompliant = criticObservedScore >= 8.0 && maxPlateau <= 10.0 && postCliffhangerTailSec <= 2.0 && scoreDiscrepancy <= 2.0 && weakWindows.length === 0;
+
+  return {
+    status: 'SUCCESS',
+    mp4Duration: totalDuration,
+    auditedSeconds: totalDuration,
+    auditCoverageRatio,
+    postCliffhangerTailSec,
+    directorPredictedScore,
+    criticObservedScore,
+    scoreDiscrepancy,
+    maxPlateau,
+    windows,
+    weakWindows,
+    averageRetentionScore: avgScore,
+    isCompliant,
+    totalDurationSec: totalDuration,
+    summary: `Analyzed ${windows.length} windows. Coverage: ${(auditCoverageRatio*100).toFixed(0)}%. Tail: ${postCliffhangerTailSec}s. Observed Score: ${criticObservedScore}/10.`
+  };
+}
+
+/**
+ * Media-Grounded Critic (Phase 2)
+ * Actually watches the MP4 using Gemini to deduce true structure.
+ */
+async function critiqueMediaGroundedTimeline(spine = {}, options = {}) {
+  const aiService = options.aiService;
+  const mp4Path = options.mp4Path;
+  const actualMp4DurationSec = options.actualMp4DurationSec;
+
+  if (!aiService || !mp4Path || !actualMp4DurationSec) {
+    throw new Error('Media Grounded Critic requires aiService, mp4Path, and actualMp4DurationSec');
+  }
+
+  const targetWindowSec = options.targetWindowSec ?? 5.5;
+  const numWindows = Math.max(1, Math.round(actualMp4DurationSec / targetWindowSec));
+  const windowDuration = actualMp4DurationSec / numWindows;
+
+  const prompt = `
+You are an expert true-crime structural critic.
+Watch the uploaded video. It is EXACTLY ${actualMp4DurationSec.toFixed(2)} seconds long.
+I have divided the video into ${numWindows} contiguous windows of ~${windowDuration.toFixed(2)} seconds.
+
+For EVERY window, output:
+- windowStart and windowEnd
+- observedAction (what is physically happening on screen)
+- observedDialogue (transcribe or summarize key spoken words)
+- observedNewInformation (what facts are revealed here)
+- newFact (is there a literal new fact?)
+- viewerBeliefChange (did viewer understanding materially change?)
+- caseStateChange (did evidence or police posture change?)
+- stakesChange (did danger or consequence severity change?)
+- futureConsequenceChange (is a consequence now imminent?)
+- isForwardConsequence (for the final cliffhanger windows, does this beat move the story FORWARD or is it just BACKSTORY?)
+
+CRITICAL INSTRUCTION ON PROGRESS:
+A window can contain NEW WORDS without meaningful STORY PROGRESS. Do not award a full retention pulse merely because dialogue is different. Strong progress requires material change in understanding, evidence, stakes, or consequences.
+
+CRITICAL INSTRUCTION ON ENDINGS:
+The final beat must move the story FORWARD. A late witness statement that merely explains what happened before police arrived is BACKSTORY. Forward consequence reveal changes what is likely to happen next (e.g. officer discovers weapon, announces charge).
+
+Score each window 1-10 for pacing and structural tension. Penalize semantic plateaus where no material progress occurs.`;
+
+  // Call the AI
+  const aiResult = await aiService.generateJsonFromFiles({
+    filePaths: [mp4Path],
+    prompt: prompt,
+    taskType: 'analysis'
+  });
+
+  const windows = aiResult.windows || [];
+  
+  // Calculate planned functions from spine
+  let currentOutputTime = 0;
+  const beatSpans = (spine.beats || []).map((b) => {
+    const dur = Math.max(0, Number(b.sourceEndSec) - Number(b.sourceStartSec));
+    const span = { ...b, outputStartSec: currentOutputTime, outputEndSec: currentOutputTime + dur };
+    currentOutputTime += dur;
+    return span;
+  });
+
+  let maxPlateau = 0;
+  let currentRun = 0;
+  let lastFunc = null;
+  const weakWindows = [];
+
+  // Score the windows
+  const scoredWindows = windows.map(w => {
+    // Map to planned function
+    const midPoint = (w.windowStart + w.windowEnd) / 2;
+    const overlappingBeat = beatSpans.find(b => midPoint >= b.outputStartSec && midPoint <= b.outputEndSec) || beatSpans[beatSpans.length - 1];
+    w.plannedFunction = overlappingBeat ? (overlappingBeat.narrativeRole || 'narrative_progression') : 'none';
+
+    let score = 8.5;
+    const isZeroGain = w.observedNewInformation.match(/None|Nothing|Silence/i) || w.observedNewInformation.length < 5;
+    if (isZeroGain) score -= 3.0;
+    
+    // Tension delta check
+    if (/scream|hit|weapon|fight|gun|blood|arrest/i.test(w.observedDialogue + w.observedAction)) {
+      score += 1.0;
+    }
+    
+    const wDur = w.windowEnd - w.windowStart;
+    if (lastFunc === w.observedFunction) {
+      currentRun += wDur;
+    } else {
+      currentRun = wDur;
+    }
+    lastFunc = w.observedFunction;
+    if (currentRun > maxPlateau) maxPlateau = currentRun;
+    w.semanticStateRunSec = currentRun;
+    
+    if (currentRun > 10.0) score = Math.min(score, 7.0);
+    
+    w.retentionScore = Math.max(1, Math.min(10, Number(score.toFixed(1))));
+    w.retentionStatus = w.retentionScore >= 8.0 ? 'STRONG' : w.retentionScore >= 6.5 ? 'PASS' : 'WEAK';
+    
+    if (w.retentionStatus === 'WEAK') weakWindows.push(w);
+    
+    w.outputTimeFormatted = `${w.windowStart.toFixed(1)}s - ${w.windowEnd.toFixed(1)}s`;
+    return w;
+  });
+
+  // Calculate 6-dimension observed score
+  let hookObs = 2.0; let causalObs = 2.0; let escObs = 2.0; let pulseObs = 1.5; let payoffObs = 1.5; let cohObs = 1.0;
+  if (scoredWindows[0] && (scoredWindows[0].observedNewInformation.match(/None/i))) hookObs -= 0.5;
+  if (maxPlateau > 10.0) pulseObs -= 0.8; else if (maxPlateau > 8.0) pulseObs -= 0.4;
+
+  const lastWindow = scoredWindows[scoredWindows.length - 1];
+  const isTail = lastWindow && lastWindow.observedAction.match(/TAIL|SILENCE|Nothing|Blank|Black/i);
+  let postCliffhangerTailSec = 0;
+  if (isTail) {
+    postCliffhangerTailSec = lastWindow.windowEnd - lastWindow.windowStart;
+    payoffObs -= 1.0;
+  }
+
+  const zeroGainRatio = scoredWindows.filter(w => w.retentionScore < 6).length / numWindows;
+  if (zeroGainRatio > 0.3) escObs -= 0.8;
+
+  const criticObservedScore = Number((Math.max(0, hookObs) + Math.max(0, causalObs) + Math.max(0, escObs) + Math.max(0, pulseObs) + Math.max(0, payoffObs) + Math.max(0, cohObs)).toFixed(1));
+  const directorPredictedScore = computeStructuralViralScore(spine, options)?.score || 0;
+  const scoreDiscrepancy = Math.abs(directorPredictedScore - criticObservedScore);
+  
+  const avgScore = Number((scoredWindows.reduce((sum, win) => sum + win.retentionScore, 0) / scoredWindows.length).toFixed(1));
+  
+  const coverageRatio = aiResult.auditCoverageRatio || (lastWindow ? (lastWindow.windowEnd / actualMp4DurationSec) : 0);
+  
+  if (coverageRatio < 0.98) {
+    return {
+      status: 'STRUCTURAL_CRITIC_INCOMPLETE',
+      isCompliant: false,
+      summary: 'Incomplete media coverage.',
+      windows: [],
+      weakWindows: []
+    };
+  }
+
+  const isCompliant = criticObservedScore >= 8.0 && maxPlateau <= 10.0 && postCliffhangerTailSec <= 2.0;
+
+  return {
+    status: 'SUCCESS',
+    mp4Duration: actualMp4DurationSec,
+    auditedSeconds: actualMp4DurationSec,
+    auditCoverageRatio: coverageRatio,
+    postCliffhangerTailSec,
+    directorPredictedScore,
+    criticObservedScore,
+    scoreDiscrepancy,
+    maxPlateau,
+    windows: scoredWindows,
+    weakWindows,
+    averageRetentionScore: avgScore,
+    isCompliant,
+    summary: `Media Audit completed. ${scoredWindows.length} windows. Coverage: ${(coverageRatio*100).toFixed(0)}%. Observed Score: ${criticObservedScore}/10.`
+  };
+}
+
+function formatRetentionAuditMarkdown(auditResult = {}) {
+  const windows = Array.isArray(auditResult.windows) ? auditResult.windows : [];
+  if (!windows.length) return '*No window audit data available.*';
+
+  let md = `### Structural Retention Audit (~5-8s Windows)\n\n`;
+  md += `| Window | Output Time | Planned | Observed | Action | Dialogue | Score |\n`;
+  md += `| :---: | :---: | :--- | :--- | :--- | :--- | :---: |\n`;
+
+  for (const win of windows) {
+    const statusBadge = win.retentionStatus === 'STRONG' ? '🟢' : win.retentionStatus === 'PASS' ? '🟡' : '🔴';
+    md += `| **W${win.windowIndex}** | \`${win.outputTimeFormatted}\` | **${win.plannedFunction}** | **${win.observedFunction}** | ${win.observedAction} | *${win.observedDialogue}* | ${statusBadge} **${win.retentionScore}/10** |\n`;
+  }
+
+  md += `\n**Overall Window Retention Average**: **${auditResult.averageRetentionScore}/10** (${auditResult.isCompliant ? 'PASS' : 'REQUIRES TARGETED REPAIR'})\n`;
+  if (auditResult.criticObservedScore) {
+     md += `\n**Media-Observed Structural Score**: **${auditResult.criticObservedScore}/10**\n`;
+     md += `**Director Predicted Score**: **${auditResult.directorPredictedScore}/10**\n`;
+     md += `**Score Discrepancy**: **${auditResult.scoreDiscrepancy.toFixed(1)}**\n`;
+  }
+
+  return md;
+}
+
+function generateTargetedRepairSpecification(auditResult = {}, spine = {}) {
+  const weakWindows = auditResult.weakWindows || [];
+  
+  if (auditResult.postCliffhangerTailSec > 2.0) {
+    // If there is a substantial tail, that's a priority repair even if individual windows weren't scored "WEAK" 
+    // because tails kill viral payoff
+    return {
+      weakWindowStart: auditResult.mp4Duration - auditResult.postCliffhangerTailSec,
+      weakWindowEnd: auditResult.mp4Duration,
+      observedProblem: `The final ${auditResult.postCliffhangerTailSec.toFixed(1)}s of the MP4 continues past the planned cliffhanger without meaningful escalation, destroying the payoff.`,
+      failureType: 'post_cliffhanger_tail',
+      requiredNarrativeFunction: 'Ensure the timeline ends immediately after the cliffhanger/payoff, or replace the tail footage with stronger causal escalation leading to a new final payoff.',
+      candidateRepairStrategy: 'Shorten final beats to cut off the tail, or replace the tail with an ACTIVE escalation beat.',
+      lockedBeatsCount: spine.beats ? spine.beats.length : 0
+    };
+  }
+
+  if (!weakWindows.length) return null;
+
+  const firstWeak = weakWindows[0];
+  let failureType = 'semantic_plateau';
+  if (firstWeak.observedNewInformation.match(/None/i)) failureType = 'weak_information_gain';
+
+  return {
+    weakWindowStart: firstWeak.windowStart,
+    weakWindowEnd: firstWeak.windowEnd,
+    observedProblem: `Window ${firstWeak.outputTimeFormatted} scored ${firstWeak.retentionScore}/10. Observed Action: ${firstWeak.observedAction}`,
+    failureType,
+    requiredNarrativeFunction: 'Deliver concrete physical action, visual reveal, or progressive evidence.',
+    candidateRepairStrategy: 'Replace static talking or repetitive action with a beat that introduces new physical evidence or escalation.',
+    lockedBeatsCount: 0
+  };
+}
+
+module.exports = {
+  critiqueRenderedTimeline,
+  critiqueMediaGroundedTimeline,
+  formatRetentionAuditMarkdown,
+  generateTargetedRepairSpecification
+};

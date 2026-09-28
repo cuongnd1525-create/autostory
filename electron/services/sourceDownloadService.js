@@ -214,6 +214,8 @@ class SourceDownloadService {
 
     progress("metadata", 2, "Đang đọc thông tin video");
     const metadataResult = await this.runExternal(command, [
+      "--js-runtimes", "node",
+      "--remote-components", "ejs:github",
       "--no-playlist",
       "--skip-download",
       "--dump-single-json",
@@ -235,6 +237,8 @@ class SourceDownloadService {
     let videoPath = "";
     try {
       const downloadResult = await this.runExternal(command, [
+        "--js-runtimes", "node",
+        "--remote-components", "ejs:github",
         "--no-playlist",
         "--newline",
         "--continue",

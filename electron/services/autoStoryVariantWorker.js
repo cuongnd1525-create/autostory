@@ -5,6 +5,30 @@ const Dubbing = require('./dubbingService');
 const Service = require('./autoStoryFastService');
 const { serial } = require('./autoStoryWorkQueue');
 
+// Copy a file only if it exists; returns true when copied. Bug-3 fix: the
+// worker input artifacts (plan.json / evidence-N / edit-N) are V2-only. V3
+// renders from script-N.json via importHighlightCutProject and never needs
+// them, so a missing artifact must NOT crash worker preparation.
+async function copyIfExists(src, dst) {
+  try {
+    await fs.copyFile(src, dst);
+    return true;
+  } catch (error) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+// Contract-aware worker input prep: copy whichever optional planning artifacts
+// exist (all present for V2, none for V3). Returns the list actually copied.
+async function copyWorkerInputArtifacts(sourceAnalysis, analysis, scriptId) {
+  const copied = [];
+  for (const name of ['plan.json', `evidence-${scriptId}.json`, `edit-${scriptId}.json`]) {
+    if (await copyIfExists(path.join(sourceAnalysis, name), path.join(analysis, name))) copied.push(name);
+  }
+  return copied;
+}
+
 // Each variant owns its journal, media and mutable project snapshot.
 async function run({ settings, store, workspaceRoot, projectId, scriptId, scriptPath, signal, onProgress, callBudget }) {
   const base = store.getProjectPaths(workspaceRoot, projectId);
@@ -27,9 +51,7 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
       if (/^(review-|before-review-|final-check-)/.test(entry) && entry.endsWith('.json')) await fs.rm(path.join(analysis, entry), { force: true });
     }
   }
-  for (const name of ['plan.json', `evidence-${scriptId}.json`, `edit-${scriptId}.json`]) {
-    await fs.copyFile(path.join(sourceAnalysis, name), path.join(analysis, name));
-  }
+  await copyWorkerInputArtifacts(sourceAnalysis, analysis, scriptId);
   await local.saveProject(workerRoot, { ...parent, workerParentIdentity: identity,
     storyScriptPaths: scriptPath ? [scriptPath] : [], storyScriptPath: scriptPath || '',
     analysis: variant ? { ...parent.analysis, highlightVariants: [variant], activeVariantId: variant.id, segments: variant.segments } : null,
@@ -49,7 +71,17 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
       return null;
     });
     if (audit) await store.writeText(path.join(sourceAnalysis, `review-state-${scriptId}.json`), audit);
-    if (audit) await fs.copyFile(path.join(analysis, `edit-${scriptId}.json`), path.join(sourceAnalysis, `edit-${scriptId}.json`));
+    if (audit) {
+      await copyIfExists(path.join(analysis, `edit-${scriptId}.json`), path.join(sourceAnalysis, `edit-${scriptId}.json`));
+      if (result.autoStoryContractVersion === 2) {
+        await fs.copyFile(path.join(analysis, `evidence-${scriptId}.json`), path.join(sourceAnalysis, `evidence-${scriptId}.json`));
+        const parentPlan = JSON.parse(await fs.readFile(path.join(sourceAnalysis, 'plan.json'), 'utf8'));
+        const localPlan = JSON.parse(await fs.readFile(path.join(analysis, 'plan.json'), 'utf8'));
+        const revisedStory = localPlan.stories.find(s => s.scriptId === scriptId);
+        if (revisedStory) await store.writeText(path.join(sourceAnalysis, 'plan.json'), JSON.stringify({ ...parentPlan,
+          stories: parentPlan.stories.map(s => s.scriptId === scriptId ? revisedStory : s) }, null, 2));
+      }
+    }
     const entries = [];
     const ledgers = [path.join(sourceAnalysis, 'run-costs.json')];
     for (let id = 1; id <= 5; id++) ledgers.push(path.join(base.rootDir, '.variant-workers', String(id), projectId, 'analysis', 'auto-story-fast', 'run-costs.json'));
@@ -82,7 +114,9 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     }
     await publish();
     if (!await Dubbing.canReuseAutoStoryDraft(project, selected, settings)) {
+      const renderAt = Date.now();
       await dubbing.renderHighlightFastDraft({ workspaceRoot: workerRoot, projectId, settings, project, onProgress });
+      await require('./autoStoryRunMetrics').append(analysis, { runId: callBudget?.runId, scriptId, stage: 'render', category: 'local', local: true, usd: 0, renderMs: Date.now()-renderAt });
     }
     const ready = await publish();
     onProgress?.({ stage: 'reviewing', autoStoryDraftReady: true, project: ready, percent: 78, message: `Script ${scriptId}: draft sẵn sàng, đang review` });
@@ -93,4 +127,4 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     await service.vertex?.dispatcher?.close();
   }
 }
-module.exports = { run };
+module.exports = { run, copyIfExists, copyWorkerInputArtifacts };

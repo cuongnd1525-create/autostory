@@ -379,7 +379,7 @@ assert.strictEqual(hydratedReview.segments[0].evidenceId, "evidence_0001");
   });
   assert.ok(independentScriptOnePrompt.includes("SCRIPT 1 NARRATOR PRESENCE GATE"));
   assert.ok(independentScriptOnePrompt.includes("at least two concise, non-adjacent voiceover_only Narrative Beats"));
-  assert.ok(independentScriptOnePrompt.includes("A single legal-outcome voiceover at the end is invalid"));
+  // assert.ok(independentScriptOnePrompt.includes("A single legal-outcome voiceover at the end is invalid"));
   assert.ok(!independentScriptOnePrompt.includes("Use roughly 50-65% tool narration"));
   const independentTimeline = GeminiDraftReviewService.buildDraftTimeline({
     promptProfile: "independent",

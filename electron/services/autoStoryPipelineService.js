@@ -333,14 +333,14 @@ function validateEdl(result, canonical, locked, config, videoDuration) {
         if (!Number.isFinite(segment.sourceStartSec) || !Number.isFinite(segment.sourceEndSec) || segment.sourceStartSec < 0 || segment.sourceEndSec <= segment.sourceStartSec || segment.sourceEndSec > videoDuration + 0.25) {
           throw new Error(`${segment.segmentId}: timestamp nguồn không hợp lệ.`);
         }
-        if (!["original_audio", "voiceover_only"].includes(segment.audioMode)) throw new Error(`${segment.segmentId}: audioMode không hợp lệ.`);
+        if (!["original_audio", "voiceover_only", "mixed_ducking"].includes(segment.audioMode)) throw new Error(`${segment.segmentId}: audioMode không hợp lệ.`);
         if (segment.audioMode === "original_audio" && segment.voiceoverText) throw new Error(`${segment.segmentId}: original_audio phải có voiceoverText rỗng.`);
         if (segment.audioMode === "original_audio" && segment.sourceNarratorDetected === true) throw new Error(`${segment.segmentId}: original_audio chứa narrator nguồn; phải đổi clip hoặc dùng voiceover_only.`);
-        if (segment.audioMode === "voiceover_only" && !segment.voiceoverText) throw new Error(`${segment.segmentId}: voiceover_only thiếu voiceoverText.`);
-        if (segment.audioMode === "voiceover_only" && !text(segment.previewVi)) throw new Error(`${segment.segmentId}: narrator thiếu phụ đề previewVi tiếng Việt.`);
-        if (!config.narration.enabled && segment.audioMode === "voiceover_only") throw new Error(`${segment.segmentId}: cấu hình Original only không cho phép narrator.`);
+        if ((segment.audioMode === "voiceover_only" || segment.audioMode === "mixed_ducking") && !segment.voiceoverText) throw new Error(`${segment.segmentId}: ${segment.audioMode} thiếu voiceoverText.`);
+        if ((segment.audioMode === "voiceover_only" || segment.audioMode === "mixed_ducking") && !text(segment.previewVi)) throw new Error(`${segment.segmentId}: narrator thiếu phụ đề previewVi tiếng Việt.`);
+        if (!config.narration.enabled && (segment.audioMode === "voiceover_only" || segment.audioMode === "mixed_ducking")) throw new Error(`${segment.segmentId}: cấu hình Original only không cho phép narrator.`);
         const visualDuration = (segment.sourceEndSec - segment.sourceStartSec) / segment.playbackSpeed;
-        if (segment.audioMode === "voiceover_only") {
+        if (segment.audioMode === "voiceover_only" || segment.audioMode === "mixed_ducking") {
           const wordCount = segment.voiceoverText.split(/\s+/).filter(Boolean).length;
           const estimatedVoiceDuration = Math.max(0.8, wordCount / narratorWordsPerSecond);
           const fitRatio = estimatedVoiceDuration / Math.max(0.1, visualDuration);
@@ -399,7 +399,8 @@ function toHighlightScript(script, lockedStory, config) {
       speaker_focus: text(segment.speakerFocus),
       focus_priority: text(segment.focusPriority),
       subtitle_priority: text(segment.subtitlePriority)
-    }))
+    })),
+    policy_issues: script.policyIssues || []
   };
 }
 
@@ -510,9 +511,9 @@ class AutoStoryPipelineService {
       await writeJsonAtomic(jobPath, job);
     };
     const progress = (percent, message, stage) => onProgress?.({ percent, message, stage });
-    const runStage = async ({ key, version, outputName, input, range, files = [], taskType, expectedKey, temperature, prompt, responseSchema = null, maxOutputTokens = null, strictRootJson = false }) => {
+    const runStage = async ({ key, outputName, input, range, files = [], taskType, expectedKey, temperature, prompt, responseSchema = null, maxOutputTokens = null, strictRootJson = false }) => {
       const outputPath = path.join(root, outputName);
-      const hash = valueHash({ version, sourceSha256, input });
+      const hash = valueHash({ sourceSha256, input, prompt, responseSchema });
       if (job.stages[key]?.hash === hash && job.stages[key]?.status === "completed") {
         try {
           const cached = await readJson(outputPath);
@@ -528,7 +529,7 @@ class AutoStoryPipelineService {
           job.stages[key].error = `${outputName} rỗng hoặc thiếu ${expectedKey || "payload"}; tự chạy lại stage.`;
         } catch (_error) {}
       }
-      job.stages[key] = { hash, version, status: "running", outputPath, startedAt: new Date().toISOString() };
+      job.stages[key] = { hash, status: "running", outputPath, startedAt: new Date().toISOString() };
       await saveJob();
       progress(range[0], `Đang chạy ${key}`, key);
       try {
@@ -611,7 +612,6 @@ class AutoStoryPipelineService {
       const rangeEnd = 12 + (((index + 1) / chunkStarts.length) * 21);
       const chunkRaw = await runStage({
         key: `canonical_chunk_${String(index + 1).padStart(2, "0")}`,
-        version: prompts.PROMPT_VERSIONS.canonical,
         outputName: `canonical-chunk-${String(index + 1).padStart(2, "0")}.json`,
         input: { sourceSha256, chunkStartSec, chunkEndSec, transcriptSlice: Boolean(transcriptSlice) },
         range: [rangeStart, rangeEnd],
@@ -639,8 +639,7 @@ class AutoStoryPipelineService {
       await writeJsonAtomic(path.join(root, "canonical-events-merged.json"), canonicalRaw);
     }
     job.stages.canonical = {
-      hash: valueHash({ version: prompts.PROMPT_VERSIONS.canonical, sourceSha256, metadata }),
-      version: prompts.PROMPT_VERSIONS.canonical,
+      hash: valueHash({ sourceSha256, metadata }),
       status: "completed",
       outputPath: path.join(root, "canonical-analysis.json"),
       chunkCount: chunkStarts.length,
@@ -776,26 +775,38 @@ class AutoStoryPipelineService {
     }
     const canonical = validateCanonical(canonicalCandidate, Number(metadata.duration));
     const scoredRaw = await runStage({
-      key: "scoring", version: prompts.PROMPT_VERSIONS.scoring, outputName: "event-scores.json",
+      key: "scoring", outputName: "event-scores.json",
       input: { canonical, weights: config.scoreWeights }, range: [34, 47], taskType: "economy", expectedKey: "scores", temperature: 0.1,
       prompt: prompts.scoringPrompt({ canonical, weights: config.scoreWeights })
     });
     const scored = validateAndScore(scoredRaw, canonical, config.scoreWeights);
     await writeJsonAtomic(path.join(root, "event-scores.json"), scored);
     const candidatesRaw = await runStage({
-      key: "planning", version: prompts.PROMPT_VERSIONS.planning, outputName: "story-candidates.json",
+      key: "planning", outputName: "story-candidates.json",
       input: { canonical, scored, editorialConfig }, range: [47, 62], taskType: "quality", expectedKey: "candidates", temperature: 0.45,
       prompt: prompts.planningPrompt({ canonical, scoredEvents: scored, config: editorialConfig, candidatePoolSize: config.candidatePoolSize })
     });
     const candidates = validateCandidates(candidatesRaw, canonical, config.candidatePoolSize);
+    
+    // --- Hook Lab Integration ---
+    progress(62, "Tối ưu hóa hook (Hook Lab)", "hook_lab");
+    const { generateAndSelectHooks } = require("./autoStoryHookLab");
+    const optimizedHooks = await generateAndSelectHooks({ vertex: this.vertex }, candidates.candidates, config);
+    candidates.candidates.forEach(c => {
+      const opt = optimizedHooks.find(o => o.candidateId === c.candidateId);
+      if (opt && opt.bestHook && opt.bestHook.hook_text) {
+        c.hookPromise = opt.bestHook.hook_text;
+      }
+    });
+
     const lockedRaw = await runStage({
-      key: "judge", version: prompts.PROMPT_VERSIONS.judge, outputName: "locked-story.json",
+      key: "judge", outputName: "locked-story.json",
       input: { canonical, scored, candidates, editorialConfig }, range: [62, 76], taskType: "quality", expectedKey: "lockedStories", temperature: 0.15,
       prompt: prompts.judgePrompt({ canonical, scoredEvents: scored, candidates, config: editorialConfig })
     });
     const locked = validateLocked(lockedRaw, candidates, config.outputCount);
     const edlRaw = await runStage({
-      key: "edl", version: prompts.PROMPT_VERSIONS.edl, outputName: "final-edl.json",
+      key: "edl", outputName: "final-edl.json",
       input: { canonical, locked, editorialConfig }, range: [76, 94], files: sourceFiles, taskType: "video_analysis", expectedKey: "scripts", temperature: 0.15,
       prompt: prompts.edlPrompt({ canonical, lockedStories: locked, config: editorialConfig, measuredWordsPerSecond: config.narration.measuredWordsPerSecond })
     });
@@ -817,6 +828,32 @@ class AutoStoryPipelineService {
       job.stages.edl = { ...job.stages.edl, repaired: true, repairReason: firstError.message, usage: this.vertex.lastUsage || null };
     }
     await writeJsonAtomic(path.join(root, "final-edl.json"), edl);
+
+    // --- Monetization/Safety Policy Pass ---
+    const policyRaw = await runStage({
+      key: "policy_check", outputName: "policy-check.json",
+      input: { edl }, range: [94, 98], taskType: "quality", expectedKey: "issues", temperature: 0.1,
+      prompt: "Analyze the final timeline scripts for any brand-safety, monetization, or policy issues. Report any potential violations or confirm they are safe.",
+      responseSchema: {
+        type: "object",
+        properties: {
+          issues: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                scriptId: { type: "number" },
+                severity: { type: "string" },
+                description: { type: "string" }
+              }
+            }
+          }
+        }
+      }
+    });
+    edl.scripts.forEach(script => {
+      script.policyIssues = policyRaw.issues?.filter(i => i.scriptId === script.scriptId) || [];
+    });
 
     const scriptPaths = [];
     for (const script of edl.scripts) {

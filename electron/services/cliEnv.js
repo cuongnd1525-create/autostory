@@ -54,6 +54,8 @@ function buildCliEnv(baseEnv = process.env) {
       return true;
     })
     .join(path.delimiter);
+  if (env.NO_PROXY) env.NO_PROXY = env.NO_PROXY.replace(/::1(\/\d+)?/g, '').replace(/,,+/g, ',').replace(/^,|,$/g, '');
+  if (env.no_proxy) env.no_proxy = env.no_proxy.replace(/::1(\/\d+)?/g, '').replace(/,,+/g, ',').replace(/^,|,$/g, '');
   return env;
 }
 

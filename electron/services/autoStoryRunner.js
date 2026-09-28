@@ -5,9 +5,9 @@ const Service = require('./autoStoryFastService');
 // Isolated variant workers can render while the producer prepares other scripts.
 class AutoStoryRunner {
   constructor(settings, store, dubbing, createService = (s, d) => new Service(s, store, d)) {
-    this.settings = { ...settings, autoStoryResourceManaged: true, autoStoryBoundedRun: true };
+    this.settings = { autoStorySourceContract: true, ...settings, autoStoryResourceManaged: true, autoStoryBoundedRun: true };
     this.store = store; this.dubbing = dubbing;
-    const callBudget = { calls: 0 };
+    const callBudget = { calls: 0, runId: require('crypto').randomUUID() };
     this.callBudget = callBudget;
     this.isolatedWorkers = typeof store.saveProject === 'function';
     this.producer = createService(this.settings, { dubbing, callBudget });
@@ -95,7 +95,7 @@ class AutoStoryRunner {
       await this.store.updateProject(workspaceRoot, projectId, { autoStoryProduction: { startedAt, elapsedMs: 0, jobs: {}, finished: false } });
       const project = await this.producer.recoverScriptIds(workspaceRoot, projectId);
       const variants = project.analysis?.highlightVariants || [];
-      const missing = variants.length < (project.autoStoryConfig?.outputCount || 2);
+      const missing = variants.length < (project.autoStoryConfig?.outputCount || (project.autoStoryPipelineVersion ? 2 : 1));
       for (const v of variants) if (!scriptId || Number(v.scriptId) === scriptId) enqueue({ scriptId: Number(v.scriptId), scriptPath: v.sourceJsonPath });
       const generate = !variants.length || (scriptId ? !variants.some(v => Number(v.scriptId) === scriptId) : missing);
       if (generate) analysis = await this.producer.run({ workspaceRoot, projectId, scriptId, signal, onProgress,
@@ -103,7 +103,7 @@ class AutoStoryRunner {
     } catch (error) { fatal = error; }
     // Recover missing scripts independently using the producer's checkpoints.
     // One additional pass per failed script, sharing the same API call budget.
-    const blocked = error => /401|403|budget|giới hạn|hard limit|access|truy cập|chưa đọc đủ/i.test(error || '');
+    const blocked = error => /401|403|429|budget|giới hạn|hard limit|access|truy cập|chưa đọc đủ/i.test(error || '');
     let generationFailures = analysis?.failures || [];
     if (fatal && !signal?.aborted && !blocked(fatal.message)) {
       try { generationFailures = JSON.parse(await fs.readFile(path.join(path.dirname(stateFile), 'failures.json'), 'utf8')); }
@@ -112,7 +112,7 @@ class AutoStoryRunner {
     for (const failure of [...generationFailures]) {
       const id = Number(failure.scriptId);
       if (signal?.aborted || !Number.isInteger(id) || (scriptId && id !== scriptId)
-        || pending.some(p => p.scriptId === id) || blocked(failure.error)) continue;
+        || pending.some(p => p.scriptId === id) || blocked(failure.error) || failure.kind) continue;
       onProgress?.({ stage: 'recovering', message: `Script ${id}: tự phục hồi bước lỗi từ dữ liệu đã lưu (1/1)`, level: 'WARNING' });
       try {
         const recovered = await this.producer.run({ workspaceRoot, projectId, scriptId: id,
@@ -139,16 +139,17 @@ class AutoStoryRunner {
     for (const v of variants) {
       try { audits.push(JSON.parse(await fs.readFile(path.join(path.dirname(stateFile), `review-state-${v.scriptId}.json`), 'utf8'))); } catch (e) { if (e.code !== 'ENOENT') fatal ||= e; }
     }
-    const requested = current.autoStoryConfig?.outputCount || 2;
+    const requested = current.autoStoryConfig?.outputCount || (current.autoStoryContractVersion === 2 ? 1 : 2);
     const needsAttention = variants.length < requested || audits.some(a => a.needsUserReview || a.finalCheck?.verdict === 'NEEDS_ATTENTION');
     const updated = await this.store.updateProject(workspaceRoot, projectId, {
+      ...(require('./autoStoryProviderErrors').isRateLimit(fatal) ? { autoStoryCapacityWarning:'' } : {}),
       storyScriptPaths: variants.map(v => v.sourceJsonPath).filter(Boolean),
       autoStoryProduction: { startedAt, elapsedMs: Date.now() - startedAt, jobs, finished: true },
       autoStoryState: { ...current.autoStoryState, failures: combined, audits,
         boundedRun: true,
         needsAttention,
         phase: signal?.aborted ? 'cancelled' : fatal || combined.length || variants.length < requested || Object.values(jobs).some(j => j.phase === 'failed') ? 'review_failed' : 'complete',
-        error: fatal?.message || '' }
+        error: fatal?.message || '', errorKind: fatal?.kind || '', failedStage: fatal?.stage || '' }
     });
     await fs.mkdir(path.dirname(stateFile), { recursive: true });
     await fs.writeFile(stateFile, JSON.stringify(updated.autoStoryProduction, null, 2));

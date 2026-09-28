@@ -17,7 +17,7 @@ assert.ok(directPromptSource.includes("The Viral Mini-Doc / Deep Dive"));
 assert.ok(directPromptSource.includes("The 80/20 High-Retention Reality"));
 assert.ok(directPromptSource.includes("Return exactly three independent Markdown JSON code blocks"));
 assert.ok(directPromptSource.includes("el.sourceDownloadUrl?.value.trim()"));
-assert.ok(source.includes("if (isHighlightCutMode()) {\n    prompt = buildDirectHighlightGeminiPromptTemplate();"));
+assert.ok(/if\s*\(isHighlightCutMode\(\)\)\s*{\s*prompt\s*=\s*buildDirectHighlightGeminiPromptTemplate\(\);/.test(source));
 assert.ok(source.includes("return withUiGeminiInputAccessGate(prompt);"));
 assert.ok(source.includes("STEP 0 - VERIFIED INPUT ACCESS GATE"));
 assert.ok(source.includes("SEMANTIC HOOK TOURNAMENT - MUST RUN BEFORE STORY SELECTION"));

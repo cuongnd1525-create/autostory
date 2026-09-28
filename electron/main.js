@@ -29,6 +29,8 @@ const { createMonotonicProgressNormalizer } = require("./services/progressPolicy
 const { buildCliEnv } = require("./services/cliEnv");
 const { createCancelToken, clearCancelToken, cancelActiveOperation } = require("./services/cancelToken");
 const { inspectGeminiJsonFiles } = require("./services/geminiJsonArtifactService");
+const RecapPipelineService = require("./services/recap/recapPipelineService");
+const RecapHardwareService = require("./services/recap/recapHardwareService");
 
 let mainWindow;
 let configStore;
@@ -40,6 +42,8 @@ let renderJobService;
 let geminiDraftReviewService;
 let manualAntigravityStage1Service;
 let configuredAiWorkflowService;
+let recapPipelineService;
+let recapHardwareService;
 let mainWindowRendererReady = false;
 let rendererRecoveryAttempts = [];
 let recoveredRenderJobs = [];
@@ -48,7 +52,7 @@ let productionQueue;
 let foregroundOperations = 0;
 function handleIpc(channel, listener) {
   ipcMain.handle(channel, async (event, ...args) => {
-    const readOnly = new Set(['project:list', 'project:get', 'project:openFolder', 'project:openOutput', 'project:audioPlan', 'project:getViralRepairContext']);
+    const readOnly = new Set(['project:list', 'project:get', 'project:openFolder', 'project:openOutput', 'project:audioPlan', 'project:getViralRepairContext', 'recap:getReviewState', 'recap:detectHardware']);
     const mutating = (channel.startsWith('project:') && !readOnly.has(channel)) || channel === 'autoStory:run'
       || (channel.startsWith('analysis:') && channel !== 'analysis:inspectGeminiJsonFiles')
       || ['voice:test', 'voice:calibrate', 'video:mirrorFlip', 'source:downloadUrl', 'translation:prepareHyMt2'].includes(channel);
@@ -471,6 +475,11 @@ app.whenReady().then(async () => {
   dubbingService = new DubbingService(projectStore);
   geminiDraftReviewService = new GeminiDraftReviewService(projectStore);
   ollamaService = new OllamaService();
+  recapHardwareService = new RecapHardwareService(configStore.getSettings());
+  recapPipelineService = new RecapPipelineService({
+    projectStore,
+    hardwareService: recapHardwareService
+  });
   productionQueue = require('./services/productionQueueIpc').install({ ipcMain, dialog, app, BrowserWindow,
     store: projectStore, dubbing: dubbingService, getSettings: () => configStore.getSettings(), getWorkspaceRoot,
     isForegroundBusy: () => foregroundOperations > 0 });
@@ -703,8 +712,16 @@ app.whenReady().then(async () => {
       if (existingProject.analysisWorkflow === "vertex_auto_story") {
         await service.vertex?.dispatcher?.close();
         const Runner = require("./services/autoStoryRunner");
-        return await new Runner(settings, projectStore, dubbingService).run({ workspaceRoot: getWorkspaceRoot(), projectId,
+        const runResult = await new Runner(settings, projectStore, dubbingService).run({ workspaceRoot: getWorkspaceRoot(), projectId,
           scriptId, signal: controller.signal, onProgress });
+        // Bug-2 fix: flag a zero-script / failed generation so the UI STOPS and
+        // never proceeds to draft rendering; preserve the original V3 failure.
+        const outcome = require("./services/autoStoryRunOutcome");
+        if (outcome.isFailedGeneration(runResult)) {
+          runResult.generationFailed = true;
+          runResult.error = outcome.firstGenerationError(runResult);
+        }
+        return runResult;
       }
       const missingScripts = !scriptId && existingProject.analysis?.highlightVariants?.length > 0
         && existingProject.analysis.highlightVariants.length < (existingProject.autoStoryConfig?.outputCount || 2);
@@ -1128,6 +1145,15 @@ app.whenReady().then(async () => {
       onNormalized: (payload) => renderJobService.progress(job.id, payload)
     });
     try {
+      if (project.mode === "recap") {
+        return await recapPipelineService.runRecapProject({
+          workspaceRoot: getWorkspaceRoot(),
+          projectId,
+          settings,
+          onProgress,
+          cancelToken: token
+        });
+      }
       if (project.mode === "dubbing" || project.mode === "script_rewrite" || project.mode === "satisfying_storytime" || project.mode === "highlight_cut") {
         return await dubbingService.renderProject({
           workspaceRoot: getWorkspaceRoot(),
@@ -1183,6 +1209,15 @@ app.whenReady().then(async () => {
           onProgress
         });
       }
+      if (project.mode === "recap") {
+        return await recapPipelineService.runRecapProject({
+          workspaceRoot: getWorkspaceRoot(),
+          projectId,
+          settings,
+          onProgress,
+          cancelToken: token
+        });
+      }
       if (["dubbing", "script_rewrite", "satisfying_storytime", "highlight_cut"].includes(project.mode)) {
         return await dubbingService.renderProject({
           workspaceRoot: getWorkspaceRoot(),
@@ -1213,6 +1248,53 @@ app.whenReady().then(async () => {
   });
 
   handleIpc("project:cancelRender", async () => cancelActiveOperation("Đã dừng xuất video theo yêu cầu của user."));
+
+  handleIpc("recap:detectHardware", async () => {
+    return await recapHardwareService.detectBestEncoder();
+  });
+
+  handleIpc("recap:getReviewState", async (_event, projectId) => {
+    return await recapPipelineService.getReviewState(getWorkspaceRoot(), projectId);
+  });
+
+  handleIpc("recap:updateDecisions", async (_event, projectId, payload) => {
+    return await recapPipelineService.updateReviewDecisions(getWorkspaceRoot(), projectId, payload);
+  });
+
+  handleIpc("recap:run", async (event, projectId, options = {}) => {
+    const settings = { ...configStore.getSettings(), ...options };
+    const token = createCancelToken("recap:run");
+    const onProgress = createPipelineProgressSender(event);
+    try {
+      return await recapPipelineService.runRecapProject({
+        workspaceRoot: getWorkspaceRoot(),
+        projectId,
+        settings,
+        onProgress,
+        cancelToken: token
+      });
+    } finally {
+      clearCancelToken(token);
+    }
+  });
+
+  handleIpc("recap:renderFinal", async (event, projectId) => {
+    const settings = configStore.getSettings();
+    const token = createCancelToken("recap:renderFinal");
+    const onProgress = createPipelineProgressSender(event);
+    try {
+      await recapPipelineService.updateReviewDecisions(getWorkspaceRoot(), projectId, { userApprovedFinal: true });
+      return await recapPipelineService.runRecapProject({
+        workspaceRoot: getWorkspaceRoot(),
+        projectId,
+        settings,
+        onProgress,
+        cancelToken: token
+      });
+    } finally {
+      clearCancelToken(token);
+    }
+  });
 
   handleIpc("project:audioPlan", async (_event, projectId) => {
     const settings = configStore.getSettings();

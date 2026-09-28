@@ -508,12 +508,29 @@ class FfmpegService {
     ], { captureStdout: false });
   }
 
-  async mixVideoAudioWithVoice({ videoPath, voicePath, outputPath, sourceVolume = 0.22, voiceVolume = 1.0, limiter = true }) {
+  async mixVideoAudioWithVoice({ videoPath, voicePath, outputPath, sourceVolume = 0.22, voiceVolume = 1.0, limiter = true, duck = false }) {
     const safeSourceVolume = Math.max(0, Number(sourceVolume) || 0);
     const safeVoiceVolume = Math.max(0, Number(voiceVolume) || 0);
     const meta = await this.probeVideo(videoPath);
     if (!meta.hasAudio || safeSourceVolume <= 0.0001) {
       await this.replaceVideoAudio({ videoPath, audioPath: voicePath, outputPath, voiceVolume: safeVoiceVolume, limiter });
+      return;
+    }
+    // AutoStory v3 (Phase 13): real sidechain ducking so the original bodycam
+    // bed stays audible and dips only while the narrator speaks, then recovers.
+    if (duck) {
+      await this.run(this.ffmpegPath, [
+        "-y", "-i", videoPath, "-i", voicePath,
+        "-filter_complex",
+        [
+          `[0:a]volume=${safeSourceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[bg_raw]`,
+          `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[vo]`,
+          `[vo]asplit=2[vo_sc][vo_mix]`,
+          `[bg_raw][vo_sc]sidechaincompress=threshold=-30dB:ratio=10:attack=8:release=260:makeup=1[bg]`,
+          `[bg][vo_mix]amix=inputs=2:duration=first:weights='1.0 1.0':normalize=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`
+        ].join(";"),
+        "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k", "-shortest", outputPath
+      ], { captureStdout: false });
       return;
     }
     await this.run(this.ffmpegPath, [
@@ -1197,7 +1214,8 @@ class FfmpegService {
     width = 1080,
     height = 1920,
     preset = "fast",
-    crf = 21
+    crf = 21,
+    masterAudio = false
   }) {
     const targetWidth = Math.max(180, Math.round(Number(width) || 1080));
     const targetHeight = Math.max(180, Math.round(Number(height) || 1920));
@@ -1241,6 +1259,11 @@ class FfmpegService {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     const inputArgs = ["-y", "-i", inputPath];
     if (titleOverlayPath) inputArgs.push("-loop", "1", "-framerate", "30", "-i", titleOverlayPath);
+
+    const audioOutputArgs = masterAudio
+      ? ["-filter:a", "loudnorm=I=-14:TP=-1.5:LRA=9,alimiter=limit=0.95", "-c:a", "aac", "-b:a", "192k"]
+      : ["-c:a", "copy"];
+
     await this.run(this.ffmpegPath, [
       ...inputArgs,
       "-filter_complex",
@@ -1257,8 +1280,8 @@ class FfmpegService {
       preset,
       "-crf",
       String(crf),
-      "-c:a",
-      "copy",
+      ...audioOutputArgs,
+      "-shortest",
       "-movflags",
       "+faststart",
       outputPath

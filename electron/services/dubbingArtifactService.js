@@ -214,13 +214,15 @@ function resolveSuggestedTopCaption(project = {}) {
   const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
   const firstVariant = variants[0] || {};
   return safeText(
-    analysis.sharedTopBannerText
+    analysis.hookHeadline
+    || analysis.sharedTopBannerText
     || analysis.shared_top_banner_text
     || analysis.topHeader
     || analysis.top_banner_text
     || analysis.top_header
     || analysis.scriptTitle
     || analysis.title
+    || firstVariant.hookHeadline
     || firstVariant.sharedTopBannerText
     || firstVariant.topHeader
     || firstVariant.top_banner_text

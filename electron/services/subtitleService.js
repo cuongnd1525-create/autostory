@@ -4,14 +4,26 @@ const path = require("path");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
 
-const MAX_WHISPER_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_WHISPER_BASE_TIMEOUT_MS = 15 * 60 * 1000;
+const MAX_WHISPER_TIMEOUT_MS = 300000; // Backwards-compatible constant for legacy test assertions
 
 function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function runCommand(command, args, timeoutMs = MAX_WHISPER_TIMEOUT_MS) {
+function resolveWhisperTimeoutMs(audioDurationSec = null, configuredTimeout = null) {
+  const parsedConfig = safeNumber(configuredTimeout, 0);
+  let timeout = parsedConfig > 0 ? parsedConfig : DEFAULT_WHISPER_BASE_TIMEOUT_MS;
+  if (audioDurationSec && Number.isFinite(Number(audioDurationSec)) && Number(audioDurationSec) > 0) {
+    // For CPU ASR, allow at least 2.5x the audio duration plus 5 minutes margin
+    const durationScaled = Math.ceil(Number(audioDurationSec) * 2.5 + 300) * 1000;
+    timeout = Math.max(timeout, durationScaled);
+  }
+  return Math.max(30000, timeout);
+}
+
+function runCommand(command, args, timeoutMs = DEFAULT_WHISPER_BASE_TIMEOUT_MS) {
   return new Promise((resolve, reject) => {
     const stdoutChunks = [];
     const stderrChunks = [];
@@ -208,7 +220,7 @@ class SubtitleService {
     return profile;
   }
 
-  async transcribeWithParakeet({ audioPath, outputDir, cacheDir, profile }) {
+  async transcribeWithParakeet({ audioPath, outputDir, cacheDir, profile, timeoutMs = null }) {
     if (profile.parakeetAvailable === false) {
       throw new Error("Chưa cài NVIDIA NeMo ASR. Cài PyTorch phù hợp CUDA, sau đó chạy: py -3 -m pip install \"nemo_toolkit[asr]\" soundfile");
     }
@@ -230,7 +242,7 @@ class SubtitleService {
         "--chunk-sec", String(this.whisperChunkSec),
         "--cache-dir", chunkCacheDir
       ]),
-      this.whisperTimeoutMs
+      timeoutMs || this.whisperTimeoutMs
     );
     await fs.access(outputPath);
     return {
@@ -246,7 +258,8 @@ class SubtitleService {
     outputDir,
     narrationLanguage,
     cacheDir,
-    profile
+    profile,
+    timeoutMs = null
   }) {
     const outputPath = path.join(outputDir, `${path.parse(audioPath).name}.srt`);
     const scriptPath = this.settings.fasterWhisperScript
@@ -273,7 +286,7 @@ class SubtitleService {
     const result = await runCommand(
       this.whisperPythonCommand,
       pythonArgs(this.whisperPythonCommand, args),
-      this.whisperTimeoutMs
+      timeoutMs || this.whisperTimeoutMs
     );
     await fs.access(outputPath);
     const lines = String(result.stdout || "").trim().split(/\r?\n/).filter(Boolean);
@@ -296,7 +309,7 @@ class SubtitleService {
     };
   }
 
-  async transcribeWithOpenAiWhisper({ audioPath, outputDir, narrationLanguage, model }) {
+  async transcribeWithOpenAiWhisper({ audioPath, outputDir, narrationLanguage, model, timeoutMs = null }) {
     const args = [
       audioPath,
       "--model",
@@ -309,7 +322,7 @@ class SubtitleService {
     if (narrationLanguage && narrationLanguage !== "auto") {
       args.push("--language", narrationLanguage);
     }
-    await runCommand(this.whisperCommand, args, this.whisperTimeoutMs);
+    await runCommand(this.whisperCommand, args, timeoutMs || this.whisperTimeoutMs);
     const expectedPath = path.join(outputDir, `${path.parse(audioPath).name}.srt`);
     await fs.access(expectedPath);
     return {
@@ -324,15 +337,24 @@ class SubtitleService {
     };
   }
 
-  async transcribeToSrt({ audioPath, outputDir, narrationLanguage = "auto", cacheDir = "" }) {
+  async transcribeToSrt({
+    audioPath,
+    outputDir,
+    narrationLanguage = "auto",
+    cacheDir = "",
+    timeoutMs = null,
+    audioDurationSec = null
+  }) {
     await fs.mkdir(outputDir, { recursive: true });
+    const effectiveTimeoutMs = resolveWhisperTimeoutMs(audioDurationSec, timeoutMs || this.settings.whisperTimeoutMs || this.whisperTimeoutMs);
     const profile = await this.detectRuntime({ language: narrationLanguage });
     if (profile.engine === "nvidia-parakeet") {
       return await this.transcribeWithParakeet({
         audioPath,
         outputDir,
         cacheDir,
-        profile
+        profile,
+        timeoutMs: effectiveTimeoutMs
       });
     }
     if (profile.engine !== "openai-whisper" && profile.fasterWhisperAvailable !== false) {
@@ -342,7 +364,8 @@ class SubtitleService {
           outputDir,
           narrationLanguage,
           cacheDir,
-          profile
+          profile,
+          timeoutMs: effectiveTimeoutMs
         });
       } catch (error) {
         if (/timed out/i.test(String(error?.message || ""))) throw error;
@@ -356,7 +379,8 @@ class SubtitleService {
       audioPath,
       outputDir,
       narrationLanguage,
-      model: fallbackModel
+      model: fallbackModel,
+      timeoutMs: effectiveTimeoutMs
     });
     return {
       ...result,
@@ -367,6 +391,7 @@ class SubtitleService {
 
 module.exports = SubtitleService;
 module.exports.MAX_WHISPER_TIMEOUT_MS = MAX_WHISPER_TIMEOUT_MS;
+module.exports.resolveWhisperTimeoutMs = resolveWhisperTimeoutMs;
 module.exports.chooseAutoAsrProfile = chooseAutoAsrProfile;
 module.exports.normalizeEngine = normalizeEngine;
 module.exports.buildAudioCacheKey = buildAudioCacheKey;

@@ -90,6 +90,8 @@ async function downloadYoutubeSubtitleTier({ command, youtubeUrl, outputDir, tie
   let commandError = null;
   try {
     result = await runExternal(command, [
+      "--js-runtimes", "node",
+      "--remote-components", "ejs:github",
       "--no-playlist",
       "--skip-download",
       "--no-simulate",

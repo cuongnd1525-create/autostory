@@ -97,7 +97,7 @@ class ElevenLabsService {
     return payload.voices || [];
   }
 
-  buildVoiceSettings(performanceMode = "narration", genreMode = "thriller") {
+  buildVoiceSettings(performanceMode = "narration", genreMode = "thriller", emotionTag = "") {
     if (this.settings.elevenLabsVoiceSettingsMode === "custom") {
       return {
         stability: clampSetting(this.settings.elevenLabsStability ?? 0.32),
@@ -108,6 +108,14 @@ class ElevenLabsService {
     }
 
     let settings;
+    
+    // Emotion tags override the base performance mode settings
+    const e = String(emotionTag || "").toUpperCase();
+    if (e === "URGENT" || e === "SHOUT") {
+      performanceMode = "panic";
+    } else if (e === "SAD" || e === "WHISPER") {
+      performanceMode = "narration";
+    }
 
     if (performanceMode === "hook") {
       settings = {
@@ -118,9 +126,9 @@ class ElevenLabsService {
       };
     } else if (performanceMode === "panic") {
       settings = {
-        stability: 0.28,
-        similarity_boost: 0.76,
-        style: 0.64,
+        stability: 0.15,
+        similarity_boost: 0.85,
+        style: 0.90,
         use_speaker_boost: true
       };
     } else if (performanceMode === "story") {
@@ -146,16 +154,21 @@ class ElevenLabsService {
       };
     }
 
+    if (e === "WHISPER") {
+       settings.style = 0.95; // Extreme style exxageration for whisper
+    }
+
     const genreAdjustments = {
       thriller: { stability: -0.06, similarity_boost: -0.02, style: 0.08 },
-      action: { stability: -0.03, similarity_boost: -0.01, style: 0.06 },
-      healing: { stability: 0.16, similarity_boost: 0.08, style: -0.10 },
-      drama: { stability: 0.06, similarity_boost: 0.04, style: 0.04 },
-      mystery: { stability: -0.02, similarity_boost: 0.02, style: 0.06 },
-      comedy: { stability: 0.14, similarity_boost: 0.04, style: -0.04 },
-      "sci-fi": { stability: 0.02, similarity_boost: 0.02, style: 0.08 }
+      action: { stability: -0.05, similarity_boost: -0.04, style: 0.12 },
+      drama: { stability: -0.02, similarity_boost: -0.01, style: 0.05 },
+      mystery: { stability: -0.04, similarity_boost: -0.01, style: 0.06 },
+      comedy: { stability: -0.03, similarity_boost: 0, style: 0.10 },
+      horror: { stability: -0.08, similarity_boost: -0.03, style: 0.15 },
+      healing: { stability: 0.05, similarity_boost: 0.02, style: -0.05 }
     };
-    const adjustment = genreAdjustments[genreMode] || genreAdjustments.thriller;
+
+    const adjustment = genreAdjustments[genreMode] || { stability: 0, similarity_boost: 0, style: 0 };
 
     return {
       stability: clampSetting(settings.stability + adjustment.stability),
@@ -165,7 +178,15 @@ class ElevenLabsService {
     };
   }
 
-  async synthesizeSpeech({ text, voiceId, outputPath, performanceMode, genreMode }) {
+  async synthesizeSpeech({
+    text,
+    voiceId,
+    outputPath,
+    languageCode,
+    performanceMode,
+    genreMode,
+    emotionTag
+  }) {
     if (!voiceId) {
       throw new Error("Voice ID is missing. Select or paste an ElevenLabs voice ID.");
     }
@@ -182,7 +203,7 @@ class ElevenLabsService {
         body: JSON.stringify({
           text,
           model_id: this.modelId,
-          voice_settings: this.buildVoiceSettings(performanceMode, genreMode)
+          voice_settings: this.buildVoiceSettings(performanceMode, genreMode, emotionTag)
         })
       }), "ElevenLabs TTS");
       return Buffer.from(await response.arrayBuffer());
@@ -197,7 +218,8 @@ class ElevenLabsService {
     outputPath,
     alignmentPath,
     performanceMode,
-    genreMode
+    genreMode,
+    emotionTag
   }) {
     if (!voiceId) {
       throw new Error("Voice ID is missing. Select or paste an ElevenLabs voice ID.");
@@ -215,7 +237,7 @@ class ElevenLabsService {
         body: JSON.stringify({
           text,
           model_id: this.modelId,
-          voice_settings: this.buildVoiceSettings(performanceMode || "story", genreMode)
+          voice_settings: this.buildVoiceSettings(performanceMode || "story", genreMode, emotionTag)
         })
       }), "ElevenLabs timed TTS");
       return response.json();

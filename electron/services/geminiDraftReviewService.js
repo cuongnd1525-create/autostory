@@ -498,9 +498,9 @@ function buildStorySpineReviewPrompt({
   const proxyList = sourceProxyFiles.length ? sourceProxyFiles.map((file) => `- ${path.basename(file)}`).join("\n") : "- No source proxy supplied";
   const scriptId = safeNumber(variant.scriptId, 0);
   const audioProfile = scriptId === 1
-    ? "Script 1 is narrator-led but must still preserve decisive direct dialogue/action. Narrator-led is a functional story requirement, not a duration quota: use 2-4 concise, non-adjacent tool-narration beats that connect the Hook, rewind/context, causal escalation, and Payoff. A single legal-outcome voiceover at the end is invalid."
+    ? "Script 1 is narrator-led. Use multiple non-adjacent tool-narration beats that connect the Hook, rewind/context, causal escalation, and Payoff to build a 60/40 Audio Sandwich. You MUST inject narrator voice frequently so that original audio without voiceover NEVER runs continuously for more than 15 seconds."
     : scriptId === 3
-    ? "Script 3 is a balanced mini-documentary. Use roughly 45-60% tool narration and preserve decisive authentic source proof."
+    ? "Script 3 is a balanced mini-documentary. Use roughly 40-50% tool narration and preserve decisive authentic source proof."
     : "Script 4 is authenticity-led, not narration-free. Preserve raw audio only when it both carries emotional proof and keeps the story understandable. Every unresolved chronology, location, actor, or causal jump requires a concise bridge; do not chase an audio percentage.";
   const transcriptInputName = safeText(variant.transcriptInputName || "source-transcript.srt");
   return `${buildGeminiInputAccessGate({
@@ -514,10 +514,15 @@ function buildStorySpineReviewPrompt({
     ]
   })}
 
-You are independently rebuilding a rendered true-crime/bodycam short as a senior American TikTok editor.
+You are independently rebuilding a rendered true-crime/bodycam short as a ruthless American TikTok viral retention editor.
 
-REVIEW ORDER - HIGHEST PRIORITY:
-1. Watch the complete rendered draft.
+REVIEW ORDER - HIGHEST PRIORITY (RUTHLESS VIRAL RETENTION CRITIC):
+1. Watch the complete rendered draft from 0.000s to end.
+CRITICAL RETENTION CHECKS:
+   - 0-3s Hook Drop-off: The first 3 seconds must hit the viewer with immediate absurd conflict, high stakes, or intense action. Flag any slow walking, silent establishing shots, polite greetings, or procedural stalling. If the rendered draft opens weak, you MUST rebuild the Hook.
+   - Mid-video Lulls: Flag and eliminate any dead-air/silence > 1.5s or repetitive administrative procedure that halts narrative momentum without new information or reaction.
+   - Lingering Outro: Video must cut to black within 2-3s after the payoff/resolution. Flag any lingering after-talk or wandering outro.
+   - Viral TikTok Voiceover Style: Voiceover lines must be punchy and high-energy (<= 25 words), in present tense, adopting a sensational, rage-baiting conversational tone that exposes suspect lies. Rewrite any bureaucratic or documentary-style narration.
 2. Before judging V${revision}, independently define the strongest edit you would build from the supplied source: Central Viewer Question -> Hook Promise -> minimum rewind context -> causal escalation -> full promised Climax -> immediate Payoff.
 3. Independently run a fresh Semantic Hook Tournament across at least five verified candidates: high_action, dialogue_conflict, psychological_wtf, rage_irony, and evidence_reveal. Judge what is actually visible/audible in the first 3 seconds, not the V1 label or local motion/audio rank.
 4. Only then compare V${revision} with that ideal. Do not let V${revision} anchor the story.
@@ -833,7 +838,7 @@ ${independentReviewOptionRules(variant)}
 - After the Hook, use minimum Context and order source beats by the causal/emotional logic of storySpine. Chronological order is preferred when equally strong, but backward or forward thematic jumps are allowed when they reveal new information, escalate the same conflict, return to the promised climax, or deliver Payoff.
 - Every non-contiguous or backward jump must advance the same central question and contain a concrete transitionReason. Use a voiceover_only narration beat whenever picture/direct dialogue cannot explain the jump immediately. Reject random peak montages and unresolved identity changes.
 - Preserve original_audio whenever a clean source range contains an indispensable authentic quote, accusation, denial, confession, command, emotional reaction, impact, radio call, or confrontation. Mark original_audio_protected=true and never replace that range with tool narration. External source narration remains forbidden and is never protected.
-- Script 1 must preserve audio_strategy="clean_hybrid" and voiceover_enabled=true. It is narrator-led: use 2-4 concise, non-adjacent narration beats with distinct story jobs, including rewind/context before the promised Climax and one later causal-escalation or verified-Payoff beat. One legal-outcome VO at the end is not a narrator spine. Script 3 and Script 4 use narration only where their story needs it. All narrator-covered ranges must mute source audio completely; do not invent a ducking mode that the renderer does not support.
+- Script 1 must preserve audio_strategy="clean_hybrid" and voiceover_enabled=true. It is narrator-led: use multiple narrator beats to build a 60/40 Audio Sandwich. Dead air (original audio running without narrator) must NEVER exceed 15 seconds. All narrator-covered ranges must use voiceover_only which ducks source audio to 20% volume so ambient sound is preserved.
 - Every revised independent script must deliver a verified standalone payoff before ending.`
     : "";
   const timestampGate = isIndependent
@@ -857,8 +862,13 @@ ${independentReviewOptionRules(variant)}
 6. Keep startSec/endSec continuous from zero and recalculate them from source duration and playbackSpeed. The local tool reflows output timestamps and is authoritative.
 7. Do not use blank padding, freeze frames or unrelated repeated footage.`
     : isIndependent
-    ? `MANDATORY REVIEW METHOD - THREE INDEPENDENT TIKTOK SCRIPTS:
+    ? `MANDATORY REVIEW METHOD - THREE INDEPENDENT TIKTOK SCRIPTS (RUTHLESS VIRAL RETENTION CRITIC):
 1. IDEAL EDIT FIRST - ANTI-ANCHORING: Before judging V1, independently determine the strongest edit you would build from the complete source using this retention pattern: strongest Hook/climax teaser -> minimum necessary rewind/context -> connected narrator-led escalation interrupted by decisive authentic proof -> return to the promised climax -> immediate emotional/factual payoff.
+CRITICAL RETENTION CHECKS:
+- 0-3s Hook Drop-off: The first 3 seconds must hit the viewer with immediate absurd conflict, high stakes, or intense action. Flag any slow walking, silent establishing shots, polite greetings, or procedural stalling. If V1 opens weak, you MUST rebuild the Hook.
+- Mid-video Procedural Lulls: Flag and eliminate dead-air/silence > 1.5s or repetitive administrative procedure that halts narrative momentum without new information or reaction.
+- Lingering Outro: Video must cut to black within 2-3s after the payoff/resolution. Flag any lingering after-talk or wandering outro.
+- Viral TikTok Voiceover Style: Voiceover lines must be punchy and high-energy (<= 25 words), in present tense, adopting a sensational, rage-baiting conversational tone that exposes suspect lies. Rewrite any bureaucratic or documentary-style narration.
 2. Write this ideal structure into revisedScript.story_blueprint.storySpine: centralViewerQuestion, hookPromise, rewindContext, escalationPath, climax, climaxEvidenceIds, payoff, and payoffEvidenceIds. Do not let V1 determine what the story should be.
 3. Only after forming the ideal Story Spine, watch the complete draft and compare V1 against it. Search all supplied source coverage and transcript for stronger omitted action, quote, contradiction, reveal, climax, and payoff.
 4. Rebuild from scratch when V1 chose the wrong premise, Hook, causal spine, climax, or payoff. Preserve a V1 segment only because it remains the strongest choice, never because it already renders correctly.

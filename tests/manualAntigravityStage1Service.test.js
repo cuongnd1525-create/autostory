@@ -117,6 +117,38 @@ async function createPackage() {
   assert(!schemaSafeCommand.args.includes("plan"));
   assert(schemaSafeCommand.args.includes("accept-edits"));
 
+  // Test Antigravity model normalization and effort compatibility
+  const flashHighService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityModel: "Gemini 3.8 Flash (High)"
+  });
+  const flashHighCmd = flashHighService.buildCommand("test", "schema.json", fixture.pass1Dir);
+  assert(flashHighCmd.args.includes("gemini-3.8-flash-high"), "Display label should be normalized to canonical ID");
+  assert(!flashHighCmd.args.includes("--effort"), "--effort must not be passed to model with fixed effort");
+
+  const claudeService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityModel: "Claude Sonnet 4.6 (Thinking)"
+  });
+  const claudeCmd = claudeService.buildCommand("test", "schema.json", fixture.pass1Dir);
+  assert(claudeCmd.args.includes("claude-sonnet-4-6"));
+  assert(!claudeCmd.args.includes("--effort"), "--effort must not be passed to Claude models");
+
+  const argsWithConflictService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityArgs: '--model "Gemini 3.8 Flash (High)" --effort high'
+  });
+  const conflictCmd = argsWithConflictService.buildCommand("test", "schema.json", fixture.pass1Dir);
+  assert(conflictCmd.args.includes("gemini-3.8-flash-high"));
+  assert(!conflictCmd.args.includes("--effort"), "--effort in args must be stripped if model does not support it");
+
+  const defaultModelService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityModel: ""
+  });
+  const defaultCmd = defaultModelService.buildCommand("test", "schema.json", fixture.pass1Dir);
+  assert(defaultCmd.args.includes("--effort"), "--effort high should be passed for default model");
+
   const parsed = ManualAntigravityStage1Service.findArtifactEnvelope(JSON.stringify({
     result: `\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``
   }));
@@ -136,6 +168,376 @@ async function createPackage() {
   assert.strictEqual(service.cancel(), true, "active Antigravity process should be cancellable");
   assert.strictEqual(killed, true);
 
+  // Test resolveAntigravityTimeoutMs
+  const { resolveAntigravityTimeoutMs } = ManualAntigravityStage1Service;
+  assert.strictEqual(resolveAntigravityTimeoutMs(300000), 900000, "legacy 300000 must auto-upgrade to 900000");
+  assert.strictEqual(resolveAntigravityTimeoutMs(undefined), 900000, "default should be 900000");
+  assert.strictEqual(resolveAntigravityTimeoutMs(1800000), 1800000, "custom higher timeout preserved");
+  // Multi-chunk video adaptive timeout: 3 chunks = (3 * 360 + 900) * 1000 = 1980000 ms (33 min)
+  assert.strictEqual(
+    resolveAntigravityTimeoutMs(900000, { proxyChunkCount: 3, sceneCount: 72 }),
+    1980000,
+    "3 proxy chunks should scale timeout to at least 1980000 ms"
+  );
+  // Large scene count: > 50 scenes
+  assert.strictEqual(
+    resolveAntigravityTimeoutMs(900000, { proxyChunkCount: 1, sceneCount: 60 }),
+    1500000,
+    "> 50 scenes should scale timeout to at least 1500000 ms"
+  );
+
+  // Test command builder defaults to stream-json and uses adaptive timeout
+  const adaptiveService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityModel: "gemini-3.8-flash-high"
+  });
+  const adaptiveCmd = adaptiveService.buildCommand("test", "schema.json", fixture.pass1Dir, {
+    packageInfo: { proxyChunkCount: 3, sceneCount: 72 }
+  });
+  assert(adaptiveCmd.args.includes("stream-json"), "default output format should be stream-json");
+  assert(adaptiveCmd.args.includes("--print-timeout"), "--print-timeout flag should be present");
+  const timeoutArgIdx = adaptiveCmd.args.indexOf("--print-timeout");
+  assert.strictEqual(adaptiveCmd.args[timeoutArgIdx + 1], "1980s", "print timeout should adapt to 1980s for 3 chunks");
+  assert.strictEqual(adaptiveCmd.timeoutMs, 1980000);
+
+  // Test stream-json live progress updates in runCli
+  const streamEvents = [
+    JSON.stringify({ event: "init", init: {} }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 1,
+        state: "ACTIVE",
+        step_type: "tool",
+        tool_name: "view_file",
+        tool_info: { name: "view_file", parameters: { AbsolutePath: "D:\\test\\analysis-proxy-chunk-001.mp4" } }
+      }
+    }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 2,
+        state: "ACTIVE",
+        step_type: "agent_response"
+      }
+    }),
+    JSON.stringify({
+      event: "result",
+      result: {
+        status: "SUCCESS",
+        response: JSON.stringify({
+          artifacts: [1, 3, 4].map((id) => ({ filename: `script-${id}.json`, script: buildScript(id) }))
+        })
+      }
+    })
+  ].join("\n");
+
+  const streamProgress = [];
+  const streamChildCalls = [];
+  const fakeStreamSpawn = (command, args, options) => {
+    streamChildCalls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.pid = 54321;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    child.stdin.on("finish", () => {
+      process.nextTick(() => {
+        child.stdout.write(streamEvents + "\n");
+        child.stdout.end();
+        child.emit("close", 0);
+      });
+    });
+    child.kill = () => child.emit("close", 1);
+    return child;
+  };
+
+  const streamTestService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityModel: "gemini-3.8-flash-high",
+    antigravityTimeoutMs: 60000
+  }, { spawn: fakeStreamSpawn });
+
+  const streamResult = await streamTestService.runCli({
+    command: "agy",
+    args: ["--output-format", "stream-json"],
+    prompt: "test",
+    cwd: fixture.root,
+    timeoutMs: 60000,
+    onProgress: (p) => streamProgress.push(p)
+  });
+  assert(streamResult.stdout.includes('"status":"SUCCESS"'));
+  assert(streamProgress.some((p) => p.message && p.message.includes("analysis-proxy-chunk-001.mp4")), "should report proxy chunk progress");
+  assert(streamProgress.some((p) => p.message && p.message.includes("Antigravity đang phân tích")), "should report reasoning progress");
+
+  // --- Test getExpectedProxyList with chunk manifest & batch dirs ---
+  const chunkFixtureDir = await fs.mkdtemp(path.join(os.tmpdir(), "cineviral-proxy-chunk-test-"));
+  const batch1 = path.join(chunkFixtureDir, "UPLOAD-BATCH-01");
+  const batch2 = path.join(chunkFixtureDir, "UPLOAD-BATCH-02-FINAL");
+  await fs.mkdir(batch1, { recursive: true });
+  await fs.mkdir(batch2, { recursive: true });
+  const chunk1Path = path.join(batch1, "analysis-proxy-chunk-001.mp4");
+  const chunk2Path = path.join(batch2, "analysis-proxy-chunk-002.mp4");
+  await fs.writeFile(chunk1Path, "dummy video 1", "utf8");
+  await fs.writeFile(chunk2Path, "dummy video 2", "utf8");
+  const manifestContent = {
+    chunks: [
+      { chunkId: "chunk_001", file: "analysis-proxy-chunk-001.mp4", uploadRelativePath: "UPLOAD-BATCH-01/analysis-proxy-chunk-001.mp4", sourceStartSec: 0, sourceEndSec: 240, durationSec: 240 },
+      { chunkId: "chunk_002", file: "analysis-proxy-chunk-002.mp4", uploadRelativePath: "UPLOAD-BATCH-02-FINAL/analysis-proxy-chunk-002.mp4", sourceStartSec: 240, sourceEndSec: 480, durationSec: 240 }
+    ]
+  };
+  await fs.writeFile(path.join(chunkFixtureDir, "proxy-chunks-manifest.json"), JSON.stringify(manifestContent), "utf8");
+
+  const expectedChunks = await ManualAntigravityStage1Service.getExpectedProxyList(chunkFixtureDir);
+  assert.strictEqual(expectedChunks.length, 2, "must discover both chunks from manifest");
+  assert.strictEqual(expectedChunks[0].filename, "analysis-proxy-chunk-001.mp4");
+  assert.strictEqual(expectedChunks[1].filename, "analysis-proxy-chunk-002.mp4");
+  assert(expectedChunks[0].absolutePath.includes("UPLOAD-BATCH-01"));
+
+  // --- Test validateVideoCoverage ---
+  const emptyViewed = new Set();
+  const cov0 = ManualAntigravityStage1Service.validateVideoCoverage(expectedChunks, emptyViewed);
+  assert.strictEqual(cov0.coveragePercent, 0);
+  assert.strictEqual(cov0.isComplete, false);
+  assert.strictEqual(cov0.missingProxyFiles.length, 2);
+
+  const partialViewed = new Set(["analysis-proxy-chunk-001.mp4"]);
+  const cov50 = ManualAntigravityStage1Service.validateVideoCoverage(expectedChunks, partialViewed);
+  assert.strictEqual(cov50.coveragePercent, 50);
+  assert.strictEqual(cov50.isComplete, false);
+  assert.deepStrictEqual(cov50.missingProxyFiles, ["analysis-proxy-chunk-002.mp4"]);
+
+  const fullViewed = new Set(["analysis-proxy-chunk-001.mp4", "analysis-proxy-chunk-002.mp4"]);
+  const cov100 = ManualAntigravityStage1Service.validateVideoCoverage(expectedChunks, fullViewed);
+  assert.strictEqual(cov100.coveragePercent, 100);
+  assert.strictEqual(cov100.isComplete, true);
+  assert.strictEqual(cov100.missingProxyFiles.length, 0);
+
+  // --- Test Telemetry matching in runCli: proxy-chunks-manifest.json vs mp4 ---
+  const telemetryEvents = [
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 1,
+        state: "ACTIVE",
+        step_type: "tool",
+        tool_name: "view_file",
+        tool_info: { name: "view_file", parameters: { AbsolutePath: path.join(chunkFixtureDir, "proxy-chunks-manifest.json") } }
+      }
+    }),
+    JSON.stringify({
+      event: "step_update",
+      step_update: {
+        step_index: 2,
+        state: "ACTIVE",
+        step_type: "tool",
+        tool_name: "view_file",
+        tool_info: { name: "view_file", parameters: { AbsolutePath: chunk1Path } }
+      }
+    })
+  ].join("\n");
+
+  const telemetryProgress = [];
+  const fakeTelemetrySpawn = (command, args, options) => {
+    const child = new EventEmitter();
+    child.pid = 99991;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    child.stdin.on("finish", () => {
+      process.nextTick(() => {
+        child.stdout.write(telemetryEvents + "\n");
+        child.stdout.end();
+        child.emit("close", 0);
+      });
+    });
+    return child;
+  };
+
+  const teleService = new ManualAntigravityStage1Service({ antigravityCommand: "agy" }, { spawn: fakeTelemetrySpawn });
+  const liveViewedSet = new Set();
+  await teleService.runCli({
+    command: "agy",
+    args: [],
+    prompt: "test",
+    cwd: chunkFixtureDir,
+    timeoutMs: 15000,
+    expectedProxyList: expectedChunks,
+    viewedProxySet: liveViewedSet,
+    onProgress: (p) => telemetryProgress.push(p)
+  });
+
+  const manifestMsg = telemetryProgress.find((p) => p.message && p.message.includes("proxy-chunks-manifest.json"));
+  assert(manifestMsg, "manifest progress must be reported");
+  assert(manifestMsg.message.includes("scene manifest"), "manifest must be labeled as scene manifest");
+  assert(!manifestMsg.message.includes("xem proxy video"), "manifest must NEVER be labeled as proxy video");
+
+  const videoMsg = telemetryProgress.find((p) => p.message && p.message.includes("analysis-proxy-chunk-001.mp4"));
+  assert(videoMsg, "video chunk progress must be reported");
+  assert(videoMsg.message.includes("xem proxy video"), "video chunk must be labeled as proxy video");
+  assert(liveViewedSet.has("analysis-proxy-chunk-001.mp4"), "chunk must be added to live viewed set");
+
+  // --- Test auditTranscriptForViewedProxies ---
+  const mockTranscriptPath = path.join(chunkFixtureDir, "transcript.jsonl");
+  const transcriptContent = [
+    JSON.stringify({ step_index: 1, tool_calls: [{ name: "view_file", args: { AbsolutePath: chunk1Path } }] }),
+    JSON.stringify({ step_index: 2, tool_calls: [{ name: "view_file", args: { AbsolutePath: chunk2Path } }] })
+  ].join("\n");
+  await fs.writeFile(mockTranscriptPath, transcriptContent, "utf8");
+
+  const auditedCoverage = await ManualAntigravityStage1Service.auditTranscriptForViewedProxies(
+    null,
+    expectedChunks,
+    new Set(),
+    mockTranscriptPath
+  );
+  assert.strictEqual(auditedCoverage.isComplete, true, "transcript audit should find both chunks");
+  assert.strictEqual(auditedCoverage.coveragePercent, 100);
+
+  // --- Test Hard Validation Gate in service.run when video chunks missing ---
+  const gatePackageDir = await fs.mkdtemp(path.join(os.tmpdir(), "cineviral-gate-test-"));
+  const gatePass1 = path.join(gatePackageDir, "01-GUI-GEMINI");
+  await fs.mkdir(gatePass1, { recursive: true });
+  await fs.writeFile(path.join(gatePass1, "01-gemini-highlight-scripts-prompt.txt"), "Generate Script 1.", "utf8");
+  await fs.writeFile(path.join(gatePass1, "scene-manifest.json"), JSON.stringify({ scenes: [] }), "utf8");
+  await fs.writeFile(path.join(gatePass1, "analysis-proxy-chunk-001.mp4"), "dummy mp4", "utf8");
+  await fs.writeFile(path.join(gatePass1, "proxy-chunks-manifest.json"), JSON.stringify({
+    chunks: [{ chunkId: "chk1", file: "analysis-proxy-chunk-001.mp4" }]
+  }), "utf8");
+  await fs.writeFile(path.join(gatePackageDir, "package-info.json"), JSON.stringify({
+    workflow: "manual_gemini_draft_review",
+    pass1UploadDir: gatePass1,
+    promptPath: path.join(gatePass1, "01-gemini-highlight-scripts-prompt.txt")
+  }), "utf8");
+
+  const missingVideoCalls = [];
+  const fakeMissingVideoSpawn = (command, args, options) => {
+    missingVideoCalls.push({ command, args, options });
+    const child = new EventEmitter();
+    child.pid = 88881;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    child.stdin.on("finish", () => {
+      process.nextTick(() => {
+        // Return valid envelope BUT never call view_file on chunk-001.mp4!
+        const resultEnvelope = {
+          artifacts: [{ filename: "script-1.json", script: buildScript(1) }]
+        };
+        child.stdout.write(JSON.stringify({ event: "result", result: { status: "SUCCESS", response: JSON.stringify(resultEnvelope) } }) + "\n");
+        child.stdout.end();
+        child.emit("close", 0);
+      });
+    });
+    return child;
+  };
+
+  const gateService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityTimeoutMs: 15000
+  }, { spawn: fakeMissingVideoSpawn });
+
+  let gateFailed = false;
+  try {
+    await gateService.run({ packageDir: gatePackageDir });
+  } catch (err) {
+    gateFailed = true;
+    assert(err.message.includes("Antigravity vi phạm quy tắc bắt buộc"), "must throw hard gate error");
+    assert(err.message.includes("analysis-proxy-chunk-001.mp4"), "must name missing chunk");
+  }
+  assert.strictEqual(gateFailed, true, "run must fail when video chunks were not viewed");
+
+  // --- Test Hard Validation Gate in service.run when video chunks ARE viewed (100% coverage) ---
+  const fakeViewedSpawn = (command, args, options) => {
+    const child = new EventEmitter();
+    child.pid = 88882;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    child.stdin.on("finish", () => {
+      process.nextTick(() => {
+        const streamEvents = [
+          JSON.stringify({
+            event: "step_update",
+            step_update: {
+              step_index: 1,
+              state: "ACTIVE",
+              step_type: "tool",
+              tool_name: "view_file",
+              tool_info: { name: "view_file", parameters: { AbsolutePath: path.join(gatePass1, "analysis-proxy-chunk-001.mp4") } }
+            }
+          }),
+          JSON.stringify({
+            event: "result",
+            result: {
+              status: "SUCCESS",
+              response: JSON.stringify({
+                artifacts: [{ filename: "script-1.json", script: buildScript(1) }]
+              })
+            }
+          })
+        ].join("\n");
+        child.stdout.write(streamEvents + "\n");
+        child.stdout.end();
+        child.emit("close", 0);
+      });
+    });
+    return child;
+  };
+
+  const successGateService = new ManualAntigravityStage1Service({
+    antigravityCommand: "agy",
+    antigravityTimeoutMs: 15000
+  }, { spawn: fakeViewedSpawn });
+
+  const successResult = await successGateService.run({ packageDir: gatePackageDir });
+  assert.strictEqual(successResult.coverage.isComplete, true, "coverage must be complete");
+  assert.strictEqual(successResult.coverage.coveragePercent, 100);
+  assert.deepStrictEqual(successResult.coverage.viewedProxyFiles, ["analysis-proxy-chunk-001.mp4"]);
+
+  const runInfoRaw = await fs.readFile(path.join(gatePackageDir, "01-ANTIGRAVITY-RESULT", "antigravity-run-info.json"), "utf8");
+  const runInfo = JSON.parse(runInfoRaw);
+  assert.strictEqual(runInfo.directMultimodalCoverage, true);
+  assert.strictEqual(runInfo.videoCoveragePercent, 100);
+  assert.deepStrictEqual(runInfo.expectedProxyFiles, ["analysis-proxy-chunk-001.mp4"]);
+  assert.deepStrictEqual(runInfo.viewedProxyFiles, ["analysis-proxy-chunk-001.mp4"]);
+  assert.deepStrictEqual(runInfo.missingProxyFiles, []);
+
+  // --- Test timeout check on stderr ---
+  const fakeStderrTimeoutSpawn = (command, args, options) => {
+    const child = new EventEmitter();
+    child.pid = 77771;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({ write(_chunk, _encoding, callback) { callback(); } });
+    child.stdin.on("finish", () => {
+      process.nextTick(() => {
+        child.stderr.write("[agy] print timeout after 15m0s\n", "utf8", () => {
+          child.emit("close", 0);
+        });
+      });
+    });
+    return child;
+  };
+
+  const timeoutService = new ManualAntigravityStage1Service({ antigravityCommand: "agy" }, { spawn: fakeStderrTimeoutSpawn });
+  let timeoutFailed = false;
+  try {
+    await timeoutService.runCli({
+      command: "agy",
+      args: [],
+      prompt: "test",
+      cwd: chunkFixtureDir,
+      timeoutMs: 15000
+    });
+  } catch (err) {
+    timeoutFailed = true;
+    assert(err.message.includes("Antigravity timed out after 15m0s"), "must detect timeout from stderr");
+  }
+  assert.strictEqual(timeoutFailed, true, "stderr timeout must be detected");
+
+  await fs.rm(chunkFixtureDir, { recursive: true, force: true });
+  await fs.rm(gatePackageDir, { recursive: true, force: true });
   await fs.rm(fixture.root, { recursive: true, force: true });
   console.log("manualAntigravityStage1Service tests passed");
 })().catch((error) => {

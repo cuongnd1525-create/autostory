@@ -276,7 +276,8 @@ function $(id) {
 }
 
 function queryElements() {
-  Object.assign(el, {
+    Object.assign(el, {
+    runAutoReviewAll: $("run-auto-review-all"),
     setupView: $("setup-view"),
     studioView: $("studio-view"),
     wizardSteps: $("wizard-steps"),
@@ -337,6 +338,10 @@ function queryElements() {
     cancelManualAntigravityStage1: $("cancel-manual-antigravity-stage1"),
     openManualAntigravityResult: $("open-manual-antigravity-result"),
     manualAntigravityStage1Status: $("manual-antigravity-stage1-status"),
+    aiAnalysisTerminal: $("ai-analysis-terminal"),
+    aiTerminalPercentage: $("ai-terminal-percentage"),
+    aiTerminalProgressBar: $("ai-terminal-progress-bar"),
+    aiTerminalLog: $("ai-terminal-log"),
     stage1AiProviderBadge: $("stage1-ai-provider-badge"),
     stage1AiActionTitle: $("stage1-ai-action-title"),
     stage1AiActionDescription: $("stage1-ai-action-description"),
@@ -455,6 +460,8 @@ function queryElements() {
     autoStoryOutputCount: $("auto-story-output-count"),
     autoStoryNarrationStyle: $("auto-story-narration-style"),
     autoStoryAudioBalance: $("auto-story-audio-balance"),
+    autoStoryEngineVersion: $("auto-story-engine-version"),
+    autoStoryEngineHint: $("auto-story-engine-hint"),
     manualSerializedOptions: $("manual-serialized-options"),
     manualSeriesSharedHook: $("manual-series-shared-hook"),
     manualSeriesInterleavedAudio: $("manual-series-interleaved-audio"),
@@ -601,6 +608,20 @@ function queryElements() {
     previewControlPlay: $("preview-control-play"),
     previewTimecode: $("preview-timecode"),
     videoPlaceholder: $("video-placeholder"),
+    tabBtnRightLog: $("tab-btn-right-log"),
+    tabBtnRightInspector: $("tab-btn-right-inspector"),
+    rightLogTab: $("right-log-tab"),
+    rightInspectorTab: $("right-inspector-tab"),
+    studioActivityFeed: $("studio-activity-feed"),
+    studioSystemLog: $("studio-system-log"),
+    toggleStudioRawLog: $("toggle-studio-raw-log"),
+    copyStudioLog: $("copy-studio-log"),
+    studioVariantHub: $("studio-variant-hub"),
+    variantHubSummary: $("variant-hub-summary"),
+    variantHubCards: $("variant-hub-cards"),
+    studioPipelineTracker: $("studio-pipeline-tracker"),
+    trackerCurrentLabel: $("tracker-current-label"),
+    trackerPercentLabel: $("tracker-percent-label"),
     inspectStart: $("inspect-start"),
     inspectEnd: $("inspect-end"),
     inspectDuration: $("inspect-duration"),
@@ -2136,8 +2157,15 @@ function addLog(message, level = "INFO") {
   const line = `[${level}] ${message}`;
   state.logLines.push(line);
   state.logLines = state.logLines.slice(-260);
-  el.systemLog.textContent = state.logLines.join("\n");
-  el.systemLog.scrollTop = el.systemLog.scrollHeight;
+  const logContent = state.logLines.join("\n");
+  if (el.systemLog) {
+    el.systemLog.textContent = logContent;
+    el.systemLog.scrollTop = el.systemLog.scrollHeight;
+  }
+  if (el.studioSystemLog) {
+    el.studioSystemLog.textContent = logContent;
+    el.studioSystemLog.scrollTop = el.studioSystemLog.scrollHeight;
+  }
   addActivity(message, level);
 }
 
@@ -2161,25 +2189,49 @@ function addActivity(message, level = "INFO") {
 }
 
 function renderActivity() {
-  if (!el.activityFeed) return;
-  if (!state.activities.length) {
-    el.activityFeed.innerHTML = `<div class="activity-empty">Hoạt động sẽ hiển thị ở đây khi bộ xử lý bắt đầu chạy.</div>`;
-    return;
-  }
-  el.activityFeed.innerHTML = state.activities.slice(-40).reverse().map((item) => `
+  const html = !state.activities.length
+    ? `<div class="activity-empty">Hoạt động sẽ hiển thị ở đây khi bộ xử lý bắt đầu chạy.</div>`
+    : state.activities.slice(-40).reverse().map((item) => `
     <div class="activity-item ${item.status}">
       <span class="activity-dot"></span>
       <p>${escapeHtml(item.message)}</p>
     </div>
   `).join("");
+
+  if (el.activityFeed) el.activityFeed.innerHTML = html;
+  if (el.studioActivityFeed) el.studioActivityFeed.innerHTML = html;
 }
+
+let exportProgressFadeTimer = null;
 
 function setExportProgress(percent = 0, label = "Đang xuất") {
   const value = Math.max(0, Math.min(100, Number(percent || 0)));
-  el.exportProgress?.classList.toggle("hidden", !state.busy && value <= 0);
+
+  if (exportProgressFadeTimer) {
+    clearTimeout(exportProgressFadeTimer);
+    exportProgressFadeTimer = null;
+  }
+
+  if (value <= 0 && !state.busy) {
+    el.exportProgress?.classList.add("hidden");
+    el.exportProgress?.classList.remove("fade-out");
+    return;
+  }
+
+  el.exportProgress?.classList.remove("hidden", "fade-out");
   if (el.exportProgressLabel) el.exportProgressLabel.textContent = label;
   if (el.exportProgressValue) el.exportProgressValue.textContent = `${Math.round(value)}%`;
   if (el.exportProgressBar) el.exportProgressBar.style.width = `${value}%`;
+
+  if (value >= 100) {
+    exportProgressFadeTimer = setTimeout(() => {
+      el.exportProgress?.classList.add("fade-out");
+      setTimeout(() => {
+        el.exportProgress?.classList.add("hidden");
+        el.exportProgress?.classList.remove("fade-out");
+      }, 400);
+    }, 2500);
+  }
 }
 
 function readSetupDraft() {
@@ -2208,6 +2260,7 @@ function writeSetupDraft() {
     autoStoryOutputCount: el.autoStoryOutputCount?.value || "2",
     autoStoryNarrationStyle: el.autoStoryNarrationStyle?.value || "investigative",
     autoStoryAudioBalance: el.autoStoryAudioBalance?.value || "balanced",
+    autoStoryEngineVersion: el.autoStoryEngineVersion?.value || "2",
     sourceVideoPath: el.sourceVideoPath?.value || "",
     sourceDownloadUrl: el.sourceDownloadUrl?.value || "",
     sourceKind: el.sourceVideoPath?.dataset.sourceKind || "",
@@ -2306,6 +2359,7 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (el.autoStoryOutputCount) el.autoStoryOutputCount.value = draft.autoStoryOutputCount || "2";
   if (el.autoStoryNarrationStyle) el.autoStoryNarrationStyle.value = draft.autoStoryNarrationStyle || "investigative";
   if (el.autoStoryAudioBalance) el.autoStoryAudioBalance.value = draft.autoStoryAudioBalance || "balanced";
+  if (el.autoStoryEngineVersion) { el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || "2"; updateAutoStoryEngineHint(); }
   if (draft.sourceVideoPath) el.sourceVideoPath.value = draft.sourceVideoPath;
   if (draft.sourceDownloadUrl && el.sourceDownloadUrl) el.sourceDownloadUrl.value = draft.sourceDownloadUrl;
   if (el.sourceVideoPath) {
@@ -2457,10 +2511,10 @@ function resetSetupStep(step) {
     if (el.manualPromptProfile) el.manualPromptProfile.value = "independent";
     setIndependentHookPriority(DEFAULT_INDEPENDENT_HOOK_PRIORITY);
     if (el.manualIndependentScriptCount) el.manualIndependentScriptCount.value = "2";
-    if (el.manualIndependentHookMax) el.manualIndependentHookMax.value = "30";
-    if (el.manualIndependentNarratorTone) el.manualIndependentNarratorTone.value = "profile_default";
-    if (el.manualIndependentAudioBalance) el.manualIndependentAudioBalance.value = "original_first";
-    if (el.manualIndependentPacing) el.manualIndependentPacing.value = "balanced";
+      if (el.manualIndependentHookMax) el.manualIndependentHookMax.value = "10";
+      if (el.manualIndependentNarratorTone) el.manualIndependentNarratorTone.value = "profile_default";
+      if (el.manualIndependentAudioBalance) el.manualIndependentAudioBalance.value = "narrator_led";
+      if (el.manualIndependentPacing) el.manualIndependentPacing.value = "fast";
     if (el.manualIndependentEnding) el.manualIndependentEnding.value = "verified_payoff";
     if (el.manualIndependentScript1Min) el.manualIndependentScript1Min.value = "60.5";
     if (el.manualIndependentScript1Max) el.manualIndependentScript1Max.value = "120";
@@ -2674,16 +2728,19 @@ function setRenderCancellable(isCancellable) {
 }
 
 function showToast(message) {
-  const toast = $("toast");
-  if (!toast) {
+  const container = $("toast-container");
+  if (!container) {
     window.alert(message);
     return;
   }
-  toast.textContent = message;
-  toast.classList.remove("hidden");
-  window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => {
-    toast.classList.add("hidden");
+  const item = document.createElement("div");
+  item.className = "toast-item";
+  item.textContent = message;
+  container.append(item);
+  window.setTimeout(() => {
+    item.style.opacity = "0";
+    item.style.transform = "translateY(-10px)";
+    window.setTimeout(() => item.remove(), 300);
   }, 3200);
 }
 
@@ -3342,7 +3399,7 @@ ${persona}
     ONE-SCENE-PER-SEGMENT: Every source range must remain inside exactly one selected sceneId. If a logical beat crosses a scene boundary, split it into scene-bounded segments, preserve macroBlockId/sourceRunId/actionSequenceId, divide voiceover without duplication, and recalculate the output Part timeline.
 13. DURATION FORMULA: endSec - startSec = (sourceEndSec - sourceStartSec) / playbackSpeed.
     OUTPUT TIMELINE IS DERIVED, NOT EDITORIAL: sourceStartSec/sourceEndSec and playbackSpeed are authoritative. Finalize every source trim and speed first, then recalculate every startSec/endSec continuously from zero using at least 3 decimal places. Never preserve old output timestamps after changing a source range or speed. The local tool will reflow the output timeline and its calculation is authoritative.
-14. AUDIO MODES: original_audio requires voiceover_text="". voiceover_only requires English voiceover_text and means source audio will be completely muted.
+14. AUDIO MODES: original_audio requires voiceover_text="". voiceover_only requires English voiceover_text and means source audio will be ducked to 20% volume.
 15. DURATION GATE: Every Part must be within ${options.minDuration}-${options.maxDuration}s and never below 60.5s. Add relevant complete evidence, never silence, freeze frames, credits, or filler.
 
 ================================================================================
@@ -3615,7 +3672,7 @@ Required order:
 - Every script must set audio_strategy="hybrid" and voiceover_enabled=true.
 - Exactly four segments must use voiceover_only. All other segments use original_audio.
 - original_audio requires voiceover_text="".
-- voiceover_only means the renderer completely mutes source audio for that segment.
+- voiceover_only means the renderer ducks source audio to 20% for that segment.
 - Never allow source narrator and tool narrator to overlap. When source_narrator_detected=true, use voiceover_only only if muting does not destroy indispensable scene dialogue or action sound.
 - Never place narrator voice over an important command, confession, reaction, radio call, or unique quote.
 
@@ -3785,7 +3842,7 @@ CORE GOAL: Build a high-retention, psychology-driven video that ALWAYS exceeds 6
    - ABSOLUTE BAN ON CLICHÉS: NEVER begin the context with cheap recap phrases such as "Caught on camera", "Let's rewind", "Here's what happened", or "Watch this".
    - FORCED SENTENCE STARTER: The very first sentence of this Voiceover MUST begin with a factual setting. You must start by stating the date/time, the geographical location/department, OR a broad objective premise (e.g., "On [Date], officers in [Location]...", "A routine traffic stop for [Reason]...", or "The [Department] received a desperate call...").
    - VOICEOVER DURATION EXCEPTION: This specific setup Context VO may run continuously for 15 to 25 seconds. Use this time to establish the stakes, the identities of the people involved, and the mundane origin of the incident.
-   - AUDIO MUTE AWARENESS: Assume the renderer will completely mute (0% volume) the source audio during \`voiceover_only\`. Write a strong, continuous narrative that carries the silent visual.
+   - AUDIO DUCKING AWARENESS: Assume the renderer will duck the source audio to 20% volume during \`voiceover_only\`. Write a strong, continuous narrative that carries the quietened visual.
    - EMOTIONAL CALIBRATION: Adapt the narrator's tone to the specific reality of the video. If the video is tragic, use a haunting/somber tone. If it is enraging, frame the arrogance objectively. Never force a "villain" narrative if the suspect is a victim or wrongly accused.
 
 3. PSYCHOLOGICAL & PHYSICAL ESCALATION (20s - 35s):
@@ -3811,7 +3868,7 @@ CORE GOAL: Build a high-retention, psychology-driven video that ALWAYS exceeds 6
 
 ### II. 3 DISTINCT SCRIPT ANGLES (THEMATIC FOCUS)
 - Script 1: "Narrated Raw Reality" (scriptId=1)
-  * NARRATED CLEAN-HYBRID: Fast, coherent narrator spine interrupted by the strongest clean quotes, impacts, and confrontations. Use 2-4 concise, non-adjacent narrator beats with distinct Context, causal-escalation, and Payoff jobs; do not fill a percentage quota.
+  * NARRATED CLEAN-HYBRID: Fast, coherent narrator spine interrupted by the strongest clean quotes, impacts, and confrontations. Use multiple non-adjacent narrator beats to create a 60/40 Audio Sandwich pacing. Do not limit to 2-4 VOs; narrate to maintain pace and ensure Dead Air does not exceed 15s.
 - Script 3: "The Viral Mini-Doc / Deep Dive" (scriptId=3)
   * Focus: Build a suspenseful investigative mini-documentary. Let important interrogation or confrontation runs breathe. Setup VO may be up to 25s.
 - Script 4: "The 80/20 High-Retention Reality" (scriptId=4)
@@ -4279,7 +4336,7 @@ Create only the requested script IDs listed at the top of this prompt. Keep ever
   * PROFILE: Set scriptId=1. HARD RANGE ${independentOptions.durations.script1.min}-${independentOptions.durations.script1.max} seconds. Approximately 4-6 macro-blocks and 4 or fewer major source jumps are useful references, not quotas. Use the shortest complete causal story that fulfills storySpine.
   * NARRATED CLEAN-HYBRID: Always set top-level audio_strategy="clean_hybrid", voiceover_enabled=true, and source_narrator_policy="forbidden". Script 1 must never be source-audio-only.
   * NARRATOR-LED PROFILE: Build a fast, coherent narrator spine, then interrupt it with the strongest clean quotes, commands, reactions, radio calls, impacts, and confrontations as proof. Narration may handle Context, contradiction, chronology, stakes, escalation, jargon clarity, and Payoff.
-  * NARRATOR PRESENCE GATE: Use 2-4 concise, non-adjacent voiceover_only beats with distinct story jobs. At least one must provide rewind/context or an indispensable causal bridge after the Hook and before the promised Climax; at least one later beat must advance escalation, resolve a stake/transition, or deliver verified Payoff. A single legal-outcome voiceover at the end is invalid. This is a functional minimum, not a duration quota.
+  * NARRATOR PRESENCE GATE: Use multiple non-adjacent voiceover_only beats to build a 60/40 Audio Sandwich. You must narrate frequently to prevent Dead Air (original audio without VO) from exceeding 15 continuous seconds. At least one must provide rewind/context or an indispensable causal bridge after the Hook and before the promised Climax; at least one later beat must advance escalation, resolve a stake/transition, or deliver verified Payoff.
   * Clean audio includes direct participant dialogue, dispatch/radio, reactions, breathing, sirens, and ambient action; it excludes every external host or documentary narrator.
   * Every voiceover_only beat must add verified context, expose a contradiction, explain a necessary source jump, raise stakes, or deliver Payoff. Never narrate an action that is already obvious and never replace an indispensable quote, command, confession, reaction, radio call, or impact.
   * If an essential visual contains source narrator, keep the visual, mute the complete source soundtrack, and faithfully recreate only verified narrator facts with the selected tool voice.
@@ -4365,7 +4422,7 @@ CRITICAL RULE: Always read the specific "calibrated voice speed" configuration p
 7. FINAL DURATION VALIDATION: HARD MONETIZATION MINIMUM: every requested script must be at least 60.5 seconds after playbackSpeed and must stay inside its user-configured HARD RANGE. Before returning, calculate actual duration as SUM((sourceEndSec-sourceStartSec)/playbackSpeed) for every Narrative Beat. If a plan exceeds its maximum, remove dead air, repeated proof, or low-value context and audit again. Never return an over-limit script. If below minimum, add only story-relevant evidence or justified 0.5-0.75 slow motion on a key split-second action. Never use silence, freeze frames, warning screens, credits, filler, repetition, or unsupported claims.
 8. PACING VALIDATION: Preserve complete decisive quotes/actions/reactions, but trim dead air and routine lead-in. Controlled micro-cuts are valid when microCutPurpose is explicit; do not turn the body into a rapid montage that breaks the narration arc.
 9. VISUAL GROUNDING VALIDATION: For every segment, verify that action_notes and narration claims are supported by specific frames plus overlapping SRT/original audio. Rewrite or remove any generic, vague, or unverified statement before returning the JSON.
-10. SCRIPT 1 NARRATED CLEAN-HYBRID OVERRIDE: Set audio_strategy="clean_hybrid", voiceover_enabled=true, and source_narrator_policy="forbidden". Use 2-4 concise, non-adjacent narrator beats forming one connected story arc while preserving decisive clean original-audio proof. Require a narrator-led rewind/context or causal bridge before the promised Climax and one later escalation/stake-resolution/Payoff beat; a final legal-outcome line alone is invalid. Every voiceover_only segment must map one-to-one to narration_arc through narrationBeatId. Every original_audio segment must contain only direct scene dialogue or ambient action. Mute and recreate every essential source-narrator interval with the selected tool voice. Thematic source jumps are valid only under the explicit jump contract.
+10. SCRIPT 1 NARRATED CLEAN-HYBRID OVERRIDE: Set audio_strategy="clean_hybrid", voiceover_enabled=true, and source_narrator_policy="forbidden". Use multiple narrator beats forming one connected story arc (aim for ~40% voiceover duration). Prevent Dead Air from exceeding 15 seconds by frequently injecting narrator voice. Require a narrator-led rewind/context or causal bridge before the promised Climax and one later escalation/stake-resolution/Payoff beat. Every voiceover_only segment must map one-to-one to narration_arc through narrationBeatId. Every original_audio segment must contain only direct scene dialogue or ambient action. Mute and recreate every essential source-narrator interval with the selected tool voice. Thematic source jumps are valid only under the explicit jump contract.
 11. SCRIPT 4 OVERRIDE: Script 4 follows its dedicated story-first ${independentOptions.durations.script4.min}-${independentOptions.durations.script4.max} second framework, uses a 4-${independentOptions.hookMaxSec} second cold-viewer Hook selected by the ranked fallback policy, and shows visual stakes immediately after the Hook. Macro-block, source-jump, narration-count, and 80/20 audio figures are reference diagnostics only. The Hook may enter mid-exchange only when the first 3 seconds remain understandable; all later blocks preserve causal continuity, return to the promised climax, and deliver the selected ending policy without hiding a known result.
 
 ---
@@ -4986,8 +5043,16 @@ async function runManualAntigravityStage1() {
   setExportProgress(4, state.activeOperation);
   el.cancelManualAntigravityStage1?.classList.remove("hidden");
   if (el.cancelManualAntigravityStage1) el.cancelManualAntigravityStage1.disabled = false;
+  if (el.aiAnalysisTerminal) {
+    el.aiAnalysisTerminal.classList.remove("hidden");
+    el.aiAnalysisTerminal.classList.remove("is-thinking");
+    if (el.aiTerminalPercentage) el.aiTerminalPercentage.textContent = "0%";
+    if (el.aiTerminalProgressBar) el.aiTerminalProgressBar.style.width = "0%";
+    if (el.aiTerminalLog) el.aiTerminalLog.textContent = `Đang khởi động ${aiInfo.label}...`;
+  }
   if (el.manualAntigravityStage1Status) {
-    el.manualAntigravityStage1Status.textContent = `Đang đọc nguyên gói GĐ1 bằng ${aiInfo.label} · ${aiInfo.model}...`;
+    el.manualAntigravityStage1Status.classList.add("hidden");
+    el.manualAntigravityStage1Status.textContent = `Đang đọc nguyên gói GĐ1 bằng ${aiInfo.label} - ${aiInfo.model}...`;
   }
   try {
     const saved = await window.cineviral.saveSettings(readSettings());
@@ -5021,6 +5086,8 @@ async function runManualAntigravityStage1() {
     if (el.manualAntigravityStage1Status) el.manualAntigravityStage1Status.textContent = error.message;
     showToast(error.message);
   } finally {
+    if (el.aiAnalysisTerminal) el.aiAnalysisTerminal.classList.add("hidden");
+    if (el.manualAntigravityStage1Status) el.manualAntigravityStage1Status.classList.remove("hidden");
     el.cancelManualAntigravityStage1?.classList.add("hidden");
     setBusy(false);
     if (el.runManualAntigravityStage1) {
@@ -5213,6 +5280,12 @@ async function createAndRunConfiguredStage1() {
   setAutoStatus("3/5 · Đang tạo project và nhập các variant...");
   const project = await createAndIngestProject();
   if (!project) return;
+  // Bug-2 fix: do not render when no variants/scripts exist.
+  if (!getHighlightVariants(project).length) {
+    setAutoStatus("Dừng · Không có kịch bản hợp lệ để render draft.");
+    addLog("AutoStory: 0 kịch bản hợp lệ — bỏ qua render draft.", "ERROR");
+    return;
+  }
   setAutoStatus("4/5 · Đang render draft tất cả variant...");
   const rendered = getHighlightVariants(project).length > 1
     ? await renderAllFastDraftVariants({ skipConfirm: true })
@@ -6101,7 +6174,8 @@ function updateReview() {
   if (el.reviewAutoStory) {
     const min = Math.max(65, Number(el.autoStoryTargetMin?.value || 65));
     const max = Math.max(min, Number(el.autoStoryTargetMax?.value || 90));
-    el.reviewAutoStory.textContent = `${Number(el.autoStoryOutputCount?.value || 2)} video · ${min}-${max}s · ${el.autoStoryNarrationStyle?.options[el.autoStoryNarrationStyle.selectedIndex]?.textContent || "Điều tra"}`;
+    const engineLabel = Number(el.autoStoryEngineVersion?.value) === 3 ? "V3 Story Model" : "V2 Legacy";
+    el.reviewAutoStory.textContent = `${engineLabel} · ${Number(el.autoStoryOutputCount?.value || 2)} video · ${min}-${max}s · ${el.autoStoryNarrationStyle?.options[el.autoStoryNarrationStyle.selectedIndex]?.textContent || "Điều tra"}`;
   }
   if (isRecap) {
     el.reviewDuration.textContent = `${Number(el.targetDuration.value || 60)}s`;
@@ -6312,6 +6386,14 @@ function renderProjectPicker() {
     : `<option value="">-- Chưa có dự án --</option>`;
 }
 
+function updateAutoStoryEngineHint() {
+  if (!el.autoStoryEngineHint) return;
+  const v3 = Number(el.autoStoryEngineVersion?.value) === 3;
+  el.autoStoryEngineHint.textContent = v3
+    ? "V3: hiểu toàn bộ nguồn một lần (Source Story Model), thiết kế story beats, kiểm tra narrator (grounding/spoiler) và duck âm gốc thay vì tắt. Nên đặt số kịch bản = 1 khi test lần đầu."
+    : "V2: pipeline production hiện tại (ổn định). Chọn V3 để dùng story-model mới.";
+}
+
 function readProjectPayload() {
   const setupMode = state.selectedMode;
   const selectedMode = ["recap", "script_rewrite"].includes(setupMode)
@@ -6373,6 +6455,9 @@ function readProjectPayload() {
         )
       }
       : null,
+    // AutoStory engine version at PROJECT ROOT (the live service checks project.autoStoryContractVersion).
+    // Only set for an explicit V3 selection; V2/legacy leaves it undefined → existing behavior preserved.
+    autoStoryContractVersion: isAutoStoryMode(setupMode) && Number(el.autoStoryEngineVersion?.value) === 3 ? 3 : undefined,
     manualGeminiPackPath: isManualGeminiWorkflowMode(setupMode) ? (el.manualGeminiPackPath?.value || "") : "",
     manualGeminiPromptOptions: isManualGeminiProMode(setupMode)
       ? readManualGeminiPromptOptions()
@@ -6679,6 +6764,100 @@ function getSegmentReviewStatus({ review, text, isReviewing }) {
     label: review.verdict === "pass" ? "Đạt" : review.verdict === "needs_rewrite" ? "Cần viết lại" : "Cảnh báo",
     detail: review.summary || "Đã có đánh giá AI."
   };
+}
+
+function switchRightTab(_tabName = "log") {
+  // Panel bên phải giờ là Nhật ký xử lý cố định
+}
+
+function renderStudioVariantHub(project = state.currentProject) {
+  if (!el.studioVariantHub || !el.variantHubCards) return;
+  const variants = getHighlightVariants(project);
+  const shouldShow = project?.mode === "highlight_cut" && variants.length > 0;
+  el.studioVariantHub.classList.toggle("hidden", !shouldShow);
+  if (!shouldShow) return;
+
+  if (el.variantHubSummary) {
+    el.variantHubSummary.textContent = `${variants.length} variant${variants.length > 1 ? "s" : ""}`;
+  }
+
+  const activeId = project.analysis?.activeVariantId || variants[0]?.id || "";
+  const queue = state.variantExportQueue || [];
+  const queueById = new Map(queue.map((item) => [item.id, item]));
+
+  el.variantHubCards.innerHTML = variants.map((variant, index) => {
+    const isActive = variant.id === activeId;
+    const duration = (variant.segments || []).reduce((sum, s) => sum + getSegmentTimelineDuration(s), 0);
+    const title = variant.label || variant.title || `Variant ${index + 1}`;
+    const queueItem = queueById.get(variant.id);
+
+    let badgeText = "Chờ xử lý";
+    let badgeClass = "badge-pending";
+
+    if (queueItem?.status === "rendering") {
+      badgeText = "Đang dựng...";
+      badgeClass = "badge-rendering";
+    } else if (queueItem?.status === "reviewing") {
+      badgeText = "Đang review AI...";
+      badgeClass = "badge-reviewing";
+    } else if (variant.draftReview?.verdict === "PASS" || variant.draftReviewReadiness?.grade === "A") {
+      badgeText = "V2 PASS";
+      badgeClass = "badge-pass";
+    } else if (variant.draftReview?.verdict === "NEEDS_ATTENTION") {
+      badgeText = "Cần chú ý";
+      badgeClass = "badge-warning";
+    } else if (variant.artifacts?.finalVideoPath) {
+      badgeText = "Đã xuất";
+      badgeClass = "badge-pass";
+    } else if (variant.artifacts?.fastDraftVideoPath) {
+      badgeText = "Draft sẵn sàng";
+      badgeClass = "badge-pending";
+    }
+
+    const viralScore = Number(variant.viralPreflight?.score || variant.draftReviewReadiness?.score || 0);
+    const scoreClass = viralScore >= 80 ? "score-high" : viralScore >= 60 ? "score-med" : "score-low";
+    const scoreDisplay = viralScore > 0 ? `${viralScore}/100` : "--";
+
+    return `
+      <div class="variant-hub-card ${isActive ? "active" : ""}" data-highlight-variant="${escapeHtml(variant.id)}" title="${escapeHtml(title)}">
+        <div class="variant-hub-card-top">
+          <span class="variant-hub-card-title">#${index + 1} ${escapeHtml(title)}</span>
+          <span class="variant-hub-card-badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+        </div>
+        <div class="variant-hub-card-bottom">
+          <span>${fmt(duration, 1)}s · ${(variant.segments || []).length} cảnh</span>
+          <span class="variant-hub-card-score ${scoreClass}">Điểm: ${scoreDisplay}</span>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function updateStudioPipelineTracker(options = {}) {
+  if (!el.studioPipelineTracker) return;
+  const { visible = false, label = "", percent = 0, activeStep = "" } = options;
+  el.studioPipelineTracker.classList.toggle("hidden", !visible);
+  if (!visible) return;
+
+  if (el.trackerCurrentLabel) el.trackerCurrentLabel.textContent = label;
+  if (el.trackerPercentLabel) el.trackerPercentLabel.textContent = `${Math.round(percent)}%`;
+
+  const steps = ["draft", "package", "review", "v2"];
+  const activeIdx = steps.indexOf(activeStep);
+
+  steps.forEach((step, idx) => {
+    const node = el.studioPipelineTracker.querySelector(`[data-pipe-step="${step}"]`);
+    if (node) {
+      node.classList.remove("active", "completed");
+      if (idx < activeIdx) node.classList.add("completed");
+      else if (idx === activeIdx) node.classList.add("active");
+    }
+  });
+
+  const lines = el.studioPipelineTracker.querySelectorAll(".stepper-line");
+  lines.forEach((line, idx) => {
+    line.classList.toggle("completed", idx < activeIdx);
+  });
 }
 
 function renderHighlightVariantBar(project = state.currentProject) {
@@ -7278,8 +7457,25 @@ function renderAutoStoryStatus() {
   const panel = $("auto-story-status");
   const button = $("resume-auto-story");
   panel?.classList.toggle("hidden", !visible);
-  if (!visible) { button?.classList.add("hidden"); return; }
+  if (!visible) { button?.classList.add("hidden"); $("pipeline-stepper")?.classList.add("hidden"); return; }
   const job = project.autoStoryState || {};
+  const errorsForStepper = (job.audits || project.analysis?.autoStoryAudits || []).some(a => a.error || a.finalCheck?.error) || project.analysis?.variantDraftBatch?.failures?.length || job.failures?.length;
+  const stepper = $("pipeline-stepper");
+  if (stepper) {
+    stepper.classList.remove("hidden");
+    const p = job.phase || "planning";
+    const phases = ["planning", "editing", "rendering", "reviewing"];
+    let currentIdx = phases.indexOf(p);
+    if (currentIdx === -1) currentIdx = p === "complete" ? 4 : 0;
+    phases.forEach((stepName, idx) => {
+      const el = stepper.querySelector(`[data-step="${stepName}"]`);
+      if (el) {
+        el.className = "step";
+        if (idx < currentIdx || p === "complete") el.classList.add("completed");
+        else if (idx === currentIdx) el.classList.add(errorsForStepper ? "error" : "active");
+      }
+    });
+  }
   const variants = project.analysis?.highlightVariants || [];
   const audits = job.audits || project.analysis?.autoStoryAudits || [];
   const requested = project.autoStoryConfig?.outputCount || 2;
@@ -7337,9 +7533,16 @@ function renderAutoStoryStatus() {
     const open = panel.dataset.projectId !== project.id || !panel.querySelector(".auto-story-script-list") || panel.querySelector(".auto-story-script-list").open;
     const diagnosticsOpen = panel.dataset.projectId === project.id && panel.querySelector(".auto-story-diagnostics")?.open;
     panel.dataset.projectId = project.id;
-    panel.innerHTML = `<div class="auto-story-heading"><strong>${escapeHtml(lines[0])}</strong><span>${escapeHtml(lines[2])}</span></div>
+    const isV3 = project.autoStoryContractVersion === 3 || project.autoStoryPipelineVersion === "source-story-v3";
+    const engineBadge = { label: isV3 ? "AutoStory V3" : "AutoStory V2", cls: isV3 ? "" : "v2" };
+    panel.innerHTML = `<div class="auto-story-heading"><strong>${escapeHtml(lines[0])}</strong><span class="auto-story-engine-badge ${engineBadge.cls}">${escapeHtml(engineBadge.label)}</span><span>${escapeHtml(lines[2])}</span></div>
       <details class="auto-story-script-list" ${open ? "open" : ""}><summary>${escapeHtml(lines[1])}</summary><div class="auto-story-rows"></div></details>
-      <details class="auto-story-diagnostics" ${diagnosticsOpen ? "open" : ""}><summary>Chi phí và chi tiết</summary><div>${lines.slice(3).map(line => `<p>${escapeHtml(line)}</p>`).join("") || "Chưa có thông tin bổ sung."}</div></details>`;
+      <details class="auto-story-diagnostics" ${diagnosticsOpen ? "open" : ""}><summary>Chi phí và chi tiết</summary><div>${lines.slice(3).map(line => `<p>${escapeHtml(line)}</p>`).join("") || "Chưa có thông tin bổ sung."}</div></details>
+      <button type="button" class="auto-story-icon auto-story-open-folder" title="Mở thư mục phân tích của dự án">Mở thư mục phân tích</button>`;
+    panel.querySelector(".auto-story-open-folder")?.addEventListener("click", async () => {
+      try { await window.cineviral.openProjectFolder(project.id); }
+      catch (e) { addLog(e.message, "ERROR"); }
+    });
     scriptList = panel.querySelector(".auto-story-rows");
   }
   if (panel) for (const id of new Set([...variants.map(v => Number(v.scriptId)), ...(job.failures || []).map(f => Number(f.scriptId))])) {
@@ -7402,17 +7605,18 @@ function renderStudio() {
     : ["manual_gemini_pro", "manual_gemini_pro_two_pass", "manual_gemini_draft_review"].includes(project.analysisWorkflow)
     ? "Gemini Draft Review · "
     : "";
-  el.segmentSummary.textContent = `${workflowLabel}${segments.length} đoạn - ${fmt(totalDuration, 1)} giây`;
-  el.kpiScenes.textContent = scenes.length || analysis.kpi?.sceneCount || 0;
-  el.kpiSegments.textContent = segments.length || analysis.kpi?.segmentCount || 0;
-  el.kpiDuration.textContent = `${fmt(totalDuration, 1)}s`;
+  if (el.kpiScenes) el.kpiScenes.textContent = scenes.length || analysis.kpi?.sceneCount || 0;
+  if (el.kpiSegments) el.kpiSegments.textContent = segments.length || analysis.kpi?.segmentCount || 0;
+  if (el.kpiDuration) el.kpiDuration.textContent = `${fmt(totalDuration, 1)}s`;
   renderViralDiagnostics(project);
 
   const warnings = analysis.warnings || [];
-  el.warningBox.innerHTML = warnings.length
-    ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
-    : "Không phát hiện bất thường. Sẵn sàng xuất video.";
-  el.warningBox.style.color = warnings.length ? "#ffb020" : "#35f0a4";
+  if (el.warningBox) {
+    el.warningBox.innerHTML = warnings.length
+      ? `<ul>${warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}</ul>`
+      : "Không phát hiện bất thường. Sẵn sàng xuất video.";
+    el.warningBox.style.color = warnings.length ? "#ffb020" : "#35f0a4";
+  }
   const isRecap = project.mode === "recap";
   const isScriptRewrite = project.mode === "script_rewrite";
   const isSatisfyingStorytime = project.mode === "satisfying_storytime";
@@ -7454,12 +7658,18 @@ function renderStudio() {
   el.openOutputFolder?.classList.toggle("hidden", !getFinalOutputPath(project));
 
   renderHighlightVariantBar(project);
+  renderStudioVariantHub(project);
   renderHighlightRevisionBar(project);
   renderSegments(segments);
   renderInspector();
   renderSpeakers();
   renderTimeline(segments, scenes);
   renderPreviewSource(project);
+  if (el.studioSystemLog) {
+    el.studioSystemLog.textContent = state.logLines.join("\n");
+    el.studioSystemLog.scrollTop = el.studioSystemLog.scrollHeight;
+  }
+  renderActivity();
   syncConfiguredAiWorkflowUi();
 }
 
@@ -8326,10 +8536,10 @@ function renderSceneReview(segment) {
 function renderInspector() {
   const segment = getSegments()[state.selectedSegmentIndex] || null;
   if (!segment) {
-    el.inspectStart.textContent = "0.000";
-    el.inspectEnd.textContent = "0.000";
-    el.inspectDuration.textContent = "0.000s";
-    el.inspectText.value = "";
+    if (el.inspectStart) el.inspectStart.textContent = "0.000";
+    if (el.inspectEnd) el.inspectEnd.textContent = "0.000";
+    if (el.inspectDuration) el.inspectDuration.textContent = "0.000s";
+    if (el.inspectText) el.inspectText.value = "";
     if (el.inspectSpeaker) el.inspectSpeaker.value = "SPEAKER_00";
     if (el.inspectSpeed) el.inspectSpeed.value = "1";
     if (el.inspectVolume) el.inspectVolume.value = "100";
@@ -8339,15 +8549,15 @@ function renderInspector() {
     renderSceneReview(null);
     return;
   }
-  el.inspectStart.textContent = fmt(segment.startSec);
-  el.inspectEnd.textContent = fmt(segment.endSec);
-  el.inspectDuration.textContent = `${fmt((segment.endSec || 0) - (segment.startSec || 0))}s`;
+  if (el.inspectStart) el.inspectStart.textContent = fmt(segment.startSec);
+  if (el.inspectEnd) el.inspectEnd.textContent = fmt(segment.endSec);
+  if (el.inspectDuration) el.inspectDuration.textContent = `${fmt((segment.endSec || 0) - (segment.startSec || 0))}s`;
   const inspectorText = isHighlightCutProject()
     ? getHighlightSegmentText(segment)
     : state.currentProject?.mode === "recap"
       ? (segment.narrationLine || segment.subtitleText || "")
       : (segment.dubbingLine || segment.translatedText || segment.text || "");
-  el.inspectText.value = inspectorText;
+  if (el.inspectText) el.inspectText.value = inspectorText;
   if (el.inspectSpeaker) {
     const speaker = segment.speaker || "SPEAKER_00";
     if (![...el.inspectSpeaker.options].some((option) => option.value === speaker)) {
@@ -8711,6 +8921,18 @@ async function renderFastDraftVideo() {
     showToast("Render nháp nhanh hiện hỗ trợ Storytime và Highlight Cut.");
     return;
   }
+  // Bug-2 fix: never render when AutoStory produced no scripts / ended failed —
+  // preserve and show the original generation error instead of a generic one.
+  if (state.currentProject.analysisWorkflow === "vertex_auto_story"
+    && !(state.currentProject.analysis?.highlightVariants?.length)
+    && ["failed", "review_failed", "render_failed", "cancelled"].includes(state.currentProject.autoStoryState?.phase)) {
+    const err = state.currentProject.autoStoryState?.error
+      || state.currentProject.autoStoryState?.failures?.[0]?.error
+      || "AutoStory chưa tạo được kịch bản để render.";
+    addLog(`Không thể render draft: ${err}`, "ERROR");
+    showToast(err);
+    return;
+  }
   setBusy(true);
   state.activeOperation = "Render nháp nhanh";
   setExportProgress(5, "Đang chuẩn bị render nháp nhanh");
@@ -8927,6 +9149,91 @@ async function openConfiguredDraftReviewResult() {
   await window.cineviral.openFile(resultDir);
 }
 
+async function runAutoReviewAndRenderAll() {
+  if (!state.currentProject || state.currentProject.mode !== "highlight_cut") return;
+  const variants = getHighlightVariants();
+  if (!variants.length) return;
+  
+  const confirmed = await showConfirmAction({
+    title: "Auto Review & Render Toàn bộ",
+    message: `Hệ thống sẽ tự động chạy: AI Review ➔ Import V2 ➔ Render Nháp Nhanh V2 cho ${variants.length} variant. Sẽ tốn nhiều thời gian và credit (nếu dùng Vertex). Bạn có muốn tiếp tục?`,
+    confirmText: "Bắt đầu"
+  });
+  if (!confirmed) return;
+
+  switchRightTab("log");
+  updateStudioPipelineTracker({
+    visible: true,
+    label: `Bắt đầu Auto Pipeline cho ${variants.length} variant...`,
+    percent: 5,
+    activeStep: "draft"
+  });
+
+  let successCount = 0;
+  for (const [index, variant] of variants.entries()) {
+    try {
+      await switchHighlightVariant(variant.id);
+      renderStudioVariantHub();
+      addLog(`[Auto Pipeline] Bắt đầu xử lý Variant ${index + 1}/${variants.length}...`);
+      
+      const vProgressBase = (index / variants.length) * 100;
+      const vProgressSpan = 100 / variants.length;
+
+      updateStudioPipelineTracker({
+        visible: true,
+        label: `Variant ${index + 1}/${variants.length}: Chuẩn bị gói review...`,
+        percent: vProgressBase + vProgressSpan * 0.25,
+        activeStep: "package"
+      });
+
+      addLog(`[Auto Pipeline] ${index + 1}/${variants.length}: Đang chạy AI Review...`);
+      updateStudioPipelineTracker({
+        visible: true,
+        label: `Variant ${index + 1}/${variants.length}: AI đang xem video và đánh giá...`,
+        percent: vProgressBase + vProgressSpan * 0.5,
+        activeStep: "review"
+      });
+
+      const reviewResult = await runConfiguredDraftReview();
+      if (!reviewResult || !reviewResult.resultPath) {
+        addLog(`[Auto Pipeline] Variant ${index + 1} thất bại ở bước AI Review. Bỏ qua.`, "WARNING");
+        continue;
+      }
+
+      addLog(`[Auto Pipeline] ${index + 1}/${variants.length}: Đang import bản Review V2...`);
+      await importReviewedScriptPath(reviewResult.resultPath, { autoRouted: true });
+
+      addLog(`[Auto Pipeline] ${index + 1}/${variants.length}: Đang render bản nháp V2...`);
+      updateStudioPipelineTracker({
+        visible: true,
+        label: `Variant ${index + 1}/${variants.length}: Đang render video V2...`,
+        percent: vProgressBase + vProgressSpan * 0.85,
+        activeStep: "v2"
+      });
+
+      await renderFastDraftVideo();
+      
+      successCount++;
+      addLog(`[Auto Pipeline] Variant ${index + 1} hoàn tất V2 thành công!`, "SUCCESS");
+      renderStudioVariantHub();
+    } catch (err) {
+      addLog(`[Auto Pipeline] Lỗi ở Variant ${index + 1}: ${err.message}`, "ERROR");
+    }
+  }
+  
+  updateStudioPipelineTracker({
+    visible: true,
+    label: `Hoàn tất toàn bộ ${successCount}/${variants.length} variant!`,
+    percent: 100,
+    activeStep: "v2"
+  });
+  renderStudioVariantHub();
+  setTimeout(() => updateStudioPipelineTracker({ visible: false }), 10000);
+
+  showToast(`Auto Review hoàn tất ${successCount}/${variants.length} variant.`);
+  addLog(`[Auto Pipeline] HOÀN TẤT. ${successCount}/${variants.length} variant đã sinh V2 và render xong.`, "INFO");
+}
+
 async function importConfiguredDraftReview() {
   const resultPath = getDraftReviewArtifacts().aiResultPath;
   if (!resultPath) {
@@ -9019,8 +9326,19 @@ async function createAndIngestProject() {
     if (payload.analysisWorkflow === "vertex_auto_story") {
       addLog("Vertex đang xem nguồn, chọn câu chuyện và dựng theo bằng chứng...");
       const result = await window.cineviral.runAutoStoryPipeline(created.project.id);
-      state.currentProject = result.project;
-      addLog(`Đã tạo và render draft ${result.analysis?.scriptPaths?.length || payload.autoStoryConfig?.outputCount || 0} Auto Story.`);
+      if (result.project) state.currentProject = result.project;
+      // Bug-2 fix: a failed/zero-script V3 run STOPS here — surface the real error,
+      // do not claim a draft was rendered, do not proceed to any render step.
+      if (result.generationFailed || !(result.analysis?.scriptPaths?.length)) {
+        const err = result.error || result.project?.autoStoryState?.error
+          || result.project?.autoStoryState?.failures?.[0]?.error || "AutoStory V3 không tạo được kịch bản nào.";
+        addLog(`AutoStory V3 thất bại: ${err}`, "ERROR");
+        showToast(`AutoStory V3 thất bại: ${err}`);
+        await refreshProjects();
+        showStudio(state.currentProject);
+        return state.currentProject;
+      }
+      addLog(`Đã tạo và render draft ${result.analysis.scriptPaths.length} Auto Story.`);
     } else if (payload.mode === "dubbing") {
       addLog("Đang nạp media cho chế độ thuyết minh & dịch...");
       state.currentProject = await window.cineviral.ingestDubbingProject(created.project.id);
@@ -9326,6 +9644,7 @@ async function downloadSourceFromUrl() {
 }
 
 function bindEvents() {
+  if (el.runAutoReviewAll) el.runAutoReviewAll.addEventListener("click", runAutoReviewAndRenderAll);
   window.cineviral.onSourceDownloadProgress?.(updateSourceDownloadProgress);
   el.cancelConfirmAction?.addEventListener("click", () => closeConfirmAction(false));
   el.submitConfirmAction?.addEventListener("click", () => closeConfirmAction(true));
@@ -9617,6 +9936,15 @@ function bindEvents() {
       writeSetupDraft();
     });
   });
+  el.autoStoryEngineVersion?.addEventListener("change", () => {
+    // Convenience for the first V3 test: prefer a single output unless the user changed it.
+    if (Number(el.autoStoryEngineVersion.value) === 3 && el.autoStoryOutputCount && el.autoStoryOutputCount.value === "2") {
+      el.autoStoryOutputCount.value = "1";
+    }
+    updateAutoStoryEngineHint();
+    updateReview();
+    writeSetupDraft();
+  });
   [
     el.manualPromptProfile,
     el.manualIndependentScriptCount,
@@ -9830,8 +10158,8 @@ function bindEvents() {
     button.addEventListener("click", () => {
       document.querySelectorAll(".left-panel .tab").forEach((node) => node.classList.remove("active"));
       button.classList.add("active");
-      ["dialogue", "mixer", "stats"].forEach((name) => {
-        $(`${name}-tab`).classList.toggle("hidden", button.dataset.tab !== name);
+      ["dialogue", "mixer"].forEach((name) => {
+        $(`${name}-tab`)?.classList.toggle("hidden", button.dataset.tab !== name);
       });
       const editing = button.dataset.tab === "mixer";
       if (editing) {
@@ -9846,12 +10174,9 @@ function bindEvents() {
     });
   });
 
-  document.querySelectorAll(".inspector-panel .tab").forEach((button) => {
+  document.querySelectorAll(".right-panel-tabs .tab").forEach((button) => {
     button.addEventListener("click", () => {
-      document.querySelectorAll(".inspector-panel .tab").forEach((node) => node.classList.remove("active"));
-      button.classList.add("active");
-      $("segment-inspector").classList.toggle("hidden", button.dataset.inspector !== "segment");
-      $("voice-inspector").classList.toggle("hidden", button.dataset.inspector !== "voice");
+      switchRightTab(button.dataset.rightTab || "log");
     });
   });
 
@@ -10088,7 +10413,7 @@ function bindEvents() {
     }
   });
 
-  el.saveSegment.addEventListener("click", async () => {
+  el.saveSegment?.addEventListener("click", async () => {
     setBusy(true);
     try {
       await saveCurrentSegments();
@@ -10290,6 +10615,16 @@ function bindEvents() {
     if (!button) return;
     try {
       await switchHighlightVariant(button.dataset.highlightVariant);
+    } catch (error) {
+      addLog(error.message, "ERROR");
+      showToast(error.message);
+    }
+  });
+  el.variantHubCards?.addEventListener("click", async (event) => {
+    const card = event.target.closest("[data-highlight-variant]");
+    if (!card) return;
+    try {
+      await switchHighlightVariant(card.dataset.highlightVariant);
     } catch (error) {
       addLog(error.message, "ERROR");
       showToast(error.message);
@@ -10509,14 +10844,28 @@ function bindEvents() {
     }
   });
 
-  el.copyLog.addEventListener("click", () => {
+  el.copyLog?.addEventListener("click", () => {
     navigator.clipboard.writeText(state.logLines.join("\n"));
   });
-  el.toggleRawLog.addEventListener("click", () => {
+  el.toggleRawLog?.addEventListener("click", () => {
     state.rawLogVisible = !state.rawLogVisible;
-    el.systemLog.classList.toggle("hidden", !state.rawLogVisible);
-    el.activityFeed.classList.toggle("hidden", state.rawLogVisible);
-    el.toggleRawLog.textContent = state.rawLogVisible ? "Hiện hoạt động" : "Hiện log thô";
+    el.systemLog?.classList.toggle("hidden", !state.rawLogVisible);
+    el.activityFeed?.classList.toggle("hidden", state.rawLogVisible);
+    if (el.toggleRawLog) {
+      el.toggleRawLog.textContent = state.rawLogVisible ? "Hiện hoạt động" : "Hiện log thô";
+    }
+  });
+
+  el.copyStudioLog?.addEventListener("click", () => {
+    navigator.clipboard.writeText(state.logLines.join("\n"));
+  });
+  el.toggleStudioRawLog?.addEventListener("click", () => {
+    state.studioRawLogVisible = !state.studioRawLogVisible;
+    el.studioSystemLog?.classList.toggle("hidden", !state.studioRawLogVisible);
+    el.studioActivityFeed?.classList.toggle("hidden", state.studioRawLogVisible);
+    if (el.toggleStudioRawLog) {
+      el.toggleStudioRawLog.textContent = state.studioRawLogVisible ? "Hiện hoạt động" : "Hiện log thô";
+    }
   });
 }
 
@@ -10557,18 +10906,40 @@ async function bootstrap() {
       setVariantExportQueue(payload.variantBatch.items);
     }
     if (payload.message) {
-      addLog([payload.stage || payload.step, payload.message].filter(Boolean).join(': '), payload.level || 'INFO');
+      const formattedLog = [payload.stage || payload.step, payload.message].filter(Boolean).join(': ');
+      if (formattedLog !== state.lastLoggedProgressMessage) {
+        state.lastLoggedProgressMessage = formattedLog;
+        addLog(formattedLog, payload.level || 'INFO');
+      }
     }
-    if (["antigravity_stage1", "configured_ai_stage1"].includes(payload.step) && el.manualAntigravityStage1Status) {
-      el.manualAntigravityStage1Status.textContent = `${Math.round(Number(payload.percent || 0))}% · ${payload.message || "AI đang xử lý GĐ1..."}`;
-    }
-    if (payload.step === "configured_ai_draft_review" && el.draftReviewStatus) {
-      el.draftReviewStatus.textContent = `${Math.round(Number(payload.percent || 0))}% · ${payload.message || "AI đang review draft..."}`;
-    }
-    if (typeof payload.percent === "number") {
-      const step = payload.stage || payload.step;
-      const label = payload.message || step || state.activeOperation || "Đang xử lý";
-      setExportProgress(payload.percent, label.trim());
+    if (["antigravity_stage1", "configured_ai_stage1"].includes(payload.step)) {
+      if (el.aiAnalysisTerminal) {
+        el.aiAnalysisTerminal.classList.remove("hidden");
+        if (el.manualAntigravityStage1Status) el.manualAntigravityStage1Status.classList.add("hidden");
+        
+        if (payload.message && (payload.message.includes("viết kịch bản") || payload.message.includes("phân tích prompt"))) {
+           el.aiAnalysisTerminal.classList.add("is-thinking");
+        } else {
+           el.aiAnalysisTerminal.classList.remove("is-thinking");
+        }
+        
+        const pct = Math.round(Number(payload.percent || 0));
+        if (el.aiTerminalPercentage) el.aiTerminalPercentage.textContent = `${pct}%`;
+        if (el.aiTerminalProgressBar) el.aiTerminalProgressBar.style.width = `${pct}%`;
+        if (el.aiTerminalLog && payload.message) el.aiTerminalLog.textContent = payload.message;
+      }
+      if (typeof payload.percent === "number") {
+        setExportProgress(payload.percent, (payload.message || "Antigravity đang phân tích...").trim());
+      }
+    } else if (payload.step === "configured_ai_draft_review" && el.draftReviewStatus) {
+      el.draftReviewStatus.textContent = `${Math.round(Number(payload.percent || 0))}% - ${payload.message || "AI đang review draft..."}`;
+      if (typeof payload.percent === "number") setExportProgress(payload.percent, (payload.message || payload.step || state.activeOperation || "Đang xử lý").trim());
+    } else {
+      if (typeof payload.percent === "number") {
+        const step = payload.stage || payload.step;
+        const label = payload.message || step || state.activeOperation || "Đang xử lý";
+        setExportProgress(payload.percent, label.trim());
+      }
     }
     if (payload.project) {
       state.currentProject = payload.project;

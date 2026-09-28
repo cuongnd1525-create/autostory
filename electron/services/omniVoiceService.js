@@ -590,14 +590,23 @@ class OmniVoiceService {
     });
   }
 
-  async synthesizeSpeech({ text, voiceName, outputPath, language = "auto", durationSec, numStep, timeoutMs, onProgress }) {
+  async synthesizeSpeech({ text, voiceName, outputPath, language = "auto", durationSec, numStep, emotionTag, timeoutMs, onProgress }) {
     if (!String(text || "").trim()) {
       throw new Error("OmniVoice text is empty.");
     }
 
+    let finalVoiceName = String(voiceName || "").trim();
+    if (!fileExists(finalVoiceName)) {
+      const e = String(emotionTag || "").toUpperCase();
+      if (e === "WHISPER") finalVoiceName += ", whisper";
+      else if (e === "SHOUT") finalVoiceName += ", very high pitch, loud";
+      else if (e === "SAD") finalVoiceName += ", low pitch";
+      else if (e === "URGENT") finalVoiceName += ", high pitch";
+    }
+
     await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
-    if (!fileExists(String(voiceName || "").trim())) {
-      const normalized = normalizeOmniVoiceInstruct(voiceName || this.defaultInstruct);
+    if (!fileExists(finalVoiceName)) {
+      const normalized = normalizeOmniVoiceInstruct(finalVoiceName || this.defaultInstruct);
       if (normalized.translated.length && typeof onProgress === "function") {
         onProgress(`OmniVoice đã chuẩn hóa thuộc tính: ${normalized.translated.join(", ")}.`);
       }
@@ -611,7 +620,7 @@ class OmniVoiceService {
       try {
         const worker = getPersistentWorker(this.settings, this.model, this.device);
         await worker.enqueue(
-          this.buildWorkerPayload({ text, voiceName, outputPath, language, durationSec, numStep }),
+          this.buildWorkerPayload({ text, voiceName: finalVoiceName, outputPath, language, durationSec, numStep }),
           { onProgress, timeoutMs }
         );
       } catch (error) {
@@ -621,12 +630,12 @@ class OmniVoiceService {
         }
         if (!fileExists(outputPath) || fs.statSync(outputPath).size === 0) {
           onProgress?.(`OmniVoice worker lỗi (${error.message}). Đang fallback sang CLI một lần.`);
-          const args = this.buildArgs({ text, voiceName, outputPath, language, durationSec, numStep });
+          const args = this.buildArgs({ text, voiceName: finalVoiceName, outputPath, language, durationSec, numStep });
           await this.run(args, onProgress, timeoutMs);
         }
       }
     } else {
-      const args = this.buildArgs({ text, voiceName, outputPath, language, durationSec, numStep });
+      const args = this.buildArgs({ text, voiceName: finalVoiceName, outputPath, language, durationSec, numStep });
       onProgress?.("OmniVoice local inference is starting.");
       await this.run(args, onProgress, timeoutMs);
     }

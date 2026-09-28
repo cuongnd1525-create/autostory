@@ -189,7 +189,8 @@ function formatVertexApiError(status, rawBody, projectId) {
   } catch (_error) {
     // Preserve non-JSON provider errors below.
   }
-  const message = safeText(payload?.error?.message || rawBody || `HTTP ${status}`);
+  const detailStr = payload?.error?.details ? ` - ${JSON.stringify(payload.error.details)}` : '';
+  const message = safeText(payload?.error?.message || rawBody || `HTTP ${status}`) + detailStr;
   if (status === 403 && message.includes("aiplatform.endpoints.predict")) {
     return new Error(
       `Vertex AI đã xác thực nhưng service account chưa có quyền chạy model trong project "${projectId}". `
@@ -199,7 +200,7 @@ function formatVertexApiError(status, rawBody, projectId) {
   if (status === 403 && /SERVICE_DISABLED|has not been used|API.*disabled/i.test(message)) {
     return new Error(`Vertex AI API chưa được bật trong project "${projectId}". Hãy bật aiplatform.googleapis.com rồi thử lại.`);
   }
-  return new Error(`Vertex AI request failed (${status}): ${message}`);
+  return Object.assign(new Error(`Vertex AI request failed (${status}): ${message}`), { httpStatus: status });
 }
 
 function vertexEndpoint(projectId, location, model) {
@@ -468,11 +469,16 @@ class VertexAiService {
     taskType = "quality",
     responseSchema = null,
     maxOutputTokens = null,
+    thinkingBudget = null,
     strictRootJson = false,
     videoFps = null,
     videoFpsByPath = {},
     mediaResolution = null,
-    modelOverride = ""
+    modelOverride = "",
+    sourceContract = false,
+    hookSchema = false,
+    relaxedSchema = false,
+    cachedContent = null
   } = {}) {
     this.lastResponseMetadata = null;
     this.lastResponseText = "";
@@ -482,7 +488,9 @@ class VertexAiService {
     const model = safeText(modelOverride) || this.getModel(taskType);
     const startedAt = Date.now();
     let preparedCount = 0;
-    const parts = await mapWithConcurrency(filePaths, 2, async (filePath) => {
+    // Phase 16: when a Vertex context cache holds the media, don't re-attach
+    // (and re-bill) the files — reuse the primed cache instead.
+    const parts = await mapWithConcurrency(cachedContent ? [] : filePaths, 2, async (filePath) => {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const part = await this.buildFilePart(filePath, token, signal);
       const fileFps = videoFpsByPath[filePath] ?? videoFps;
@@ -497,7 +505,10 @@ class VertexAiService {
       return part;
     });
     const preparedAt = Date.now();
-    parts.push({ text: prompt });
+    parts.push({ text: sourceContract && hookSchema && responseSchema
+      ? require('./autoStorySchemaBoundary').hookPrompt(prompt, responseSchema)
+      : sourceContract && relaxedSchema && responseSchema
+        ? require('./autoStorySchemaBoundary').schemaPrompt(prompt, responseSchema) : prompt });
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     let heartbeat = null;
@@ -525,13 +536,22 @@ class VertexAiService {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
+          ...(cachedContent ? { cachedContent } : {}),
           contents: [{ role: "user", parts }],
           generationConfig: {
             temperature,
             responseMimeType: "application/json",
             ...(["MEDIA_RESOLUTION_LOW", "MEDIA_RESOLUTION_MEDIUM", "MEDIA_RESOLUTION_HIGH"].includes(mediaResolution) ? { mediaResolution } : {}),
             ...(Number(maxOutputTokens) > 0 ? { maxOutputTokens: Math.round(Number(maxOutputTokens)) } : {}),
-            ...(responseSchema ? { responseSchema } : {})
+            // Gemini 2.5 "thinking" tokens are drawn from maxOutputTokens; for bounded
+            // JSON extraction (Source Story Model) we cap/disable them so reasoning can't
+            // starve the JSON output and cause a false MAX_TOKENS truncation. Only sent
+            // when the caller opts in (thinkingBudget >= 0), so other tasks are unchanged.
+            ...(Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0
+              ? { thinkingConfig: { thinkingBudget: Math.round(Number(thinkingBudget)) } } : {}),
+            ...(responseSchema ? { responseSchema: sourceContract
+              ? (hookSchema || relaxedSchema ? require('./autoStorySchemaBoundary').hookTransport(responseSchema)
+                : require('./autoStorySchemaBoundary').transport(responseSchema)) : responseSchema } : {})
           }
         }),
         signal: controller.signal,
@@ -551,7 +571,11 @@ class VertexAiService {
         this.lastResponseMetadata = { model, httpStatus: response.status,
           prepareMs: preparedAt - startedAt, modelMs: Date.now() - preparedAt,
           providerError: body.slice(0, 20000) };
-        throw formatVertexApiError(response.status, body, this.projectId);
+        const error = formatVertexApiError(response.status, body, this.projectId);
+        const retryAfter = response.headers?.get?.('retry-after');
+        if (retryAfter) error.retryAfterMs = /^\d+(\.\d+)?$/.test(retryAfter)
+          ? Number(retryAfter) * 1000 : Math.max(0, Date.parse(retryAfter) - Date.now());
+        throw error;
       }
       const payload = await response.json();
       const completedAt = Date.now();
@@ -561,6 +585,8 @@ class VertexAiService {
       this.lastResponseMetadata = {
         finishReason: payload.candidates?.[0]?.finishReason || "",
         usage: payload.usageMetadata || {}, model,
+        requestedMaxOutputTokens: Number(maxOutputTokens) > 0 ? Math.round(Number(maxOutputTokens)) : null,
+        requestedThinkingBudget: Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0 ? Math.round(Number(thinkingBudget)) : null,
         prepareMs: preparedAt - startedAt, modelMs: completedAt - preparedAt
       };
       const responseText = extractResponseText(payload);
@@ -600,6 +626,40 @@ class VertexAiService {
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       clearTimeout(timeout);
+    }
+  }
+
+  // Phase 16: create a Vertex context cache over source media so downstream
+  // stages reuse one primed context instead of re-uploading/re-billing clips.
+  // Returns the cachedContents resource name, or null on any failure (caller
+  // then falls back to attaching files normally). Additive + defensive.
+  async createCachedContent({ filePaths = [], systemText = "", taskType = "quality", modelOverride = "", ttlSeconds = 3600, signal } = {}) {
+    try {
+      if (!this.bucket || !filePaths.length) return null;
+      const token = await this.getAccessToken();
+      this.validateSettings();
+      const model = safeText(modelOverride) || this.getModel(taskType);
+      const parts = await mapWithConcurrency(filePaths, 2, async (filePath) => this.buildFilePart(filePath, token, signal));
+      const region = this.location;
+      const host = region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+      const url = `https://${host}/v1/projects/${encodeURIComponent(this.projectId)}/locations/${encodeURIComponent(region)}/cachedContents`;
+      const body = {
+        model: `projects/${this.projectId}/locations/${region}/publishers/google/models/${model}`,
+        contents: [{ role: "user", parts }],
+        ttl: `${Math.max(60, Math.round(ttlSeconds))}s`
+      };
+      if (systemText) body.systemInstruction = { role: "system", parts: [{ text: systemText }] };
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        dispatcher: this.dispatcher
+      });
+      if (!response.ok) return null;
+      const payload = await response.json();
+      return payload?.name || null;
+    } catch (_error) {
+      return null;
     }
   }
 

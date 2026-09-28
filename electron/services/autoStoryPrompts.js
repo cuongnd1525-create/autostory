@@ -32,9 +32,7 @@ Keep the artifact compact enough for downstream stages: include at most 120 stor
 Video duration: ${Number(durationSec || 0).toFixed(3)} seconds.
 Timestamped transcript supplied: ${transcriptIncluded ? "yes" : "no; use the complete source audio and mark uncertain dialogue"}.
 
-Every event must contain eventId, start, end, title, description, participants, eventType, storyRoleCandidates, visualEvidence, audioEvidence, dialogue, requiresContext, spoils, confidence, sourceNarratorPresent, and informationGain. Use only valid source seconds. Supported causal relations: CAUSES, EXPLAINS, REQUIRES_CONTEXT, CONTRADICTS, RESOLVES, REVEALS.
-
-The first character of the response MUST be { and the last character MUST be }. Never return the events array by itself. Return one root JSON object containing inputAccessAudit, videoSummary, storyType, mainConflict, characters, timeline, events, causalLinks, mandatoryFacts, mandatoryResolutions, hookCandidates, visualPayoffs, dialoguePayoffs, boringSegments, and uncertainFacts. No Markdown.`;
+Every event must contain eventId, start, end, title, description, participants, eventType, storyRoleCandidates, visualEvidence, audioEvidence, dialogue, requiresContext, spoils, confidence, sourceNarratorPresent, and informationGain. Use only valid source seconds. Supported causal relations: CAUSES, EXPLAINS, REQUIRES_CONTEXT, CONTRADICTS, RESOLVES, REVEALS.`;
 }
 
 function canonicalChunkPrompt({ sourceStartSec, sourceEndSec, sourceDurationSec, transcriptIncluded, chunkIndex, chunkCount }) {
@@ -52,7 +50,7 @@ TIMESTAMP CONTRACT:
 
 Each event must be concise and contain eventId, start, end, title, description, participants, eventType, storyRoleCandidates, visualEvidence, audioEvidence, dialogue, requiresContext, spoils, confidence, sourceNarratorPresent, and informationGain. Keep decisive dialogue only. Merge adjacent moments with the same narrative function. Include the final meaningful outcome in this chunk, but do not create filler events solely to cover silence.
 
-Return only one root object: {"inputAccessAudit":{"accessGranted":true,"inspectedInputs":["complete video chunk with audio"${transcriptIncluded ? ',"matching timestamped SRT slice"' : ""}]},"events":[...]}. First character {, last character }. No Markdown.`;
+Return only one root object.`;
 }
 
 function canonicalRepairPrompt({ rawEvents, durationSec, transcriptIncluded }) {
@@ -83,7 +81,7 @@ Do not repeat an event whose complete action ends at or before ${Number(previous
 
 Each event must contain eventId, start, end, title, description, participants, eventType, storyRoleCandidates, visualEvidence, audioEvidence, dialogue, requiresContext, spoils, confidence, sourceNarratorPresent, and informationGain.
 
-Return one root JSON object exactly shaped as {"inputAccessAudit":{"accessGranted":true,"inspectedInputs":[]},"events":[...]}. First character {, last character }. No Markdown.`;
+Return one root JSON object.`;
 }
 
 function canonicalTimestampRepairPrompt({ events, durationSec }) {
@@ -93,7 +91,7 @@ For every supplied event, locate its verified dialogue or the nearest transcript
 
 For visual-only events with no exact spoken sentence, anchor them inside the immediately surrounding verified transcript corridor. Never fabricate a timestamp. If a precise frame is uncertain, use the narrowest evidence-supported corridor and keep it within the neighboring events.
 
-Return only {"events":[{"eventId":"event_1","start":0.0,"end":1.0}]}. The events array must contain exactly ${listForPrompt(events).length} entries. First character {, last character }. No Markdown.
+Return one root object. The events array must contain exactly ${listForPrompt(events).length} entries.
 
 EVENTS TO ALIGN:
 ${json(listForPrompt(events).map((event) => ({
@@ -121,7 +119,7 @@ ${json(weights)}
 CANONICAL SOURCE OF TRUTH:
 ${json(canonical)}
 
-Return {"inputAccessAudit":{"accessGranted":true,"inspectedInputs":["canonical_analysis.json"]},"scores":[...]}. No Markdown.`;
+Return one root object.`;
 }
 
 function planningPrompt({ canonical, scoredEvents, config, candidatePoolSize }) {
@@ -142,15 +140,17 @@ ${json(canonical)}
 EVENT SCORES WITH LOCAL COMPUTED SCORE:
 ${json(scoredEvents)}
 
-Return {"inputAccessAudit":{"accessGranted":true,"inspectedInputs":["canonical_analysis.json","event_scores.json"]},"candidates":[...]}. No Markdown.`;
+Return one root object.`;
 }
 
 function judgePrompt({ canonical, scoredEvents, candidates, config }) {
   return `${accessGate("story_judge")}
 
-Act only as an independent critic and story judge. Do not invent a new source event. Rank the supplied candidates on Hook, cold-viewer comprehension, causal continuity, escalation, information density, curiosity, visual strength, emotional payoff, climax, resolution, spoiler control, and earliest likely swipe point.
-
-Lock exactly ${config.outputCount} winning stories when that many pass quality. If the source cannot support that many distinct strong stories, return fewer and explain capacityWarning; never fill the quota with duplicate or weak stories. Each locked story must include scriptId, candidateId, judgeScore, reason, centralViewerQuestion, hookPromise, lockedSequence, mandatoryEvents, optionalEvents, forbiddenEvents, targetDuration, retentionRisks, and resolutionEventIds. Locked stories must be meaningfully distinct, although a unique real climax/resolution may be shared.
+Act as a merciless Viral Critic Agent. Do not invent a new source event. Rank the supplied candidates based on their Viral Retention Curve:
+1. Curiosity Gap: Does the hook immediately raise a question in the first 3 seconds?
+2. Pacing: Is there a 5-second context immediately following the hook, followed by rapid escalation without dead air?
+3. Payoff: Is the climax visually and emotionally satisfying?
+Lock exactly ${config.outputCount} winning stories. Reject candidates with a weak Curiosity Gap or slow pacing. Each locked story must include scriptId, candidateId, judgeScore, reason, centralViewerQuestion, hookPromise, lockedSequence, mandatoryEvents, optionalEvents, forbiddenEvents, targetDuration, retentionRisks, and resolutionEventIds.
 
 REQUEST:
 ${json(config)}
@@ -164,7 +164,7 @@ ${json(scoredEvents)}
 CANDIDATES:
 ${json(candidates)}
 
-Return {"inputAccessAudit":{"accessGranted":true,"inspectedInputs":["canonical_analysis.json","event_scores.json","story_candidates.json"]},"lockedStories":[...],"capacityWarning":""}. No Markdown.`;
+Return one root object.`;
 }
 
 function edlPrompt({ canonical, lockedStories, config, measuredWordsPerSecond }) {
@@ -174,17 +174,24 @@ Act as an execution editor. The stories below are locked. You may refine clip in
 
 Create exactly one script for every locked story. Each script must contain scriptId, title, top_header, language="en", targetDuration, storyContract, narrationArc, and segments. Each segment requires segmentId, eventId, storyRole, sourceStart, sourceEnd, playbackSpeed, reason, narrativePurpose, audioMode, voiceoverText, sourceNarratorDetected, speakerFocus, focusPriority, subtitlePriority, and previewVi.
 
-Audio modes: original_audio or voiceover_only. original_audio requires voiceoverText="" and must contain clean participant/dialogue/action audio with no external source narrator. voiceover_only requires concise verified English narration and mutes the complete source soundtrack. Preserve decisive quotes, commands, impacts, shots, denials, discoveries, reactions, and aftermath as original_audio when clean. Narration connects context, causality, time jumps, contradictions, stakes, and verified outcomes; it never describes an obvious visual.
+Audio modes: original_audio, voiceover_only, or mixed_ducking.
+- original_audio requires voiceoverText="" and must contain clean participant/dialogue/action audio with no external source narrator.
+- voiceover_only requires concise verified English narration and mutes the complete source soundtrack.
+- mixed_ducking: High-energy English narration over ducked ambient source sound (~15% volume). Essential for viral TikTok openings (Type B Hook) and cognitive framing over bodycam movement. Preserves realism while delivering urgent storytelling.
+Preserve decisive quotes, commands, impacts, shots, denials, discoveries, reactions, and aftermath as original_audio when clean. Narration connects context, causality, time jumps, contradictions, stakes, and verified outcomes; it never describes an obvious visual.
+DEAD AIR ELIMINATION RULE: Uninterrupted ambient sound without participant dialogue or voiceover MUST NEVER exceed 3.0 seconds. Any scene transition over 3 seconds must have connecting narration or be trimmed out.
 
-For every segment, previewVi is mandatory Vietnamese subtitle text. For original_audio, translate the exact audible participant speech; for voiceover_only, translate voiceoverText. Never copy previewVi from another segment. If a clean original_audio beat has no speech, previewVi may be empty. sourceNarratorDetected=true is only valid with voiceover_only and verified replacement narration.
+For voiceover_only and mixed_ducking segments, you MUST provide an emotionTag (e.g., "URGENT", "WHISPER", "SHOUT", "SAD", "NEUTRAL") to direct the TTS engine's emotional pacing. Choose the emotion that best fits the scene's tension. For original_audio, use "NEUTRAL".
 
-Audio balance is a story target, not a duration quota: original_first preserves more strong authentic source beats; balanced alternates concise narration bridges with decisive source audio; narrator_led permits more short narration bridges but must still preserve the strongest clean scene audio; original_only forbids voiceover_only. Never create one uninterrupted narrator block longer than 12 seconds. Split narration by story purpose and place meaningful original audio between bridges when evidence supports it.
+For every segment, previewVi is mandatory Vietnamese subtitle text. For original_audio, translate the exact audible participant speech; for voiceover_only and mixed_ducking, translate voiceoverText. Never copy previewVi from another segment. If a clean original_audio beat has no speech, previewVi may be empty. sourceNarratorDetected=true is only valid with voiceover_only or mixed_ducking with verified replacement narration.
+
+Audio balance is a story target, not a duration quota: original_first preserves more strong authentic source beats; balanced alternates concise narration bridges with decisive source audio; narrator_led permits more short narration bridges but must still preserve the strongest clean scene audio; original_only forbids voiceover_only and mixed_ducking. Allow opening hook narration or cognitive framing bridges up to 25 seconds when establishing high-stakes context over approach/movement footage, but always alternate with authentic participant audio (Audio Sandwich formula).
 
 Narrator measured speed: ${Number(measuredWordsPerSecond || 0) > 0 ? `${Number(measuredWordsPerSecond).toFixed(3)} words/second` : "not measured; keep every narration beat concise"}.
 Narration configuration:
 ${json(config.narration)}
 
-Each script must be ${config.targetDurationMinSec}-${config.targetDurationMaxSec} seconds in the rendered output. For original_audio, duration is (sourceEnd-sourceStart)/playbackSpeed. For voiceover_only, rendered duration is driven by spoken word count / measured narrator speed, not by a long muted source window. Match each narration visual window closely to its estimated spoken duration; do not hide missing runtime inside muted footage. Enter late and exit immediately after payoff. Never cut a spoken sentence, decisive action, or immediate reaction. Remove dead air, repeated proof, procedural material, long lead-ins, and long exits first.
+Each script must be ${config.targetDurationMinSec}-${config.targetDurationMaxSec} seconds in the rendered output. For original_audio, duration is (sourceEnd-sourceStart)/playbackSpeed. For voiceover_only and mixed_ducking, rendered duration is driven by spoken word count / measured narrator speed, not by a long muted source window. Match each narration visual window closely to its estimated spoken duration; do not hide missing runtime inside muted footage. Enter late and exit immediately after payoff. Never cut a spoken sentence, decisive action, or immediate reaction. Remove dead air, repeated proof, procedural material, long lead-ins, and long exits first.
 
 CANONICAL SOURCE OF TRUTH:
 ${json(canonical)}
@@ -192,7 +199,7 @@ ${json(canonical)}
 LOCKED STORIES:
 ${json(lockedStories)}
 
-Return {"inputAccessAudit":{"accessGranted":true,"inspectedInputs":["complete source video for exact clip verification","canonical_analysis.json","locked_story.json"]},"scripts":[...]}. No Markdown.`;
+Return one root object.`;
 }
 
 function auditPrompt({ canonical, lockedStory, edl }) {
@@ -200,7 +207,7 @@ function auditPrompt({ canonical, lockedStory, edl }) {
 
 Audit the supplied rendered draft as a senior American TikTok bodycam editor. Do not redesign the source story. Compare execution against the locked story and EDL: Hook, pacing, clarity, continuity, visual/audio payoff, escalation, climax, resolution, dead time, repetition, confusion, missing source payoff, and bad clip selection.
 
-Return verdict PASS, MINOR_REVISE, or MAJOR_REVISE; score 0-100; timestamped issues; and revisionScope=stage5, stage4, or stage1. Prefer stage5 unless the locked story itself is structurally wrong. No Markdown.
+Return one root object.
 
 CANONICAL SUMMARY:
 ${json({ videoSummary: canonical.videoSummary, mainConflict: canonical.mainConflict, mandatoryResolutions: canonical.mandatoryResolutions })}

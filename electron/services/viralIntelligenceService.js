@@ -239,11 +239,11 @@ function scoreViralCandidate(item = {}, genreMode = "thriller", selectedIndex = 
 
   const adjusted = {
     plotImportance,
-    curiosityScore: clamp(curiosityScore + (genreBoost.curiosityScore || 0)),
+    curiosityScore: clamp(curiosityScore + (genreBoost.curiosityScore || 0) + (role === 'hook' ? 0.20 : 0)),
     emotionalImpactScore: clamp(emotionalImpactScore + (genreBoost.emotionalImpactScore || 0)),
     injusticeScore: clamp(injusticeScore + (genreBoost.injusticeScore || 0)),
     conflictDensityScore: clamp(conflictDensityScore + (genreBoost.conflictDensityScore || 0)),
-    visualImpactScore: clamp(visualImpact + (genreBoost.visualImpactScore || 0)),
+    visualImpactScore: clamp(visualImpact + (genreBoost.visualImpactScore || 0) + (role === 'hook' && highMotion ? 0.25 : 0)),
     twistValueScore: clamp(twistValueScore + (genreBoost.twistValueScore || 0)),
     payoffScore: clamp(payoffScore + (genreBoost.payoffScore || 0)),
     shareabilityScore,
@@ -252,11 +252,11 @@ function scoreViralCandidate(item = {}, genreMode = "thriller", selectedIndex = 
     contextCost
   };
   const retentionScore = clamp(
-    0.20 * adjusted.plotImportance
-    + 0.18 * adjusted.curiosityScore
+    0.15 * adjusted.plotImportance
+    + 0.25 * adjusted.curiosityScore
     + 0.15 * adjusted.emotionalImpactScore
     + 0.12 * adjusted.conflictDensityScore
-    + 0.10 * adjusted.visualImpactScore
+    + 0.15 * adjusted.visualImpactScore
     + 0.10 * adjusted.twistValueScore
     + 0.08 * adjusted.payoffScore
     + 0.07 * adjusted.shareabilityScore

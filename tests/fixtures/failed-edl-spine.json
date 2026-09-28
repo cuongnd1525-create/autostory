@@ -1,0 +1,227 @@
+{
+  "spines": [
+    {
+      "centralViewerQuestion": "Why are these parents holding their daughter down, and what will happen to them?",
+      "hookPromise": "Immediate visual of an adult male pinning a young woman to the floor, followed by the question of why her parents are involved.",
+      "hookStrategy": "In media res, immediate high-stakes visual, followed by a rewind to provide context and build tension.",
+      "strongEnough": true,
+      "reason": "The cold open immediately establishes a high-tension situation with a clear visual of a young woman being restrained by an adult male, followed by her desperate plea for help. This creates an immediate curiosity gap and sets up the central conflict. The rewind then provides crucial context from the boyfriend's perspective, building towards the confrontation at the door.",
+      "informationBudget": {
+        "immediate": [
+          "Officer responds to a domestic disturbance call.",
+          "A young woman is being physically restrained by an adult male.",
+          "The young woman is pleading for help."
+        ],
+        "deferred": [
+          "The identities of the people involved (daughter, stepdad, mother).",
+          "The reason for the physical altercation.",
+          "The legal implications of the parents' actions.",
+          "The outcome of the police intervention."
+        ],
+        "reveals": [
+          "The male restraining the daughter is her stepdad.",
+          "The mother is also involved and complicit.",
+          "The parents claim it's a 'family discussion' about 'house rules'.",
+          "The daughter was trying to leave."
+        ],
+        "omit": [
+          "The final arrest and transport of the suspects (for Part 2).",
+          "Any post-incident paperwork or routine procedures."
+        ]
+      },
+      "openLoops": [
+        {
+          "id": "loop_01",
+          "question": "Why is the stepdad holding the daughter down?",
+          "opensAtBeat": "beat_2",
+          "closesAtBeat": "beat_6"
+        },
+        {
+          "id": "loop_02",
+          "question": "What led to this confrontation?",
+          "opensAtBeat": "beat_2",
+          "closesAtBeat": "beat_5"
+        },
+        {
+          "id": "loop_03",
+          "question": "What are the parents' intentions?",
+          "opensAtBeat": "beat_2",
+          "closesAtBeat": "beat_7"
+        }
+      ],
+      "beats": [
+        {
+          "beatId": "beat_0",
+          "beatIndex": 0,
+          "sourceStartSec": 32.5,
+          "sourceEndSec": 35.5,
+          "chronologyMode": "teaser",
+          "narrativeRole": "teaser_conflict",
+          "viewerQuestion": "What is happening at this house?",
+          "informationRevealed": "Officer arrives at a house; a woman opens the door and immediately claims her daughter is violent.",
+          "openLoop": "What is the daughter doing?",
+          "payoffTiming": "immediate",
+          "audioMode": "original_audio",
+          "narrationPurpose": "NONE",
+          "wantsNarration": false,
+          "narratorFunction": "NONE",
+          "sourceEventId": "e4",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_1",
+          "beatIndex": 1,
+          "sourceStartSec": 41.5,
+          "sourceEndSec": 46.5,
+          "chronologyMode": "teaser",
+          "narrativeRole": "escalation",
+          "viewerQuestion": "Why is the officer running upstairs?",
+          "informationRevealed": "Officer hears shouting and runs upstairs.",
+          "openLoop": "What is causing the commotion upstairs?",
+          "payoffTiming": "immediate",
+          "audioMode": "original_audio",
+          "narrationPurpose": "NONE",
+          "wantsNarration": false,
+          "narratorFunction": "NONE",
+          "sourceEventId": "e6",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_2",
+          "beatIndex": 2,
+          "sourceStartSec": 46.5,
+          "sourceEndSec": 58.5,
+          "chronologyMode": "teaser",
+          "narrativeRole": "micro_payoff",
+          "viewerQuestion": "Why is this man holding the girl down?",
+          "informationRevealed": "Officer finds an adult male pinning a young woman to the bathroom floor; the woman pleads for help.",
+          "openLoop": "loop_01, loop_02, loop_03",
+          "payoffTiming": "immediate",
+          "audioMode": "original_audio",
+          "narrationPurpose": "NONE",
+          "wantsNarration": false,
+          "narratorFunction": "NONE",
+          "sourceEventId": "e7",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_3",
+          "beatIndex": 3,
+          "sourceStartSec": 10.5,
+          "sourceEndSec": 13.5,
+          "chronologyMode": "rewind",
+          "narrativeRole": "rewind_context",
+          "viewerQuestion": "What was the initial call about?",
+          "informationRevealed": "The 911 call reported a girlfriend being attacked by her parents.",
+          "openLoop": "Who called 911?",
+          "payoffTiming": "delayed",
+          "audioMode": "voiceover_with_ambient",
+          "narrationPurpose": "CONTEXT",
+          "wantsNarration": true,
+          "narratorFunction": "CONTEXT",
+          "sourceEventId": "e1",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_4",
+          "beatIndex": 4,
+          "sourceStartSec": 28.5,
+          "sourceEndSec": 30.5,
+          "chronologyMode": "chronological",
+          "narrativeRole": "progressive_evidence",
+          "viewerQuestion": "Who is this man and what is his connection?",
+          "informationRevealed": "The boyfriend, Nathan, pleads with the officer to get his girlfriend out safely, stating 'They're hurting her.'",
+          "openLoop": "How is the boyfriend involved?",
+          "payoffTiming": "delayed",
+          "audioMode": "voiceover_with_ambient",
+          "narrationPurpose": "SETUP",
+          "wantsNarration": true,
+          "narratorFunction": "CONTEXT",
+          "sourceEventId": "e3",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_5",
+          "beatIndex": 5,
+          "sourceStartSec": 32.933,
+          "sourceEndSec": 43.933,
+          "chronologyMode": "chronological",
+          "narrativeRole": "confrontation",
+          "viewerQuestion": "What did the boyfriend witness?",
+          "informationRevealed": "Nathan describes the stepdad slamming his girlfriend onto the bed and wall, dragging her to pin her down.",
+          "openLoop": "What was the mother doing?",
+          "payoffTiming": "delayed",
+          "audioMode": "voiceover_with_ambient",
+          "narrationPurpose": "EVIDENCE_SUMMARY",
+          "wantsNarration": true,
+          "narratorFunction": "CLARIFICATION",
+          "sourceEventId": "e52",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_6",
+          "beatIndex": 6,
+          "sourceStartSec": 43.933,
+          "sourceEndSec": 56.933,
+          "chronologyMode": "chronological",
+          "narrativeRole": "confrontation",
+          "viewerQuestion": "How did the boyfriend react?",
+          "informationRevealed": "Nathan recounts the mother slapping his girlfriend and the stepdad pushing him when he tried to intervene.",
+          "openLoop": "What happened after Nathan was pushed?",
+          "payoffTiming": "delayed",
+          "audioMode": "voiceover_with_ambient",
+          "narrationPurpose": "EVIDENCE_SUMMARY",
+          "wantsNarration": true,
+          "narratorFunction": "CLARIFICATION",
+          "sourceEventId": "e53",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_7",
+          "beatIndex": 7,
+          "sourceStartSec": 152.5,
+          "sourceEndSec": 160.5,
+          "chronologyMode": "chronological",
+          "narrativeRole": "contradiction",
+          "viewerQuestion": "What is the mother's explanation?",
+          "informationRevealed": "The mother claims they were having a 'family discussion about house rules'.",
+          "openLoop": "Does this explanation align with the daughter's experience?",
+          "payoffTiming": "delayed",
+          "audioMode": "voiceover_with_ambient",
+          "narrationPurpose": "CONTEXT",
+          "wantsNarration": true,
+          "narratorFunction": "CLARIFICATION",
+          "sourceEventId": "e8",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        },
+        {
+          "beatId": "beat_8",
+          "beatIndex": 8,
+          "sourceStartSec": 109,
+          "sourceEndSec": 111,
+          "chronologyMode": "chronological",
+          "narrativeRole": "cliffhanger",
+          "viewerQuestion": "What was the daughter trying to do?",
+          "informationRevealed": "The mother states, 'You're welcome to leave,' implying the daughter was trying to depart.",
+          "openLoop": "What are the legal implications of preventing someone from leaving?",
+          "payoffTiming": "part_2",
+          "audioMode": "voiceover_with_ambient",
+          "narrationPurpose": "CLIFFHANGER",
+          "wantsNarration": true,
+          "narratorFunction": "FORESHADOW",
+          "sourceEventId": "e34",
+          "tensionBefore": 1,
+          "tensionAfter": 1
+        }
+      ]
+    }
+  ]
+}
