@@ -85,8 +85,8 @@ class ProjectStore {
       storyScriptPaths: Array.isArray(payload.storyScriptPaths) ? payload.storyScriptPaths : (payload.storyScriptPath ? [payload.storyScriptPath] : []),
       autoStoryConfig: payload.autoStoryConfig || null,
       // AutoStory engine version at project ROOT (the live service checks project.autoStoryContractVersion).
-      // Only persist for an explicit V3 selection; V2/legacy stays undefined so existing behavior is unchanged.
-      autoStoryContractVersion: Number(payload.autoStoryContractVersion) === 3 ? 3 : undefined,
+      // Only persist for an explicit V3/V4 selection; V2/legacy stays undefined so existing behavior is unchanged.
+      autoStoryContractVersion: [3, 4].includes(Number(payload.autoStoryContractVersion)) ? Number(payload.autoStoryContractVersion) : undefined,
       autoStoryJobPath: payload.autoStoryJobPath || "",
       autoWhisper: payload.autoWhisper !== false,
       sourceLanguage: payload.sourceLanguage || "auto",

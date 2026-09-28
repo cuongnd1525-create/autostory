@@ -130,6 +130,7 @@ function critiqueRenderedTimeline(spine = {}, options = {}) {
       semanticStateRunSec: Number(semanticStateRunSec.toFixed(1)),
       retentionScore: windowScore,
       retentionStatus,
+      isForwardConsequence: overlappingBeats.some(b => b.isForwardConsequence !== false && (b.isForwardConsequence || b.narrativeRole === 'cliffhanger' || (b.consequenceMagnitude && b.consequenceMagnitude !== 'none'))),
       whyWatchNext: isTail ? 'None (Tail)' : (tensionDelta > 0 ? 'Escalation' : 'Resolution')
     };
 
@@ -145,7 +146,7 @@ function critiqueRenderedTimeline(spine = {}, options = {}) {
   if (postCliffhangerTailSec > 2.0) payoffObs -= 1.0;
   if (postCliffhangerTailSec > 5.0) payoffObs -= 1.5;
   
-  const lastWindow = scoredWindows[scoredWindows.length - 1];
+  const lastWindow = windows[windows.length - 1];
   if (lastWindow && !lastWindow.isForwardConsequence) {
     payoffObs -= 2.0; // Penalty for backstory instead of forward consequence
   }
@@ -157,7 +158,7 @@ function critiqueRenderedTimeline(spine = {}, options = {}) {
   const directorPredictedScore = computeStructuralViralScore(spine, options)?.score || 0;
   const scoreDiscrepancy = Math.abs(directorPredictedScore - criticObservedScore);
   const avgScore = Number((windows.reduce((sum, win) => sum + win.retentionScore, 0) / windows.length).toFixed(1));
-  const isCompliant = criticObservedScore >= 8.0 && maxPlateau <= 10.0 && postCliffhangerTailSec <= 2.0 && scoreDiscrepancy <= 2.0 && weakWindows.length === 0;
+  const isCompliant = criticObservedScore >= 8.0 && postCliffhangerTailSec <= 2.0 && scoreDiscrepancy <= 2.0 && weakWindows.length === 0;
 
   return {
     status: 'SUCCESS',

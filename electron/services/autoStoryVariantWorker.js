@@ -30,7 +30,7 @@ async function copyWorkerInputArtifacts(sourceAnalysis, analysis, scriptId) {
 }
 
 // Each variant owns its journal, media and mutable project snapshot.
-async function run({ settings, store, workspaceRoot, projectId, scriptId, scriptPath, signal, onProgress, callBudget }) {
+async function run({ settings, store, workspaceRoot, projectId, scriptId, scriptPath, signal, onProgress, callBudget, dubbing: customDubbing, createService }) {
   const base = store.getProjectPaths(workspaceRoot, projectId);
   const workerRoot = path.join(base.rootDir, '.variant-workers', String(scriptId));
   const local = new Store(), paths = local.getProjectPaths(workerRoot, projectId);
@@ -52,12 +52,21 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     }
   }
   await copyWorkerInputArtifacts(sourceAnalysis, analysis, scriptId);
+  if (parent.autoStoryContractVersion === 3 || parent.autoStoryContractVersion === 4) {
+    await copyIfExists(path.join(sourceAnalysis, 'story-spine.json'), path.join(analysis, 'story-spine.json'));
+    await copyIfExists(path.join(sourceAnalysis, `script-${scriptId}.json`), path.join(analysis, `script-${scriptId}.json`));
+  }
   await local.saveProject(workerRoot, { ...parent, workerParentIdentity: identity,
     storyScriptPaths: scriptPath ? [scriptPath] : [], storyScriptPath: scriptPath || '',
     analysis: variant ? { ...parent.analysis, highlightVariants: [variant], activeVariantId: variant.id, segments: variant.segments } : null,
     artifacts: variant?.artifacts || {}, exportRoot: paths.outputDir });
-  const dubbing = new Dubbing(local);
-  const service = new Service(settings, local, { dubbing, callBudget });
+  const dubbing = customDubbing || new Dubbing(local);
+  const service = createService
+    ? (createService.length >= 3 ? createService(settings, local, { dubbing, callBudget }) : createService(settings, { dubbing, callBudget }))
+    : new Service(settings, local, { dubbing, callBudget });
+  if (service.store !== local) {
+    service.store = local;
+  }
   const publish = async () => serial(`variant-commit:${base.rootDir}`, async () => {
     const result = await local.getProject(workerRoot, projectId);
     const selected = result.analysis?.highlightVariants?.find(v => Number(v.scriptId) === scriptId);
@@ -80,6 +89,21 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
         const revisedStory = localPlan.stories.find(s => s.scriptId === scriptId);
         if (revisedStory) await store.writeText(path.join(sourceAnalysis, 'plan.json'), JSON.stringify({ ...parentPlan,
           stories: parentPlan.stories.map(s => s.scriptId === scriptId ? revisedStory : s) }, null, 2));
+      }
+      if (result.autoStoryContractVersion === 3 || result.autoStoryContractVersion === 4) {
+        await copyIfExists(path.join(analysis, `script-${scriptId}.json`), path.join(sourceAnalysis, `script-${scriptId}.json`));
+        for (const name of [
+          `initial-story-spine-${scriptId}.json`,
+          `initial-media-audit-${scriptId}.json`,
+          `repair-1-specification-${scriptId}.json`,
+          `repair-1-story-spine-${scriptId}.json`,
+          `repair-1-media-audit-${scriptId}.json`,
+          `repair-2-specification-${scriptId}.json`,
+          `repair-2-story-spine-${scriptId}.json`,
+          `repair-2-media-audit-${scriptId}.json`
+        ]) {
+          await copyIfExists(path.join(analysis, name), path.join(sourceAnalysis, name));
+        }
       }
     }
     const entries = [];

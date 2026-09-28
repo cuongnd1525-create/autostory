@@ -77,18 +77,31 @@ async function buildStoryDesign(engine, model, root, emit, externalRepairInstruc
   };
   const runOnce = async (customRepairInstruction) => {
     customRepairInstruction = customRepairInstruction || externalRepairInstruction;
+    const formattedInstruction = typeof customRepairInstruction === 'string'
+      ? customRepairInstruction
+      : customRepairInstruction ? JSON.stringify(customRepairInstruction, null, 2) : '';
     const instruction = customRepairInstruction
-      ? `${V3.instructions.storyDesign}\n\n${customRepairInstruction}`
+      ? `${V3.instructions.storyDesign}\n\n${formattedInstruction}`
       : V3.instructions.storyDesign;
     let value = null, raw = null, error = null;
     const inputData = {
       model,
       targetDurationMinSec: engine.config.targetDurationMinSec || 70,
       targetDurationMaxSec: engine.config.targetDurationMaxSec || 90,
-      storyMode: 'serialized_part'
+      storyMode: 'serialized_part',
+      ...(customRepairInstruction ? { repairSpecification: customRepairInstruction } : {})
     };
     try {
-      value = await engine.ask(`v3-story-design${customRepairInstruction ? '_repair' : ''}`, inputData, V3.schemas.storyDesign, instruction, [], validateStoryDesign, 'auto_story_edit');
+      value = await engine.ask(
+        `v3-story-design${customRepairInstruction ? '_repair' : ''}`,
+        inputData,
+        V3.schemas.storyDesign,
+        instruction,
+        [],
+        validateStoryDesign,
+        'auto_story_edit',
+        customRepairInstruction ? { noCache: true } : {}
+      );
       raw = value;
     } catch (e) { error = e; raw = (e && e.invalidArtifact) || null; }
     return { value, raw, error, metadata: metaOf() };
@@ -128,7 +141,10 @@ async function buildStoryDesign(engine, model, root, emit, externalRepairInstruc
   let repairPrompt = STORY_DESIGN_REPAIR;
 
   if (usable.length && !firstQuality.valid) {
-    repairPrompt = `TARGETED EDL QUALITY REPAIR PASS — Your previous EDL contained critical retention/pacing defects that MUST be resolved:
+    const criticHeader = externalRepairInstruction
+      ? `TARGETED STRUCTURAL REPAIR DIRECTIVE FROM MEDIA-GROUNDED CRITIC:\n${typeof externalRepairInstruction === 'string' ? externalRepairInstruction : JSON.stringify(externalRepairInstruction, null, 2)}\n\n`
+      : '';
+    repairPrompt = `${criticHeader}TARGETED EDL QUALITY REPAIR PASS — Your previous EDL contained critical retention/pacing defects that MUST be resolved:
 VIOLATIONS DETECTED BY GUARDRAIL:
 ${firstQuality.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}
 
@@ -576,113 +592,231 @@ async function run(service, opts) {
 
 
 async function auditDrafts(service, opts) {
-  const { workspaceRoot, projectId, scriptId, signal, onProgress, onDraft } = opts;
+  const { workspaceRoot, projectId, signal, onProgress, onDraft } = opts;
   const project = await service.store.getProject(workspaceRoot, projectId);
-  const root = require('path').join(service.store.getProjectPaths(workspaceRoot, projectId).analysisDir, "auto-story-fast");
+  const root = path.join(service.store.getProjectPaths(workspaceRoot, projectId).analysisDir, "auto-story-fast");
   
+  const scriptId = opts.scriptId ? Number(opts.scriptId) : null;
+
+  // Canonical V3 artifacts — never depend on plan.json
+  let spineData = null;
+  try {
+    spineData = JSON.parse(await fs.readFile(path.join(root, 'story-spine.json'), 'utf8'));
+  } catch (_) {}
+  const spines = Array.isArray(spineData?.spines) ? spineData.spines : (spineData?.beats ? [spineData] : []);
+
+  let targetScriptIds = [];
+  if (scriptId) {
+    targetScriptIds = [scriptId];
+  } else if (Array.isArray(project.analysis?.highlightVariants) && project.analysis.highlightVariants.length > 0) {
+    targetScriptIds = project.analysis.highlightVariants.map(v => Number(v.scriptId)).filter(Number.isInteger);
+  } else if (spines.length > 0) {
+    targetScriptIds = spines.map((s, i) => Number(s.scriptId) || (i + 1));
+  } else {
+    targetScriptIds = [1];
+  }
+  targetScriptIds = [...new Set(targetScriptIds)];
+
   const audits = [];
-  const plan = JSON.parse(await fs.promises.readFile(require('path').join(root, 'plan.json'), 'utf8').catch(() => '{"stories":[]}'));
-  
-  for (let story of plan.stories) {
-    if (scriptId && story.scriptId !== scriptId) continue;
-    const id = story.scriptId;
-    const record = require('path').join(root, `review-state-${id}.json`);
-    
-    let variant = project.analysis?.highlightVariants?.find(v => Number(v.scriptId) === id);
+  const { critiqueMediaGroundedTimeline, generateTargetedRepairSpecification } = require('./structuralCriticService');
+
+  // Bug 6: Use already-configured vertex/ai service from service (never construct new Vertex or read %APPDATA%)
+  const ai = service.vertex || service.ai;
+  if (!ai) throw new Error('AutoStoryFastService missing configured vertex/ai service.');
+
+  // Bug 4: Canonical source cache from project.autoStorySourceV3
+  const sourceCachePath = project.autoStorySourceV3?.cache;
+  if (!sourceCachePath) {
+    throw new Error('Missing project.autoStorySourceV3.cache; cannot audit/repair V3 draft without source cache.');
+  }
+  const model = await sourceModel.load(sourceCachePath);
+  if (!model || !Array.isArray(model.events)) {
+    throw new Error(`Failed to load canonical Source Story Model from ${sourceCachePath}`);
+  }
+
+  const engine = new Engine(service, {
+    project,
+    root,
+    cache: sourceCachePath,
+    config: project.autoStoryEditorialConfig || project.autoStoryConfig || {},
+    signal,
+    onProgress,
+    duration: project.autoStorySourceV3?.duration || project.analysis?.media?.duration || 0,
+    sourceHash: project.autoStorySourceV3?.identity || ''
+  });
+
+  for (const id of targetScriptIds) {
+    signal?.throwIfAborted();
+    const record = path.join(root, `review-state-${id}.json`);
+
+    let variant = project.analysis?.highlightVariants?.find(v => Number(v.scriptId) === id)
+      || (project.analysis?.highlightVariants?.length === 1 ? project.analysis.highlightVariants[0] : null);
     if (!variant?.artifacts?.fastDraftVideoPath) continue;
-    let draft = variant.artifacts.fastDraftVideoPath;
-    
-    let script = JSON.parse(await fs.promises.readFile(require('path').join(root, `script-${id}.json`), 'utf8'));
-    let spineData = JSON.parse(await fs.promises.readFile(require('path').join(root, 'story-spine.json'), 'utf8').catch(() => '{}'));
-    let spine = spineData.spines ? spineData.spines[0] : spineData;
-    if (!spine || !spine.beats) spine = script;
+    let currentMp4 = variant.artifacts.fastDraftVideoPath;
 
-    const { critiqueMediaGroundedTimeline, generateTargetedRepairSpecification } = require('./structuralCriticService');
-    const VertexAiService = require('./vertexAiService');
-    const configPath = require('path').join(require('os').homedir(), 'AppData', 'Roaming', 'cineviral-studio', 'config.json');
-    const aiConfig = JSON.parse(await fs.promises.readFile(configPath, 'utf8').catch(() => '{}'));
-    const ai = new VertexAiService(aiConfig);
-    
-    const { Engine } = require('./autoStorySourceEngine');
-    const engine = new Engine(service, { project, root, config: project.autoStoryEditorialConfig, signal, onProgress });
-    const { buildScript } = require('./autoStoryV3Pipeline');
-    
-    let passes = 0;
-    let maxPasses = 2;
-    let critique = null;
-    let isInitial = true;
+    let script = null;
+    try {
+      script = JSON.parse(await fs.readFile(path.join(root, `script-${id}.json`), 'utf8'));
+    } catch (_) {}
 
-    while (passes <= maxPasses) {
-      const meta = await service.ffmpeg.probeVideo(draft);
-      onProgress?.({ stage: 'reviewing', message: `Script ${id}: [V4] Chạy Media-Grounded Critic (Pass ${passes})...` });
-      
-      critique = await critiqueMediaGroundedTimeline(spine, {
-        aiService: ai,
-        mp4Path: draft,
-        actualMp4DurationSec: meta.duration,
-        targetWindowSec: 5.5
+    let spine = spines.find(s => Number(s.scriptId) === id) || spines[id - 1] || spines[0] || null;
+    if (!spine || !Array.isArray(spine.beats)) spine = script || {};
+
+    let story = {
+      ...spine,
+      scriptId: id,
+      title: spine.hookPromise || spine.title || `Story ${id}`,
+      spine: {
+        centralViewerQuestion: spine.centralViewerQuestion,
+        hookPromise: spine.hookPromise,
+        informationBudget: spine.informationBudget
+      },
+      openLoops: spine.openLoops || []
+    };
+
+    let currentSpine = spine;
+
+    // 1. Initial render audit
+    const meta = await service.ffmpeg.probeVideo(currentMp4);
+    onProgress?.({ stage: 'reviewing', message: `Script ${id}: [V4] Chạy Media-Grounded Critic (Initial)...` });
+
+    let currentCritique = await critiqueMediaGroundedTimeline(currentSpine, {
+      aiService: ai,
+      mp4Path: currentMp4,
+      actualMp4DurationSec: meta.duration,
+      targetWindowSec: 5.5
+    });
+
+    console.log(`[V4] Initial media score: ${currentCritique.criticObservedScore}`);
+    if (currentCritique.weakWindows?.length) console.log(`[V4] Weak windows: ${currentCritique.weakWindows.length}`);
+
+    await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(currentSpine, null, 2));
+    await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(currentCritique, null, 2));
+
+    if (currentCritique.isCompliant) {
+      const passedAudit = {
+        scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: false,
+        finalCheck: { complete: true, verdict: 'PASS', issues: [] },
+        metrics: {
+          criticObservedScore: currentCritique.criticObservedScore,
+          averageRetentionScore: currentCritique.averageRetentionScore,
+          mp4Duration: currentCritique.mp4Duration
+        }
+      };
+      await fs.writeFile(record, JSON.stringify(passedAudit, null, 2));
+      audits.push(passedAudit);
+      continue;
+    }
+
+    // Repair Loop (max 2 passes)
+    let repaired = false;
+    for (let repairPass = 1; repairPass <= 2; repairPass++) {
+      signal?.throwIfAborted();
+      console.log(`[V4] Targeted repair pass #${repairPass} started`);
+      const repairSpec = generateTargetedRepairSpecification(currentCritique, currentSpine);
+      await fs.writeFile(path.join(root, `repair-${repairPass}-specification-${id}.json`), JSON.stringify(repairSpec, null, 2));
+
+      const emitProgress = (st, msg, pct) => onProgress?.({ stage: st, message: msg, percent: pct });
+      const repairedSpines = await buildStoryDesign(engine, model, root, emitProgress, repairSpec);
+      if (!repairedSpines || !repairedSpines.length) {
+        throw new Error(`Repair pass ${repairPass} failed to produce a repaired spine.`);
+      }
+      currentSpine = repairedSpines[0];
+      await fs.writeFile(path.join(root, `repair-${repairPass}-story-spine-${id}.json`), JSON.stringify(currentSpine, null, 2));
+
+      // Bug 3: Repaired spine itself becomes the story passed to buildScript (no merging old beats)
+      const repairedStory = {
+        ...currentSpine,
+        scriptId: id,
+        title: currentSpine.hookPromise || currentSpine.title || story.title || `Story ${id}`,
+        spine: {
+          centralViewerQuestion: currentSpine.centralViewerQuestion || story.centralViewerQuestion,
+          hookPromise: currentSpine.hookPromise || story.hookPromise,
+          informationBudget: currentSpine.informationBudget || story.informationBudget
+        },
+        openLoops: currentSpine.openLoops || story.openLoops || [],
+        beats: currentSpine.beats
+      };
+
+      const rebuilt = await buildScript(engine, service, opts, repairedStory, model, root, emitProgress);
+      const scriptPath = path.join(root, `script-${id}.json`);
+      await fs.writeFile(scriptPath, JSON.stringify(highlightV3(rebuilt.script, repairedStory, rebuilt.evidence), null, 2));
+
+      const importedProject = await service.dubbing.importReviewedScriptProject({
+        workspaceRoot,
+        projectId,
+        settings: service.settings,
+        jsonPath: scriptPath
       });
-      
-      if (isInitial) {
-        console.log(`[V4] Initial media score: ${critique.criticObservedScore}`);
-        if (critique.weakWindows.length) console.log(`[V4] Weak windows: ${critique.weakWindows.length}`);
-        await fs.promises.writeFile(require('path').join(root, 'initial-story-spine.json'), JSON.stringify(spine, null, 2));
-        await fs.promises.writeFile(require('path').join(root, 'initial-media-audit.json'), JSON.stringify(critique, null, 2));
-        isInitial = false;
-      } else {
-        console.log(`[V4] Repaired media score: ${critique.criticObservedScore}`);
-        await fs.promises.writeFile(require('path').join(root, 'repaired-story-spine.json'), JSON.stringify(spine, null, 2));
-        await fs.promises.writeFile(require('path').join(root, 'repaired-media-audit.json'), JSON.stringify(critique, null, 2));
-      }
+      const selectedVariant = importedProject.analysis?.highlightVariants?.find(v => Number(v.scriptId) === id)
+        || importedProject.analysis?.highlightVariants?.[0];
 
-      if (critique.isCompliant) {
-        if (passes > 0) console.log('[V4] Repaired EDL accepted');
-        const passedAudit = {
-          scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: false,
-          finalCheck: { complete: true, verdict: 'PASS', issues: [] }
-        };
-        await fs.promises.writeFile(record, JSON.stringify(passedAudit, null, 2));
-        audits.push(passedAudit);
-        break;
-      }
-
-      if (passes >= maxPasses) {
-        console.log(`[V4] Max repair passes reached. Failed explicitly.`);
-        const failedAudit = {
-          scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: true,
-          finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: 'Failed to meet criteria after 2 repairs.' }] }
-        };
-        await fs.promises.writeFile(record, JSON.stringify(failedAudit, null, 2));
-        audits.push(failedAudit);
-        break;
-      }
-
-      // Repair Loop
-      console.log(`[V4] Targeted repair started`);
-      const repairSpec = generateTargetedRepairSpecification(critique);
-      await fs.promises.writeFile(require('path').join(root, 'repair-specification.json'), JSON.stringify({spec: repairSpec, windows: critique.weakWindows}, null, 2));
-      
-      const repairedSpines = await buildStoryDesign(engine, await require('./sourceStoryModelService').loadCached(engine), root, (st, msg, pct) => onProgress?.({stage: st, message: msg, percent: pct}), repairSpec);
-      spine = repairedSpines[0];
-      
-      const rebuilt = await buildScript(engine, service, opts, story, await require('./sourceStoryModelService').loadCached(engine), root, (st, msg, pct) => onProgress?.({stage: st, message: msg, percent: pct}), spine);
-      const scriptPath = require('path').join(root, `script-${id}.json`);
-      await fs.promises.writeFile(scriptPath, JSON.stringify(rebuilt.script, null, 2));
-      
-      const importedProject = await service.dubbing.importReviewedScriptProject({ workspaceRoot, projectId, settings: service.settings, jsonPath: scriptPath });
-      const selectedVariant = importedProject.analysis.highlightVariants.find(v => Number(v.scriptId) === id);
-      
-      console.log(`[V4] Re-render started`);
+      console.log(`[V4] Re-render pass #${repairPass} started`);
       const rendered = await service.dubbing.renderHighlightFastDraft({
-        workspaceRoot, projectId, settings: service.settings,
-        project: { ...importedProject, analysis: { ...importedProject.analysis, activeVariantId: selectedVariant.id, segments: selectedVariant.segments } },
+        workspaceRoot,
+        projectId,
+        settings: service.settings,
+        project: {
+          ...importedProject,
+          analysis: {
+            ...importedProject.analysis,
+            activeVariantId: selectedVariant.id,
+            segments: selectedVariant.segments
+          }
+        },
         onProgress
       });
-      draft = rendered.outputPath;
-      passes++;
+      currentMp4 = rendered.outputPath || rendered.internalOutputPath || selectedVariant.artifacts?.fastDraftVideoPath;
+      onDraft?.(await service.store.getProject(workspaceRoot, projectId));
+
+      // Audit the newly rendered MP4 (each media audit receives MP4 from immediately preceding render)
+      const repairMeta = await service.ffmpeg.probeVideo(currentMp4);
+      onProgress?.({ stage: 'reviewing', message: `Script ${id}: [V4] Chạy Media-Grounded Critic (Pass ${repairPass})...` });
+      currentCritique = await critiqueMediaGroundedTimeline(currentSpine, {
+        aiService: ai,
+        mp4Path: currentMp4,
+        actualMp4DurationSec: repairMeta.duration,
+        targetWindowSec: 5.5
+      });
+      console.log(`[V4] Repaired media score (Pass ${repairPass}): ${currentCritique.criticObservedScore}`);
+      await fs.writeFile(path.join(root, `repair-${repairPass}-media-audit-${id}.json`), JSON.stringify(currentCritique, null, 2));
+
+      if (currentCritique.isCompliant) {
+        console.log(`[V4] Repaired EDL accepted (Pass ${repairPass})`);
+        const passedAudit = {
+          scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: false,
+          repairPasses: repairPass,
+          finalCheck: { complete: true, verdict: 'PASS', issues: [] },
+          metrics: {
+            criticObservedScore: currentCritique.criticObservedScore,
+            averageRetentionScore: currentCritique.averageRetentionScore,
+            mp4Duration: currentCritique.mp4Duration
+          }
+        };
+        await fs.writeFile(record, JSON.stringify(passedAudit, null, 2));
+        audits.push(passedAudit);
+        repaired = true;
+        break;
+      }
+    }
+
+    if (!repaired) {
+      console.log(`[V4] Max repair passes reached. Failed explicitly.`);
+      const failedAudit = {
+        scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: true,
+        repairPasses: 2,
+        finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: 'Failed to meet criteria after 2 repairs.' }] },
+        metrics: {
+          criticObservedScore: currentCritique.criticObservedScore,
+          averageRetentionScore: currentCritique.averageRetentionScore,
+          mp4Duration: currentCritique.mp4Duration
+        }
+      };
+      await fs.writeFile(record, JSON.stringify(failedAudit, null, 2));
+      audits.push(failedAudit);
     }
   }
-  
+
   return { project: await service.store.getProject(workspaceRoot, projectId), audits };
 }
 module.exports = { run, auditDrafts, assignAudioRoles, buildScript, enforceSafeWords, demoteOverflow, safeWordsFor, isOverflow,

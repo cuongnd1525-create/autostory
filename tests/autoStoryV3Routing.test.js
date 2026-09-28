@@ -10,7 +10,10 @@ const v3Path = require.resolve(path.join(svcDir, 'autoStoryV3Pipeline.js'));
 const v2Path = require.resolve(path.join(svcDir, 'autoStorySourcePipeline.js'));
 let calls = {};
 function stub(p, tag, impl) {
-  require.cache[p] = { id: p, filename: p, loaded: true, exports: { run: impl || (async (svc) => { calls[tag] = { project: await svc.store.getProject() }; return { routed: tag }; }) } };
+  require.cache[p] = { id: p, filename: p, loaded: true, exports: {
+    run: impl || (async (svc) => { calls[tag] = { project: await svc.store.getProject() }; return { routed: tag }; }),
+    auditDrafts: async (svc, opts) => { calls[`${tag}_audit`] = { project: await svc.store.getProject(), opts }; return { routed: `${tag}_audit`, audits: [] }; }
+  } };
 }
 stub(v3Path, 'v3');
 stub(v2Path, 'v2');
@@ -72,15 +75,35 @@ const ok = async (name, fn) => { await fn(); passed++; console.log('  ok -', nam
     stub(v3Path, 'v3'); // restore
   });
 
-  await ok('auditDrafts routes v3 to the draft-watching critic (not the inline v1 audit)', async () => {
+  await ok('auditDrafts routes v3 to autoStoryV3Pipeline.auditDrafts', async () => {
+    calls = {};
+    const project = { autoStoryContractVersion: 3 };
+    const svc = makeService(project);
+    svc.recoverScriptIds = async () => project;
+    const res = await svc.auditDrafts({ workspaceRoot: '/w', projectId: 'p1' });
+    assert.equal(res.routed, 'v3_audit');
+    assert.ok(calls.v3_audit, 'v3 auditDrafts routed to autoStoryV3Pipeline.auditDrafts');
+  });
+
+  await ok('auditDrafts routes v4 to autoStoryV3Pipeline.auditDrafts', async () => {
+    calls = {};
+    const project = { autoStoryContractVersion: 4 };
+    const svc = makeService(project);
+    svc.recoverScriptIds = async () => project;
+    const res = await svc.auditDrafts({ workspaceRoot: '/w', projectId: 'p1' });
+    assert.equal(res.routed, 'v3_audit');
+    assert.ok(calls.v3_audit, 'v4 auditDrafts routed to autoStoryV3Pipeline.auditDrafts');
+  });
+
+  await ok('auditDrafts routes v2 to autoStorySourceReview', async () => {
     const reviewPath = require.resolve(path.join(svcDir, 'autoStorySourceReview.js'));
     let reviewed = false;
     require.cache[reviewPath] = { id: reviewPath, filename: reviewPath, loaded: true, exports: { run: async () => { reviewed = true; return { audits: [] }; } } };
-    const project = { autoStoryContractVersion: 3 };
+    const project = { autoStoryContractVersion: 2 };
     const svc = makeService(project);
-    svc.recoverScriptIds = async () => project; // bypass v2 recovery internals
+    svc.recoverScriptIds = async () => project;
     await svc.auditDrafts({ workspaceRoot: '/w', projectId: 'p1' });
-    assert.ok(reviewed, 'v3 auditDrafts used autoStorySourceReview');
+    assert.ok(reviewed, 'v2 auditDrafts used autoStorySourceReview');
   });
 
   console.log(`\nAll ${passed} routing assertions passed.`);

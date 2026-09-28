@@ -10,6 +10,7 @@ class AutoStoryRunner {
     const callBudget = { calls: 0, runId: require('crypto').randomUUID() };
     this.callBudget = callBudget;
     this.isolatedWorkers = typeof store.saveProject === 'function';
+    this.createService = createService;
     this.producer = createService(this.settings, { dubbing, callBudget });
     this.consumer = createService(this.settings, { dubbing, callBudget });
   }
@@ -37,6 +38,7 @@ class AutoStoryRunner {
             await state(id, 'rendering');
             const audit = await require('./autoStoryVariantWorker').run({ settings: this.settings, store: this.store,
               workspaceRoot, projectId, scriptId: id, scriptPath, signal, callBudget: this.callBudget,
+              dubbing: this.dubbing, createService: this.createService,
               onProgress: p => { onProgress?.({ ...p, message: `Script ${id}: ${p.message || p.stage || ''}` }); } });
             if (!audit?.complete) throw new Error(audit?.error || 'Chưa có review hoàn chỉnh.');
             const finalPhase = audit.finalCheck?.error ? 'failed' : audit.needsUserReview ? 'needs_attention' : 'complete';

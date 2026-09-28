@@ -557,7 +557,7 @@ ${JSON.stringify(context)}`;
   }
   async run({ workspaceRoot, projectId, onProgress, signal, retryFailed = false, scriptId = null, onScriptReady }) {
     let project = await this.store.getProject(workspaceRoot, projectId);
-    if (project.autoStoryContractVersion === 3 || this.settings.autoStoryContractV3) {
+    if (project.autoStoryContractVersion === 3 || project.autoStoryContractVersion === 4 || this.settings.autoStoryContractV3) {
       return require('./autoStoryV3Pipeline').run(this, { workspaceRoot, projectId, onProgress, signal, retryFailed, scriptId, onScriptReady });
     }
     if (project.autoStoryContractVersion === 2 || (!project.autoStoryPipelineVersion && this.settings.autoStorySourceContract)) {
