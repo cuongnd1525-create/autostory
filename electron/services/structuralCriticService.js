@@ -431,9 +431,9 @@ Judge whether the sequence of scenes flows causally or has unexplained narrative
       if (w.shotState === undefined) w.shotState = w.visualState.shotState;
     } else {
       w.visualState = {
-        primarySubject: w.primarySubject || 'subject',
-        locationState: w.locationState || 'location',
-        activityState: w.activityState || 'conversational',
+        primarySubject: w.primarySubject || ('subject_' + (w.windowIndex ?? 0)),
+        locationState: w.locationState || ('location_' + (w.windowIndex ?? 0)),
+        activityState: w.activityState || 'action',
         shotState: w.shotState || 'wide'
       };
     }
@@ -735,7 +735,7 @@ Judge whether the sequence of scenes flows causally or has unexplained narrative
     const isConversational = /conversation|talk|speak|argu|explain|interview|question|answer|statement|dialogue|stationary|plea|gestur/i.test(activityState) ||
       (['context_setup', 'suspect_defense', 'victim_allegation', 'backstory'].includes(w.observedFunction) && !/restrain|cuff|struggle|pursu|fight|tackle|physic|search/i.test(activityState));
 
-    const noPhysicalChange = !w.caseStateChange && w.observedFunction !== 'physical_evidence' && !w.continuousPhysicalAction;
+    const noPhysicalChange = !w.continuousPhysicalAction && w.observedFunction !== 'physical_evidence' && !/restrain|cuff|struggle|pursu|fight|tackle|physic/i.test(activityState);
     const isTalkingActivity = isConversational && noPhysicalChange;
 
     const sameSubjectAsPrev = Boolean(lastSubject && primarySubject && (primarySubject === lastSubject || primarySubject.includes(lastSubject) || lastSubject.includes(primarySubject)));
