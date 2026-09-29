@@ -30,7 +30,7 @@ async function copyWorkerInputArtifacts(sourceAnalysis, analysis, scriptId) {
 }
 
 // Each variant owns its journal, media and mutable project snapshot.
-async function run({ settings, store, workspaceRoot, projectId, scriptId, scriptPath, signal, onProgress, callBudget, dubbing: customDubbing, createService }) {
+async function run({ settings, store, workspaceRoot, projectId, scriptId, scriptPath, signal, onProgress, callBudget, createDubbing, createService }) {
   const base = store.getProjectPaths(workspaceRoot, projectId);
   const workerRoot = path.join(base.rootDir, '.variant-workers', String(scriptId));
   const local = new Store(), paths = local.getProjectPaths(workerRoot, projectId);
@@ -60,7 +60,7 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     storyScriptPaths: scriptPath ? [scriptPath] : [], storyScriptPath: scriptPath || '',
     analysis: variant ? { ...parent.analysis, highlightVariants: [variant], activeVariantId: variant.id, segments: variant.segments } : null,
     artifacts: variant?.artifacts || {}, exportRoot: paths.outputDir });
-  const dubbing = customDubbing || new Dubbing(local);
+  const dubbing = createDubbing ? createDubbing(local) : new Dubbing(local);
   const service = createService
     ? (createService.length >= 3 ? createService(settings, local, { dubbing, callBudget }) : createService(settings, { dubbing, callBudget }))
     : new Service(settings, local, { dubbing, callBudget });
@@ -104,6 +104,34 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
         ]) {
           await copyIfExists(path.join(analysis, name), path.join(sourceAnalysis, name));
         }
+
+        // Canonical update of parent story-spine.json with accepted repaired spine
+        const workerSpineFile = path.join(analysis, 'story-spine.json');
+        const parentSpineFile = path.join(sourceAnalysis, 'story-spine.json');
+        try {
+          const workerSpineData = JSON.parse(await fs.readFile(workerSpineFile, 'utf8'));
+          const acceptedSpine = (workerSpineData.spines || []).find(s => Number(s.scriptId) === Number(scriptId))
+            || (workerSpineData.spines || [])[0];
+          if (acceptedSpine) {
+            let parentSpineData = { spines: [] };
+            try {
+              parentSpineData = JSON.parse(await fs.readFile(parentSpineFile, 'utf8'));
+            } catch (_) {}
+            if (Array.isArray(parentSpineData.spines)) {
+              const idx = parentSpineData.spines.findIndex(s => Number(s.scriptId) === Number(scriptId));
+              if (idx >= 0) {
+                parentSpineData.spines[idx] = { ...acceptedSpine, scriptId };
+              } else if (parentSpineData.spines.length >= Number(scriptId)) {
+                parentSpineData.spines[Number(scriptId) - 1] = { ...acceptedSpine, scriptId };
+              } else {
+                parentSpineData.spines.push({ ...acceptedSpine, scriptId });
+              }
+            } else {
+              parentSpineData.spines = [{ ...acceptedSpine, scriptId }];
+            }
+            await store.writeText(parentSpineFile, JSON.stringify(parentSpineData, null, 2));
+          }
+        } catch (_) {}
       }
     }
     const entries = [];

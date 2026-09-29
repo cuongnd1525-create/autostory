@@ -4,14 +4,24 @@
     "storyArchetype": "DECEPTION_CONTRADICTION",
     "centralIncident": "Officer investigates a hit-and-run pedestrian crash and interrogates an overly calm pedestrian whose elaborate alibi collapses under physical evidence.",
     "centralViewerQuestion": "Can the calm suspect talk his way out of a felony hit-and-run before physical evidence traps him?",
-    "episodeStartSec": 0.0,
-    "episodeEndSec": 98.0,
-    "primaryPeople": ["Officer Ross", "Suspect Arthur Cole", "Dispatch"],
+    "episodeStartSec": 0,
+    "episodeEndSec": 98,
+    "primaryPeople": [
+      "Officer Ross",
+      "Suspect Arthur Cole",
+      "Dispatch"
+    ],
     "primaryConflict": "Suspect spinning multiple contradictory alibis while officer methodically uncovers blood, glass, and car keys on his person.",
     "initialState": "Officer responds to pedestrian hit-and-run scene and searches nearby streets.",
     "targetEndState": "Suspect's alibi is demolished by car key fob panic test; handcuffed for felony hit-and-run.",
     "mainOpenLoop": "Why does this calm pedestrian have broken safety glass embedded in his knuckles?",
-    "coreEvidenceChain": ["dog_walk_alibi", "shattered_windshield_dispatch", "bleeding_knuckle_cuts", "radiator_fluid_odor", "key_fob_horn_test"]
+    "coreEvidenceChain": [
+      "dog_walk_alibi",
+      "shattered_windshield_dispatch",
+      "bleeding_knuckle_cuts",
+      "radiator_fluid_odor",
+      "key_fob_horn_test"
+    ]
   },
   "centralViewerQuestion": "Can the calm suspect talk his way out of a felony hit-and-run before physical evidence traps him?",
   "hookPromise": "Calculated pedestrian alibi completely unravels when an officer tests the key fob in his jacket pocket.",
@@ -19,8 +29,8 @@
     {
       "beatId": "beat_0",
       "beatIndex": 0,
-      "sourceStartSec": 10.0,
-      "sourceEndSec": 13.0,
+      "sourceStartSec": 10,
+      "sourceEndSec": 13,
       "chronologyMode": "teaser",
       "narrativeRole": "teaser_conflict",
       "audioMode": "original_audio",
@@ -30,13 +40,14 @@
       "viewerStateAfter": "Hears bold absolute denial.",
       "viewerQuestionBefore": "Is this man innocent or lying?",
       "causalRelation": "OPENS_QUESTION",
-      "whyThisBeatNow": "Teaser introduces initial false calm."
+      "whyThisBeatNow": "Teaser introduces initial false calm.",
+      "semanticFunction": "teaser_conflict"
     },
     {
       "beatId": "beat_1",
       "beatIndex": 1,
-      "sourceStartSec": 15.0,
-      "sourceEndSec": 18.0,
+      "sourceStartSec": 15,
+      "sourceEndSec": 18,
       "chronologyMode": "teaser",
       "narrativeRole": "micro_payoff",
       "audioMode": "original_audio",
@@ -46,12 +57,13 @@
       "viewerStateAfter": "Shocked by smoking-gun physical evidence contradiction.",
       "causalParentBeat": "beat_0",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "Teaser partial reveal cuts before full explanation."
+      "whyThisBeatNow": "Teaser partial reveal cuts before full explanation.",
+      "semanticFunction": "micro_payoff"
     },
     {
       "beatId": "beat_2",
       "beatIndex": 2,
-      "sourceStartSec": 0.0,
+      "sourceStartSec": 0,
       "sourceEndSec": 5.5,
       "chronologyMode": "rewind",
       "narrativeRole": "rewind_context",
@@ -61,13 +73,14 @@
       "viewerStateBefore": "Left hanging at boots.",
       "viewerStateAfter": "Understands gravity of felony hit-and-run.",
       "causalRelation": "EXPLAINS",
-      "whyThisBeatNow": "Establishes crime context."
+      "whyThisBeatNow": "Establishes crime context.",
+      "semanticFunction": "rewind_context"
     },
     {
       "beatId": "beat_3",
       "beatIndex": 3,
-      "sourceStartSec": 20.0,
-      "sourceEndSec": 25.0,
+      "sourceStartSec": 20,
+      "sourceEndSec": 25,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -77,13 +90,14 @@
       "viewerStateAfter": "Vehicle profile established.",
       "causalParentBeat": "beat_2",
       "causalRelation": "CONFIRMS",
-      "whyThisBeatNow": "Connects crime scene to vehicle characteristics without repeating teaser."
+      "whyThisBeatNow": "Connects crime scene to vehicle characteristics without repeating teaser.",
+      "semanticFunction": "dispatch_bulletin"
     },
     {
       "beatId": "beat_4",
       "beatIndex": 4,
-      "sourceStartSec": 26.0,
-      "sourceEndSec": 31.0,
+      "sourceStartSec": 26,
+      "sourceEndSec": 31,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -93,13 +107,14 @@
       "viewerStateAfter": "Suspect intercepted; note absence of animal.",
       "causalParentBeat": "beat_3",
       "causalRelation": "RESPONDS_TO",
-      "whyThisBeatNow": "Initial contact in chronological timeline."
+      "whyThisBeatNow": "Initial contact in chronological timeline.",
+      "semanticFunction": "suspect_intercept"
     },
     {
       "beatId": "beat_5",
       "beatIndex": 5,
-      "sourceStartSec": 33.0,
-      "sourceEndSec": 38.0,
+      "sourceStartSec": 33,
+      "sourceEndSec": 38,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -109,13 +124,14 @@
       "viewerStateAfter": "Suspect attempting polite charm offense.",
       "causalParentBeat": "beat_4",
       "causalRelation": "EXPLAINS",
-      "whyThisBeatNow": "Sets up baseline deception."
+      "whyThisBeatNow": "Sets up baseline deception.",
+      "semanticFunction": "confrontation"
     },
     {
       "beatId": "beat_6",
       "beatIndex": 6,
-      "sourceStartSec": 40.0,
-      "sourceEndSec": 45.0,
+      "sourceStartSec": 40,
+      "sourceEndSec": 45,
       "chronologyMode": "chronological",
       "narrativeRole": "contradiction",
       "audioMode": "original_audio",
@@ -125,13 +141,14 @@
       "viewerStateAfter": "First crack in story appears.",
       "causalParentBeat": "beat_5",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "Alibi begins to falter."
+      "whyThisBeatNow": "Alibi begins to falter.",
+      "semanticFunction": "contradiction"
     },
     {
       "beatId": "beat_7",
       "beatIndex": 7,
-      "sourceStartSec": 47.0,
-      "sourceEndSec": 52.0,
+      "sourceStartSec": 47,
+      "sourceEndSec": 52,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -141,13 +158,14 @@
       "viewerStateAfter": "Physical injury linked directly to broken glass.",
       "causalParentBeat": "beat_6",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Physical forensic evidence."
+      "whyThisBeatNow": "Physical forensic evidence.",
+      "semanticFunction": "glass_lacerations_reveal"
     },
     {
       "beatId": "beat_8",
       "beatIndex": 8,
-      "sourceStartSec": 54.0,
-      "sourceEndSec": 59.0,
+      "sourceStartSec": 54,
+      "sourceEndSec": 59,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -157,13 +175,14 @@
       "viewerStateAfter": "Officer tightens trap.",
       "causalParentBeat": "beat_7",
       "causalRelation": "RESPONDS_TO",
-      "whyThisBeatNow": "Confronting suspect with facts."
+      "whyThisBeatNow": "Confronting suspect with facts.",
+      "semanticFunction": "verbal_challenge"
     },
     {
       "beatId": "beat_9",
       "beatIndex": 9,
-      "sourceStartSec": 61.0,
-      "sourceEndSec": 66.0,
+      "sourceStartSec": 61,
+      "sourceEndSec": 66,
       "chronologyMode": "chronological",
       "narrativeRole": "contradiction",
       "audioMode": "original_audio",
@@ -173,12 +192,13 @@
       "viewerStateAfter": "Story completely shifts from dog walker to passenger.",
       "causalParentBeat": "beat_8",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "Secondary alibi confirms original story was a total lie."
+      "whyThisBeatNow": "Secondary alibi confirms original story was a total lie.",
+      "semanticFunction": "contradiction"
     },
     {
       "beatId": "beat_10",
       "beatIndex": 10,
-      "sourceStartSec": 68.0,
+      "sourceStartSec": 68,
       "sourceEndSec": 73.5,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
@@ -189,13 +209,14 @@
       "viewerStateAfter": "Spotting key fob; deciding test imminent.",
       "causalParentBeat": "beat_9",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "The ultimate instrument of proof."
+      "whyThisBeatNow": "The ultimate instrument of proof.",
+      "semanticFunction": "key_fob_discovery"
     },
     {
       "beatId": "beat_11",
       "beatIndex": 11,
-      "sourceStartSec": 75.0,
-      "sourceEndSec": 81.0,
+      "sourceStartSec": 75,
+      "sourceEndSec": 81,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -205,13 +226,14 @@
       "viewerStateAfter": "Irrefutable proof; suspect's deception completely destroyed.",
       "causalParentBeat": "beat_10",
       "causalRelation": "PAYS_OFF",
-      "whyThisBeatNow": "Cinematic climax of the contradiction ladder."
+      "whyThisBeatNow": "Cinematic climax of the contradiction ladder.",
+      "semanticFunction": "alarm_confirmation"
     },
     {
       "beatId": "beat_12",
       "beatIndex": 12,
-      "sourceStartSec": 83.0,
-      "sourceEndSec": 88.0,
+      "sourceStartSec": 83,
+      "sourceEndSec": 88,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -221,13 +243,14 @@
       "viewerStateAfter": "Arrest completed.",
       "causalParentBeat": "beat_11",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Physical consequence of alibi collapse."
+      "whyThisBeatNow": "Physical consequence of alibi collapse.",
+      "semanticFunction": "officer_physical_action"
     },
     {
       "beatId": "beat_13",
       "beatIndex": 13,
-      "sourceStartSec": 92.0,
-      "sourceEndSec": 98.0,
+      "sourceStartSec": 92,
+      "sourceEndSec": 98,
       "chronologyMode": "chronological",
       "narrativeRole": "cliffhanger",
       "audioMode": "voiceover_with_ambient",
@@ -240,7 +263,8 @@
       "cliffhangerNewInformation": "Suspect is a high-profile county official out on active felony bail.",
       "cliffhangerSpecificFact": "Vehicle registration matches County Commissioner Arthur Cole out on active felony bail.",
       "cliffhangerExpectedNextPayoff": "Part 2 reveals police interview and bail revocation hearing.",
-      "consequenceMagnitude": "charges"
+      "consequenceMagnitude": "charges",
+      "semanticFunction": "cliffhanger"
     }
   ]
 }

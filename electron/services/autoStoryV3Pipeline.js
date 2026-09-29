@@ -66,7 +66,7 @@ const STORY_DESIGN_REPAIR = `REPAIR — your previous Story Design returned NO u
 // bounded, text-only targeted repair. Evaluates EDL quality guardrails (teaser borrow budget,
 // compact cold-open, micro-beats, strict chronology, and strong cliffhanger).
 // Never fabricates or heuristically alters the EDL; Gemini owns the timeline 100%.
-async function buildStoryDesign(engine, model, root, emit, externalRepairInstruction = null) {
+async function buildStoryDesign(engine, model, root, emit, externalRepairInstruction = null, currentSpine = null) {
   assertStoryModelInput(model);
   const metaOf = () => {
     const m = engine.service?.vertex?.lastResponseMetadata || {}; const u = m.usage || {};
@@ -77,9 +77,24 @@ async function buildStoryDesign(engine, model, root, emit, externalRepairInstruc
   };
   const runOnce = async (customRepairInstruction) => {
     customRepairInstruction = customRepairInstruction || externalRepairInstruction;
-    const formattedInstruction = typeof customRepairInstruction === 'string'
-      ? customRepairInstruction
-      : customRepairInstruction ? JSON.stringify(customRepairInstruction, null, 2) : '';
+    let formattedInstruction = '';
+    if (customRepairInstruction) {
+      if (currentSpine) {
+        formattedInstruction = `TARGETED STRUCTURAL REPAIR DIRECTIVE FROM MEDIA-GROUNDED CRITIC:
+Return a COMPLETE repaired spine, but change ONLY beats necessary to resolve the specified media-critic failure.
+Preserve all unaffected beats exactly unless transition continuity requires a specific adjacent change.
+
+CURRENT SPINE TO REPAIR:
+${JSON.stringify(currentSpine, null, 2)}
+
+REPAIR SPECIFICATION:
+${typeof customRepairInstruction === 'string' ? customRepairInstruction : JSON.stringify(customRepairInstruction, null, 2)}`;
+      } else {
+        formattedInstruction = typeof customRepairInstruction === 'string'
+          ? customRepairInstruction
+          : JSON.stringify(customRepairInstruction, null, 2);
+      }
+    }
     const instruction = customRepairInstruction
       ? `${V3.instructions.storyDesign}\n\n${formattedInstruction}`
       : V3.instructions.storyDesign;
@@ -89,7 +104,8 @@ async function buildStoryDesign(engine, model, root, emit, externalRepairInstruc
       targetDurationMinSec: engine.config.targetDurationMinSec || 70,
       targetDurationMaxSec: engine.config.targetDurationMaxSec || 90,
       storyMode: 'serialized_part',
-      ...(customRepairInstruction ? { repairSpecification: customRepairInstruction } : {})
+      ...(customRepairInstruction ? { repairSpecification: customRepairInstruction } : {}),
+      ...(currentSpine ? { currentSpine } : {})
     };
     try {
       value = await engine.ask(
@@ -714,10 +730,13 @@ async function auditDrafts(service, opts) {
       signal?.throwIfAborted();
       console.log(`[V4] Targeted repair pass #${repairPass} started`);
       const repairSpec = generateTargetedRepairSpecification(currentCritique, currentSpine);
+      if (!repairSpec) {
+        throw new Error(`Media critic non-compliant (status: ${currentCritique.status}, score: ${currentCritique.criticObservedScore}) but no repair specification could be generated.`);
+      }
       await fs.writeFile(path.join(root, `repair-${repairPass}-specification-${id}.json`), JSON.stringify(repairSpec, null, 2));
 
       const emitProgress = (st, msg, pct) => onProgress?.({ stage: st, message: msg, percent: pct });
-      const repairedSpines = await buildStoryDesign(engine, model, root, emitProgress, repairSpec);
+      const repairedSpines = await buildStoryDesign(engine, model, root, emitProgress, repairSpec, currentSpine);
       if (!repairedSpines || !repairedSpines.length) {
         throw new Error(`Repair pass ${repairPass} failed to produce a repaired spine.`);
       }
@@ -783,6 +802,33 @@ async function auditDrafts(service, opts) {
 
       if (currentCritique.isCompliant) {
         console.log(`[V4] Repaired EDL accepted (Pass ${repairPass})`);
+
+        // Atomically update story-spine.json in root with the accepted repaired spine
+        const spinePath = path.join(root, 'story-spine.json');
+        try {
+          let currentSpineData = { spines: [] };
+          try {
+            currentSpineData = JSON.parse(await fs.readFile(spinePath, 'utf8'));
+          } catch (_) {}
+          if (Array.isArray(currentSpineData.spines)) {
+            const idx = currentSpineData.spines.findIndex(s => s.scriptId === id);
+            if (idx >= 0) {
+              currentSpineData.spines[idx] = { ...currentSpine, scriptId: id };
+            } else if (currentSpineData.spines.length >= id) {
+              currentSpineData.spines[id - 1] = { ...currentSpine, scriptId: id };
+            } else {
+              currentSpineData.spines.push({ ...currentSpine, scriptId: id });
+            }
+          } else {
+            currentSpineData.spines = [{ ...currentSpine, scriptId: id }];
+          }
+          const tempPath = `${spinePath}.${crypto.randomUUID()}.tmp`;
+          await fs.writeFile(tempPath, JSON.stringify(currentSpineData, null, 2));
+          await fs.rename(tempPath, spinePath);
+        } catch (err) {
+          console.warn(`[V4] Warning: Failed to update local story-spine.json with accepted spine: ${err.message}`);
+        }
+
         const passedAudit = {
           scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: false,
           repairPasses: repairPass,

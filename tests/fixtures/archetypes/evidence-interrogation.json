@@ -4,14 +4,25 @@
     "storyArchetype": "INTERROGATION",
     "centralIncident": "Police respond to a 2 AM commercial burglary alarm and trap an insider safecracker who concocts a kidnapping hostage story.",
     "centralViewerQuestion": "Is the man caught beside the cracked warehouse safe a terrified hostage or an inside mastermind?",
-    "episodeStartSec": 0.0,
-    "episodeEndSec": 87.0,
-    "primaryPeople": ["Officer Campbell", "Suspect Gregory Hayes", "Detective Vance"],
+    "episodeStartSec": 0,
+    "episodeEndSec": 87,
+    "primaryPeople": [
+      "Officer Campbell",
+      "Suspect Gregory Hayes",
+      "Detective Vance"
+    ],
     "primaryConflict": "Suspect posing as a kidnapped hostage while physical forensic evidence systematically proves deliberate safecracking and inside assistance.",
     "initialState": "Officers enter warehouse with guns drawn responding to silent motion alarms.",
     "targetEndState": "Hostage claim is shattered by physical master card and $45k cash recovery; insider conspiracy revealed.",
     "mainOpenLoop": "Why does the supposed hostage possess the master electronic keycard to the company vault?",
-    "coreEvidenceChain": ["breached_side_door", "safe_combination_in_hand", "hostage_claim", "safecracking_tactical_gloves", "master_keycard_match", "forty_five_thousand_cash"]
+    "coreEvidenceChain": [
+      "breached_side_door",
+      "safe_combination_in_hand",
+      "hostage_claim",
+      "safecracking_tactical_gloves",
+      "master_keycard_match",
+      "forty_five_thousand_cash"
+    ]
   },
   "centralViewerQuestion": "Is the man caught beside the cracked warehouse safe a terrified hostage or an inside mastermind?",
   "hookPromise": "Intense late-night commercial burglary interrogation where a supposed hostage is exposed as an inside thief.",
@@ -19,8 +30,8 @@
     {
       "beatId": "beat_0",
       "beatIndex": 0,
-      "sourceStartSec": 12.0,
-      "sourceEndSec": 15.0,
+      "sourceStartSec": 12,
+      "sourceEndSec": 15,
       "chronologyMode": "teaser",
       "narrativeRole": "teaser_conflict",
       "audioMode": "original_audio",
@@ -30,13 +41,14 @@
       "viewerStateAfter": "Sees high-stakes standoff with crying suspect.",
       "viewerQuestionBefore": "Is he victim or burglar?",
       "causalRelation": "OPENS_QUESTION",
-      "whyThisBeatNow": "Teaser introduces dramatic ambiguity."
+      "whyThisBeatNow": "Teaser introduces dramatic ambiguity.",
+      "semanticFunction": "teaser_conflict"
     },
     {
       "beatId": "beat_1",
       "beatIndex": 1,
-      "sourceStartSec": 16.0,
-      "sourceEndSec": 19.0,
+      "sourceStartSec": 16,
+      "sourceEndSec": 19,
       "chronologyMode": "teaser",
       "narrativeRole": "micro_payoff",
       "audioMode": "original_audio",
@@ -46,13 +58,14 @@
       "viewerStateAfter": "Shocked by safecracking notes in hand; left hanging!",
       "causalParentBeat": "beat_0",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Teaser cuts before full explanation."
+      "whyThisBeatNow": "Teaser cuts before full explanation.",
+      "semanticFunction": "micro_payoff"
     },
     {
       "beatId": "beat_2",
       "beatIndex": 2,
-      "sourceStartSec": 0.0,
-      "sourceEndSec": 5.0,
+      "sourceStartSec": 0,
+      "sourceEndSec": 5,
       "chronologyMode": "rewind",
       "narrativeRole": "rewind_context",
       "audioMode": "voiceover_with_ambient",
@@ -61,13 +74,14 @@
       "viewerStateBefore": "Left hanging at safe.",
       "viewerStateAfter": "Understands breach timeline.",
       "causalRelation": "EXPLAINS",
-      "whyThisBeatNow": "Origin context."
+      "whyThisBeatNow": "Origin context.",
+      "semanticFunction": "rewind_context"
     },
     {
       "beatId": "beat_3",
       "beatIndex": 3,
-      "sourceStartSec": 6.0,
-      "sourceEndSec": 11.0,
+      "sourceStartSec": 6,
+      "sourceEndSec": 11,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -77,13 +91,14 @@
       "viewerStateAfter": "Professional burglary tools confirmed.",
       "causalParentBeat": "beat_2",
       "causalRelation": "CONFIRMS",
-      "whyThisBeatNow": "Physical evidence of planned forced entry."
+      "whyThisBeatNow": "Physical evidence of planned forced entry.",
+      "semanticFunction": "perimeter_breach"
     },
     {
       "beatId": "beat_4",
       "beatIndex": 4,
-      "sourceStartSec": 20.0,
-      "sourceEndSec": 25.0,
+      "sourceStartSec": 20,
+      "sourceEndSec": 25,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -93,13 +108,14 @@
       "viewerStateAfter": "Tracking active intruder inside.",
       "causalParentBeat": "beat_3",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Building kinetic tension towards apprehension."
+      "whyThisBeatNow": "Building kinetic tension towards apprehension.",
+      "semanticFunction": "facility_search"
     },
     {
       "beatId": "beat_5",
       "beatIndex": 5,
-      "sourceStartSec": 26.0,
-      "sourceEndSec": 31.0,
+      "sourceStartSec": 26,
+      "sourceEndSec": 31,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -109,13 +125,14 @@
       "viewerStateAfter": "Suspect caught in the act.",
       "causalParentBeat": "beat_4",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Physical encounter occurs."
+      "whyThisBeatNow": "Physical encounter occurs.",
+      "semanticFunction": "cornered_suspect"
     },
     {
       "beatId": "beat_6",
       "beatIndex": 6,
-      "sourceStartSec": 32.0,
-      "sourceEndSec": 37.0,
+      "sourceStartSec": 32,
+      "sourceEndSec": 37,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -125,13 +142,14 @@
       "viewerStateAfter": "Mechanical custody achieved.",
       "causalParentBeat": "beat_5",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Scene secured for interrogation."
+      "whyThisBeatNow": "Scene secured for interrogation.",
+      "semanticFunction": "officer_physical_action"
     },
     {
       "beatId": "beat_7",
       "beatIndex": 7,
-      "sourceStartSec": 38.0,
-      "sourceEndSec": 43.0,
+      "sourceStartSec": 38,
+      "sourceEndSec": 43,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -141,13 +159,14 @@
       "viewerStateAfter": "Hostage coercion claim presented.",
       "causalParentBeat": "beat_6",
       "causalRelation": "EXPLAINS",
-      "whyThisBeatNow": "Presents central false hypothesis."
+      "whyThisBeatNow": "Presents central false hypothesis.",
+      "semanticFunction": "suspect_defense_excuse"
     },
     {
       "beatId": "beat_8",
       "beatIndex": 8,
-      "sourceStartSec": 45.0,
-      "sourceEndSec": 50.0,
+      "sourceStartSec": 45,
+      "sourceEndSec": 50,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -157,13 +176,14 @@
       "viewerStateAfter": "Specialized equipment casts severe doubt on impromptu hostage claim.",
       "causalParentBeat": "beat_7",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "First forensic contradiction."
+      "whyThisBeatNow": "First forensic contradiction.",
+      "semanticFunction": "safecracking_evidence"
     },
     {
       "beatId": "beat_9",
       "beatIndex": 9,
-      "sourceStartSec": 52.0,
-      "sourceEndSec": 57.0,
+      "sourceStartSec": 52,
+      "sourceEndSec": 57,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -173,13 +193,14 @@
       "viewerStateAfter": "Insider access proven.",
       "causalParentBeat": "beat_8",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Uncovers technical mechanism of entry."
+      "whyThisBeatNow": "Uncovers technical mechanism of entry.",
+      "semanticFunction": "rfid_card_discovery"
     },
     {
       "beatId": "beat_10",
       "beatIndex": 10,
-      "sourceStartSec": 59.0,
-      "sourceEndSec": 64.0,
+      "sourceStartSec": 59,
+      "sourceEndSec": 64,
       "chronologyMode": "chronological",
       "narrativeRole": "contradiction",
       "audioMode": "original_audio",
@@ -189,13 +210,14 @@
       "viewerStateAfter": "Suspect identity unmasked as facility manager.",
       "causalParentBeat": "beat_9",
       "causalRelation": "PAYS_OFF",
-      "whyThisBeatNow": "Direct unmasking of the inside perpetrator."
+      "whyThisBeatNow": "Direct unmasking of the inside perpetrator.",
+      "semanticFunction": "contradiction"
     },
     {
       "beatId": "beat_11",
       "beatIndex": 11,
-      "sourceStartSec": 66.0,
-      "sourceEndSec": 72.0,
+      "sourceStartSec": 66,
+      "sourceEndSec": 72,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "voiceover_with_ambient",
@@ -205,13 +227,14 @@
       "viewerStateAfter": "Loot found; pre-planned embezzlement completely confirmed.",
       "causalParentBeat": "beat_10",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Irrefutable physical evidence of completed theft."
+      "whyThisBeatNow": "Irrefutable physical evidence of completed theft.",
+      "semanticFunction": "cash_evidence_reveal"
     },
     {
       "beatId": "beat_12",
       "beatIndex": 12,
-      "sourceStartSec": 74.0,
-      "sourceEndSec": 79.0,
+      "sourceStartSec": 74,
+      "sourceEndSec": 79,
       "chronologyMode": "chronological",
       "narrativeRole": "reaction",
       "audioMode": "original_audio",
@@ -221,13 +244,14 @@
       "viewerStateAfter": "Suspect fully confesses real motive.",
       "causalParentBeat": "beat_11",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Emotional and legal collapse."
+      "whyThisBeatNow": "Emotional and legal collapse.",
+      "semanticFunction": "admission_reaction"
     },
     {
       "beatId": "beat_13",
       "beatIndex": 13,
-      "sourceStartSec": 81.0,
-      "sourceEndSec": 87.0,
+      "sourceStartSec": 81,
+      "sourceEndSec": 87,
       "chronologyMode": "chronological",
       "narrativeRole": "cliffhanger",
       "audioMode": "original_audio",
@@ -240,7 +264,8 @@
       "cliffhangerNewInformation": "Text message proves the company Vice President of Security is Hayes' criminal co-conspirator.",
       "cliffhangerSpecificFact": "Text message proves Vice President of Security is directing the safe burglary conspiracy.",
       "cliffhangerExpectedNextPayoff": "Part 2 reveals police sting operation against the Vice President.",
-      "consequenceMagnitude": "charges"
+      "consequenceMagnitude": "charges",
+      "semanticFunction": "cliffhanger"
     }
   ]
 }

@@ -4,14 +4,24 @@
     "storyArchetype": "PURSUIT",
     "centralIncident": "Suspicious person bolts on foot through residential yards and alleyways before a violent struggle in a drainage ditch.",
     "centralViewerQuestion": "Why did the suspect sprint away into the neighborhood ditch and what did he throw over the fence?",
-    "episodeStartSec": 0.0,
-    "episodeEndSec": 88.0,
-    "primaryPeople": ["Officer Jenkins", "Fleeing Suspect (Ray)", "Backup Officer Torres"],
+    "episodeStartSec": 0,
+    "episodeEndSec": 88,
+    "primaryPeople": [
+      "Officer Jenkins",
+      "Fleeing Suspect (Ray)",
+      "Backup Officer Torres"
+    ],
     "primaryConflict": "High-speed foot chase through obstacles; physical tackle and restraint in wet culvert.",
     "initialState": "Officer approaches individual walking through private alleyway.",
     "targetEndState": "Suspect is tackled, restrained in handcuffs, burglary tools recovered, and unexplained gunshot wound discovered.",
     "mainOpenLoop": "What crime is the runner fleeing from and what is in the discarded black backpack?",
-    "coreEvidenceChain": ["sudden_foot_flight", "discarded_backpack", "culvert_tackle", "crowbar_jewelry_recovery", "fresh_gunshot_wound"]
+    "coreEvidenceChain": [
+      "sudden_foot_flight",
+      "discarded_backpack",
+      "culvert_tackle",
+      "crowbar_jewelry_recovery",
+      "fresh_gunshot_wound"
+    ]
   },
   "centralViewerQuestion": "Why did the suspect sprint away into the neighborhood ditch and what did he throw over the fence?",
   "hookPromise": "Kinetic, relentless foot pursuit through backyard fences ending in a ditch tackle and shocking injury reveal.",
@@ -19,7 +29,7 @@
     {
       "beatId": "beat_0",
       "beatIndex": 0,
-      "sourceStartSec": 0.0,
+      "sourceStartSec": 0,
       "sourceEndSec": 4.5,
       "chronologyMode": "chronological",
       "narrativeRole": "hook_setup",
@@ -30,12 +40,13 @@
       "viewerStateAfter": "Sees dark alley confrontation.",
       "viewerQuestionBefore": "Will the pedestrian comply or run?",
       "causalRelation": "OPENS_QUESTION",
-      "whyThisBeatNow": "Immediate tension hook without prologue delay."
+      "whyThisBeatNow": "Immediate tension hook without prologue delay.",
+      "semanticFunction": "hook_setup"
     },
     {
       "beatId": "beat_1",
       "beatIndex": 1,
-      "sourceStartSec": 5.0,
+      "sourceStartSec": 5,
       "sourceEndSec": 9.5,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
@@ -46,12 +57,13 @@
       "viewerStateAfter": "Flight initiated; chase begins.",
       "causalParentBeat": "beat_0",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Kinetic trigger launches pursuit."
+      "whyThisBeatNow": "Kinetic trigger launches pursuit.",
+      "semanticFunction": "kinetic_pursuit"
     },
     {
       "beatId": "beat_2",
       "beatIndex": 2,
-      "sourceStartSec": 10.0,
+      "sourceStartSec": 10,
       "sourceEndSec": 14.5,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
@@ -62,12 +74,13 @@
       "viewerStateAfter": "Officer in full sprint pursuit.",
       "causalParentBeat": "beat_1",
       "causalRelation": "RESPONDS_TO",
-      "whyThisBeatNow": "Establishes tactical stakes and pursuit speed."
+      "whyThisBeatNow": "Establishes tactical stakes and pursuit speed.",
+      "semanticFunction": "pursuit_escalation"
     },
     {
       "beatId": "beat_3",
       "beatIndex": 3,
-      "sourceStartSec": 16.0,
+      "sourceStartSec": 16,
       "sourceEndSec": 20.5,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
@@ -78,12 +91,13 @@
       "viewerStateAfter": "Obstacle breach; tracking runner location.",
       "causalParentBeat": "beat_2",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Visual action dynamic shift."
+      "whyThisBeatNow": "Visual action dynamic shift.",
+      "semanticFunction": "obstacle_evasion"
     },
     {
       "beatId": "beat_4",
       "beatIndex": 4,
-      "sourceStartSec": 22.0,
+      "sourceStartSec": 22,
       "sourceEndSec": 26.5,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
@@ -94,13 +108,14 @@
       "viewerStateAfter": "Evidence jettison spotted; mystery object created.",
       "causalParentBeat": "beat_3",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Creates central physical evidence open loop."
+      "whyThisBeatNow": "Creates central physical evidence open loop.",
+      "semanticFunction": "evidence_discard"
     },
     {
       "beatId": "beat_5",
       "beatIndex": 5,
-      "sourceStartSec": 28.0,
-      "sourceEndSec": 33.0,
+      "sourceStartSec": 28,
+      "sourceEndSec": 33,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -110,12 +125,13 @@
       "viewerStateAfter": "Dead-end terrain approaching; warning issued.",
       "causalParentBeat": "beat_4",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Officer prepares force application."
+      "whyThisBeatNow": "Officer prepares force application.",
+      "semanticFunction": "taser_warning"
     },
     {
       "beatId": "beat_6",
       "beatIndex": 6,
-      "sourceStartSec": 35.0,
+      "sourceStartSec": 35,
       "sourceEndSec": 39.5,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
@@ -126,13 +142,14 @@
       "viewerStateAfter": "Runner momentum broken; gap closes.",
       "causalParentBeat": "beat_5",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Physical slip enables apprehension."
+      "whyThisBeatNow": "Physical slip enables apprehension.",
+      "semanticFunction": "suspect_stumble"
     },
     {
       "beatId": "beat_7",
       "beatIndex": 7,
-      "sourceStartSec": 41.0,
-      "sourceEndSec": 46.0,
+      "sourceStartSec": 41,
+      "sourceEndSec": 46,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -142,13 +159,14 @@
       "viewerStateAfter": "Physical takedown achieved.",
       "causalParentBeat": "beat_6",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Direct physical climax of the foot chase."
+      "whyThisBeatNow": "Direct physical climax of the foot chase.",
+      "semanticFunction": "officer_tackle"
     },
     {
       "beatId": "beat_8",
       "beatIndex": 8,
-      "sourceStartSec": 48.0,
-      "sourceEndSec": 53.0,
+      "sourceStartSec": 48,
+      "sourceEndSec": 53,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -158,13 +176,14 @@
       "viewerStateAfter": "Active resisting arrest ongoing.",
       "causalParentBeat": "beat_7",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Stakes remain high during restraint."
+      "whyThisBeatNow": "Stakes remain high during restraint.",
+      "semanticFunction": "ground_struggle"
     },
     {
       "beatId": "beat_9",
       "beatIndex": 9,
-      "sourceStartSec": 55.0,
-      "sourceEndSec": 60.0,
+      "sourceStartSec": 55,
+      "sourceEndSec": 60,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -174,13 +193,14 @@
       "viewerStateAfter": "First wrist secured; compliance progressing.",
       "causalParentBeat": "beat_8",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Progressive mechanical control."
+      "whyThisBeatNow": "Progressive mechanical control.",
+      "semanticFunction": "officer_restraint"
     },
     {
       "beatId": "beat_10",
       "beatIndex": 10,
-      "sourceStartSec": 62.0,
-      "sourceEndSec": 67.0,
+      "sourceStartSec": 62,
+      "sourceEndSec": 67,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -190,12 +210,13 @@
       "viewerStateAfter": "Suspect completely neutralized in custody.",
       "causalParentBeat": "beat_9",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Full suspect securing."
+      "whyThisBeatNow": "Full suspect securing.",
+      "semanticFunction": "suspect_secured"
     },
     {
       "beatId": "beat_11",
       "beatIndex": 11,
-      "sourceStartSec": 69.0,
+      "sourceStartSec": 69,
       "sourceEndSec": 74.5,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
@@ -206,13 +227,14 @@
       "viewerStateAfter": "Burglary evidence confirmed; motive for running solved.",
       "causalParentBeat": "beat_4",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Resolves discarded backpack open loop."
+      "whyThisBeatNow": "Resolves discarded backpack open loop.",
+      "semanticFunction": "physical_evidence_revelation"
     },
     {
       "beatId": "beat_12",
       "beatIndex": 12,
-      "sourceStartSec": 76.0,
-      "sourceEndSec": 81.0,
+      "sourceStartSec": 76,
+      "sourceEndSec": 81,
       "chronologyMode": "chronological",
       "narrativeRole": "contradiction",
       "audioMode": "original_audio",
@@ -222,12 +244,13 @@
       "viewerStateAfter": "Classic implausible carrier defense.",
       "causalParentBeat": "beat_11",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "Single punchy suspect excuse."
+      "whyThisBeatNow": "Single punchy suspect excuse.",
+      "semanticFunction": "contradiction"
     },
     {
       "beatId": "beat_13",
       "beatIndex": 13,
-      "sourceStartSec": 83.0,
+      "sourceStartSec": 83,
       "sourceEndSec": 88.5,
       "chronologyMode": "chronological",
       "narrativeRole": "cliffhanger",
@@ -240,7 +263,8 @@
       "cliffhangerQuestion": "Who shot this suspect before police arrived, and was it a homeowner during the robbery in Part 2?",
       "cliffhangerNewInformation": "Suspect has an active gunshot wound from a violent encounter prior to the foot chase.",
       "cliffhangerExpectedNextPayoff": "Part 2 reveals EMS treatment and the homeowner shootout investigation.",
-      "consequenceMagnitude": "violence"
+      "consequenceMagnitude": "violence",
+      "semanticFunction": "cliffhanger"
     }
   ]
 }

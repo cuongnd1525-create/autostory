@@ -4,13 +4,14 @@ const Service = require('./autoStoryFastService');
 
 // Isolated variant workers can render while the producer prepares other scripts.
 class AutoStoryRunner {
-  constructor(settings, store, dubbing, createService = (s, d) => new Service(s, store, d)) {
+  constructor(settings, store, dubbing, createService = (s, d) => new Service(s, store, d), createDubbing = null) {
     this.settings = { autoStorySourceContract: true, ...settings, autoStoryResourceManaged: true, autoStoryBoundedRun: true };
     this.store = store; this.dubbing = dubbing;
     const callBudget = { calls: 0, runId: require('crypto').randomUUID() };
     this.callBudget = callBudget;
     this.isolatedWorkers = typeof store.saveProject === 'function';
     this.createService = createService;
+    this.createDubbing = createDubbing;
     this.producer = createService(this.settings, { dubbing, callBudget });
     this.consumer = createService(this.settings, { dubbing, callBudget });
   }
@@ -38,7 +39,7 @@ class AutoStoryRunner {
             await state(id, 'rendering');
             const audit = await require('./autoStoryVariantWorker').run({ settings: this.settings, store: this.store,
               workspaceRoot, projectId, scriptId: id, scriptPath, signal, callBudget: this.callBudget,
-              dubbing: this.dubbing, createService: this.createService,
+              createDubbing: this.createDubbing, createService: this.createService,
               onProgress: p => { onProgress?.({ ...p, message: `Script ${id}: ${p.message || p.stage || ''}` }); } });
             if (!audit?.complete) throw new Error(audit?.error || 'Chưa có review hoàn chỉnh.');
             const finalPhase = audit.finalCheck?.error ? 'failed' : audit.needsUserReview ? 'needs_attention' : 'complete';
