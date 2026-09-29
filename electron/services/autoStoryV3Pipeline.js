@@ -703,11 +703,47 @@ async function auditDrafts(service, opts) {
       targetWindowSec: 5.5
     });
 
+    if (currentCritique.status === 'STRUCTURAL_CRITIC_INCOMPLETE' || currentCritique.status === 'MEDIA_CRITIC_INVALID') {
+      console.warn(`[V4] Initial critic returned ${currentCritique.status}. Retrying critic once on same MP4...`);
+      currentCritique = await critiqueMediaGroundedTimeline(currentSpine, {
+        aiService: ai,
+        mp4Path: currentMp4,
+        actualMp4DurationSec: meta.duration,
+        targetWindowSec: 5.5
+      });
+    }
+
     console.log(`[V4] Initial media score: ${currentCritique.criticObservedScore}`);
     if (currentCritique.weakWindows?.length) console.log(`[V4] Weak windows: ${currentCritique.weakWindows.length}`);
 
     await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(currentSpine, null, 2));
     await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(currentCritique, null, 2));
+
+    if (currentCritique.status === 'STRUCTURAL_CRITIC_INCOMPLETE' || currentCritique.status === 'MEDIA_CRITIC_INVALID') {
+      console.error(`[V4] Initial critic retry failed with ${currentCritique.status}. Failing pipeline with MEDIA_CRITIC_FAILED.`);
+      const criticFailedAudit = {
+        scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: true,
+        status: 'MEDIA_CRITIC_FAILED',
+        failureType: 'MEDIA_CRITIC_FAILED',
+        finalCheck: {
+          complete: false,
+          verdict: 'FAIL',
+          issues: [{ reason: `MEDIA_CRITIC_FAILED: Critic model failed after retry (${currentCritique.status}: ${currentCritique.summary})` }]
+        },
+        metrics: {
+          criticObservedScore: 0,
+          averageRetentionScore: 0,
+          mp4Duration: meta.duration
+        },
+        auditResult: currentCritique
+      };
+      await fs.writeFile(record, JSON.stringify(criticFailedAudit, null, 2));
+      audits.push(criticFailedAudit);
+      const criticErr = new Error(`MEDIA_CRITIC_FAILED: Critic model failed after retry (${currentCritique.status}: ${currentCritique.summary})`);
+      criticErr.code = 'MEDIA_CRITIC_FAILED';
+      criticErr.audit = criticFailedAudit;
+      throw criticErr;
+    }
 
     if (currentCritique.isCompliant) {
       const passedAudit = {
@@ -797,13 +833,52 @@ async function auditDrafts(service, opts) {
         actualMp4DurationSec: repairMeta.duration,
         targetWindowSec: 5.5
       });
+
+      if (currentCritique.status === 'STRUCTURAL_CRITIC_INCOMPLETE' || currentCritique.status === 'MEDIA_CRITIC_INVALID') {
+        console.warn(`[V4] Repaired media critic (Pass ${repairPass}) returned ${currentCritique.status}. Retrying critic once on same MP4...`);
+        currentCritique = await critiqueMediaGroundedTimeline(currentSpine, {
+          aiService: ai,
+          mp4Path: currentMp4,
+          actualMp4DurationSec: repairMeta.duration,
+          targetWindowSec: 5.5
+        });
+      }
+
       console.log(`[V4] Repaired media score (Pass ${repairPass}): ${currentCritique.criticObservedScore}`);
       await fs.writeFile(path.join(root, `repair-${repairPass}-media-audit-${id}.json`), JSON.stringify(currentCritique, null, 2));
+
+      if (currentCritique.status === 'STRUCTURAL_CRITIC_INCOMPLETE' || currentCritique.status === 'MEDIA_CRITIC_INVALID') {
+        console.error(`[V4] Repaired media critic retry failed with ${currentCritique.status}. Failing pipeline with MEDIA_CRITIC_FAILED.`);
+        const criticFailedAudit = {
+          scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: true,
+          status: 'MEDIA_CRITIC_FAILED',
+          failureType: 'MEDIA_CRITIC_FAILED',
+          repairPasses: repairPass,
+          finalCheck: {
+            complete: false,
+            verdict: 'FAIL',
+            issues: [{ reason: `MEDIA_CRITIC_FAILED: Critic model failed after retry (${currentCritique.status}: ${currentCritique.summary})` }]
+          },
+          metrics: {
+            criticObservedScore: 0,
+            averageRetentionScore: 0,
+            mp4Duration: repairMeta.duration
+          },
+          auditResult: currentCritique
+        };
+        await fs.writeFile(record, JSON.stringify(criticFailedAudit, null, 2));
+        audits.push(criticFailedAudit);
+        const criticErr = new Error(`MEDIA_CRITIC_FAILED: Critic model failed after retry (${currentCritique.status}: ${currentCritique.summary})`);
+        criticErr.code = 'MEDIA_CRITIC_FAILED';
+        criticErr.audit = criticFailedAudit;
+        throw criticErr;
+      }
 
       if (currentCritique.isCompliant) {
         console.log(`[V4] Repaired EDL accepted (Pass ${repairPass})`);
 
         // Atomically update story-spine.json in root with the accepted repaired spine
+        // MUST happen BEFORE persisting review-state PASS!
         const spinePath = path.join(root, 'story-spine.json');
         try {
           let currentSpineData = { spines: [] };
@@ -826,9 +901,28 @@ async function auditDrafts(service, opts) {
           await fs.writeFile(tempPath, JSON.stringify(currentSpineData, null, 2));
           await fs.rename(tempPath, spinePath);
         } catch (err) {
-          console.warn(`[V4] Warning: Failed to update local story-spine.json with accepted spine: ${err.message}`);
+          console.error(`[V4] PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`);
+          const failAudit = {
+            scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: true,
+            status: 'PERSIST_ACCEPTED_EDL_FAILED',
+            failureType: 'PERSIST_ACCEPTED_EDL_FAILED',
+            repairPasses: repairPass,
+            finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `PERSIST_ACCEPTED_EDL_FAILED: ${err.message}` }] },
+            metrics: {
+              criticObservedScore: currentCritique.criticObservedScore,
+              averageRetentionScore: currentCritique.averageRetentionScore,
+              mp4Duration: currentCritique.mp4Duration
+            }
+          };
+          await fs.writeFile(record, JSON.stringify(failAudit, null, 2)).catch(() => {});
+          audits.push(failAudit);
+          const persistErr = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`);
+          persistErr.code = 'PERSIST_ACCEPTED_EDL_FAILED';
+          persistErr.audit = failAudit;
+          throw persistErr;
         }
 
+        // Only persist review-state PASS if canonical spine persistence succeeded
         const passedAudit = {
           scriptId: id, complete: true, contractVersion: 4, pending: false, needsUserReview: false,
           repairPasses: repairPass,

@@ -87,6 +87,24 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     console.log('✓ Item 1 Passed: Media critic observedFunction contract enforced strictly');
   }
 
+  // Helper to generate a fully valid 13-field window object
+  const makeValidWin = (idx, start, end, func = 'context_setup', extra = {}) => ({
+    windowIndex: idx,
+    windowStart: start,
+    windowEnd: end,
+    observedFunction: func,
+    observedAction: 'Action ' + idx,
+    observedDialogue: 'Dialogue ' + idx,
+    observedNewInformation: 'Info ' + idx,
+    newFact: true,
+    viewerBeliefChange: true,
+    caseStateChange: true,
+    stakesChange: true,
+    futureConsequenceChange: true,
+    isForwardConsequence: true,
+    ...extra
+  });
+
   // Item 4: Full Media Audit Coverage Determinism (Cases A, B, C, D)
   {
     console.log('Checking Item 4: Deterministic media coverage validation (Cases A, B, C, D)...');
@@ -97,8 +115,8 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     const mockCaseA = {
       generateJsonFromFiles: async () => ({
         windows: [
-          { windowIndex: 0, windowStart: 0, windowEnd: 5.5, observedFunction: 'context_setup', observedAction: 'A0', observedNewInformation: 'I0' },
-          { windowIndex: 2, windowStart: 11.0, windowEnd: 16.5, observedFunction: 'consequence', observedAction: 'A2', observedNewInformation: 'I2' }
+          makeValidWin(0, 0, 5.5, 'context_setup'),
+          makeValidWin(2, 11.0, 16.5, 'consequence')
         ]
       })
     };
@@ -112,9 +130,9 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     const mockCaseB = {
       generateJsonFromFiles: async () => ({
         windows: [
-          { windowIndex: 0, windowStart: 0, windowEnd: 5.5, observedFunction: 'context_setup', observedAction: 'A0', observedNewInformation: 'I0' },
-          { windowIndex: 0, windowStart: 0, windowEnd: 5.5, observedFunction: 'context_setup', observedAction: 'A0 dup', observedNewInformation: 'I0' },
-          { windowIndex: 1, windowStart: 5.5, windowEnd: 11.0, observedFunction: 'officer_action', observedAction: 'A1', observedNewInformation: 'I1' }
+          makeValidWin(0, 0, 5.5, 'context_setup'),
+          makeValidWin(0, 0, 5.5, 'context_setup', { observedAction: 'A0 dup' }),
+          makeValidWin(1, 5.5, 11.0, 'officer_action')
         ]
       })
     };
@@ -128,9 +146,9 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     const mockCaseC = {
       generateJsonFromFiles: async () => ({
         windows: [
-          { windowIndex: 0, windowStart: 0, windowEnd: 5.5, observedFunction: 'context_setup', observedAction: 'A0', observedNewInformation: 'I0' },
-          { windowIndex: 1, windowStart: 7.0, windowEnd: 11.0, observedFunction: 'officer_action', observedAction: 'A1', observedNewInformation: 'I1' }, // 1.5s gap from 5.5 to 7.0
-          { windowIndex: 2, windowStart: 11.0, windowEnd: 16.5, observedFunction: 'consequence', observedAction: 'A2', observedNewInformation: 'I2' }
+          makeValidWin(0, 0, 5.5, 'context_setup'),
+          makeValidWin(1, 7.0, 11.0, 'officer_action'), // 1.5s gap from 5.5 to 7.0
+          makeValidWin(2, 11.0, 16.5, 'consequence')
         ]
       })
     };
@@ -144,9 +162,9 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     const mockCaseD = {
       generateJsonFromFiles: async () => ({
         windows: [
-          { windowIndex: 0, windowStart: 0, windowEnd: 5.5, observedFunction: 'context_setup', observedAction: 'A0', observedNewInformation: 'I0', newFact: true, viewerBeliefChange: true, caseStateChange: true, stakesChange: true, futureConsequenceChange: true, isForwardConsequence: true },
-          { windowIndex: 1, windowStart: 5.5, windowEnd: 11.0, observedFunction: 'officer_action', observedAction: 'A1', observedNewInformation: 'I1', newFact: true, viewerBeliefChange: true, caseStateChange: true, stakesChange: true, futureConsequenceChange: true, isForwardConsequence: true },
-          { windowIndex: 2, windowStart: 11.0, windowEnd: 16.5, observedFunction: 'consequence', observedAction: 'A2', observedNewInformation: 'I2', newFact: true, viewerBeliefChange: true, caseStateChange: true, stakesChange: true, futureConsequenceChange: true, isForwardConsequence: true }
+          makeValidWin(0, 0, 5.5, 'context_setup'),
+          makeValidWin(1, 5.5, 11.0, 'officer_action'),
+          makeValidWin(2, 11.0, 16.5, 'consequence')
         ]
       })
     };
@@ -156,6 +174,470 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     assert.strictEqual(resD.status, 'SUCCESS', 'Case D (complete contiguous coverage) must succeed');
     assert.strictEqual(resD.isCompliant, true, 'Case D must be compliant');
     console.log('✓ Item 4 Passed: Coverage validation Cases A, B, C failed as expected, and D passed');
+  }
+
+  // =========================================================================
+  // V4 MEDIA CRITIC ACCEPTANCE CORRECTNESS REGRESSION TESTS
+  // =========================================================================
+  console.log('\n--- Running Media Critic Acceptance Correctness Tests ---');
+
+  // Test 1: Missing required response fields -> MEDIA_CRITIC_INVALID
+  {
+    console.log('Test 1: Missing required response fields...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 5.5, narrativeRole: 'hook' }] };
+    const requiredFields = [
+      'windowIndex', 'windowStart', 'windowEnd', 'observedFunction',
+      'observedAction', 'observedDialogue', 'observedNewInformation',
+      'newFact', 'viewerBeliefChange', 'caseStateChange', 'stakesChange',
+      'futureConsequenceChange', 'isForwardConsequence'
+    ];
+    for (const field of requiredFields) {
+      const baseWin = makeValidWin(0, 0, 5.5, 'consequence');
+      delete baseWin[field];
+      const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+        aiService: { generateJsonFromFiles: async () => ({ windows: [baseWin] }) },
+        mp4Path: 'dummy.mp4', actualMp4DurationSec: 5.5, targetWindowSec: 5.5
+      });
+      assert.strictEqual(res.status, 'MEDIA_CRITIC_INVALID', `Missing field '${field}' must yield MEDIA_CRITIC_INVALID`);
+      assert.strictEqual(res.isCompliant, false);
+    }
+    console.log('✓ Test 1 Passed: Missing required response fields yield MEDIA_CRITIC_INVALID');
+  }
+
+  // Test 2: Non-boolean progress field (e.g. string "true" or null) -> MEDIA_CRITIC_INVALID
+  {
+    console.log('Test 2: Non-boolean progress fields...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 5.5, narrativeRole: 'hook' }] };
+    const progressFields = ['newFact', 'viewerBeliefChange', 'caseStateChange', 'stakesChange', 'futureConsequenceChange', 'isForwardConsequence'];
+    for (const field of progressFields) {
+      for (const invalidVal of ['true', null, 1, undefined]) {
+        const baseWin = makeValidWin(0, 0, 5.5, 'consequence');
+        baseWin[field] = invalidVal;
+        const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+          aiService: { generateJsonFromFiles: async () => ({ windows: [baseWin] }) },
+          mp4Path: 'dummy.mp4', actualMp4DurationSec: 5.5, targetWindowSec: 5.5
+        });
+        assert.strictEqual(res.status, 'MEDIA_CRITIC_INVALID', `Non-boolean progress field '${field}' = ${invalidVal} must yield MEDIA_CRITIC_INVALID`);
+        assert.strictEqual(res.isCompliant, false);
+      }
+    }
+    console.log('✓ Test 2 Passed: Non-boolean progress fields yield MEDIA_CRITIC_INVALID');
+  }
+
+  // Test 3: Progress plateau: 3 consecutive windows with no progress fields true -> fails acceptance even if observedFunction changes
+  {
+    console.log('Test 3: Progress plateau across changing observedFunctions...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 16.5, narrativeRole: 'hook' }] };
+    const dur = 16.5; // 3 x 5.5s = 16.5s > 10.0s
+    const wins = [
+      makeValidWin(0, 0, 5.5, 'context_setup', { viewerBeliefChange: false, caseStateChange: false, stakesChange: false, futureConsequenceChange: false, newFact: true }),
+      makeValidWin(1, 5.5, 11.0, 'officer_action', { viewerBeliefChange: false, caseStateChange: false, stakesChange: false, futureConsequenceChange: false, newFact: true }),
+      makeValidWin(2, 11.0, 16.5, 'consequence', { viewerBeliefChange: false, caseStateChange: false, stakesChange: false, futureConsequenceChange: false, newFact: true, isForwardConsequence: true })
+    ];
+    const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+      aiService: { generateJsonFromFiles: async () => ({ windows: wins }) },
+      mp4Path: 'dummy.mp4', actualMp4DurationSec: dur, targetWindowSec: 5.5
+    });
+    assert.strictEqual(res.status, 'SUCCESS');
+    assert.strictEqual(res.noProgressRunSec > 10.0, true, `noProgressRunSec (${res.noProgressRunSec}s) must exceed 10.0s`);
+    assert.strictEqual(res.isCompliant, false, 'Progress plateau must fail acceptance even with changing observedFunctions');
+    const spec = structuralCriticService.generateTargetedRepairSpecification(res, dummySpine);
+    assert.strictEqual(spec.failureType, 'semantic_plateau');
+    console.log('✓ Test 3 Passed: Progress plateau >10s fails acceptance despite changing observedFunction');
+  }
+
+  // Test 4: Progress plateau: 3 consecutive windows with same observedFunction but real caseStateChange=true -> passes (not a plateau)
+  {
+    console.log('Test 4: Consecutive same observedFunction with real progress passes...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 16.5, narrativeRole: 'hook' }] };
+    const dur = 16.5;
+    const wins = [
+      makeValidWin(0, 0, 5.5, 'officer_action', { caseStateChange: true }),
+      makeValidWin(1, 5.5, 11.0, 'officer_action', { caseStateChange: true }),
+      makeValidWin(2, 11.0, 16.5, 'officer_action', { caseStateChange: true, isForwardConsequence: true })
+    ];
+    const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+      aiService: { generateJsonFromFiles: async () => ({ windows: wins }) },
+      mp4Path: 'dummy.mp4', actualMp4DurationSec: dur, targetWindowSec: 5.5
+    });
+    assert.strictEqual(res.status, 'SUCCESS');
+    assert.strictEqual(res.noProgressRunSec, 0, 'noProgressRunSec must be 0 when caseStateChange is true');
+    assert.strictEqual(res.weakWindows.length, 0);
+    assert.strictEqual(res.isCompliant, true, 'Same observedFunction with real progress must pass acceptance');
+    console.log('✓ Test 4 Passed: Consecutive same observedFunction with real caseStateChange passes');
+  }
+
+  // Test 5: Isolated weak window (5.5/10) with otherwise high score -> fails acceptance, triggers targeted repair
+  {
+    console.log('Test 5: Isolated weak window fails acceptance...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 22.0, narrativeRole: 'hook' }] };
+    const dur = 22.0;
+    const wins = [
+      makeValidWin(0, 0, 5.5, 'context_setup'),
+      // Isolated weak window: all 5 progress vectors false -> retentionStatus='WEAK', score <= 5.5
+      makeValidWin(1, 5.5, 11.0, 'suspect_defense', {
+        newFact: false, viewerBeliefChange: false, caseStateChange: false, stakesChange: false, futureConsequenceChange: false, isForwardConsequence: false
+      }),
+      makeValidWin(2, 11.0, 16.5, 'officer_action'),
+      makeValidWin(3, 16.5, 22.0, 'consequence', { isForwardConsequence: true })
+    ];
+    const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+      aiService: { generateJsonFromFiles: async () => ({ windows: wins }) },
+      mp4Path: 'dummy.mp4', actualMp4DurationSec: dur, targetWindowSec: 5.5
+    });
+    assert.strictEqual(res.status, 'SUCCESS');
+    assert.strictEqual(res.weakWindows.length, 1, 'Must have exactly 1 weak window');
+    assert.strictEqual(res.weakWindows[0].windowIndex, 1);
+    assert.strictEqual(res.weakWindows[0].retentionStatus, 'WEAK');
+    assert.strictEqual(res.weakWindows[0].retentionScore <= 5.5, true);
+    assert.strictEqual(res.isCompliant, false, 'Isolated weak window must fail acceptance');
+    const spec = structuralCriticService.generateTargetedRepairSpecification(res, dummySpine);
+    assert.strictEqual(spec.weakWindowStart, 5.5);
+    console.log('✓ Test 5 Passed: Isolated weak window fails acceptance and triggers repair');
+  }
+
+  // Test 6: Backstory ending -> fails acceptance gate, repair spec has failureType: 'ending_backstory'
+  {
+    console.log('Test 6: Backstory ending fails gate...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 11.0, narrativeRole: 'hook' }] };
+    const dur = 11.0;
+    const wins = [
+      makeValidWin(0, 0, 5.5, 'context_setup'),
+      makeValidWin(1, 5.5, 11.0, 'backstory', { isForwardConsequence: false })
+    ];
+    const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+      aiService: { generateJsonFromFiles: async () => ({ windows: wins }) },
+      mp4Path: 'dummy.mp4', actualMp4DurationSec: dur, targetWindowSec: 5.5
+    });
+    assert.strictEqual(res.endingValid, false, 'Backstory ending must have endingValid: false');
+    assert.strictEqual(res.isCompliant, false, 'Backstory ending must fail compliance');
+    const spec = structuralCriticService.generateTargetedRepairSpecification(res, dummySpine);
+    assert.strictEqual(spec.failureType, 'ending_backstory');
+    console.log('✓ Test 6 Passed: Backstory ending fails acceptance gate with failureType ending_backstory');
+  }
+
+  // Test 7: Forward consequence ending -> passes ending gate
+  {
+    console.log('Test 7: Forward consequence ending passes...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 11.0, narrativeRole: 'hook' }] };
+    const dur = 11.0;
+    const wins = [
+      makeValidWin(0, 0, 5.5, 'context_setup'),
+      makeValidWin(1, 5.5, 11.0, 'consequence', { isForwardConsequence: true })
+    ];
+    const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+      aiService: { generateJsonFromFiles: async () => ({ windows: wins }) },
+      mp4Path: 'dummy.mp4', actualMp4DurationSec: dur, targetWindowSec: 5.5
+    });
+    assert.strictEqual(res.endingValid, true);
+    assert.strictEqual(res.isCompliant, true);
+    console.log('✓ Test 7 Passed: Forward consequence ending passes ending gate');
+  }
+
+  // Test 8: Payoff ending -> passes ending gate
+  {
+    console.log('Test 8: Payoff ending passes...');
+    const dummySpine = { beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 11.0, narrativeRole: 'hook' }] };
+    const dur = 11.0;
+    const wins = [
+      makeValidWin(0, 0, 5.5, 'context_setup'),
+      makeValidWin(1, 5.5, 11.0, 'payoff', { isForwardConsequence: false })
+    ];
+    const res = await structuralCriticService.critiqueMediaGroundedTimeline(dummySpine, {
+      aiService: { generateJsonFromFiles: async () => ({ windows: wins }) },
+      mp4Path: 'dummy.mp4', actualMp4DurationSec: dur, targetWindowSec: 5.5
+    });
+    assert.strictEqual(res.endingValid, true);
+    assert.strictEqual(res.isCompliant, true);
+    console.log('✓ Test 8 Passed: Payoff ending passes ending gate');
+  }
+
+  // Test 9: Incomplete window coverage -> critic retried ONCE on same MP4, does NOT call buildStoryDesign, fails pipeline with MEDIA_CRITIC_FAILED
+  {
+    console.log('Test 9: Incomplete coverage critic retry and MEDIA_CRITIC_FAILED...');
+    const testPipelineDir = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-critic-fail-'));
+    const testStore = new Store();
+    const sourceCacheDir = path.join(testPipelineDir, 'cache');
+    await fs.mkdir(sourceCacheDir, { recursive: true });
+    await sourceModelService.persist(sourceCacheDir, {
+      modelVersion: sourceModelService.MODEL_VERSION,
+      durationSec: 120,
+      people: [],
+      events: [{ id: 'e1', startSec: 0, endSec: 10, type: 'event', summary: 'E1' }],
+      quotes: [],
+      audioEvents: []
+    });
+    const testMp4 = path.join(testPipelineDir, 'draft_1.mp4');
+    await fs.writeFile(testMp4, 'mock mp4');
+
+    const testProj = await testStore.createProject(testPipelineDir, {
+      title: 'Critic Failure Test',
+      autoStoryContractVersion: 4,
+      sourceVideoPath: path.join(testPipelineDir, 'src.mp4')
+    });
+    await testStore.updateProject(testPipelineDir, testProj.id, {
+      autoStorySourceV3: {
+        identity: 'test_critic_fail_id',
+        cache: sourceCacheDir,
+        duration: 120
+      },
+      analysis: {
+        highlightVariants: [{
+          id: 'variant_01',
+          scriptId: 1,
+          artifacts: { fastDraftVideoPath: testMp4 }
+        }]
+      }
+    });
+    const paths = testStore.getProjectPaths(testPipelineDir, testProj.id);
+    const analysisDir = path.join(paths.analysisDir, 'auto-story-fast');
+    await fs.mkdir(analysisDir, { recursive: true });
+    await fs.writeFile(path.join(testPipelineDir, 'src.mp4'), 'mock');
+
+    let criticCallCount = 0;
+    let buildStoryDesignCalled = false;
+    const auditedMp4Paths = [];
+    const mockFailAi = {
+      getModel: () => 'gemini-2.5-flash',
+      generateJsonFromFiles: async (args) => {
+        const prompt = String(args.prompt || '');
+        if (/v3-story-design/i.test(prompt) || prompt.includes('centralViewerQuestion')) {
+          buildStoryDesignCalled = true;
+          return { accessGranted: true, spines: [] };
+        }
+        criticCallCount++;
+        auditedMp4Paths.push(args.filePaths[0]);
+        // Return incomplete window coverage (only 1 window for 11s duration)
+        return {
+          windows: [
+            makeValidWin(0, 0, 5.5, 'context_setup')
+          ]
+        };
+      }
+    };
+
+    const mockFfmpeg = {
+      probeVideo: async () => ({ duration: 11.0, width: 1080, height: 1920 })
+    };
+
+    const dummySpineDoc = {
+      spines: [{
+        scriptId: 1,
+        centralViewerQuestion: 'Q?',
+        hookPromise: 'H',
+        beats: [{ beatId: 'b1', sourceStartSec: 0, sourceEndSec: 11.0, narrativeRole: 'confrontation' }]
+      }]
+    };
+    await fs.writeFile(path.join(analysisDir, 'story-spine.json'), JSON.stringify(dummySpineDoc));
+    await fs.writeFile(path.join(analysisDir, 'script-1.json'), JSON.stringify({ segments: [] }));
+
+    const pipelineService = new Service({}, testStore, {
+      dubbing: {
+        importReviewedScriptProject: async () => ({ analysis: { highlightVariants: [{ id: 'v1', scriptId: 1 }] } }),
+        renderHighlightFastDraft: async () => ({ outputPath: testMp4 })
+      },
+      vertex: mockFailAi,
+      ffmpeg: mockFfmpeg
+    });
+
+    let pipelineError = null;
+    try {
+      await pipelineService.auditDrafts({
+        workspaceRoot: testPipelineDir,
+        projectId: testProj.id,
+        scriptId: 1
+      });
+    } catch (err) {
+      pipelineError = err;
+    }
+
+    if (pipelineError && pipelineError.code !== 'MEDIA_CRITIC_FAILED') {
+      console.error('Test 9 UNEXPECTED ERROR:', pipelineError);
+    }
+
+    assert.ok(pipelineError, 'Pipeline must fail when critic model fails after retry');
+    assert.strictEqual(pipelineError.code, 'MEDIA_CRITIC_FAILED', 'Error code must be MEDIA_CRITIC_FAILED');
+    assert.strictEqual(criticCallCount, 2, 'Critic must be retried exactly ONCE on the same MP4 (total 2 calls)');
+    assert.strictEqual(auditedMp4Paths[0], auditedMp4Paths[1], 'Critic retry must be on the SAME MP4');
+    assert.strictEqual(buildStoryDesignCalled, false, 'buildStoryDesign must NOT be called on critic failure');
+
+    // Assert review-state file recorded failure
+    const reviewState = JSON.parse(await fs.readFile(path.join(analysisDir, 'review-state-1.json'), 'utf8'));
+    assert.strictEqual(reviewState.status, 'MEDIA_CRITIC_FAILED');
+    assert.strictEqual(reviewState.finalCheck?.verdict, 'FAIL');
+    await fs.rm(testPipelineDir, { recursive: true, force: true });
+    console.log('✓ Test 9 Passed: Incomplete coverage triggers 1 retry on same MP4, no repair, fails with MEDIA_CRITIC_FAILED');
+  }
+
+  // Test 10: story-spine.json write failure after repair -> fails with PERSIST_ACCEPTED_EDL_FAILED, no review-state PASS written
+  {
+    console.log('Test 10: Canonical persistence failure fails with PERSIST_ACCEPTED_EDL_FAILED...');
+    const testPipelineDir = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-persist-fail-'));
+    const testStore = new Store();
+    const sourceCacheDir = path.join(testPipelineDir, 'cache');
+    await fs.mkdir(sourceCacheDir, { recursive: true });
+    await sourceModelService.persist(sourceCacheDir, {
+      modelVersion: sourceModelService.MODEL_VERSION,
+      durationSec: 120,
+      people: [],
+      events: [{ id: 'e1', startSec: 0, endSec: 10, type: 'event', summary: 'E1' }],
+      quotes: [],
+      audioEvents: []
+    });
+    const testMp4 = path.join(testPipelineDir, 'draft_1.mp4');
+    await fs.writeFile(testMp4, 'mock mp4');
+
+    const testProj = await testStore.createProject(testPipelineDir, {
+      title: 'Persist Failure Test',
+      autoStoryContractVersion: 4,
+      sourceVideoPath: path.join(testPipelineDir, 'src.mp4')
+    });
+    await testStore.updateProject(testPipelineDir, testProj.id, {
+      autoStoryConfig: {
+        outputCount: 1,
+        targetDurationMinSec: 10,
+        targetDurationMaxSec: 15,
+        narration: { enabled: true, measuredWordsPerSecond: 2.5 }
+      },
+      autoStoryEditorialConfig: {
+        outputCount: 1,
+        targetDurationMinSec: 10,
+        targetDurationMaxSec: 15,
+        narration: { enabled: true, measuredWordsPerSecond: 2.5 }
+      },
+      autoStorySourceV3: {
+        identity: 'test_persist_fail_id',
+        cache: sourceCacheDir,
+        duration: 120
+      },
+      analysis: {
+        highlightVariants: [{
+          id: 'variant_01',
+          scriptId: 1,
+          artifacts: { fastDraftVideoPath: testMp4 }
+        }]
+      }
+    });
+    const paths = testStore.getProjectPaths(testPipelineDir, testProj.id);
+    const analysisDir = path.join(paths.analysisDir, 'auto-story-fast');
+    await fs.mkdir(analysisDir, { recursive: true });
+    await fs.writeFile(path.join(testPipelineDir, 'src.mp4'), 'mock');
+
+    const repairedSpineBeats = [
+      { beatId: 'b1', sourceStartSec: 0, sourceEndSec: 5.5, narrativeRole: 'confrontation' },
+      { beatId: 'b2_repaired', sourceStartSec: 5.5, sourceEndSec: 11.0, narrativeRole: 'cliffhanger', isForwardConsequence: true }
+    ];
+
+    let criticAuditCount = 0;
+    const mockAiForPersist = {
+      getModel: () => 'gemini-2.5-flash',
+      generateJsonFromFiles: async (args) => {
+        const prompt = String(args.prompt || '');
+        if (/v3-story-design/i.test(prompt) || prompt.includes('centralViewerQuestion')) {
+          return {
+            accessGranted: true,
+            spines: [{
+              scriptId: 1,
+              centralViewerQuestion: 'Q?',
+              hookPromise: 'H',
+              beats: repairedSpineBeats
+            }]
+          };
+        }
+        if (/v3-narration/i.test(prompt) || prompt.includes('narrations')) {
+          return { narrations: [] };
+        }
+        criticAuditCount++;
+        // First audit fails with isolated weak window (triggers repair)
+        if (criticAuditCount === 1) {
+          return {
+            windows: [
+              makeValidWin(0, 0, 5.5, 'suspect_defense', { newFact: false, viewerBeliefChange: false, caseStateChange: false, stakesChange: false, futureConsequenceChange: false, isForwardConsequence: false }),
+              makeValidWin(1, 5.5, 11.0, 'consequence', { isForwardConsequence: true })
+            ]
+          };
+        }
+        // Second audit (after repair) passes!
+        return {
+          windows: [
+            makeValidWin(0, 0, 5.5, 'officer_action'),
+            makeValidWin(1, 5.5, 11.0, 'consequence', { isForwardConsequence: true })
+          ]
+        };
+      }
+    };
+
+    const testProxyDurations = new Map();
+    const mockFfmpeg = {
+      probeVideo: async (videoPath) => {
+        const baseKey = path.basename(videoPath).replace(/\.tmp\.mp4$/, '').replace(/\.mp4$/, '');
+        if (testProxyDurations.has(baseKey)) {
+          return { duration: testProxyDurations.get(baseKey), width: 640, height: 360 };
+        }
+        return { duration: 11.0, width: 1080, height: 1920 };
+      },
+      probeAudio: async () => ({ duration: 3.0 }),
+      createAnalysisProxyChunk: async ({ outputPath, durationSec }) => {
+        const baseKey = path.basename(outputPath).replace(/\.tmp\.mp4$/, '').replace(/\.mp4$/, '');
+        testProxyDurations.set(baseKey, durationSec);
+        await fs.writeFile(outputPath, 'mock proxy media');
+      }
+    };
+
+    const initialSpine = {
+      spines: [{
+        scriptId: 1,
+        centralViewerQuestion: 'Q?',
+        hookPromise: 'H',
+        beats: [
+          { beatId: 'b1', sourceStartSec: 0, sourceEndSec: 5.5, narrativeRole: 'context' },
+          { beatId: 'b2', sourceStartSec: 5.5, sourceEndSec: 11.0, narrativeRole: 'cliffhanger', isForwardConsequence: true }
+        ]
+      }]
+    };
+    await fs.writeFile(path.join(analysisDir, 'story-spine.json'), JSON.stringify(initialSpine));
+    await fs.writeFile(path.join(analysisDir, 'script-1.json'), JSON.stringify({ segments: [] }));
+
+    const pipelineService = new Service({}, testStore, {
+      dubbing: {
+        importReviewedScriptProject: async () => ({ analysis: { highlightVariants: [{ id: 'v1', scriptId: 1 }] } }),
+        renderHighlightFastDraft: async () => {
+          // Break story-spine.json write by replacing it with a directory right before the pass audit attempts to persist it
+          const spinePath = path.join(analysisDir, 'story-spine.json');
+          await fs.rm(spinePath, { recursive: true, force: true });
+          await fs.mkdir(spinePath);
+          return { outputPath: testMp4 };
+        }
+      },
+      vertex: mockAiForPersist,
+      ffmpeg: mockFfmpeg
+    });
+
+    let persistError = null;
+    try {
+      await pipelineService.auditDrafts({
+        workspaceRoot: testPipelineDir,
+        projectId: testProj.id,
+        scriptId: 1
+      });
+    } catch (err) {
+      persistError = err;
+    }
+
+    if (persistError && persistError.code !== 'PERSIST_ACCEPTED_EDL_FAILED') {
+      console.error('Test 10 UNEXPECTED ERROR:', persistError);
+    }
+
+    assert.ok(persistError, 'Pipeline must fail when story-spine.json cannot be persisted');
+    assert.strictEqual(persistError.code, 'PERSIST_ACCEPTED_EDL_FAILED', 'Error code must be PERSIST_ACCEPTED_EDL_FAILED');
+
+    // Assert review-state-1.json is NOT PASS
+    const reviewState = JSON.parse(await fs.readFile(path.join(analysisDir, 'review-state-1.json'), 'utf8'));
+    assert.strictEqual(reviewState.status, 'PERSIST_ACCEPTED_EDL_FAILED');
+    assert.strictEqual(reviewState.finalCheck?.verdict, 'FAIL', 'review-state must NOT record PASS');
+
+    await fs.rm(testPipelineDir, { recursive: true, force: true });
+    console.log('✓ Test 10 Passed: Canonical persistence failure fails with PERSIST_ACCEPTED_EDL_FAILED and no PASS');
   }
 
   // Item 5: Noncompliant Critic Always Produces Actionable Repair Spec (even with empty weakWindows)

@@ -4,24 +4,14 @@
     "storyArchetype": "ESCALATION",
     "centralIncident": "Nighttime routine traffic stop escalates into a high-stakes standoff when the nervous driver hides a loaded weapon under his passenger jacket.",
     "centralViewerQuestion": "Why is the driver desperately hiding his hands under a jacket during a routine traffic stop?",
-    "episodeStartSec": 0,
-    "episodeEndSec": 91,
-    "primaryPeople": [
-      "Officer Miller",
-      "Driver Marcus Vance",
-      "Backup Officer Davis"
-    ],
+    "episodeStartSec": 0.0,
+    "episodeEndSec": 91.0,
+    "primaryPeople": ["Officer Miller", "Driver Marcus Vance", "Backup Officer Davis"],
     "primaryConflict": "Driver refusing direct commands to show hands; officer drawing taser after spotting weapon silhouette.",
     "initialState": "Patrol car initiates routine traffic stop for expired tags.",
     "targetEndState": "Driver is extracted at gunpoint, weapon recovered, and active armed robbery warrant revealed.",
     "mainOpenLoop": "What is concealed under the driver's jacket and why is he willing to risk getting shot?",
-    "coreEvidenceChain": [
-      "nervous_profuse_sweating",
-      "wallet_excuse",
-      "concealed_jacket_hand",
-      "loaded_glock_recovered",
-      "felony_warrant_match"
-    ]
+    "coreEvidenceChain": ["nervous_profuse_sweating", "wallet_excuse", "concealed_jacket_hand", "loaded_glock_recovered", "felony_warrant_match"]
   },
   "centralViewerQuestion": "Why is the driver desperately hiding his hands under a jacket during a routine traffic stop?",
   "hookPromise": "Suspenseful nighttime traffic stop that accelerates from routine questions into drawn weapons and felony warrants.",
@@ -29,8 +19,8 @@
     {
       "beatId": "beat_0",
       "beatIndex": 0,
-      "sourceStartSec": 0,
-      "sourceEndSec": 6,
+      "sourceStartSec": 0.0,
+      "sourceEndSec": 6.0,
       "chronologyMode": "chronological",
       "narrativeRole": "hook_setup",
       "audioMode": "original_audio",
@@ -40,14 +30,13 @@
       "viewerStateAfter": "Notices immediate hesitation and tension.",
       "viewerQuestionBefore": "Why is the sedan delaying pulling over?",
       "causalRelation": "OPENS_QUESTION",
-      "whyThisBeatNow": "Establishes initial suspense without premature teaser spoiler.",
-      "semanticFunction": "hook_setup"
+      "whyThisBeatNow": "Establishes initial suspense without premature teaser spoiler."
     },
     {
       "beatId": "beat_1",
       "beatIndex": 1,
-      "sourceStartSec": 8,
-      "sourceEndSec": 13,
+      "sourceStartSec": 8.0,
+      "sourceEndSec": 13.0,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -57,14 +46,13 @@
       "viewerStateAfter": "Sees driver extreme physical agitation.",
       "causalParentBeat": "beat_0",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Direct physical evidence of extreme suspect anxiety.",
-      "semanticFunction": "driver_agitation"
+      "whyThisBeatNow": "Direct physical evidence of extreme suspect anxiety."
     },
     {
       "beatId": "beat_2",
       "beatIndex": 2,
-      "sourceStartSec": 15,
-      "sourceEndSec": 20,
+      "sourceStartSec": 15.0,
+      "sourceEndSec": 20.0,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -74,14 +62,13 @@
       "viewerStateAfter": "Understands suspect is withholding identity.",
       "causalParentBeat": "beat_1",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "First verbal deception introduces legal jeopardy.",
-      "semanticFunction": "fake_identity_claim"
+      "whyThisBeatNow": "First verbal deception introduces legal jeopardy."
     },
     {
       "beatId": "beat_3",
       "beatIndex": 3,
-      "sourceStartSec": 22,
-      "sourceEndSec": 27,
+      "sourceStartSec": 22.0,
+      "sourceEndSec": 27.0,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "original_audio",
@@ -91,14 +78,13 @@
       "viewerStateAfter": "Spotting concealed hand; threat level spikes.",
       "causalParentBeat": "beat_2",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Visual discovery shifts routine stop to potential lethal encounter.",
-      "semanticFunction": "concealed_threat_discovery"
+      "whyThisBeatNow": "Visual discovery shifts routine stop to potential lethal encounter."
     },
     {
       "beatId": "beat_4",
       "beatIndex": 4,
-      "sourceStartSec": 28,
-      "sourceEndSec": 33,
+      "sourceStartSec": 28.0,
+      "sourceEndSec": 33.0,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -108,14 +94,13 @@
       "viewerStateAfter": "Bracing for driver reaction.",
       "causalParentBeat": "beat_3",
       "causalRelation": "RESPONDS_TO",
-      "whyThisBeatNow": "Officer acts on weapon threat.",
-      "semanticFunction": "tactical_command"
+      "whyThisBeatNow": "Officer acts on weapon threat."
     },
     {
       "beatId": "beat_5",
       "beatIndex": 5,
-      "sourceStartSec": 34,
-      "sourceEndSec": 39,
+      "sourceStartSec": 34.0,
+      "sourceEndSec": 39.0,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
       "audioMode": "original_audio",
@@ -125,14 +110,13 @@
       "viewerStateAfter": "Shocked by direct defiance in front of flashlight.",
       "causalParentBeat": "beat_4",
       "causalRelation": "ESCALATES",
-      "whyThisBeatNow": "Peak non-compliance pushes situation to weapon draw.",
-      "semanticFunction": "defiant_noncompliance"
+      "whyThisBeatNow": "Peak non-compliance pushes situation to weapon draw."
     },
     {
       "beatId": "beat_6",
       "beatIndex": 6,
-      "sourceStartSec": 40,
-      "sourceEndSec": 45,
+      "sourceStartSec": 40.0,
+      "sourceEndSec": 45.0,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
@@ -142,14 +126,13 @@
       "viewerStateAfter": "Taser drawn; standoff reached.",
       "causalParentBeat": "beat_5",
       "causalRelation": "RESPONDS_TO",
-      "whyThisBeatNow": "Officer escalates force option.",
-      "semanticFunction": "taser_standoff"
+      "whyThisBeatNow": "Officer escalates force option."
     },
     {
       "beatId": "beat_7",
       "beatIndex": 7,
-      "sourceStartSec": 48,
-      "sourceEndSec": 54,
+      "sourceStartSec": 48.0,
+      "sourceEndSec": 54.0,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
       "audioMode": "original_audio",
@@ -159,14 +142,13 @@
       "viewerStateAfter": "Backup arrives; escape cut off.",
       "causalParentBeat": "beat_6",
       "causalRelation": "CONFIRMS",
-      "whyThisBeatNow": "Overwhelming force arrival changes power dynamic.",
-      "semanticFunction": "backup_surround"
+      "whyThisBeatNow": "Overwhelming force arrival changes power dynamic."
     },
     {
       "beatId": "beat_8",
       "beatIndex": 8,
-      "sourceStartSec": 55,
-      "sourceEndSec": 60,
+      "sourceStartSec": 55.0,
+      "sourceEndSec": 60.0,
       "chronologyMode": "chronological",
       "narrativeRole": "reaction",
       "audioMode": "original_audio",
@@ -176,14 +158,13 @@
       "viewerStateAfter": "Driver surrenders physical position.",
       "causalParentBeat": "beat_7",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Driver capitulates under multiple officers.",
-      "semanticFunction": "suspect_surrender"
+      "whyThisBeatNow": "Driver capitulates under multiple officers."
     },
     {
       "beatId": "beat_9",
       "beatIndex": 9,
-      "sourceStartSec": 61,
-      "sourceEndSec": 66,
+      "sourceStartSec": 61.0,
+      "sourceEndSec": 66.0,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
       "audioMode": "original_audio",
@@ -193,14 +174,13 @@
       "viewerStateAfter": "Physical custody achieved.",
       "causalParentBeat": "beat_8",
       "causalRelation": "RESULTS_IN",
-      "whyThisBeatNow": "Immediate restraint ensures scene safety.",
-      "semanticFunction": "physical_restraint"
+      "whyThisBeatNow": "Immediate restraint ensures scene safety."
     },
     {
       "beatId": "beat_10",
       "beatIndex": 10,
-      "sourceStartSec": 70,
-      "sourceEndSec": 76,
+      "sourceStartSec": 70.0,
+      "sourceEndSec": 76.0,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "voiceover_with_ambient",
@@ -210,14 +190,13 @@
       "viewerStateAfter": "Lethal threat confirmed; viewer sees illegal firearm.",
       "causalParentBeat": "beat_9",
       "causalRelation": "REVEALS",
-      "whyThisBeatNow": "Core evidence payoff of the concealed jacket loop.",
-      "semanticFunction": "firearm_recovery"
+      "whyThisBeatNow": "Core evidence payoff of the concealed jacket loop."
     },
     {
       "beatId": "beat_11",
       "beatIndex": 11,
-      "sourceStartSec": 78,
-      "sourceEndSec": 83,
+      "sourceStartSec": 78.0,
+      "sourceEndSec": 83.0,
       "chronologyMode": "chronological",
       "narrativeRole": "contradiction",
       "audioMode": "original_audio",
@@ -227,14 +206,13 @@
       "viewerStateAfter": "Driver offers desperate implausible excuse.",
       "causalParentBeat": "beat_10",
       "causalRelation": "CONTRADICTS",
-      "whyThisBeatNow": "Single punchy suspect defense highlighting guilt.",
-      "semanticFunction": "suspect_defense_excuse"
+      "whyThisBeatNow": "Single punchy suspect defense highlighting guilt."
     },
     {
       "beatId": "beat_12",
       "beatIndex": 12,
-      "sourceStartSec": 85,
-      "sourceEndSec": 91,
+      "sourceStartSec": 85.0,
+      "sourceEndSec": 91.0,
       "chronologyMode": "chronological",
       "narrativeRole": "cliffhanger",
       "audioMode": "voiceover_with_ambient",
@@ -246,8 +224,7 @@
       "cliffhangerQuestion": "Will Marcus Vance face armed robbery charges in Part 2 after his false identity collapsed?",
       "cliffhangerNewInformation": "Dispatch confirms driver is an armed robbery fugitive with active violent felony warrants.",
       "cliffhangerExpectedNextPayoff": "Part 2 reveals interrogation confession and felony booking details.",
-      "consequenceMagnitude": "charges",
-      "semanticFunction": "cliffhanger"
+      "consequenceMagnitude": "charges"
     }
   ]
 }

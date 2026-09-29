@@ -4,27 +4,14 @@
     "storyArchetype": "RESCUE",
     "centralIncident": "Police respond to a domestic disturbance and discover a teenage daughter being physically restrained by her stepfather in a locked bathroom.",
     "centralViewerQuestion": "Why is the stepfather holding the daughter down on the bathroom floor?",
-    "episodeStartSec": 0,
+    "episodeStartSec": 0.0,
     "episodeEndSec": 1105.5,
-    "primaryPeople": [
-      "Officer",
-      "Stepfather",
-      "Mother",
-      "Daughter",
-      "Nathan (Boyfriend)"
-    ],
+    "primaryPeople": ["Officer", "Stepfather", "Mother", "Daughter", "Nathan (Boyfriend)"],
     "primaryConflict": "Parents physically restraining daughter who wanted to leave; mother deflecting while daughter alleges abuse.",
     "initialState": "Officer arrives at house with vague dispatch information.",
     "targetEndState": "Daughter is freed, stepfather is handcuffed, and felony battery allegations are revealed.",
     "mainOpenLoop": "Why was the daughter held down and who committed criminal battery?",
-    "coreEvidenceChain": [
-      "witness_plea",
-      "bathroom_restraint",
-      "hallway_contradiction",
-      "handcuffs_applied",
-      "wrist_bruises",
-      "battery_punch_claim"
-    ]
+    "coreEvidenceChain": ["witness_plea", "bathroom_restraint", "hallway_contradiction", "handcuffs_applied", "wrist_bruises", "battery_punch_claim"]
   },
   "centralViewerQuestion": "Why is the stepfather holding the daughter down on the bathroom floor?",
   "hookPromise": "Shocking 9-second cold open of a house confrontation that cuts before resolution.",
@@ -40,153 +27,142 @@
       "retentionReason": "escalation",
       "newInformation": "Mother deflecting at front door claims daughter is unruly.",
       "viewerStateBefore": "Cold viewer.",
-      "viewerStateAfter": "Hooked on door confrontation.",
-      "semanticFunction": "teaser_conflict"
+      "viewerStateAfter": "Hooked on door confrontation."
     },
     {
       "beatId": "beat_1",
       "beatIndex": 1,
-      "sourceStartSec": 44,
-      "sourceEndSec": 47,
+      "sourceStartSec": 44.0,
+      "sourceEndSec": 47.0,
       "chronologyMode": "teaser",
       "narrativeRole": "escalation",
       "audioMode": "original_audio",
       "retentionReason": "escalation",
       "newInformation": "Screaming erupts upstairs; officer charges the staircase.",
       "viewerStateBefore": "Watching door.",
-      "viewerStateAfter": "Shocked by screams upstairs.",
-      "semanticFunction": "escalation"
+      "viewerStateAfter": "Shocked by screams upstairs."
     },
     {
       "beatId": "beat_2",
       "beatIndex": 2,
-      "sourceStartSec": 54,
-      "sourceEndSec": 57,
+      "sourceStartSec": 54.0,
+      "sourceEndSec": 57.0,
       "chronologyMode": "teaser",
       "narrativeRole": "micro_payoff",
       "audioMode": "original_audio",
       "retentionReason": "visual_reveal",
       "newInformation": "Visual flash of adult male pinning daughter in bathroom; CUT before resolution!",
       "viewerStateBefore": "Charging upstairs.",
-      "viewerStateAfter": "Sees violent restraint; left hanging!",
-      "semanticFunction": "micro_payoff"
+      "viewerStateAfter": "Sees violent restraint; left hanging!"
     },
     {
       "beatId": "beat_3",
       "beatIndex": 3,
-      "sourceStartSec": 0,
-      "sourceEndSec": 6,
+      "sourceStartSec": 0.0,
+      "sourceEndSec": 6.0,
       "chronologyMode": "rewind",
       "narrativeRole": "rewind_context",
       "audioMode": "voiceover_with_ambient",
       "retentionReason": "new_fact",
       "newInformation": "Police car arrives; 911 dispatch audio explains domestic violence call.",
       "viewerStateBefore": "Left hanging at bathroom door.",
-      "viewerStateAfter": "Understands call origin.",
-      "semanticFunction": "rewind_context"
+      "viewerStateAfter": "Understands call origin."
     },
     {
       "beatId": "beat_4",
       "beatIndex": 4,
-      "sourceStartSec": 12,
-      "sourceEndSec": 17,
+      "sourceStartSec": 12.0,
+      "sourceEndSec": 17.0,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "voiceover_with_ambient",
       "retentionReason": "new_fact",
       "newInformation": "Boyfriend Nathan intercepts officer outside, frantic for help.",
       "viewerStateBefore": "Cruiser arriving.",
-      "viewerStateAfter": "Witness testimony introduced.",
-      "semanticFunction": "witness_intercept"
+      "viewerStateAfter": "Witness testimony introduced."
     },
     {
       "beatId": "beat_5",
       "beatIndex": 5,
-      "sourceStartSec": 17,
-      "sourceEndSec": 23,
+      "sourceStartSec": 17.0,
+      "sourceEndSec": 23.0,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
       "audioMode": "voiceover_with_ambient",
       "retentionReason": "strong_quote",
       "newInformation": "Nathan quotes: 'They are hurting her inside, please get her out!'",
       "viewerStateBefore": "Witness introduced.",
-      "viewerStateAfter": "Immediate peril confirmed.",
-      "semanticFunction": "victim_allegation"
+      "viewerStateAfter": "Immediate peril confirmed."
     },
     {
       "beatId": "beat_6",
       "beatIndex": 6,
-      "sourceStartSec": 58,
-      "sourceEndSec": 64,
+      "sourceStartSec": 58.0,
+      "sourceEndSec": 64.0,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
       "retentionReason": "reaction",
       "newInformation": "Officer intervenes in bathroom, ordering stepfather to release girl.",
       "viewerStateBefore": "Entering house.",
-      "viewerStateAfter": "Physical confrontation halted.",
-      "semanticFunction": "officer_intervention"
+      "viewerStateAfter": "Physical confrontation halted."
     },
     {
       "beatId": "beat_7",
       "beatIndex": 7,
-      "sourceStartSec": 64,
-      "sourceEndSec": 70,
+      "sourceStartSec": 64.0,
+      "sourceEndSec": 70.0,
       "chronologyMode": "chronological",
       "narrativeRole": "confrontation",
       "audioMode": "original_audio",
       "retentionReason": "reaction",
       "newInformation": "Stepfather complies and releases girl while daughter sobs on floor.",
       "viewerStateBefore": "Intervention.",
-      "viewerStateAfter": "Conflicting claims at scene.",
-      "semanticFunction": "confrontation"
+      "viewerStateAfter": "Conflicting claims at scene."
     },
     {
       "beatId": "beat_8",
       "beatIndex": 8,
-      "sourceStartSec": 102,
-      "sourceEndSec": 107,
+      "sourceStartSec": 102.0,
+      "sourceEndSec": 107.0,
       "chronologyMode": "chronological",
       "narrativeRole": "contradiction",
       "audioMode": "voiceover_with_ambient",
       "retentionReason": "contradiction",
       "newInformation": "Mother insists 'we do not abuse our children', claiming daughter went ballistic.",
       "viewerStateBefore": "Physical scene calmed.",
-      "viewerStateAfter": "Mother caught in blatant lie.",
-      "semanticFunction": "suspect_defense_excuse"
+      "viewerStateAfter": "Mother caught in blatant lie."
     },
     {
       "beatId": "beat_9",
       "beatIndex": 9,
       "sourceStartSec": 247.8,
-      "sourceEndSec": 253,
+      "sourceEndSec": 253.0,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
       "audioMode": "original_audio",
       "retentionReason": "escalation",
       "newInformation": "Officer moves in with handcuffs: 'We got to get you in handcuffs for now, okay?'",
       "viewerStateBefore": "Mother deflecting.",
-      "viewerStateAfter": "Officer taking physical control with handcuffs.",
-      "semanticFunction": "officer_physical_action"
+      "viewerStateAfter": "Officer taking physical control with handcuffs."
     },
     {
       "beatId": "beat_10",
       "beatIndex": 10,
-      "sourceStartSec": 254,
-      "sourceEndSec": 258,
+      "sourceStartSec": 254.0,
+      "sourceEndSec": 258.0,
       "chronologyMode": "chronological",
       "narrativeRole": "reaction",
       "audioMode": "original_audio",
       "retentionReason": "reaction",
       "newInformation": "Suspect being stood up, daughter cries: 'Can you get him off me?'",
       "viewerStateBefore": "Officer taking control.",
-      "viewerStateAfter": "Physical separation underway.",
-      "semanticFunction": "reaction"
+      "viewerStateAfter": "Physical separation underway."
     },
     {
       "beatId": "beat_11",
       "beatIndex": 11,
-      "sourceStartSec": 309,
+      "sourceStartSec": 309.0,
       "sourceEndSec": 314.5,
       "chronologyMode": "chronological",
       "narrativeRole": "escalation",
@@ -194,13 +170,12 @@
       "retentionReason": "escalation",
       "newInformation": "Officer double locks handcuffs so they do not tighten as suspect is secured.",
       "viewerStateBefore": "Separation underway.",
-      "viewerStateAfter": "Suspect secured in handcuffs.",
-      "semanticFunction": "officer_restraint"
+      "viewerStateAfter": "Suspect secured in handcuffs."
     },
     {
       "beatId": "beat_12",
       "beatIndex": 12,
-      "sourceStartSec": 863,
+      "sourceStartSec": 863.0,
       "sourceEndSec": 867.5,
       "chronologyMode": "chronological",
       "narrativeRole": "progressive_evidence",
@@ -208,8 +183,7 @@
       "retentionReason": "visual_reveal",
       "newInformation": "Cut to daughter Melody in cuffs: 'my mom grabs my wrist... you are not going upstairs.'",
       "viewerStateBefore": "Suspect secured.",
-      "viewerStateAfter": "Direct victim testimony of assault.",
-      "semanticFunction": "victim_statement"
+      "viewerStateAfter": "Direct victim testimony of assault."
     },
     {
       "beatId": "beat_13",
@@ -222,13 +196,12 @@
       "retentionReason": "visual_reveal",
       "newInformation": "Daughter reveals: 'Let me go. Please do not touch me physically right now.'",
       "viewerStateBefore": "Victim testimony.",
-      "viewerStateAfter": "Victim describes physical assault.",
-      "semanticFunction": "physical_evidence_revelation"
+      "viewerStateAfter": "Victim describes physical assault."
     },
     {
       "beatId": "beat_14",
       "beatIndex": 14,
-      "sourceStartSec": 1100,
+      "sourceStartSec": 1100.0,
       "sourceEndSec": 1105.5,
       "chronologyMode": "chronological",
       "narrativeRole": "cliffhanger",
@@ -240,8 +213,7 @@
       "payoffTiming": "part_2",
       "cliffhangerQuestion": "Will Georgia police arrest and charge the stepfather with felony battery in Part 2?",
       "cliffhangerNewInformation": "The daughter explicitly reveals the stepfather punched both her and her boyfriend.",
-      "cliffhangerExpectedNextPayoff": "Part 2 reveals whether felony battery charges are filed against the stepfather.",
-      "semanticFunction": "cliffhanger"
+      "cliffhangerExpectedNextPayoff": "Part 2 reveals whether felony battery charges are filed against the stepfather."
     }
   ]
 }

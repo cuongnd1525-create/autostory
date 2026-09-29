@@ -79,7 +79,7 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
       if (error.code !== 'ENOENT') throw error;
       return null;
     });
-    if (audit) await store.writeText(path.join(sourceAnalysis, `review-state-${scriptId}.json`), audit);
+
     if (audit) {
       await copyIfExists(path.join(analysis, `edit-${scriptId}.json`), path.join(sourceAnalysis, `edit-${scriptId}.json`));
       if (result.autoStoryContractVersion === 2) {
@@ -106,33 +106,48 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
         }
 
         // Canonical update of parent story-spine.json with accepted repaired spine
-        const workerSpineFile = path.join(analysis, 'story-spine.json');
-        const parentSpineFile = path.join(sourceAnalysis, 'story-spine.json');
+        // MUST happen BEFORE persisting review-state PASS!
+        let isPassAudit = false;
         try {
-          const workerSpineData = JSON.parse(await fs.readFile(workerSpineFile, 'utf8'));
-          const acceptedSpine = (workerSpineData.spines || []).find(s => Number(s.scriptId) === Number(scriptId))
-            || (workerSpineData.spines || [])[0];
-          if (acceptedSpine) {
-            let parentSpineData = { spines: [] };
-            try {
-              parentSpineData = JSON.parse(await fs.readFile(parentSpineFile, 'utf8'));
-            } catch (_) {}
-            if (Array.isArray(parentSpineData.spines)) {
-              const idx = parentSpineData.spines.findIndex(s => Number(s.scriptId) === Number(scriptId));
-              if (idx >= 0) {
-                parentSpineData.spines[idx] = { ...acceptedSpine, scriptId };
-              } else if (parentSpineData.spines.length >= Number(scriptId)) {
-                parentSpineData.spines[Number(scriptId) - 1] = { ...acceptedSpine, scriptId };
-              } else {
-                parentSpineData.spines.push({ ...acceptedSpine, scriptId });
-              }
-            } else {
-              parentSpineData.spines = [{ ...acceptedSpine, scriptId }];
-            }
-            await store.writeText(parentSpineFile, JSON.stringify(parentSpineData, null, 2));
-          }
+          const parsed = JSON.parse(audit);
+          isPassAudit = parsed?.finalCheck?.verdict === 'PASS';
         } catch (_) {}
+
+        if (isPassAudit) {
+          const workerSpineFile = path.join(analysis, 'story-spine.json');
+          const parentSpineFile = path.join(sourceAnalysis, 'story-spine.json');
+          try {
+            const workerSpineData = JSON.parse(await fs.readFile(workerSpineFile, 'utf8'));
+            const acceptedSpine = (workerSpineData.spines || []).find(s => Number(s.scriptId) === Number(scriptId))
+              || (workerSpineData.spines || [])[0];
+            if (acceptedSpine) {
+              let parentSpineData = { spines: [] };
+              try {
+                parentSpineData = JSON.parse(await fs.readFile(parentSpineFile, 'utf8'));
+              } catch (_) {}
+              if (Array.isArray(parentSpineData.spines)) {
+                const idx = parentSpineData.spines.findIndex(s => Number(s.scriptId) === Number(scriptId));
+                if (idx >= 0) {
+                  parentSpineData.spines[idx] = { ...acceptedSpine, scriptId };
+                } else if (parentSpineData.spines.length >= Number(scriptId)) {
+                  parentSpineData.spines[Number(scriptId) - 1] = { ...acceptedSpine, scriptId };
+                } else {
+                  parentSpineData.spines.push({ ...acceptedSpine, scriptId });
+                }
+              } else {
+                parentSpineData.spines = [{ ...acceptedSpine, scriptId }];
+              }
+              await store.writeText(parentSpineFile, JSON.stringify(parentSpineData, null, 2));
+            }
+          } catch (err) {
+            const persistErr = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`);
+            persistErr.code = 'PERSIST_ACCEPTED_EDL_FAILED';
+            throw persistErr;
+          }
+        }
       }
+
+      await store.writeText(path.join(sourceAnalysis, `review-state-${scriptId}.json`), audit);
     }
     const entries = [];
     const ledgers = [path.join(sourceAnalysis, 'run-costs.json')];
@@ -172,9 +187,14 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     }
     const ready = await publish();
     onProgress?.({ stage: 'reviewing', autoStoryDraftReady: true, project: ready, percent: 78, message: `Script ${scriptId}: draft sẵn sàng, đang review` });
-    const result = await service.auditDrafts({ workspaceRoot: workerRoot, projectId, scriptId, signal, onProgress });
-    await publish();
-    return result.audits.find(a => Number(a.scriptId) === scriptId);
+    try {
+      const result = await service.auditDrafts({ workspaceRoot: workerRoot, projectId, scriptId, signal, onProgress });
+      await publish();
+      return result.audits.find(a => Number(a.scriptId) === scriptId);
+    } catch (err) {
+      await publish().catch(() => {});
+      throw err;
+    }
   } finally {
     await service.vertex?.dispatcher?.close();
   }

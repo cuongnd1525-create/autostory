@@ -278,7 +278,21 @@ Score each window 1-10 for pacing and structural tension. Penalize semantic plat
             futureConsequenceChange: { type: 'boolean' },
             isForwardConsequence: { type: 'boolean' }
           },
-          required: ['windowStart', 'windowEnd', 'observedFunction', 'observedAction', 'observedNewInformation']
+          required: [
+            'windowIndex',
+            'windowStart',
+            'windowEnd',
+            'observedFunction',
+            'observedAction',
+            'observedDialogue',
+            'observedNewInformation',
+            'newFact',
+            'viewerBeliefChange',
+            'caseStateChange',
+            'stakesChange',
+            'futureConsequenceChange',
+            'isForwardConsequence'
+          ]
         }
       }
     },
@@ -304,45 +318,108 @@ Score each window 1-10 for pacing and structural tension. Penalize semantic plat
     };
   }
 
-  // 1. Validate observedFunction contract on all windows
+  // 1. Strict validation of all required fields on every window
+  const booleanFields = [
+    'newFact',
+    'viewerBeliefChange',
+    'caseStateChange',
+    'stakesChange',
+    'futureConsequenceChange',
+    'isForwardConsequence'
+  ];
+
   for (let i = 0; i < rawWindows.length; i++) {
     const w = rawWindows[i];
-    if (!w || typeof w.observedFunction !== 'string' || !ALLOWED_OBSERVED_FUNCTIONS.includes(w.observedFunction.trim())) {
+    if (!w || typeof w !== 'object') {
       return {
         status: 'MEDIA_CRITIC_INVALID',
         isCompliant: false,
-        summary: `Window at index ${w?.windowIndex ?? i} is missing or has malformed observedFunction (${w?.observedFunction}).`,
+        summary: `Window at index ${i} is not a valid object.`,
         windows: [],
         weakWindows: []
       };
     }
-  }
 
-  // 2. Validate index presence and uniqueness if provided
-  const hasIndices = rawWindows.some(w => typeof w.windowIndex === 'number');
-  if (hasIndices) {
-    const seenIndices = new Set();
-    for (const w of rawWindows) {
-      if (typeof w.windowIndex !== 'number' || w.windowIndex < 0 || w.windowIndex >= numWindows || seenIndices.has(w.windowIndex)) {
+    // windowIndex is strictly required as an integer in [0, numWindows - 1]
+    if (typeof w.windowIndex !== 'number' || !Number.isInteger(w.windowIndex) || w.windowIndex < 0 || w.windowIndex >= numWindows) {
+      return {
+        status: 'MEDIA_CRITIC_INVALID',
+        isCompliant: false,
+        summary: `Window at index ${i} has missing, non-integer, or out-of-range windowIndex (${w.windowIndex}).`,
+        windows: [],
+        weakWindows: []
+      };
+    }
+
+    // Timestamps must be numeric
+    if (typeof w.windowStart !== 'number' || typeof w.windowEnd !== 'number' || Number.isNaN(w.windowStart) || Number.isNaN(w.windowEnd)) {
+      return {
+        status: 'MEDIA_CRITIC_INVALID',
+        isCompliant: false,
+        summary: `Window ${w.windowIndex} has missing or non-numeric windowStart/windowEnd.`,
+        windows: [],
+        weakWindows: []
+      };
+    }
+
+    // observedFunction must be one of ALLOWED_OBSERVED_FUNCTIONS
+    if (typeof w.observedFunction !== 'string' || !ALLOWED_OBSERVED_FUNCTIONS.includes(w.observedFunction.trim())) {
+      return {
+        status: 'MEDIA_CRITIC_INVALID',
+        isCompliant: false,
+        summary: `Window ${w.windowIndex} is missing or has malformed observedFunction (${w.observedFunction}).`,
+        windows: [],
+        weakWindows: []
+      };
+    }
+
+    // String observations must be non-empty strings
+    if (typeof w.observedAction !== 'string' || typeof w.observedDialogue !== 'string' || typeof w.observedNewInformation !== 'string') {
+      return {
+        status: 'MEDIA_CRITIC_INVALID',
+        isCompliant: false,
+        summary: `Window ${w.windowIndex} has missing or non-string observedAction, observedDialogue, or observedNewInformation.`,
+        windows: [],
+        weakWindows: []
+      };
+    }
+
+    // All boolean progress fields must strictly be booleans
+    for (const field of booleanFields) {
+      if (typeof w[field] !== 'boolean') {
         return {
-          status: 'STRUCTURAL_CRITIC_INCOMPLETE',
+          status: 'MEDIA_CRITIC_INVALID',
           isCompliant: false,
-          summary: `Invalid, out-of-range, or duplicated windowIndex ${w?.windowIndex}.`,
+          summary: `Window ${w.windowIndex} has missing or non-boolean field '${field}' (type: ${typeof w[field]}).`,
           windows: [],
           weakWindows: []
         };
       }
-      seenIndices.add(w.windowIndex);
     }
-    if (seenIndices.size !== numWindows) {
+  }
+
+  // 2. Validate index uniqueness and completeness
+  const seenIndices = new Set();
+  for (const w of rawWindows) {
+    if (seenIndices.has(w.windowIndex)) {
       return {
         status: 'STRUCTURAL_CRITIC_INCOMPLETE',
         isCompliant: false,
-        summary: `Missing window indices: expected ${numWindows}, got ${seenIndices.size}.`,
+        summary: `Duplicate windowIndex ${w.windowIndex}.`,
         windows: [],
         weakWindows: []
       };
     }
+    seenIndices.add(w.windowIndex);
+  }
+  if (seenIndices.size !== numWindows) {
+    return {
+      status: 'STRUCTURAL_CRITIC_INCOMPLETE',
+      isCompliant: false,
+      summary: `Missing window indices: expected ${numWindows}, got ${seenIndices.size}.`,
+      windows: [],
+      weakWindows: []
+    };
   }
 
   // 3. Validate bounds and contiguity deterministically
@@ -431,8 +508,9 @@ Score each window 1-10 for pacing and structural tension. Penalize semantic plat
     return span;
   });
 
-  let maxPlateau = 0;
-  let currentRun = 0;
+  let maxNoProgressPlateau = 0;
+  let currentNoProgressRun = 0;
+  let currentSameFuncRun = 0;
   let lastFunc = null;
   const weakWindows = [];
 
@@ -443,51 +521,114 @@ Score each window 1-10 for pacing and structural tension. Penalize semantic plat
     const overlappingBeat = beatSpans.find(b => midPoint >= b.outputStartSec && midPoint <= b.outputEndSec) || beatSpans[beatSpans.length - 1];
     w.plannedFunction = overlappingBeat ? (overlappingBeat.narrativeRole || 'narrative_progression') : 'none';
 
-    let score = 8.5;
-    const isZeroGain = w.observedNewInformation.match(/None|Nothing|Silence/i) || w.observedNewInformation.length < 5;
-    if (isZeroGain) score -= 3.0;
-    
-    // Tension delta check
-    if (/scream|hit|weapon|fight|gun|blood|arrest/i.test(w.observedDialogue + w.observedAction)) {
-      score += 1.0;
-    }
-    
-    const wDur = w.windowEnd - w.windowStart;
-    if (w.observedFunction && lastFunc === w.observedFunction) {
-      currentRun += wDur;
+    const wDur = Number((w.windowEnd - w.windowStart).toFixed(2));
+
+    // Material story progress definition
+    const materialProgress = Boolean(
+      w.viewerBeliefChange ||
+      w.caseStateChange ||
+      w.stakesChange ||
+      w.futureConsequenceChange
+    );
+    w.materialProgress = materialProgress;
+
+    // Track noProgressRunSec: resets on any materialProgress
+    if (materialProgress) {
+      currentNoProgressRun = 0;
     } else {
-      currentRun = wDur;
+      currentNoProgressRun += wDur;
+    }
+    if (currentNoProgressRun > maxNoProgressPlateau) {
+      maxNoProgressPlateau = currentNoProgressRun;
+    }
+    w.noProgressRunSec = Number(currentNoProgressRun.toFixed(2));
+
+    // Track sameFunctionRunSec for diagnostics only
+    if (w.observedFunction && lastFunc === w.observedFunction) {
+      currentSameFuncRun += wDur;
+    } else {
+      currentSameFuncRun = wDur;
     }
     lastFunc = w.observedFunction || null;
-    if (currentRun > maxPlateau) maxPlateau = currentRun;
-    w.semanticStateRunSec = currentRun;
-    
-    if (currentRun > 10.0) score = Math.min(score, 7.0);
-    
+    w.sameFunctionRunSec = Number(currentSameFuncRun.toFixed(2));
+    w.semanticStateRunSec = w.noProgressRunSec; // For backward compatibility
+
+    // Story progress drives scoring:
+    // - If materialProgress === false: window MUST NOT be STRONG (score < 8.0)
+    // - If all progress vectors false and newFact is false: classified WEAK (score <= 5.5)
+    // - Dramatic vocabulary alone cannot increase score (no keyword bonuses)
+    const hasNewFact = Boolean(w.newFact);
+    let score = 5.0;
+
+    if (materialProgress) {
+      score = 8.5;
+      const progressVectorCount = [w.viewerBeliefChange, w.caseStateChange, w.stakesChange, w.futureConsequenceChange].filter(Boolean).length;
+      if (progressVectorCount >= 2) score += 0.5;
+      if (progressVectorCount >= 3) score += 0.5;
+      if (hasNewFact) score += 0.5;
+    } else if (hasNewFact) {
+      score = 7.0; // PASS but never STRONG
+    } else {
+      score = 5.0; // WEAK
+    }
+
+    const isZeroGain = (w.observedNewInformation && w.observedNewInformation.match(/None|Nothing|Silence/i)) || (w.observedNewInformation && w.observedNewInformation.length < 5);
+    if (isZeroGain && !materialProgress) {
+      score = Math.min(score, 4.0);
+    }
+
+    if (w.noProgressRunSec > 10.0) {
+      score = Math.min(score, 5.0);
+    }
+
+    // Strict invariant: If materialProgress === false, the window MUST NOT be STRONG
+    if (!materialProgress) {
+      score = Math.min(score, 7.5);
+    }
+
     w.retentionScore = Math.max(1, Math.min(10, Number(score.toFixed(1))));
     w.retentionStatus = w.retentionScore >= 8.0 ? 'STRONG' : w.retentionScore >= 6.5 ? 'PASS' : 'WEAK';
-    
-    if (w.retentionStatus === 'WEAK') weakWindows.push(w);
-    
+
+    if (!materialProgress && w.retentionStatus === 'STRONG') {
+      w.retentionStatus = 'PASS';
+    }
+    if (!materialProgress && !hasNewFact) {
+      w.retentionScore = Math.min(w.retentionScore, 5.5);
+      w.retentionStatus = 'WEAK';
+    }
+
+    if (w.retentionStatus === 'WEAK') {
+      weakWindows.push(w);
+    }
+
     w.outputTimeFormatted = `${w.windowStart.toFixed(1)}s - ${w.windowEnd.toFixed(1)}s`;
     return w;
   });
 
-  // Calculate 6-dimension observed score
-  let hookObs = 2.0; let causalObs = 2.0; let escObs = 2.0; let pulseObs = 1.5; let payoffObs = 1.5; let cohObs = 1.0;
-  if (scoredWindows[0] && (scoredWindows[0].observedNewInformation.match(/None/i))) hookObs -= 0.5;
-  if (maxPlateau > 10.0) pulseObs -= 0.8; else if (maxPlateau > 8.0) pulseObs -= 0.4;
-
+  // Ending validation (hard gate)
   const lastWindow = scoredWindows[scoredWindows.length - 1];
-  const isTail = lastWindow && lastWindow.observedAction.match(/TAIL|SILENCE|Nothing|Blank|Black/i);
+  const isBackstoryEnding = Boolean(lastWindow && lastWindow.observedFunction === 'backstory');
+  const endingValid = Boolean(
+    lastWindow &&
+    !isBackstoryEnding &&
+    (lastWindow.observedFunction === 'payoff' || lastWindow.isForwardConsequence === true)
+  );
+
+  const isTail = lastWindow && lastWindow.observedAction && lastWindow.observedAction.match(/TAIL|SILENCE|Nothing|Blank|Black/i);
   let postCliffhangerTailSec = 0;
   if (isTail) {
-    postCliffhangerTailSec = lastWindow.windowEnd - lastWindow.windowStart;
-    payoffObs -= 1.0;
+    postCliffhangerTailSec = Number((lastWindow.windowEnd - lastWindow.windowStart).toFixed(2));
   }
 
-  const zeroGainRatio = scoredWindows.filter(w => w.retentionScore < 6).length / numWindows;
-  if (zeroGainRatio > 0.3) escObs -= 0.8;
+  // Calculate 6-dimension observed score
+  let hookObs = 2.0; let causalObs = 2.0; let escObs = 2.0; let pulseObs = 1.5; let payoffObs = 1.5; let cohObs = 1.0;
+  if (scoredWindows[0] && (!scoredWindows[0].materialProgress && !scoredWindows[0].newFact)) hookObs -= 0.5;
+  if (maxNoProgressPlateau > 10.0) pulseObs -= 0.8; else if (maxNoProgressPlateau > 8.0) pulseObs -= 0.4;
+  if (postCliffhangerTailSec > 2.0) payoffObs -= 1.0;
+  if (!endingValid) payoffObs -= 1.5;
+
+  const weakRatio = scoredWindows.filter(w => w.retentionStatus === 'WEAK').length / numWindows;
+  if (weakRatio > 0.3) escObs -= 0.8;
 
   const criticObservedScore = Number((Math.max(0, hookObs) + Math.max(0, causalObs) + Math.max(0, escObs) + Math.max(0, pulseObs) + Math.max(0, payoffObs) + Math.max(0, cohObs)).toFixed(1));
   const directorPredictedScore = computeStructuralViralScore(spine, options)?.score || 0;
@@ -495,7 +636,21 @@ Score each window 1-10 for pacing and structural tension. Penalize semantic plat
   
   const avgScore = Number((scoredWindows.reduce((sum, win) => sum + win.retentionScore, 0) / scoredWindows.length).toFixed(1));
 
-  const isCompliant = criticObservedScore >= 8.0 && maxPlateau <= 10.0 && postCliffhangerTailSec <= 2.0;
+  // Hard acceptance criteria:
+  // - criticObservedScore >= 8.0
+  // - auditCoverageRatio >= 0.98
+  // - noProgressRunSec <= 10.0
+  // - postCliffhangerTailSec <= 2.0
+  // - weakWindows.length === 0
+  // - valid ending
+  const isCompliant = Boolean(
+    criticObservedScore >= 8.0 &&
+    auditCoverageRatio >= 0.98 &&
+    maxNoProgressPlateau <= 10.0 &&
+    postCliffhangerTailSec <= 2.0 &&
+    weakWindows.length === 0 &&
+    endingValid === true
+  );
 
   return {
     status: 'SUCCESS',
@@ -506,12 +661,14 @@ Score each window 1-10 for pacing and structural tension. Penalize semantic plat
     directorPredictedScore,
     criticObservedScore,
     scoreDiscrepancy,
-    maxPlateau,
+    noProgressRunSec: Number(maxNoProgressPlateau.toFixed(2)),
+    maxPlateau: Number(maxNoProgressPlateau.toFixed(2)),
+    endingValid,
     windows: scoredWindows,
     weakWindows,
     averageRetentionScore: avgScore,
     isCompliant,
-    summary: `Media Audit completed. ${scoredWindows.length} windows. Coverage: ${(auditCoverageRatio*100).toFixed(0)}%. Observed Score: ${criticObservedScore}/10.`
+    summary: `Media Audit completed. ${scoredWindows.length} windows. Coverage: ${(auditCoverageRatio*100).toFixed(0)}%. Observed Score: ${criticObservedScore}/10. Weak: ${weakWindows.length}. Ending: ${endingValid ? 'VALID' : 'INVALID'}.`
   };
 }
 
@@ -556,13 +713,15 @@ function generateTargetedRepairSpecification(auditResult = {}, spine = {}) {
 
   const windows = auditResult.windows || [];
 
-  // 2. Ending failure / backstory ending
+  // 2. Ending failure / backstory ending (hard gate)
   const lastWindow = windows[windows.length - 1];
-  if (lastWindow && (lastWindow.isForwardConsequence === false || lastWindow.observedFunction === 'backstory')) {
+  if (auditResult.endingValid === false || (lastWindow && (lastWindow.isForwardConsequence === false || lastWindow.observedFunction === 'backstory'))) {
+    const endStart = lastWindow ? lastWindow.windowStart : Math.max(0, (auditResult.mp4Duration || 10) - 6);
+    const endEnd = lastWindow ? lastWindow.windowEnd : (auditResult.mp4Duration || 10);
     return {
-      weakWindowStart: lastWindow.windowStart,
-      weakWindowEnd: lastWindow.windowEnd,
-      observedProblem: `The ending window (${lastWindow.outputTimeFormatted}) was observed as backstory rather than a forward-moving consequence/cliffhanger.`,
+      weakWindowStart: endStart,
+      weakWindowEnd: endEnd,
+      observedProblem: `The ending window (${lastWindow?.outputTimeFormatted || `${endStart}s-${endEnd}s`}) was observed as backstory rather than a forward-moving consequence/cliffhanger or payoff.`,
       failureType: 'ending_backstory',
       requiredNarrativeFunction: 'Deliver forward consequence or active cliffhanger that changes what is likely to happen next.',
       candidateRepairStrategy: 'Replace the final beat with a forward-moving discovery, charge announcement, or imminent consequence beat.',
@@ -570,14 +729,15 @@ function generateTargetedRepairSpecification(auditResult = {}, spine = {}) {
     };
   }
 
-  // 3. Semantic plateau (>10s)
-  if (auditResult.maxPlateau > 10.0 || windows.some(w => (w.semanticStateRunSec || 0) > 10.0)) {
-    const plateauEndWin = windows.find(w => (w.semanticStateRunSec || 0) > 10.0)
-      || windows.reduce((max, w) => ((w.semanticStateRunSec || 0) > (max?.semanticStateRunSec || 0) ? w : max), windows[0]);
-    const plateauDuration = plateauEndWin?.semanticStateRunSec || auditResult.maxPlateau;
+  // 3. No-progress plateau (>10s)
+  const plateauSec = auditResult.noProgressRunSec || auditResult.maxPlateau || 0;
+  if (plateauSec > 10.0 || windows.some(w => (w.noProgressRunSec || w.semanticStateRunSec || 0) > 10.0)) {
+    const plateauEndWin = windows.find(w => (w.noProgressRunSec || w.semanticStateRunSec || 0) > 10.0)
+      || windows.reduce((max, w) => (((w.noProgressRunSec || w.semanticStateRunSec || 0) > ((max?.noProgressRunSec || max?.semanticStateRunSec) || 0)) ? w : max), windows[0]);
+    const plateauDuration = plateauEndWin?.noProgressRunSec || plateauEndWin?.semanticStateRunSec || plateauSec;
     const plateauEnd = plateauEndWin ? plateauEndWin.windowEnd : (auditResult.mp4Duration || 10);
     const plateauStart = Math.max(0, Number((plateauEnd - plateauDuration).toFixed(2)));
-    const plateauFunc = plateauEndWin ? plateauEndWin.observedFunction : 'explanation_plateau';
+    const plateauFunc = plateauEndWin ? plateauEndWin.observedFunction : 'context_setup';
 
     return {
       weakWindowStart: plateauStart,
@@ -586,7 +746,8 @@ function generateTargetedRepairSpecification(auditResult = {}, spine = {}) {
       plateauEnd,
       observedFunction: plateauFunc,
       semanticStateRunSec: plateauDuration,
-      observedProblem: `Semantic plateau of ${plateauDuration.toFixed(1)}s detected with narrative function '${plateauFunc}' from ${plateauStart.toFixed(1)}s to ${plateauEnd.toFixed(1)}s exceeding 10.0s threshold.`,
+      noProgressRunSec: plateauDuration,
+      observedProblem: `No-progress plateau of ${plateauDuration.toFixed(1)}s detected with narrative function '${plateauFunc}' from ${plateauStart.toFixed(1)}s to ${plateauEnd.toFixed(1)}s exceeding 10.0s threshold.`,
       failureType: 'semantic_plateau',
       requiredNarrativeFunction: 'Break up the continuous plateau with an active complication, evidence discovery, or conflict escalation.',
       candidateRepairStrategy: 'Replace static talking or repetitive excuses with physical actions or concrete contradictory facts.',
