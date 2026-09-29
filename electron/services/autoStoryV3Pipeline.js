@@ -62,9 +62,115 @@ function chooseSpines(design) {
 }
 const STORY_DESIGN_REPAIR = `REPAIR — your previous Story Design returned NO usable story spine (empty or beat-less). The supplied Source Story Model contains meaningful state-changing events, so a story IS possible. You MUST set accessGranted=true and return at least ONE complete spine that satisfies the schema: a centralViewerQuestion, a hookPromise, an informationBudget, and an ordered beats array (each beat naming a real sourceEventId from the model). Do NOT return an empty spines array, do NOT set accessGranted=false, and do NOT return a spine with no beats. Prefer the single strongest story.`;
 
-// Story Design with raw/normalized/metadata persistence BEFORE validation and ONE
-// bounded, text-only targeted repair. Evaluates EDL quality guardrails (teaser borrow budget,
-// compact cold-open, micro-beats, strict chronology, and strong cliffhanger).
+const HARD_EDL_VIOLATIONS = new Set([
+  'LARGE_TEASER_MAIN_OVERLAP',
+  'EXACT_EDL_DUPLICATE',
+  'TOTAL_DURATION_UNDER_MIN',
+  'TOTAL_DURATION_OVER_MAX',
+  'MACRO_BEAT_EXCEEDS_MAX',
+  'UNANCHORED_BACKWARD_JUMP',
+  'VISUAL_STATE_COLLAPSE',
+  'STATIC_SPEAKER_PLATEAU',
+  'SEMANTIC_REPETITION_COLLAPSE',
+  'WEAK_CLIFFHANGER',
+  'MISSING_CLIFFHANGER',
+  'EMPTY_SPINE',
+  'EMPTY_BEATS',
+  'OVERLONG_TEASER',
+  'TEASER_COMPLETES_PAYOFF'
+]);
+
+function formatEdlQualityRepairPrompt(violations, metrics, attempt, targetMin, targetMax, externalRepairInstruction = null, spineToRepair = null) {
+  const criticHeader = externalRepairInstruction
+    ? `TARGETED STRUCTURAL REPAIR DIRECTIVE FROM MEDIA-GROUNDED CRITIC:\n${typeof externalRepairInstruction === 'string' ? externalRepairInstruction : JSON.stringify(externalRepairInstruction, null, 2)}\n\n`
+    : '';
+
+  const header = `TARGETED EDL QUALITY REPAIR PASS #${attempt} — Your previous EDL contained critical retention/pacing defects that MUST be resolved:
+- This is a targeted repair of the current spine.
+- Modify ONLY the beats needed to resolve the violations.
+- Leave all other beats, timings, and metadata intact.
+- Return the full repaired spine.`;
+
+  const violationsText = `VIOLATIONS DETECTED BY GUARDRAIL:
+${violations.map((v, i) => {
+  let line = `${i + 1}. [${v.code}] ${v.message}`;
+  if (v.code === 'LARGE_TEASER_MAIN_OVERLAP' && Array.isArray(v.overlaps) && v.overlaps.length > 0) {
+    const details = v.overlaps.map(o => {
+      const mrStr = Array.isArray(o.mainRange) ? o.mainRange.join(', ') : o.mainRange;
+      return `   * Beat ${o.mainBeatId} reuses source footage [${mrStr}] already shown in teaser beat ${o.teaserBeatId}. The post-teaser story MUST NOT reuse this source range. Keep the teaser OR replace the later beat with an unused source moment that performs the same narrative function. Do not solve this by changing metadata labels while preserving source timestamps.`;
+    }).join('\n');
+    line += `\n${details}`;
+  } else if (v.code === 'EXACT_EDL_DUPLICATE') {
+    line += `\n   * Beat '${v.secondBeatId}' has identical source footage [${v.sourceStartSec}, ${v.sourceEndSec}] and audio treatment as beat '${v.firstBeatId}'. Every beat in the EDL must feature distinct footage or narrative purpose. Replace beat '${v.secondBeatId}' with an unused source moment from the model.`;
+  }
+  return line;
+}).join('\n')}`;
+
+  const metricsText = `CURRENT METRICS FROM YOUR PREVIOUS ATTEMPT:
+- Total timeline duration: ${metrics?.totalTimelineDuration?.toFixed(1) || '?'}s (Target budget: ${targetMin}s to ${targetMax}s)
+- Teaser duration: ${metrics?.teaserDuration?.toFixed(1) || '?'}s (Target: 7s - 12s across 3 beats if teaser archetype, 0s if forward escalation)
+- Teaser-to-main overlap: ${metrics?.teaserToMainSourceOverlapSeconds?.toFixed(1) || '?'}s (Budget: <= 3.0s)
+- Max beat duration: ${metrics?.maxMacroBeatDuration?.toFixed(1) || '?'}s (Ceiling: <= 7.0s)
+- Unanchored backward jumps: ${metrics?.unanchoredBackwardJumpCount || 0} (Must be 0)
+- Same visual state run: ${metrics?.sameVisualStateRunSec?.toFixed(1) || '?'}s (Must be <= 12.0s)`;
+
+  const specificInstructions = `SPECIFIC REPAIR INSTRUCTIONS:
+${violations.map(v => {
+  if (v.code === 'LARGE_TEASER_MAIN_OVERLAP') {
+    if (Array.isArray(v.overlaps) && v.overlaps.length > 0) {
+      return v.overlaps.map(o => {
+        const mrStr = Array.isArray(o.mainRange) ? o.mainRange.join(', ') : o.mainRange;
+        return `- Beat ${o.mainBeatId} reuses source footage [${mrStr}] already shown in teaser beat ${o.teaserBeatId}.\nThe post-teaser story MUST NOT reuse this source range.\nKeep the teaser OR replace the later beat with an unused source moment that performs the same narrative function.\nDo not solve this by changing metadata labels while preserving source timestamps.`;
+      }).join('\n');
+    }
+    return `- Eliminate any teaser overlap after rewind (total overlap must be <= 3.0s, target 0s).`;
+  }
+  if (v.code === 'EXACT_EDL_DUPLICATE') {
+    return `- Beat '${v.secondBeatId}' has identical source footage [${v.sourceStartSec}, ${v.sourceEndSec}] as beat '${v.firstBeatId}'. Replace '${v.secondBeatId}' with an unused source moment from the model that performs the required narrative function.`;
+  }
+  if (v.code === 'UNANCHORED_BACKWARD_JUMP') {
+    return `- Fix beat '${v.beatId}': Ensure sourceStartSec >= previous beat's sourceEndSec! Remove or advance the backwards clip so time strictly moves forward.`;
+  }
+  if (v.code === 'TOTAL_DURATION_UNDER_MIN' || v.code === 'TOTAL_DURATION_OVER_MAX') {
+    return `- Adjust total duration to fall strictly within ${targetMin}-${targetMax}s (target 74-82s) across 13-16 beats.`;
+  }
+  if (v.code === 'MACRO_BEAT_EXCEEDS_MAX') {
+    return `- Trim beat '${v.beatId}' to <= 7.0s duration!`;
+  }
+  if (v.code === 'VISUAL_STATE_COLLAPSE') {
+    return `- Consecutive run in same visual state exceeds 12.0s! Switch to officer physical actions, physical evidence discovery, or witness/victim testimony from unused moments in the source model.`;
+  }
+  if (v.code === 'STATIC_SPEAKER_PLATEAU') {
+    return `- Do not string together consecutive beats of the same speaker repeating claims. Alternate with physical action or visual reveals.`;
+  }
+  if (v.code === 'SEMANTIC_REPETITION_COLLAPSE') {
+    return `- At most 1 beat of suspect excuses. Replace repeated excuses with physical actions or concrete contradictory facts.`;
+  }
+  if (v.code === 'WEAK_CLIFFHANGER' || v.code === 'MISSING_CLIFFHANGER') {
+    return `- Provide concrete cliffhanger with narrativeRole: 'cliffhanger', payoffTiming: 'part_2', specificNewFact, consequenceMagnitude ('charges'|'arrest'|'violence'|'evidence_found'|'confession'), and unresolvedConsequence, without spoiling the arrest.`;
+  }
+  return `- Resolve violation ${v.code}: ${v.message}`;
+}).join('\n')}`;
+
+  const mandatoryActions = `MANDATORY EDITORIAL REPAIR ACTIONS:
+1. TOTAL DURATION BUDGET (${targetMin}s to ${targetMax}s, target 74-82s): Output between 13 and 16 micro-beats of 3.5-6.5s each. Do NOT output an under-duration timeline (< ${targetMin}s) and do NOT exceed ${targetMax}s!
+2. ZERO MACRO-BEATS (HARD CEILING 7.0s): EVERY single beat MUST have (sourceEndSec - sourceStartSec) <= 7.0s! If an event or quote in the model spans 15s to 55s, choose ONLY a 4-6s sub-window. NEVER copy a 20s+ event verbatim!
+3. ZERO TEASER REPLAY AFTER REWIND: Any range shown in the teaser MUST NOT be replayed in post-rewind main story. Total overlap must be <= 3.0s (target 0s)! The post-rewind story must feature unshown footage from the source model.
+4. STRICT FORWARD CHRONOLOGY & ANTI-PLATEAU NOVELTY: Chronological beats must strictly advance forward in source time without unanchored backward jumps (sourceStartSec_i >= sourceEndSec_{i-1} - 0.5s). Max run in any single visual state is 12.0s! Forbid consecutive beats of repetitive talking or deflection. Alternate perspectives (officer physical actions, suspect statements, evidence inspection, bystander/victim statements).
+5. COMPACT COLD-OPEN: If using a teaser, exactly 3 rapid beats totaling 7-10s, cutting after 2-3s of partial reveal before full resolution.
+6. CONCRETE CLIFFHANGER: Final beat must have narrativeRole: 'cliffhanger', payoffTiming: 'part_2', concrete specific fact, consequenceMagnitude ('charges'|'arrest'|'violence'|'evidence_found'|'confession'), and no arrest/transport spoiler.`;
+
+  const spineSection = spineToRepair
+    ? `CURRENT SPINE TO REPAIR:
+${JSON.stringify(spineToRepair, null, 2)}`
+    : '';
+
+  return [criticHeader, header, violationsText, metricsText, specificInstructions, mandatoryActions, spineSection, 'Return the repaired complete spine satisfying all constraints.'].filter(Boolean).join('\n\n');
+}
+
+// Story Design with raw/normalized/metadata persistence BEFORE validation and targeted repairs.
+// Evaluates EDL quality guardrails (teaser borrow budget, compact cold-open, micro-beats,
+// strict chronology, exact duplicate avoidance, and strong cliffhanger).
 // Never fabricates or heuristically alters the EDL; Gemini owns the timeline 100%.
 async function buildStoryDesign(engine, model, root, emit, externalRepairInstruction = null, currentSpine = null) {
   assertStoryModelInput(model);
@@ -75,27 +181,27 @@ async function buildStoryDesign(engine, model, root, emit, externalRepairInstruc
       candidatesTokenCount: u.candidatesTokenCount ?? null, thoughtsTokenCount: u.thoughtsTokenCount ?? null,
       totalTokenCount: u.totalTokenCount ?? null };
   };
-  const runOnce = async (customRepairInstruction) => {
-    customRepairInstruction = customRepairInstruction || externalRepairInstruction;
+  const runOnce = async (customRepairInstruction = null, spineToRepair = null, violations = null, metrics = null) => {
     let formattedInstruction = '';
-    if (customRepairInstruction) {
-      if (currentSpine) {
-        formattedInstruction = `TARGETED STRUCTURAL REPAIR DIRECTIVE FROM MEDIA-GROUNDED CRITIC:
-Return a COMPLETE repaired spine, but change ONLY beats necessary to resolve the specified media-critic failure.
+    const repairSpec = customRepairInstruction || externalRepairInstruction;
+    const activeSpine = spineToRepair || (customRepairInstruction ? null : currentSpine);
+    if (repairSpec) {
+      const specStr = typeof repairSpec === 'string' ? repairSpec : JSON.stringify(repairSpec, null, 2);
+      if (activeSpine && !specStr.includes('CURRENT SPINE TO REPAIR:')) {
+        formattedInstruction = `TARGETED STRUCTURAL REPAIR DIRECTIVE:
+Return a COMPLETE repaired spine, but change ONLY beats necessary to resolve the specified failure.
 Preserve all unaffected beats exactly unless transition continuity requires a specific adjacent change.
 
 CURRENT SPINE TO REPAIR:
-${JSON.stringify(currentSpine, null, 2)}
+${JSON.stringify(activeSpine, null, 2)}
 
 REPAIR SPECIFICATION:
-${typeof customRepairInstruction === 'string' ? customRepairInstruction : JSON.stringify(customRepairInstruction, null, 2)}`;
+${specStr}`;
       } else {
-        formattedInstruction = typeof customRepairInstruction === 'string'
-          ? customRepairInstruction
-          : JSON.stringify(customRepairInstruction, null, 2);
+        formattedInstruction = specStr;
       }
     }
-    const instruction = customRepairInstruction
+    const instruction = repairSpec
       ? `${V3.instructions.storyDesign}\n\n${formattedInstruction}`
       : V3.instructions.storyDesign;
     let value = null, raw = null, error = null;
@@ -104,19 +210,21 @@ ${typeof customRepairInstruction === 'string' ? customRepairInstruction : JSON.s
       targetDurationMinSec: engine.config.targetDurationMinSec || 70,
       targetDurationMaxSec: engine.config.targetDurationMaxSec || 90,
       storyMode: 'serialized_part',
-      ...(customRepairInstruction ? { repairSpecification: customRepairInstruction } : {}),
-      ...(currentSpine ? { currentSpine } : {})
+      ...(repairSpec ? { repairSpecification: repairSpec } : {}),
+      ...(activeSpine ? { currentSpine: activeSpine } : {}),
+      ...(violations ? { violations } : {}),
+      ...(metrics ? { metrics } : {})
     };
     try {
       value = await engine.ask(
-        `v3-story-design${customRepairInstruction ? '_repair' : ''}`,
+        `v3-story-design${repairSpec ? '_repair' : ''}`,
         inputData,
         V3.schemas.storyDesign,
         instruction,
         [],
         validateStoryDesign,
         'auto_story_edit',
-        customRepairInstruction ? { noCache: true } : {}
+        repairSpec ? { noCache: true } : {}
       );
       raw = value;
     } catch (e) { error = e; raw = (e && e.invalidArtifact) || null; }
@@ -134,6 +242,17 @@ ${typeof customRepairInstruction === 'string' ? customRepairInstruction : JSON.s
       qualityValid: qualityReport?.valid ?? null,
       violations: qualityReport?.violations || []
     });
+    if (attempt > 1) {
+      await write(path.join(root, `v3-story-design-repair-${attempt}-raw.json`), r.raw ?? { error: r.error?.message || 'no response captured' });
+      await write(path.join(root, `v3-story-design-repair-${attempt}-normalized.json`), {
+        topLevelKeys: r.raw && typeof r.raw === 'object' ? Object.keys(r.raw) : [],
+        spineCount: Array.isArray(r.raw?.spines) ? r.raw.spines.length : null,
+        completeSpineCount: completeSpines(r.raw).length, usableSpineCount: usableCount,
+        error: r.error?.message || null, repaired: true,
+        qualityValid: qualityReport?.valid ?? null,
+        violations: qualityReport?.violations || []
+      });
+    }
     if (qualityReport) {
       await write(path.join(root, 'edl-quality-report.json'), qualityReport);
     }
@@ -143,112 +262,71 @@ ${typeof customRepairInstruction === 'string' ? customRepairInstruction : JSON.s
   const targetMax = engine.config.targetDurationMaxSec || 90;
   const valOpts = { minTimelineDurationSec: targetMin, maxTimelineDurationSec: targetMax };
 
-  const first = await runOnce(null);
+  const first = await runOnce(externalRepairInstruction, currentSpine);
   let usable = chooseSpines(first.value || first.raw);
-  let firstQuality = usable.length ? validateEdlQuality(usable[0], valOpts) : { valid: false, violations: [{ code: 'EMPTY_SPINE', message: 'No usable spine generated.' }] };
-  await persist(0, first, usable.length, firstQuality);
 
-  if (usable.length && firstQuality.valid) {
+  if (externalRepairInstruction) {
+    let quality = usable.length ? validateEdlQuality(usable[0], valOpts) : { valid: false, violations: [{ code: 'EMPTY_SPINE', message: 'No usable spine generated from critic repair.' }] };
+    await persist(1, first, usable.length, quality);
+    return usable;
+  }
+
+  let currentQuality = usable.length ? validateEdlQuality(usable[0], valOpts) : { valid: false, violations: [{ code: 'EMPTY_SPINE', message: 'No usable spine generated.' }] };
+  await persist(0, first, usable.length, currentQuality);
+
+  if (usable.length && currentQuality.valid) {
     emit('design', `[V3] Story Design completed — 1 spine passing all EDL retention & quality checks.`, 40);
     return usable;
   }
 
-  // Construct targeted repair prompt with exact violations
-  let repairPrompt = STORY_DESIGN_REPAIR;
+  let currentAttempt = 0;
+  let lastResponse = first;
 
-  if (usable.length && !firstQuality.valid) {
-    const criticHeader = externalRepairInstruction
-      ? `TARGETED STRUCTURAL REPAIR DIRECTIVE FROM MEDIA-GROUNDED CRITIC:\n${typeof externalRepairInstruction === 'string' ? externalRepairInstruction : JSON.stringify(externalRepairInstruction, null, 2)}\n\n`
-      : '';
-    repairPrompt = `${criticHeader}TARGETED EDL QUALITY REPAIR PASS — Your previous EDL contained critical retention/pacing defects that MUST be resolved:
-VIOLATIONS DETECTED BY GUARDRAIL:
-${firstQuality.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}
-
-CURRENT METRICS FROM YOUR PREVIOUS ATTEMPT:
-- Total timeline duration: ${firstQuality.metrics?.totalTimelineDuration?.toFixed(1) || '?'}s (Target budget: ${targetMin}s to ${targetMax}s)
-- Teaser duration: ${firstQuality.metrics?.teaserDuration?.toFixed(1) || '?'}s (Target: 7s - 12s across 3 beats if teaser archetype, 0s if forward escalation)
-- Teaser-to-main overlap: ${firstQuality.metrics?.teaserToMainSourceOverlapSeconds?.toFixed(1) || '?'}s (Budget: <= 3.0s)
-- Max beat duration: ${firstQuality.metrics?.maxMacroBeatDuration?.toFixed(1) || '?'}s (Ceiling: <= 7.0s)
-- Unanchored backward jumps: ${firstQuality.metrics?.unanchoredBackwardJumpCount || 0} (Must be 0)
-- Same visual state run: ${firstQuality.metrics?.sameVisualStateRunSec?.toFixed(1) || '?'}s (Must be <= 12.0s)
-
-MANDATORY EDITORIAL REPAIR ACTIONS:
-1. TOTAL DURATION BUDGET (${targetMin}s to ${targetMax}s, target 74-82s): Output between 13 and 16 micro-beats of 3.5-6.5s each. Do NOT output an under-duration timeline (< ${targetMin}s) and do NOT exceed ${targetMax}s!
-2. ZERO MACRO-BEATS (HARD CEILING 7.0s): EVERY single beat MUST have (sourceEndSec - sourceStartSec) <= 7.0s! If an event or quote in the model spans 15s to 55s, choose ONLY a 4-6s sub-window. NEVER copy a 20s+ event verbatim!
-3. ZERO TEASER REPLAY AFTER REWIND: Any range shown in the teaser MUST NOT be replayed in post-rewind main story. Total overlap must be <= 3.0s (target 0s)! The post-rewind story must feature unshown footage from the source model.
-4. STRICT FORWARD CHRONOLOGY & ANTI-PLATEAU NOVELTY: Chronological beats must strictly advance forward in source time without unanchored backward jumps (sourceStartSec_i >= sourceEndSec_{i-1} - 0.5s). Max run in any single visual state is 12.0s! Forbid consecutive beats of repetitive talking or deflection. Alternate perspectives (officer physical actions, suspect statements, evidence inspection, bystander/victim statements).
-5. COMPACT COLD-OPEN: If using a teaser, exactly 3 rapid beats totaling 7-10s, cutting after 2-3s of partial reveal before full resolution.
-6. CONCRETE CLIFFHANGER: Final beat must have narrativeRole: 'cliffhanger', payoffTiming: 'part_2', concrete specific fact, consequenceMagnitude ('charges'|'arrest'|'violence'|'evidence_found'|'confession'), and no arrest/transport spoiler.
-
-Return the repaired complete spine satisfying all constraints.`;
-  }
-
-  emit('design', `[V3] Story Design requires repair (${firstQuality.violations.length ? firstQuality.violations.map(v => v.code).join(', ') : 'schema/empty'}); one targeted AI repair pass.`, 'WARNING');
-  let second = await runOnce(repairPrompt);
-  usable = chooseSpines(second.value || second.raw);
-  let secondQuality = usable.length ? validateEdlQuality(usable[0], valOpts) : { valid: false, violations: [{ code: 'EMPTY_SPINE', message: 'No usable spine after repair.' }] };
-  await persist(1, second, usable.length, secondQuality);
-
-  let currentAttempt = 1;
-  let currentSpineQuality = secondQuality;
-  let currentResponse = second;
-
-  while (currentAttempt < 2 && usable.length && !currentSpineQuality.valid) {
+  while (currentAttempt < 2 && usable.length && !currentQuality.valid) {
     currentAttempt++;
-    const remainingViolations = currentSpineQuality.violations;
-    const secondRepairPrompt = `TARGETED EDL QUALITY REPAIR PASS #${currentAttempt} — Remaining defect(s) MUST be fixed:
-VIOLATIONS TO RESOLVE:
-${remainingViolations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}
+    const spineToRepair = usable[0];
+    const repairPrompt = formatEdlQualityRepairPrompt(
+      currentQuality.violations,
+      currentQuality.metrics,
+      currentAttempt,
+      targetMin,
+      targetMax,
+      externalRepairInstruction,
+      spineToRepair
+    );
 
-INSTRUCTIONS:
-${remainingViolations.map(v => {
-  if (v.code === 'UNANCHORED_BACKWARD_JUMP') {
-    return `- Fix beat '${v.beatId}': Ensure sourceStartSec >= previous beat's sourceEndSec! Remove or advance the backwards clip so time strictly moves forward.`;
-  }
-  if (v.code === 'TOTAL_DURATION_UNDER_MIN' || v.code === 'TOTAL_DURATION_OVER_MAX') {
-    return `- Adjust total duration to fall strictly within ${targetMin}-${targetMax}s (target 74-82s) across 13-16 beats.`;
-  }
-  if (v.code === 'MACRO_BEAT_EXCEEDS_MAX') {
-    return `- Trim beat '${v.beatId}' to <= 7.0s duration!`;
-  }
-  if (v.code === 'LARGE_TEASER_MAIN_OVERLAP') {
-    return `- Eliminate any teaser overlap after rewind (total overlap must be <= 3.0s, target 0s).`;
-  }
-  if (v.code === 'VISUAL_STATE_COLLAPSE') {
-    return `- Consecutive run in same visual state exceeds 12.0s! Switch to officer physical actions, physical evidence discovery, or witness/victim testimony from unused moments in the source model.`;
-  }
-  if (v.code === 'STATIC_SPEAKER_PLATEAU') {
-    return `- Do not string together consecutive beats of the same speaker repeating claims. Alternate with physical action or visual reveals.`;
-  }
-  if (v.code === 'SEMANTIC_REPETITION_COLLAPSE') {
-    return `- At most 1 beat of suspect excuses. Replace repeated excuses with physical actions or concrete contradictory facts.`;
-  }
-  if (v.code === 'WEAK_CLIFFHANGER') {
-    return `- Provide concrete cliffhanger with narrativeRole: 'cliffhanger', payoffTiming: 'part_2', specificNewFact, consequenceMagnitude ('charges'|'arrest'|'violence'|'evidence_found'|'confession'), and unresolvedConsequence, without spoiling the arrest.`;
-  }
-  return `- Resolve violation ${v.code} according to schema constraints.`;
-}).join('\n')}
-
-Return the repaired complete spine satisfying all constraints.`;
-
-    emit('design', `[V3] Story Design performing targeted AI repair pass #${currentAttempt} for remaining notice(s): ${remainingViolations.map(v => v.code).join(', ')}.`, 'WARNING');
-    currentResponse = await runOnce(secondRepairPrompt);
-    usable = chooseSpines(currentResponse.value || currentResponse.raw);
-    currentSpineQuality = usable.length ? validateEdlQuality(usable[0], valOpts) : { valid: false, violations: [{ code: 'EMPTY_SPINE', message: 'No usable spine after repair.' }] };
-    await persist(currentAttempt, currentResponse, usable.length, currentSpineQuality);
+    emit('design', `[V3] Story Design requires repair #${currentAttempt} (${currentQuality.violations.map(v => v.code).join(', ')}); targeted AI repair pass.`, 'WARNING');
+    lastResponse = await runOnce(repairPrompt, spineToRepair, currentQuality.violations, currentQuality.metrics);
+    usable = chooseSpines(lastResponse.value || lastResponse.raw);
+    currentQuality = usable.length ? validateEdlQuality(usable[0], valOpts) : { valid: false, violations: [{ code: 'EMPTY_SPINE', message: 'No usable spine after repair.' }] };
+    await persist(currentAttempt, lastResponse, usable.length, currentQuality);
   }
 
-  if (usable.length) {
-    if (currentSpineQuality.valid) {
-      emit('design', `[V3] Story Design recovered via targeted EDL repair — all quality checks passed.`, 40);
-    } else {
-      emit('design', `[V3] Story Design repaired (${currentSpineQuality.violations.length} remaining notices: ${currentSpineQuality.violations.map(v => v.code).join(', ')}). Proceeding with AI EDL.`, 'WARNING');
+  if (usable.length && currentQuality.valid) {
+    emit('design', `[V3] Story Design recovered via targeted EDL repair — all quality checks passed.`, 40);
+    return usable;
+  }
+
+  if (usable.length && !currentQuality.valid) {
+    const remainingHardViolations = currentQuality.violations.filter(v => HARD_EDL_VIOLATIONS.has(v.code));
+    if (remainingHardViolations.length > 0) {
+      throw new StoryError(
+        'STORY_DESIGN_HARD_INVALID',
+        `Story Design failed hard EDL quality guardrails after ${currentAttempt} repair pass(es): ${remainingHardViolations.map(v => v.code).join(', ')}. Full violations: ${currentQuality.violations.map(v => v.message).join('; ')}`,
+        {
+          violations: currentQuality.violations,
+          hardViolations: remainingHardViolations,
+          metrics: currentQuality.metrics,
+          spine: usable[0] || null
+        }
+      );
     }
+    emit('design', `[V3] Story Design repaired (${currentQuality.violations.length} remaining soft notices: ${currentQuality.violations.map(v => v.code).join(', ')}). Proceeding with AI EDL.`, 'WARNING');
     return usable;
   }
 
   throw new StoryError('STORY_DESIGN_INVALID',
-    `Story Design returned no usable spine after repair passes (first: ${first.error?.message || 'empty/beat-less'}; retry: ${currentResponse.error?.message || 'empty/beat-less'}). Raw responses persisted (v3-story-design*-raw.json).`);
+    `Story Design returned no usable spine after repair passes (first: ${first.error?.message || 'empty/beat-less'}; retry: ${lastResponse.error?.message || 'empty/beat-less'}). Raw responses persisted (v3-story-design*-raw.json).`);
 }
 function validateNarration(v) {
   if (!v || !Array.isArray(v.narrations)) throw new StoryError('INVALID_RESPONSE', 'Missing narrations.');
@@ -567,9 +645,9 @@ async function run(service, opts) {
   try {
     spines = await buildStoryDesign(engine, model, root, emit);
   } catch (err) {
-    if (err.kind === 'STORY_DESIGN_INVALID' || err.kind === 'INPUT_MISSING') {
+    if (err.kind === 'STORY_DESIGN_INVALID' || err.kind === 'STORY_DESIGN_HARD_INVALID' || err.kind === 'INPUT_MISSING') {
       await update({ autoStoryCapacityWarning: `v3: ${err.message}`, autoStoryState: { phase: 'review_failed', failures: [] } });
-      const failures = [{ scriptId: 1, kind: err.kind, error: err.message }];
+      const failures = [{ scriptId: 1, kind: err.kind, error: err.message, details: err.details || null }];
       await write(path.join(root, 'failures.json'), failures);
       emit('failed', `v3 Story Design: ${err.message}`);
       return { project, scriptPaths: [], config, analysisDir: root, failures };

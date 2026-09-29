@@ -25,6 +25,10 @@ const Runner = require('../electron/services/autoStoryRunner');
 const Dubbing = require('../electron/services/dubbingService');
 const sourceModelService = require('../electron/services/sourceStoryModelService');
 const structuralCriticService = require('../electron/services/structuralCriticService');
+const autoStoryV3Pipeline = require('../electron/services/autoStoryV3Pipeline');
+const { validateEdlQuality } = require('../electron/services/edlQualityValidator');
+const { compileV3 } = require('../electron/services/autoStoryV3Compile');
+const { Engine } = require('../electron/services/autoStorySourceEngine');
 
 const UNIQUE_BEAT_START_SEC = 88.88;
 const UNIQUE_BEAT_END_SEC = 94.88;
@@ -706,6 +710,300 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     const defaultRunner = new Runner({}, testStore, { isParentDubbing: true });
     assert.strictEqual(defaultRunner.createDubbing, null, 'AutoStoryRunner defaults createDubbing to null in production');
     console.log('✓ Item 7 Passed: AutoStoryRunner isolated worker factory verified');
+  }
+
+  // Helper for real failure shape tests (Items 8 and 9)
+  const failureShapeClusters = ['doorway_approach', 'patrol_lights', 'living_room_entry', 'evidence_table', 'hallway_confrontation', 'kitchen_interview', 'porch_standoff'];
+  const makeFailureShapeBeats = (beat4Start = 8.5, beat4End = 13.5) => [
+    { beatId: 'beat_001', sourceStartSec: 8.5, sourceEndSec: 13.5, chronologyMode: 'teaser', narrativeRole: 'hook', audioMode: 'original_audio', newInformation: 'Initial suspect confrontation outside doorway', visualStateCluster: failureShapeClusters[0] },
+    { beatId: 'beat_002', sourceStartSec: 14.0, sourceEndSec: 18.0, chronologyMode: 'teaser', narrativeRole: 'escalation', audioMode: 'original_audio', newInformation: 'Officer asks for ID, suspect refuses', visualStateCluster: failureShapeClusters[1] },
+    { beatId: 'beat_003', sourceStartSec: 18.5, sourceEndSec: 22.0, chronologyMode: 'teaser', narrativeRole: 'micro_payoff', audioMode: 'original_audio', newInformation: 'Officer reaches for cuffs', visualStateCluster: failureShapeClusters[2] },
+    { beatId: 'beat_004', sourceStartSec: beat4Start, sourceEndSec: beat4End, chronologyMode: 'rewind', narrativeRole: 'context', audioMode: 'original_audio', newInformation: 'Dispatch call details disturbance call', visualStateCluster: failureShapeClusters[3] },
+    { beatId: 'beat_005', sourceStartSec: 25.0, sourceEndSec: 30.0, chronologyMode: 'chronological', narrativeRole: 'context', audioMode: 'original_audio', newInformation: 'Officer arrives at location', visualStateCluster: failureShapeClusters[4] },
+    { beatId: 'beat_006', sourceStartSec: 30.5, sourceEndSec: 35.5, chronologyMode: 'chronological', narrativeRole: 'escalation', audioMode: 'original_audio', newInformation: 'Mother explains argument with stepfather', visualStateCluster: failureShapeClusters[5] },
+    { beatId: 'beat_007', sourceStartSec: 36.0, sourceEndSec: 41.0, chronologyMode: 'chronological', narrativeRole: 'confrontation', audioMode: 'original_audio', newInformation: 'Stepfather denies hitting anyone', visualStateCluster: failureShapeClusters[6] },
+    { beatId: 'beat_008', sourceStartSec: 41.5, sourceEndSec: 46.5, chronologyMode: 'chronological', narrativeRole: 'reveal', audioMode: 'original_audio', newInformation: 'Officer points out visible red marks on daughter', visualStateCluster: failureShapeClusters[0] },
+    { beatId: 'beat_009', sourceStartSec: 47.0, sourceEndSec: 52.0, chronologyMode: 'chronological', narrativeRole: 'contradiction', audioMode: 'original_audio', newInformation: 'Daughter confirms physical altercation occurred', visualStateCluster: failureShapeClusters[1] },
+    { beatId: 'beat_010', sourceStartSec: 52.5, sourceEndSec: 57.5, chronologyMode: 'chronological', narrativeRole: 'escalation', audioMode: 'original_audio', newInformation: 'Stepfather changes story to accidental contact', visualStateCluster: failureShapeClusters[2] },
+    { beatId: 'beat_011', sourceStartSec: 58.0, sourceEndSec: 63.0, chronologyMode: 'chronological', narrativeRole: 'confrontation', audioMode: 'original_audio', newInformation: 'Officer orders stepfather to place hands behind back', visualStateCluster: failureShapeClusters[3] },
+    { beatId: 'beat_012', sourceStartSec: 63.5, sourceEndSec: 68.5, chronologyMode: 'chronological', narrativeRole: 'escalation', audioMode: 'original_audio', newInformation: 'Stepfather tenses up and pulls away from officer', visualStateCluster: failureShapeClusters[4] },
+    { beatId: 'beat_013', sourceStartSec: 69.0, sourceEndSec: 74.0, chronologyMode: 'chronological', narrativeRole: 'confrontation', audioMode: 'original_audio', newInformation: 'Physical struggle ensues against vehicle hood', visualStateCluster: failureShapeClusters[5] },
+    {
+      beatId: 'beat_014',
+      sourceStartSec: 74.5,
+      sourceEndSec: 79.5,
+      chronologyMode: 'chronological',
+      narrativeRole: 'cliffhanger',
+      audioMode: 'original_audio',
+      newInformation: 'Officer calls emergency backup as suspect resists arrest',
+      cliffhangerQuestion: 'Will backup arrive before the suspect breaks free?',
+      cliffhangerExpectedNextPayoff: 'Part 2 reveals whether felony battery and resisting charges are filed',
+      payoffTiming: 'part_2',
+      specificNewFact: 'Emergency backup called during physical resistance',
+      consequenceMagnitude: 'charges',
+      unresolvedConsequence: 'Part 2 reveals whether felony battery and resisting charges are filed',
+      visualStateCluster: failureShapeClusters[6]
+    }
+  ];
+
+  const failureShapeModel = {
+    events: [
+      { id: 'e1', startSec: 8.0, endSec: 14.0, type: 'event', summary: 'E1' },
+      { id: 'e2', startSec: 14.0, endSec: 22.0, type: 'event', summary: 'E2' },
+      { id: 'e_unused', startSec: 22.0, endSec: 25.0, type: 'event', summary: 'E_unused' },
+      { id: 'e3', startSec: 25.0, endSec: 80.0, type: 'event', summary: 'E3' }
+    ],
+    quotes: []
+  };
+
+  // Item 8: Real failure shape is detected and repaired
+  {
+    console.log('Checking Item 8: Real failure shape detected and repaired (EDL repair receives currentSpine)...');
+    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-item8-'));
+
+    // Construct failing spine: Beat A: 8.5-13.5 (teaser), Beat B: 8.5-13.5 (rewind)
+    const initialSpine = {
+      centralViewerQuestion: 'Why did the routine domestic call escalate into an emergency confrontation?',
+      hookPromise: 'A routine noise complaint explodes into a violent arrest',
+      beats: makeFailureShapeBeats(8.5, 13.5)
+    };
+
+    // 1. validateEdlQuality rejects it BEFORE compile
+    const preQuality = validateEdlQuality(initialSpine, { minTimelineDurationSec: 65, maxTimelineDurationSec: 90 });
+    assert.strictEqual(preQuality.valid, false, 'Pre-compile validation must reject duplicate range');
+
+    const exactDup = preQuality.violations.find(v => v.code === 'EXACT_EDL_DUPLICATE');
+    assert.ok(exactDup, 'Must detect EXACT_EDL_DUPLICATE');
+    assert.strictEqual(exactDup.firstBeatId, 'beat_001');
+    assert.strictEqual(exactDup.secondBeatId, 'beat_004');
+    assert.strictEqual(exactDup.sourceStartSec, 8.5);
+    assert.strictEqual(exactDup.sourceEndSec, 13.5);
+
+    const teaserOverlap = preQuality.violations.find(v => v.code === 'LARGE_TEASER_MAIN_OVERLAP');
+    assert.ok(teaserOverlap, 'Must detect LARGE_TEASER_MAIN_OVERLAP');
+    const overlapPair = teaserOverlap.overlaps?.find(o => o.teaserBeatId === 'beat_001' && o.mainBeatId === 'beat_004');
+    assert.ok(overlapPair, 'Must detect teaser-main overlap pair');
+    assert.deepStrictEqual(overlapPair.teaserRange, [8.5, 13.5]);
+    assert.deepStrictEqual(overlapPair.mainRange, [8.5, 13.5]);
+    assert.strictEqual(overlapPair.overlapSec, 5);
+
+    // 2. Repair pass receives currentSpine with both exact ranges
+    let repairReceivedCurrentSpine = null;
+    let repairReceivedPrompt = '';
+    let repairInputData = null;
+    let designCallCount = 0;
+
+    const mockVertex = {
+      getModel: () => 'gemini-2.5-flash',
+      generateJsonFromFiles: async (args) => {
+        designCallCount++;
+        const prompt = String(args.prompt || '');
+        if (designCallCount === 1) {
+          // Initial design returns the failing spine
+          return { accessGranted: true, spines: [initialSpine] };
+        }
+        // Repair call
+        repairReceivedPrompt = prompt;
+        const inputMatch = prompt.match(/INPUT \(data\): (\{[\s\S]*?\})\nSOURCE MEDIA:/);
+        if (inputMatch) {
+          try {
+            repairInputData = JSON.parse(inputMatch[1]);
+            repairReceivedCurrentSpine = repairInputData.currentSpine;
+          } catch (_) {}
+        }
+
+        // Mock Gemini replaces Beat B with unused moment (22.5 - 24.8), other beats identical
+        const repairedBeats = makeFailureShapeBeats(22.5, 24.8);
+        return {
+          accessGranted: true,
+          spines: [{
+            centralViewerQuestion: initialSpine.centralViewerQuestion,
+            hookPromise: initialSpine.hookPromise,
+            beats: repairedBeats
+          }]
+        };
+      }
+    };
+
+    const mockSvc = new Service({}, {}, { vertex: mockVertex, ffmpeg: {}, dubbing: {}, callBudget: { calls: 0 } });
+    const engine = new Engine(mockSvc, {
+      cache: testDir,
+      root: testDir,
+      config: { targetDurationMinSec: 65, targetDurationMaxSec: 90 },
+      project: {}
+    });
+
+    const repairedSpines = await autoStoryV3Pipeline.buildStoryDesign(engine, failureShapeModel, testDir, () => {});
+
+    // Assert repair pass received currentSpine with both exact ranges
+    assert.strictEqual(designCallCount, 2, 'Must perform exactly 1 repair pass to recover');
+    assert.ok(repairReceivedCurrentSpine, 'Repair pass must receive inputData.currentSpine');
+    assert.strictEqual(repairReceivedCurrentSpine.beats[0].sourceStartSec, 8.5, 'currentSpine must contain beat_001 at 8.5s');
+    assert.strictEqual(repairReceivedCurrentSpine.beats[0].sourceEndSec, 13.5, 'currentSpine must contain beat_001 at 13.5s');
+    assert.strictEqual(repairReceivedCurrentSpine.beats[3].sourceStartSec, 8.5, 'currentSpine must contain beat_004 at 8.5s');
+    assert.strictEqual(repairReceivedCurrentSpine.beats[3].sourceEndSec, 13.5, 'currentSpine must contain beat_004 at 13.5s');
+
+    // Assert repair instruction contains exact diagnostic text
+    assert.ok(repairReceivedPrompt.includes('Beat beat_004 reuses source footage [8.5, 13.5] already shown in teaser beat beat_001'), 'Must include targeted teaser overlap directive');
+    assert.ok(repairReceivedPrompt.includes('The post-teaser story MUST NOT reuse this source range.'), 'Must include reuse prohibition');
+    assert.ok(repairReceivedPrompt.includes('Keep the teaser OR replace the later beat with an unused source moment'), 'Must instruct Gemini to replace later beat');
+    assert.ok(repairReceivedPrompt.includes('Do not solve this by changing metadata labels while preserving source timestamps.'), 'Must include anti-cheating instruction');
+    assert.ok(repairReceivedPrompt.includes('EXACT_EDL_DUPLICATE'), 'Must include EXACT_EDL_DUPLICATE notice');
+
+    // 3. Repaired EDL passes validateEdlQuality()
+    assert.strictEqual(repairedSpines.length, 1);
+    const repairedSpine = repairedSpines[0];
+    const postQuality = validateEdlQuality(repairedSpine, { minTimelineDurationSec: 65, maxTimelineDurationSec: 90 });
+    assert.strictEqual(postQuality.valid, true, 'Repaired EDL must pass validateEdlQuality()');
+    assert.strictEqual(postQuality.violations.length, 0);
+
+    // 4. Other beats remain identical
+    assert.strictEqual(repairedSpine.beats[3].sourceStartSec, 22.5, 'Beat B was replaced');
+    assert.strictEqual(repairedSpine.beats[3].sourceEndSec, 24.8, 'Beat B was replaced');
+    for (let b = 0; b < repairedSpine.beats.length; b++) {
+      if (b === 3) continue;
+      assert.strictEqual(repairedSpine.beats[b].sourceStartSec, initialSpine.beats[b].sourceStartSec, `Beat index ${b} sourceStartSec must be identical`);
+      assert.strictEqual(repairedSpine.beats[b].sourceEndSec, initialSpine.beats[b].sourceEndSec, `Beat index ${b} sourceEndSec must be identical`);
+      assert.strictEqual(repairedSpine.beats[b].beatId, initialSpine.beats[b].beatId, `Beat index ${b} beatId must be identical`);
+    }
+
+    // 5. Compiles cleanly in compileV3
+    const evidence = [{ id: 'clip1', sourceStart: 0, duration: 120 }];
+    const compileConfig = { targetDurationMinSec: 65, targetDurationMaxSec: 90, narration: { minClipDuration: 2.0 } };
+    const compiled = compileV3(repairedSpine.beats, { story: repairedSpine, evidence, config: compileConfig, sourceDuration: 120 });
+    assert.ok(compiled && compiled.segments && compiled.segments.length === 14, 'Repaired EDL must compile cleanly into 14 segments');
+
+    // 6. Duplicate guard remains active and passes
+    assert.throws(
+      () => compileV3(initialSpine.beats, { story: initialSpine, evidence, config: compileConfig, sourceDuration: 120 }),
+      err => err.name === 'StoryError' && /duplicate footage/i.test(err.message),
+      'Duplicate guard in compileV3 must remain active and reject initial spine'
+    );
+
+    await fs.rm(testDir, { recursive: true, force: true });
+    console.log('✓ Item 8 Passed: Real failure shape detected and repaired; compileV3 duplicate guard verified active');
+  }
+
+  // Item 9: Double-failure hard-blocks (Gemini fails in repairs #1 and #2 -> STORY_DESIGN_HARD_INVALID, 0 downstream calls)
+  {
+    console.log('Checking Item 9: Double-failure hard-blocks invalid story design (zero downstream calls)...');
+    const testDir = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-item9-'));
+    const testStore = new Store();
+    const proj = await testStore.createProject(testDir, {
+      name: 'Item 9 Hard-Block Test',
+      autoStoryContractVersion: 4,
+      sourceVideoPath: path.join(testDir, 'source.mp4')
+    });
+    const sourceData = 'mock video source for item 9 hard-block test';
+    await fs.writeFile(path.join(testDir, 'source.mp4'), sourceData);
+    const crypto = require('crypto');
+    const hash = crypto.createHash('sha256').update(sourceData).digest('hex');
+
+    const sourceCacheDir = path.join(testDir, '.cineviral', 'auto-story-source', hash, 'source-contract-v3');
+    await fs.mkdir(sourceCacheDir, { recursive: true });
+    await sourceModelService.persist(sourceCacheDir, {
+      modelVersion: sourceModelService.MODEL_VERSION,
+      durationSec: 120,
+      people: [{ id: 'p1', label: 'Officer', role: 'police' }],
+      events: failureShapeModel.events,
+      quotes: [],
+      audioEvents: []
+    });
+
+    await testStore.updateProject(testDir, proj.id, {
+      autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, narration: { enabled: false } },
+      autoStoryEditorialConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1 }
+    });
+
+    let mockGeminiCallCount = 0;
+    const failingSpine = {
+      centralViewerQuestion: 'Why did the routine domestic call escalate into an emergency confrontation?',
+      hookPromise: 'A routine noise complaint explodes into a violent arrest',
+      beats: makeFailureShapeBeats(8.5, 13.5)
+    };
+
+    const mockVertexDoubleFail = {
+      getModel: () => 'gemini-2.5-flash',
+      generateJsonFromFiles: async () => {
+        mockGeminiCallCount++;
+        // Always return the failing spine with duplicate 8.5-13.5
+        return { accessGranted: true, spines: [failingSpine] };
+      }
+    };
+
+    // A. Verify direct buildStoryDesign throws STORY_DESIGN_HARD_INVALID
+    const engineForDirect = new Engine(
+      new Service({}, {}, { vertex: mockVertexDoubleFail, ffmpeg: {}, dubbing: {}, callBudget: { calls: 0 } }),
+      { cache: testDir, root: testDir, config: { targetDurationMinSec: 65, targetDurationMaxSec: 90 }, project: {} }
+    );
+
+    let thrownError = null;
+    try {
+      await autoStoryV3Pipeline.buildStoryDesign(engineForDirect, failureShapeModel, testDir, () => {});
+    } catch (err) {
+      thrownError = err;
+    }
+
+    assert.ok(thrownError, 'buildStoryDesign must throw when hard violations remain after 2 repairs');
+    assert.strictEqual(thrownError.kind, 'STORY_DESIGN_HARD_INVALID', 'Error kind must be STORY_DESIGN_HARD_INVALID');
+    assert.strictEqual(mockGeminiCallCount, 3, 'Must attempt exactly 1 initial + 2 repair calls before hard-blocking');
+    assert.ok(thrownError.details.hardViolations.some(v => v.code === 'EXACT_EDL_DUPLICATE'), 'hardViolations must contain EXACT_EDL_DUPLICATE');
+    assert.ok(thrownError.details.hardViolations.some(v => v.code === 'LARGE_TEASER_MAIN_OVERLAP'), 'hardViolations must contain LARGE_TEASER_MAIN_OVERLAP');
+
+    // B. Verify pipeline autoStoryV3Pipeline.run terminates immediately with zero calls to buildScript/narration/render
+    mockGeminiCallCount = 0;
+    let buildScriptCallCount = 0;
+    let renderCallCount = 0;
+
+    const origBuildScript = autoStoryV3Pipeline.buildScript;
+    autoStoryV3Pipeline.buildScript = async (...args) => {
+      buildScriptCallCount++;
+      return origBuildScript(...args);
+    };
+
+    const mockDubbing = {
+      renderHighlightFastDraft: async () => {
+        renderCallCount++;
+        return { outputPath: 'dummy' };
+      }
+    };
+
+    const service = new Service({}, testStore, {
+      vertex: mockVertexDoubleFail,
+      ffmpeg: { probeVideo: async () => ({ duration: 120, width: 1920, height: 1080 }) },
+      dubbing: mockDubbing
+    });
+    service.measuredVoice = async () => ({ meta: { duration: 2.0 } });
+
+    try {
+      const runResult = await autoStoryV3Pipeline.run(service, {
+        workspaceRoot: testDir,
+        projectId: proj.id,
+        onProgress: () => {}
+      });
+
+      // Assertions on pipeline behavior
+      assert.deepStrictEqual(runResult.scriptPaths, [], 'Pipeline must return empty scriptPaths on hard block');
+      assert.strictEqual(runResult.failures.length, 1, 'Pipeline must record 1 failure');
+      assert.strictEqual(runResult.failures[0].kind, 'STORY_DESIGN_HARD_INVALID', 'Pipeline failure kind must be STORY_DESIGN_HARD_INVALID');
+      assert.strictEqual(buildScriptCallCount, 0, 'buildScript must NEVER be called');
+      assert.strictEqual(renderCallCount, 0, 'render must NEVER be called');
+      assert.strictEqual(mockGeminiCallCount, 3, 'Gemini must be called 3 times (initial + 2 repairs)');
+
+      // Verify failures.json artifact on disk
+      const failuresJsonPath = path.join(runResult.analysisDir, 'failures.json');
+      const failuresJson = JSON.parse(await fs.readFile(failuresJsonPath, 'utf8'));
+      assert.strictEqual(failuresJson[0].kind, 'STORY_DESIGN_HARD_INVALID');
+      assert.ok(failuresJson[0].details?.hardViolations?.length >= 2, 'failures.json must contain hardViolations');
+
+      // Verify project state recorded failure
+      const updatedProj = await testStore.getProject(testDir, proj.id);
+      assert.strictEqual(updatedProj.autoStoryState?.phase, 'review_failed', 'Project state must record phase: review_failed');
+    } finally {
+      autoStoryV3Pipeline.buildScript = origBuildScript;
+      await fs.rm(testDir, { recursive: true, force: true });
+    }
+    console.log('✓ Item 9 Passed: Double-failure hard-blocks with STORY_DESIGN_HARD_INVALID; zero calls to buildScript/render');
   }
 
   // =========================================================================

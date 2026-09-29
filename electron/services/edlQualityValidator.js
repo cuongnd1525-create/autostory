@@ -640,12 +640,71 @@ function validateEdlQuality(spine = {}, options = {}) {
     ? (teaserToMainSourceOverlapSeconds / teaserDuration)
     : 0;
 
+  const teaserOverlaps = [];
+  for (const tb of teaserBeats) {
+    const tStart = Number(tb.sourceStartSec);
+    const tEnd = Number(tb.sourceEndSec);
+    if (!Number.isFinite(tStart) || !Number.isFinite(tEnd) || tEnd <= tStart) continue;
+    for (const mb of mainBeats) {
+      const mStart = Number(mb.sourceStartSec);
+      const mEnd = Number(mb.sourceEndSec);
+      if (!Number.isFinite(mStart) || !Number.isFinite(mEnd) || mEnd <= mStart) continue;
+      const maxStart = Math.max(tStart, mStart);
+      const minEnd = Math.min(tEnd, mEnd);
+      if (maxStart < minEnd - 1e-4) {
+        const overlapSec = Number((minEnd - maxStart).toFixed(2));
+        teaserOverlaps.push({
+          teaserBeatId: tb.beatId,
+          mainBeatId: mb.beatId,
+          teaserRange: [Number(tStart.toFixed(1)), Number(tEnd.toFixed(1))],
+          mainRange: [Number(mStart.toFixed(1)), Number(mEnd.toFixed(1))],
+          overlapSec,
+          isExact: Math.abs(tStart - mStart) < 0.05 && Math.abs(tEnd - mEnd) < 0.05
+        });
+      }
+    }
+  }
+
   if (teaserToMainSourceOverlapSeconds > maxTeaserOverlapSec || teaserToMainSourceOverlapRatio > maxTeaserOverlapRatio) {
     violations.push({
       code: 'LARGE_TEASER_MAIN_OVERLAP',
       message: `Teaser-to-main source overlap is too high: ${teaserToMainSourceOverlapSeconds.toFixed(1)}s (${(teaserToMainSourceOverlapRatio * 100).toFixed(0)}% of teaser). Maximum allowed overlap is ${maxTeaserOverlapSec}s (25%). Cold open borrowed ranges must not be replayed in post-rewind narrative. Borrow shorter clips or focus post-rewind story on unshown footage.`,
-      beatId: teaserBeats[0]?.beatId || null
+      beatId: teaserBeats[0]?.beatId || null,
+      overlaps: teaserOverlaps
     });
+  }
+
+  // 1b. Rule 1b: Pre-compile exact range duplicate check across all beats
+  for (let i = 0; i < beats.length; i++) {
+    const b1 = beats[i];
+    const s1 = Number(b1.sourceStartSec);
+    const e1 = Number(b1.sourceEndSec);
+    if (!Number.isFinite(s1) || !Number.isFinite(e1) || e1 <= s1) continue;
+    const audio1 = b1.audioMode || b1.audioIntent || 'original_audio';
+
+    for (let j = i + 1; j < beats.length; j++) {
+      const b2 = beats[j];
+      const s2 = Number(b2.sourceStartSec);
+      const e2 = Number(b2.sourceEndSec);
+      if (!Number.isFinite(s2) || !Number.isFinite(e2) || e2 <= s2) continue;
+      const audio2 = b2.audioMode || b2.audioIntent || 'original_audio';
+
+      const isSameRange = Math.abs(s1 - s2) < 0.05 && Math.abs(e1 - e2) < 0.05;
+      const isSameAudio = audio1 === audio2;
+
+      if (isSameRange && isSameAudio) {
+        violations.push({
+          code: 'EXACT_EDL_DUPLICATE',
+          message: `Exact duplicate source range [${s1.toFixed(1)}-${e1.toFixed(1)}s] between beat '${b1.beatId}' and beat '${b2.beatId}' with same effective audio treatment ('${audio1}'). Every beat in the EDL must feature distinct footage or narrative purpose.`,
+          beatId: b2.beatId,
+          firstBeatId: b1.beatId,
+          secondBeatId: b2.beatId,
+          sourceStartSec: s1,
+          sourceEndSec: e1,
+          audioTreatment: audio1
+        });
+      }
+    }
   }
 
   // 3. Rule 2: Cold Open Duration & Payoff Completion
@@ -964,6 +1023,7 @@ function validateEdlQuality(spine = {}, options = {}) {
       teaserDuration: Number(teaserDuration.toFixed(2)),
       teaserToMainSourceOverlapSeconds: Number(teaserToMainSourceOverlapSeconds.toFixed(2)),
       teaserToMainSourceOverlapRatio: Number(teaserToMainSourceOverlapRatio.toFixed(3)),
+      teaserOverlaps,
       uniqueSourceSeconds: Number(uniqueSourceSeconds.toFixed(2)),
       uniqueSourceRatio: Number(uniqueSourceRatio.toFixed(3)),
       maxMacroBeatDuration: Number(maxMacroBeatDuration.toFixed(2)),
