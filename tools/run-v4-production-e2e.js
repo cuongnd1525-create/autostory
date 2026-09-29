@@ -180,6 +180,7 @@ async function main() {
   const analysisDir = path.join(projectPaths.analysisDir, 'auto-story-fast');
   const artifactPaths = {
     storySpine: path.join(analysisDir, 'story-spine.json'),
+    edlQualityReport: path.join(analysisDir, 'edl-quality-report.json'),
     script1: path.join(analysisDir, 'script-1.json'),
     initialStorySpine1: path.join(analysisDir, 'initial-story-spine-1.json'),
     initialMediaAudit1: path.join(analysisDir, 'initial-media-audit-1.json'),
@@ -266,6 +267,7 @@ async function main() {
 
   log('\n=== REAL ARTIFACT PATHS ===');
   log(`story-spine.json: ${artifactPaths.storySpine}`);
+  log(`edl-quality-report.json: ${artifactPaths.edlQualityReport}`);
   log(`script-1.json: ${artifactPaths.script1}`);
   log(`initial-story-spine-1.json: ${artifactPaths.initialStorySpine1}`);
   log(`initial-media-audit-1.json: ${artifactPaths.initialMediaAudit1}`);
@@ -325,11 +327,26 @@ async function main() {
 
   const canonicalSpineExists = fs.existsSync(artifactPaths.storySpine);
   let canonicalSpineValid = false;
+  let finalSpineObj = null;
   if (canonicalSpineExists) {
     try {
       const sp = JSON.parse(await fsp.readFile(artifactPaths.storySpine, 'utf8'));
+      finalSpineObj = Array.isArray(sp.spines) ? sp.spines[0] : sp;
       canonicalSpineValid = Array.isArray(sp.spines) ? sp.spines.length > 0 : Boolean(sp.beats?.length);
     } catch (_) {}
+  }
+
+  if (finalSpineObj && Array.isArray(finalSpineObj.beats)) {
+    log('\n=== FINAL ACCEPTED BEAT TABLE ===');
+    console.table(finalSpineObj.beats.map(b => ({
+      beatId: b.beatId,
+      sourceStartSec: b.sourceStartSec,
+      sourceEndSec: b.sourceEndSec,
+      duration: Number((b.sourceEndSec - b.sourceStartSec).toFixed(1)),
+      chronologyMode: b.chronologyMode || 'chronological',
+      narrativeRole: b.narrativeRole,
+      audioMode: b.audioMode || b.audioIntent || 'original_audio'
+    })));
   }
 
   log('\nCONFIRMATIONS:');
