@@ -126,6 +126,30 @@ async function main() {
 
   // ---- measurements
   const cuts = block.internalCutOffsetsSec;
+
+  // Duration of every intermediate artifact (container / video stream / audio stream).
+  const streamSec = (file, sel) => { try { const v = run(FFPROBE, ['-v', 'error', '-select_streams', sel, '-show_entries', 'stream=duration', '-of', 'csv=p=0', file]).trim().split('\n')[0]; return v && v !== 'N/A' ? r3(Number(v)) : null; } catch (_) { return null; } };
+  const frames = file => { try { const v = run(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-count_packets', '-show_entries', 'stream=nb_read_packets', '-of', 'csv=p=0', file]).trim(); return v ? Number(v) : null; } catch (_) { return null; } };
+  const pieceBase = block.blockVideoPath.replace(/-video\.mp4$/, '');
+  const pieceSec = RANGES.map(([a, z]) => r3(z - a));
+  const rawTts = block.fittedVoicePath.replace(/\.m4a$/, '');
+  const rawTtsFile = ['.wav', '.mp3', '.m4a'].map(x => rawTts + x).find(f => f !== block.fittedVoicePath && fs.existsSync(f));
+  const artifacts = [
+    ...pieceSec.map((sec, i) => [`raw_piece_${i + 1}`, sec, `${pieceBase}-${String(i + 1).padStart(2, '0')}-raw.mp4`]),
+    ...pieceSec.map((sec, i) => [`normalized_piece_${i + 1}`, sec, `${pieceBase}-${String(i + 1).padStart(2, '0')}-normalized.mp4`]),
+    ['block_video_concat', block.blockTimelineSec, block.blockVideoPath],
+    ['raw_block_tts', block.rawTtsSec, rawTtsFile],
+    ['fitted_block_tts', block.blockTimelineSec, block.fittedVoicePath],
+    ['voiced_block_clip', block.blockTimelineSec, `${pieceBase}-voiced.mp4`],
+    ['final_mp4', block.blockTimelineSec, finalMp4]
+  ];
+  const durationTable = artifacts.filter(([, , f]) => f && fs.existsSync(f)).map(([artifact, expectedSec, f]) => {
+    const containerSec = r3(duration(f)), videoStreamSec = streamSec(f, 'v:0'), audioStreamSec = streamSec(f, 'a:0');
+    const shortest = Math.min(...[containerSec, videoStreamSec, audioStreamSec].filter(v => Number.isFinite(v)));
+    return { artifact, expectedSec, containerSec, videoStreamSec, audioStreamSec, videoFrames: videoStreamSec === null ? null : frames(f), deltaSec: r3(shortest - expectedSec) };
+  });
+  const FRAME_TOL = (1 / 30) + 0.02;
+  const firstShort = durationTable.find(r => r.artifact !== 'raw_block_tts' && r.deltaSec < -FRAME_TOL) || null;
   const voice = block.fittedVoicePath;
   const voiceSil = silences(voice, -40, 0.15);
   const speechStart = voiceSil.length && voiceSil[0][0] === 0 ? voiceSil[0][1] : 0;
@@ -223,6 +247,7 @@ async function main() {
     ambientAtInternalCuts: ambientAtCuts, finalMixAtInternalCuts: finalAtCuts,
     finalSilencesSec: finalSil, peakDbfs: peakDb, clippingDetected: peakDb !== null && peakDb > -0.1,
     finalMp4Path: finalMp4, finalMp4DurationSec: finalDurationSec,
+    durationTable, firstArtifactShorterThanPlan: firstShort ? firstShort.artifact : null,
     previousPerSegmentResult: PREVIOUS, perSegmentVoiceSameMeasurement: perSegment, oldRenderMeasured: old,
     deliveryBlockReportPath: rendered.deliveryBlockReportPath
   };
@@ -230,6 +255,7 @@ async function main() {
   await fsp.writeFile(resultPath, JSON.stringify(result, null, 2));
   console.log(JSON.stringify({ status: result.status, reasons, perSegmentVoiceGapAtCutsSec: perSegment.voiceGapAtInternalCutsSec, rawTtsSec: result.rawTtsSec, fittedTtsSec: result.fittedTtsSec, voiceGapAtInternalCutsSec: voiceGapAtCutsSec,
     duckJumpAttributableToCutDb: ambientAtCuts.map(a => a.duckJumpAttributableToCutDb), peakDbfs: peakDb, finalMp4DurationSec: finalDurationSec }, null, 2));
+  console.table(durationTable);
   console.log(`${result.status}\nResult: ${resultPath}\nMP4: ${finalMp4}`);
   // The Kokoro worker stays warm between requests; exit explicitly.
   process.exit(reasons.length ? 2 : 0);

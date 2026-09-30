@@ -535,6 +535,9 @@ function getHighlightAmbientVolume(segment = {}, project = {}) {
   return Math.max(0.08, Math.min(0.3, segVol));
 }
 
+// One 30fps frame plus mp4 container rounding.
+const BLOCK_DURATION_TOLERANCE_SEC = (1 / 30) + 0.02;
+
 // Ambient bed under a narrated block (voiceover_with_ambient): same policy as a
 // voiced segment, applied once to the whole block.
 function getBlockAmbientVolume(segment = {}, project = {}) {
@@ -6583,7 +6586,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     });
     // 8-9. Mix ONCE; the sidechain duck runs continuously across the internal cuts.
     await ffmpeg.mixVideoAudioWithVoice({ videoPath: blockVideoPath, voicePath: fittedVoicePath, outputPath: voicedClipPath,
-      sourceVolume: ambientVolume, voiceVolume, limiter: true, duck });
+      sourceVolume: ambientVolume, voiceVolume, limiter: true, duck, separateAmbientInput: true });
+    // The voiced block must keep the planned EDL duration (a drift here accumulates
+    // across every block of a production video). Allow one 30fps frame + container rounding.
+    const voicedMeta = await ffmpeg.probeVideo(voicedClipPath).catch(() => null);
+    const voicedSec = Number(voicedMeta?.duration);
+    if (Number.isFinite(voicedSec) && Math.abs(voicedSec - blockTimelineSec) > BLOCK_DURATION_TOLERANCE_SEC) {
+      const error = new Error(`BLOCK_DURATION_DRIFT: narrated block ${lead.deliveryBlockId} rendered ${voicedSec.toFixed(3)}s for a planned ${blockTimelineSec.toFixed(3)}s.`);
+      error.code = "BLOCK_DURATION_DRIFT";
+      error.details = { blockId: lead.deliveryBlockId, voicedSec, blockTimelineSec };
+      throw error;
+    }
     await this.recordVoiceProfileSample({ workspaceRoot, settings, project, text, measuredDurationSec: rawVoiceSec,
       segmentDurationSec: blockTimelineSec, source: "highlight_fast_draft_block", providerOverride: draftVoiceProvider }).catch(() => null);
     const report = {
@@ -6591,6 +6604,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       startIndex, memberCount: members.length, narrationText: text, textHash: textHash(text),
       blockTimelineSec: Number(blockTimelineSec.toFixed(3)), rawTtsSec: Number(rawVoiceSec.toFixed(3)),
       fittedTtsSec: Number(Number(fit?.outputDuration || rawVoiceSec).toFixed(3)), fitRatio: Number(fitRatio.toFixed(3)),
+      voicedClipSec: Number.isFinite(voicedSec) ? Number(voicedSec.toFixed(3)) : null,
       voiceFitStrategy: fit?.fitStrategy || "", sourceAudioTreatment: treatment, sourceAmbientVolume: ambientVolume, duck,
       internalCutOffsetsSec: pieces.slice(0, -1).reduce((acc, p) => [...acc, Number(((acc.at(-1) || 0) + p.durationSec).toFixed(3))], []),
       storyFunction: lead.blockStoryFunction || "", narratorFunction: lead.blockNarratorFunction || "", narrationIntent: lead.blockNarrationIntent || "",

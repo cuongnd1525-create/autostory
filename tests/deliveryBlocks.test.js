@@ -193,7 +193,7 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
   });
 
   // ---------------------------------------------------------------- renderer primitive (mocked ffmpeg/TTS)
-  const fakeRender = (voiceSec) => {
+  const fakeRender = (voiceSec, voicedSec = 16) => {
     const calls = { extract: [], normalize: [], concat: [], synth: [], fit: [], mix: [] };
     const ffmpeg = {
       extractVoiceDrivenClipWithAudio: async a => { calls.extract.push(a); },
@@ -201,7 +201,8 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
       concatSegmentsByFilter: async (paths, out) => { calls.concat.push({ paths, out }); },
       probeAudio: async () => ({ duration: voiceSec }),
       fitDubbingClusterAudio: async a => { calls.fit.push(a); return { outputDuration: a.targetDuration, fitStrategy: 'pad_silence' }; },
-      mixVideoAudioWithVoice: async a => { calls.mix.push(a); }
+      mixVideoAudioWithVoice: async a => { calls.mix.push(a); },
+      probeVideo: async () => ({ duration: voicedSec })
     };
     const svc = Object.create(DubbingService.prototype);
     svc.synthesizeFastDraftVoice = async a => { calls.synth.push(a); };
@@ -223,9 +224,18 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
     assert.strictEqual(calls.fit.length, 1); assert.strictEqual(calls.fit[0].targetDuration, 16);
     assert.ok(calls.fit[0].allowTrim === false && calls.fit[0].allowSlowDown === false);
     assert.strictEqual(calls.mix.length, 1); assert.strictEqual(calls.mix[0].duck, true); assert.strictEqual(calls.mix[0].sourceVolume, 0.28);
+    assert.strictEqual(calls.mix[0].separateAmbientInput, true, 'ambient bed is not read from the stream-copied demuxer');
+    assert.strictEqual(out.report.voicedClipSec, 16);
     assert.deepStrictEqual(out.report.internalCutOffsetsSec, [5, 10.5]);
     assert.strictEqual(out.memberReports.length, 3);
     assert.ok(out.memberReports.every(r => r.mode === 'narrated_block_member' && !r.fittedVoicePath && !r.renderedText));
+  });
+
+  await ok('Render primitive: a voiced block shorter than its EDL duration fails loudly (BLOCK_DURATION_DRIFT), one-frame tolerance', async () => {
+    const drift = fakeRender(14.2, 15.786);
+    await assert.rejects(drift.svc.renderNarratedDeliveryBlock(renderArgs(drift.ffmpeg)), e => e.code === 'BLOCK_DURATION_DRIFT' && e.details.blockTimelineSec === 16);
+    const oneFrame = fakeRender(14.2, 15.967);
+    await assert.doesNotReject(oneFrame.svc.renderNarratedDeliveryBlock(renderArgs(oneFrame.ffmpeg)));
   });
 
   await ok('Render primitive: a passage that cannot fit is reported (BLOCK_VOICE_OVERFLOW), never trimmed or dropped', async () => {

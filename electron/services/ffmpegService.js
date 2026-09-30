@@ -508,7 +508,12 @@ class FfmpegService {
     ], { captureStdout: false });
   }
 
-  async mixVideoAudioWithVoice({ videoPath, voicePath, outputPath, sourceVolume = 0.22, voiceVolume = 1.0, limiter = true, duck = false }) {
+  // separateAmbientInput: read the ambient bed through a SECOND demuxer of the same
+  // file. When the bed is filtered from the same input whose video is stream-copied,
+  // ffmpeg ends that filter input early (measured 0.05-0.27s short) and -shortest then
+  // truncates the copied video to it. Opt-in (continuous narrated blocks) so existing
+  // per-segment output is byte-for-byte unchanged.
+  async mixVideoAudioWithVoice({ videoPath, voicePath, outputPath, sourceVolume = 0.22, voiceVolume = 1.0, limiter = true, duck = false, separateAmbientInput = false }) {
     const safeSourceVolume = Math.max(0, Number(sourceVolume) || 0);
     const safeVoiceVolume = Math.max(0, Number(voiceVolume) || 0);
     const meta = await this.probeVideo(videoPath);
@@ -518,12 +523,14 @@ class FfmpegService {
     }
     // AutoStory v3 (Phase 13): real sidechain ducking so the original bodycam
     // bed stays audible and dips only while the narrator speaks, then recovers.
+    const bedInput = separateAmbientInput ? ["-i", videoPath] : [];
+    const bed = separateAmbientInput ? "[2:a]" : "[0:a]";
     if (duck) {
       await this.run(this.ffmpegPath, [
-        "-y", "-i", videoPath, "-i", voicePath,
+        "-y", "-i", videoPath, "-i", voicePath, ...bedInput,
         "-filter_complex",
         [
-          `[0:a]volume=${safeSourceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[bg_raw]`,
+          `${bed}volume=${safeSourceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[bg_raw]`,
           `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[vo]`,
           `[vo]asplit=2[vo_sc][vo_mix]`,
           `[bg_raw][vo_sc]sidechaincompress=threshold=-30dB:ratio=10:attack=8:release=260:makeup=1[bg]`,
@@ -539,8 +546,9 @@ class FfmpegService {
       videoPath,
       "-i",
       voicePath,
+      ...bedInput,
       "-filter_complex",
-      `[0:a]volume=${safeSourceVolume.toFixed(3)}[bg];[1:a]volume=${safeVoiceVolume.toFixed(3)}[vo];[bg][vo]amix=inputs=2:duration=first:dropout_transition=0,aresample=async=1:first_pts=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`,
+      `${bed}volume=${safeSourceVolume.toFixed(3)}[bg];[1:a]volume=${safeVoiceVolume.toFixed(3)}[vo];[bg][vo]amix=inputs=2:duration=first:dropout_transition=0,aresample=async=1:first_pts=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`,
       "-map",
       "0:v:0",
       "-map",
