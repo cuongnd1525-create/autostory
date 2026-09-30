@@ -908,6 +908,148 @@ function fakeEngine(asks) {
     assert.ok(v(noObs).violations.some(x => x.code === 'BEAT_NOT_GROUNDED'));
   });
 
+
+  // ---------------------------------------------------------------- OVER_MAX = compression (distinct from UNDER_MIN extension)
+  const longScope = () => scopeCandidate({
+    scopeWindows: [{ startSec: 2, endSec: 200, purpose: 'core', why: 'long stop' }, { startSec: 200, endSec: 230, purpose: 'ending_material', why: 'decision' }],
+    explicitScopeBoundary: { startSec: 0, endSec: 235, rationale: 'The stop until the decision.' },
+    causalSpine: [{ eventId: 'e1', sourceStartSec: 2, sourceEndSec: 30, role: 'setup' }, { eventId: 'e5', sourceStartSec: 200, sourceEndSec: 228, role: 'consequence' }],
+    candidateEndingEvents: [{ eventId: 'e5', sourceStartSec: 210, sourceEndSec: 228, endingType: 'forward_cliffhanger', whyItIsAConsequence: 'x' }] });
+  const cEnd = (s, e) => beat('end', s, e, { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2', isForwardConsequence: true, expectedNextConsequence: 'decision' });
+  const B = { h: () => hookB(60, 66), b2: () => beat('b2', 4, 14), b3: () => beat('b3', 16, 30), b4: () => beat('b4', 34, 48), b5: () => beat('b5', 67, 80),
+    b6: () => beat('b6', 82, 95), b7: () => beat('b7', 97, 110), b8: () => beat('b8', 112, 124), b9: () => beat('b9', 126, 138), b10: () => beat('b10', 140, 152),
+    b11: () => beat('b11', 154, 166), b12: () => beat('b12', 168, 180), b13: () => beat('b13', 182, 192), b14: () => beat('b14', 194, 198.1), end: () => cEnd(210, 216) };
+  const pick = (...ids) => ids.map(x => (typeof x === 'string' ? B[x]() : x));
+  const edl163 = () => edlOf(pick('h', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'b10', 'b11', 'b12', 'b13', 'b14', 'end'));      // 15 beats, 163.1s
+  const edl108 = () => edlOf(pick('h', 'b2', beat('b3', 16, 23.5), 'b4', 'b5', 'b6', 'b7', 'b12', 'b13', 'b14', 'end'));             // 11 beats, 108.6s
+  const edl75from163 = () => edlOf(pick('h', 'b2', 'b3', 'b4', 'b5', 'b12', 'end'));                                                 // 7 beats, 75s
+  const edl75from108 = () => edlOf(pick('h', 'b2', beat('b3', 16, 23.5), 'b4', 'b5', beat('b6', 82, 88.5), 'b12', 'end'));           // 8 beats, 75s
+  const codesOf = a => a.violations.map(v => v.code);
+
+  await ok('Compression A: 163.1s OVER_MAX -> compression repair gets required 73.1s, preferred ~88.1s (85.1-91.1s), beat budget table; no missingToTarget=0', async () => {
+    assert.strictEqual(Director.timelineSec(edl163().spine.beats), 163.1);
+    const engine = fakeEngine([edl163(), edl75from163()]);
+    await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    const rep = engine.lastAsks[1];
+    assert.ok(/_compress1$/.test(rep.key), rep.key);
+    assert.deepStrictEqual(rep.evidence, [], 'text-only');
+    const d = rep.input.durationCompression;
+    assert.deepStrictEqual([d.currentDurationSec, d.maximumDurationSec, d.excessAboveMaximumSec, d.requiredReductionToMaximumSec, d.deltaFromTargetSec, d.preferredReductionToTargetSec, d.targetBandMinSec, d.targetBandMaxSec],
+      [163.1, 90, 73.1, 73.1, 88.1, 88.1, 72, 78]);
+    assert.deepStrictEqual(d.preferredReductionRangeSec, { minSec: 85.1, maxSec: 91.1 });
+    assert.ok(!('missingToTargetSec' in d) && !('missingToMinimumSec' in d), 'under-direction fields are not overloaded on OVER_MAX');
+    const v = rep.input.violations.find(x => x.code === 'TOTAL_DURATION_OVER_MAX');
+    assert.ok(v && !('missingToTargetSec' in v) && v.requiredReductionToMaximumSec === 73.1 && v.preferredReductionToTargetSec === 88.1, JSON.stringify(v));
+    assert.strictEqual(rep.input.beatBudget.length, 15);
+    assert.deepStrictEqual(Object.keys(rep.input.beatBudget[0]).sort(), ['beatId', 'durationSec', 'narrativeRole', 'newInformation', 'sourceEndSec', 'sourceStartSec', 'whyNecessaryNow']);
+    assert.strictEqual(rep.input.beatBudget.find(b => b.beatId === 'b14').durationSec, 4.1);
+    assert.ok(rep.instruction.startsWith(Director.DURATION_COMPRESSION_INSTRUCTION));
+    assert.match(rep.instruction, /You still need to remove at least 73\.1 seconds to satisfy the hard maximum \(90s\) and approximately 88\.1 seconds to reach the preferred target \(75s\)/);
+    assert.ok(!('cuttableRanges' in rep.input), 'compression is not offered new material');
+    // 108.6s example from the benchmark report.
+    const t = Director.durationTargets(longScope(), { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
+    const d108 = Director.durationDelta(108.6, t);
+    assert.deepStrictEqual([d108.excessAboveMaximumSec, d108.deltaFromTargetSec, d108.requiredReductionToMaximumSec, d108.preferredReductionToTargetSec], [18.6, 33.6, 18.6, 33.6]);
+  });
+
+  await ok('Compression B: a compression response that adds beats (15 -> 17) is rejected; the next pass compresses the ORIGINAL EDL', async () => {
+    const grown = edlOf([...edl163().spine.beats.slice(0, 14), beat('x1', 199, 200), beat('x2', 200, 201.5), cEnd(210, 216)]);
+    const engine = fakeEngine([edl163(), grown, edl75from163()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    const a1 = out.spine.directorMeta.attempts[1];
+    assert.strictEqual(a1.mode, 'duration_compression');
+    assert.ok(codesOf(a1).includes('COMPRESSION_BEAT_COUNT_INCREASED') && codesOf(a1).includes('COMPRESSION_ADDED_BEAT'), codesOf(a1).join());
+    assert.deepStrictEqual([a1.beatCountBefore, a1.beatCountAfter], [15, 17]);
+    const third = engine.lastAsks[2];
+    assert.strictEqual(third.input.currentEdl.beats.length, 15, 'rejected response is never adopted');
+    assert.strictEqual(third.input.previousCompression.accepted, false);
+    assert.match(third.instruction, /was rejected: .*COMPRESSION_ADDED_BEAT/);
+    assert.strictEqual(Director.timelineSec(out.spine.beats), 75);
+  });
+
+  await ok('Compression C: a compression response that expands a source range is rejected', async () => {
+    const expanded = edlOf(pick('h', beat('b2', 2, 14), 'b3', 'b4', 'b5', 'b12', 'end')); // b2 4-14 -> 2-14
+    const v = Director.compressionViolations(edl163().spine, expanded.spine);
+    assert.deepStrictEqual(v.map(x => x.code), ['COMPRESSION_RANGE_EXPANDED']);
+    const later = edlOf(pick('h', 'b2', 'b3', 'b4', 'b5', beat('b12', 168, 181), 'end'));  // end moved later
+    assert.ok(Director.compressionViolations(edl163().spine, later.spine).some(x => x.code === 'COMPRESSION_RANGE_EXPANDED'));
+    const engine = fakeEngine([edl163(), expanded, edl75from163()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    assert.ok(codesOf(out.spine.directorMeta.attempts[1]).includes('COMPRESSION_RANGE_EXPANDED'));
+    assert.strictEqual(engine.lastAsks[2].input.currentEdl.beats.length, 15);
+    // Trimming INSIDE the range is fine.
+    assert.deepStrictEqual(Director.compressionViolations(edl163().spine, edlOf(pick('h', beat('b2', 6, 12), 'b3', 'b4', 'b5', 'b12', 'end')).spine), []);
+  });
+
+  await ok('Compression D: a compression response that reorders surviving beats is rejected', async () => {
+    const reordered = edlOf(pick('h', 'b3', 'b2', 'b4', 'b5', 'b12', 'end'));
+    assert.deepStrictEqual(Director.compressionViolations(edl163().spine, reordered.spine).map(x => x.code), ['COMPRESSION_REORDERED']);
+    const engine = fakeEngine([edl163(), reordered, edl75from163()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    assert.ok(codesOf(out.spine.directorMeta.attempts[1]).includes('COMPRESSION_REORDERED'));
+    assert.strictEqual(engine.lastAsks[2].input.currentEdl.beats.length, 15, 'rejected response is never adopted');
+    assert.deepStrictEqual(out.spine.beats.map(b => b.beatId), ['h', 'b2', 'b3', 'b4', 'b5', 'b12', 'end']);
+  });
+
+  await ok('Compression E: 163.1s -> 108.6s is accepted as progress but still repaired (explicit remaining 18.6s / ~33.6s)', async () => {
+    const engine = fakeEngine([edl163(), edl108(), edl75from108()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    const [, a1, a2] = out.spine.directorMeta.attempts;
+    assert.deepStrictEqual(codesOf(a1), ['TOTAL_DURATION_OVER_MAX'], 'monotonic progress: only the duration violation remains');
+    assert.deepStrictEqual([a1.beatCountBefore, a1.beatCountAfter], [15, 11]);
+    const second = engine.lastAsks[2];
+    assert.ok(/_compress2$/.test(second.key));
+    assert.strictEqual(Director.timelineSec(second.input.currentEdl.beats), 108.6, 'progress is kept as the new current EDL');
+    assert.deepStrictEqual([second.input.durationCompression.requiredReductionToMaximumSec, second.input.durationCompression.preferredReductionToTargetSec], [18.6, 33.6]);
+    assert.match(second.instruction, /You still need to remove at least 18\.6 seconds to satisfy the hard maximum \(90s\) and approximately 33\.6 seconds to reach the preferred target/);
+    assert.match(second.instruction, /163\.1s -> 108\.6s\) did not remove enough/);
+    assert.strictEqual(a2.valid, true);
+    assert.strictEqual(Director.timelineSec(out.spine.beats), 75);
+  });
+
+  await ok('Compression F: 108.6s -> 108.6s is DURATION_REPAIR_STALLED and stops (no further equivalent call); prose-only change is not progress', async () => {
+    const engine = fakeEngine([edl163(), edl108(), edl108()]);
+    await assert.rejects(Director.directEdl(engine, { model: MODEL, scope: longScope() }),
+      e => e.kind === 'DIRECTOR_EDL_INVALID' && e.details.stalled === true && /DURATION_REPAIR_STALLED/.test(e.message)
+        && e.details.violations.some(v => v.code === 'DURATION_REPAIR_STALLED' && v.beforeSec === 108.6 && v.afterSec === 108.6));
+    assert.strictEqual(engine.lastAsks.length, 3);
+    // A stall on the FIRST compression stops immediately, without spending the second pass.
+    const proseOnly = edl163(); proseOnly.spine.beats.forEach(b => { b.whyNecessaryNow = 'reworded justification'; });
+    const e2 = fakeEngine([edl163(), proseOnly, edl75from163()]);
+    await assert.rejects(Director.directEdl(e2, { model: MODEL, scope: longScope() }), e => e.details?.stalled === true);
+    assert.strictEqual(e2.lastAsks.length, 2, 'no wasted equivalent call');
+  });
+
+  await ok('Compression G: a valid 163.1s -> 75s compression passes the normal grounding and duration validators', async () => {
+    const engine = fakeEngine([edl163(), edl75from163()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    assert.strictEqual(Director.timelineSec(out.spine.beats), 75);
+    assert.deepStrictEqual(Director.compressionViolations(edl163().spine, edl75from163().spine), []);
+    const reel = Scope.planScopeReel(longScope(), { durationSec: SOURCE_SEC });
+    const r = Director.validateDirectorEdl(out.spine, longScope(), { durationSec: SOURCE_SEC, targetDurationMinSec: 65, targetDurationMaxSec: 90, reel, preferredDurationSec: 75 });
+    assert.ok(r.valid, JSON.stringify(r.violations));
+    assert.strictEqual(out.spine.directorMeta.attempts[1].mediaFiles, 0);
+    // Grounding still applies to a compression: a trimmed beat outside the reel is not accepted.
+    assert.ok(Director.validateDirectorEdl(edlOf(pick('h', 'b2', 'b3', 'b4', 'b5', beat('b12', 168, 180, { observedInFootage: '' }), 'end')).spine, longScope(),
+      { durationSec: SOURCE_SEC, targetDurationMinSec: 65, targetDurationMaxSec: 90, reel }).violations.some(v => v.code === 'BEAT_NOT_GROUNDED'));
+  });
+
+  await ok('Compression H: UNDER_MIN behaviour is unchanged (lightweight extension, missingTo* fields, no compression fields)', async () => {
+    const e59 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 74), endB(98, 106)]);
+    const e75 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 84), endB(96, 110)]);
+    const engine = fakeEngine([e59, e75]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
+    const rep = engine.lastAsks[1];
+    assert.ok(/_duration1$/.test(rep.key));
+    assert.strictEqual(rep.instruction, Director.DURATION_REPAIR_INSTRUCTION);
+    assert.ok(rep.input.cuttableRanges && !rep.input.beatBudget && !rep.input.durationCompression);
+    assert.deepStrictEqual([rep.input.durationRepair.missingToMinimumSec, rep.input.durationRepair.missingToTargetSec, rep.input.durationRepair.deficitBelowMinimumSec], [6, 16, 6]);
+    assert.strictEqual(out.spine.directorMeta.attempts[1].mode, 'duration_lightweight');
+    assert.match(Director.instruction, /FINAL TIMELINE DURATION = sum\(sourceEndSec - sourceStartSec\) over every selected beat/);
+    assert.match(Director.instruction, /MUST NOT exceed input\.targetDurationMaxSec/);
+    assert.doesNotMatch(Director.instruction + Director.DURATION_COMPRESSION_INSTRUCTION, /<=\s*6s|13[-–]16 beats|max \d+ context beats|every beat (must be )?(at most|<=)/i);
+  });
+
   // ---------------------------------------------------------------- overfitting guard
   await ok('No benchmark-specific literals in production AutoStory code', async () => {
     const dirs = [path.join(__dirname, '..', 'electron')];

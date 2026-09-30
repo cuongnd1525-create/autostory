@@ -131,7 +131,7 @@ ENDING = A CONSEQUENCE OF THE CENTRAL CONFLICT.
 SCOPE MEMBERSHIP
 - hook | core | supporting_context | bridge_picture | ending. bridge_picture = in-reel footage used as picture under a narration bridge. Beats outside the reel are impossible.
 
-DURATION: aim the total at input.targetDurationSec seconds — inside the preferred band input.targetBandMinSec..input.targetBandMaxSec. input.targetDurationMinSec..input.targetDurationMaxSec is only the hard acceptance range; do NOT aim at its minimum. Plan the beat lengths so that their sum (sourceEndSec - sourceStartSec over all beats) lands inside the preferred band. The JSON you return is final: no arithmetic, drafts, corrections or repeated text inside any field. Choose beat lengths editorially (a beat may be short or long), but every beat must be at least 1 second.
+DURATION: aim the total at input.targetDurationSec seconds — inside the preferred band input.targetBandMinSec..input.targetBandMaxSec. input.targetDurationMinSec..input.targetDurationMaxSec is only the hard acceptance range; do NOT aim at its minimum. FINAL TIMELINE DURATION = sum(sourceEndSec - sourceStartSec) over every selected beat. The returned EDL must land inside the preferred band whenever suitable footage allows it, and MUST NOT exceed input.targetDurationMaxSec. The JSON you return is final: no arithmetic, drafts, corrections or repeated text inside any field. Choose beat lengths editorially (a beat may be short or long), but every beat must be at least 1 second.
 Set accessGranted=true only after actually watching the attached reel. reelObservations: 2-4 sentences on what the reel actually shows.`;
 
 function repairInstruction(kind, payload) {
@@ -173,11 +173,29 @@ function durationTargets(scope, cfg = {}) {
     targetSource: Number.isFinite(declared) ? 'storyScope.targetDurationSec' : 'hard-range midpoint'
   };
 }
-function durationDelta(totalSec, { hardMinSec, hardMaxSec, targetDurationSec }) {
-  return {
-    currentDurationSec: round2(totalSec), minimumDurationSec: hardMinSec, maximumDurationSec: hardMaxSec, targetDurationSec,
-    missingToMinimumSec: round2(Math.max(0, hardMinSec - totalSec)), missingToTargetSec: round2(Math.max(0, targetDurationSec - totalSec))
+// Both directions explicit. deltaFromTargetSec is signed (+ = too long). The
+// UNDER-direction fields (missingTo*) exist only when the timeline is below target,
+// so an over-long timeline never reports a misleading "missingToTargetSec: 0".
+function durationDelta(totalSec, { hardMinSec, hardMaxSec, targetDurationSec, targetBandMinSec = null, targetBandMaxSec = null }) {
+  const t = round2(totalSec);
+  const out = {
+    currentDurationSec: t, minimumDurationSec: hardMinSec, maximumDurationSec: hardMaxSec, targetDurationSec,
+    ...(Number.isFinite(targetBandMinSec) && Number.isFinite(targetBandMaxSec) ? { targetBandMinSec, targetBandMaxSec } : {}),
+    deficitBelowMinimumSec: round2(Math.max(0, hardMinSec - totalSec)),
+    excessAboveMaximumSec: round2(Math.max(0, totalSec - hardMaxSec)),
+    deltaFromTargetSec: round2(totalSec - targetDurationSec)
   };
+  if (totalSec > targetDurationSec) {
+    out.requiredReductionToMaximumSec = out.excessAboveMaximumSec;
+    out.preferredReductionToTargetSec = round2(totalSec - targetDurationSec);
+    if (out.targetBandMinSec !== undefined) {
+      out.preferredReductionRangeSec = { minSec: round2(Math.max(0, totalSec - targetBandMaxSec)), maxSec: round2(Math.max(0, totalSec - targetBandMinSec)) };
+    }
+  } else {
+    out.missingToMinimumSec = out.deficitBelowMinimumSec;
+    out.missingToTargetSec = round2(Math.max(0, targetDurationSec - totalSec));
+  }
+  return out;
 }
 const DURATION_CODES = new Set(['TOTAL_DURATION_UNDER_MIN', 'TOTAL_DURATION_OVER_MAX']);
 const onlyDurationViolations = vs => Array.isArray(vs) && vs.length > 0 && vs.every(v => DURATION_CODES.has(v.code));
@@ -240,7 +258,7 @@ function coveredByReel(b, reelRanges) {
   return inside / (e - s);
 }
 
-function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null } = {}) {
+function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
   const beats = Array.isArray(spine?.beats) ? spine.beats : [];
@@ -285,13 +303,15 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
 
   const total = timelineSec(beats);
   const preferred = Number.isFinite(preferredDurationSec) ? preferredDurationSec : (targetDurationMinSec + targetDurationMaxSec) / 2;
+  const deltaTargets = { hardMinSec: targetDurationMinSec, hardMaxSec: targetDurationMaxSec, targetDurationSec: preferred, targetBandMinSec, targetBandMaxSec };
   if (total < targetDurationMinSec - DUR_EPS) {
-    const d = durationDelta(total, { hardMinSec: targetDurationMinSec, hardMaxSec: targetDurationMaxSec, targetDurationSec: preferred });
+    const d = durationDelta(total, deltaTargets);
     add('TOTAL_DURATION_UNDER_MIN', `The timeline is ${d.currentDurationSec}s: ${d.missingToMinimumSec}s below the hard minimum (${targetDurationMinSec}s) and ${d.missingToTargetSec}s below the preferred target (${d.targetDurationSec}s). Do not add only ${d.missingToMinimumSec}s — repair toward approximately ${d.targetDurationSec}s.`, { totalSec: d.currentDurationSec, ...d });
   }
   if (total > targetDurationMaxSec + DUR_EPS) {
-    const d = durationDelta(total, { hardMinSec: targetDurationMinSec, hardMaxSec: targetDurationMaxSec, targetDurationSec: preferred });
-    add('TOTAL_DURATION_OVER_MAX', `The timeline is ${d.currentDurationSec}s: ${round2(total - targetDurationMaxSec)}s above the hard maximum (${targetDurationMaxSec}s) and ${round2(total - d.targetDurationSec)}s above the preferred target (${d.targetDurationSec}s). Repair toward approximately ${d.targetDurationSec}s.`, { totalSec: d.currentDurationSec, ...d });
+    const d = durationDelta(total, deltaTargets);
+    const range = d.preferredReductionRangeSec ? ` (${d.preferredReductionRangeSec.minSec}-${d.preferredReductionRangeSec.maxSec}s for the ${d.targetBandMinSec}-${d.targetBandMaxSec}s band)` : '';
+    add('TOTAL_DURATION_OVER_MAX', `The timeline is ${d.currentDurationSec}s: ${d.excessAboveMaximumSec}s above the hard maximum (${targetDurationMaxSec}s) and ${d.deltaFromTargetSec}s above the preferred target (${d.targetDurationSec}s). Remove at least ${d.requiredReductionToMaximumSec}s, preferably about ${d.preferredReductionToTargetSec}s${range}.`, { totalSec: d.currentDurationSec, ...d });
   }
 
   if (toV2Role(beats[0].narrativeRole) !== 'hook') {
@@ -444,6 +464,65 @@ Allowed: lengthen existing beats inside the cuttable range that already contains
 Not allowed: footage outside input.cuttableRanges, overlapping another beat's source range, reordering or removing existing beats, new branches of the incident, or any change to the Story Scope. Keep beatIds, order, roles and audio modes of existing beats.
 Every beat keeps observedInFootage and whyNecessaryNow. Plan the beat lengths so their sum lands in the band; the JSON you return is final (no arithmetic, drafts or repeated text inside any field). Set accessGranted=true once you have read the EDL.`;
 
+// OVER_MAX is COMPRESSION, a different operation from UNDER_MIN extension: the
+// repaired EDL must be a shortened subset of the current one. JS supplies the
+// arithmetic (beat budget table + required/preferred reductions); Gemini decides
+// WHAT to cut. JS never selects story material.
+const DURATION_COMPRESSION_INSTRUCTION = `DURATION COMPRESSION REPAIR (text-only: NO video is attached to this request, and none is needed).
+Your EDL (input.currentEdl) is media-grounded but TOO LONG. This is COMPRESSION ONLY: return a shortened subset of input.currentEdl.
+input.beatBudget lists every current beat: beatId, sourceStartSec, sourceEndSec, durationSec, narrativeRole, newInformation, whyNecessaryNow.
+input.durationCompression gives the exact numbers: currentDurationSec, maximumDurationSec, requiredReductionToMaximumSec (you MUST remove at least this much), preferredReductionToTargetSec and preferredReductionRangeSec (remove about this much so the total lands inside targetBandMinSec..targetBandMaxSec).
+Allowed: shorten an existing beat by trimming its start and/or its end INSIDE its current range; remove an existing beat that is redundant or least necessary to the central conflict.
+Not allowed: new beats or new beatIds, moving any sourceStartSec earlier or any sourceEndSec later, new source material, reordering the surviving beats, any change to the Story Scope.
+You decide what deserves time. Keep the moments that carry the central conflict; cut repetition, restated arguments, redundant context and slack inside long beats. The first beat keeps its hook role and the final beat remains the ending.
+Surviving beats keep beatId, order, role and audioMode; observedInFootage must still describe the trimmed range; every beat stays at least 1 second.
+FINAL TIMELINE DURATION = sum(sourceEndSec - sourceStartSec) over every returned beat. The JSON you return is final: no arithmetic, drafts or repeated text inside any field. Set accessGranted=true once you have read the EDL.`;
+
+const COMPRESSION_EPS_SEC = 0.05;   // float/rounding tolerance on a range edge
+const STALL_EPS_SEC = 0.5;          // a "compression" that removes less than this made no progress
+
+function beatBudget(edl) {
+  return (edl?.beats || []).map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec,
+    durationSec: round2(beatLen(b)), narrativeRole: b.narrativeRole, newInformation: b.newInformation || '', whyNecessaryNow: b.whyNecessaryNow || '' }));
+}
+
+// Deterministic, monotonic contract of a compression response vs the EDL it compressed.
+function compressionViolations(before, after) {
+  const prev = before?.beats || [], next = after?.beats || [];
+  const byId = new Map(prev.map(b => [b.beatId, b]));
+  const out = [];
+  if (next.length > prev.length) out.push({ code: 'COMPRESSION_BEAT_COUNT_INCREASED', message: `A compression repair may not add beats: ${prev.length} -> ${next.length}.` });
+  const added = next.filter(b => !byId.has(b.beatId)).map(b => b.beatId);
+  if (added.length) out.push({ code: 'COMPRESSION_ADDED_BEAT', message: `A compression repair may not introduce new beats: ${added.join(', ')}.`, beatIds: added });
+  const expanded = next.filter(b => byId.has(b.beatId)).filter(b => {
+    const o = byId.get(b.beatId);
+    return num(b.sourceStartSec) < num(o.sourceStartSec) - COMPRESSION_EPS_SEC || num(b.sourceEndSec) > num(o.sourceEndSec) + COMPRESSION_EPS_SEC;
+  }).map(b => {
+    const o = byId.get(b.beatId);
+    return `${b.beatId} ${o.sourceStartSec}-${o.sourceEndSec}s -> ${b.sourceStartSec}-${b.sourceEndSec}s`;
+  });
+  if (expanded.length) out.push({ code: 'COMPRESSION_RANGE_EXPANDED', message: `A compression repair may only trim inside a beat's current range: ${expanded.join('; ')}.` });
+  const keptIds = next.map(b => b.beatId).filter(id => byId.has(id));
+  const expectedOrder = prev.map(b => b.beatId).filter(id => keptIds.includes(id));
+  if (keptIds.join('|') !== expectedOrder.join('|')) out.push({ code: 'COMPRESSION_REORDERED', message: 'A compression repair must keep the surviving beats in their original order.' });
+  const t0 = timelineSec(prev), t1 = timelineSec(next);
+  const sameRanges = next.length === prev.length && next.every((b, i) => b.beatId === prev[i].beatId
+    && Math.abs(num(b.sourceStartSec) - num(prev[i].sourceStartSec)) <= COMPRESSION_EPS_SEC && Math.abs(num(b.sourceEndSec) - num(prev[i].sourceEndSec)) <= COMPRESSION_EPS_SEC);
+  if (sameRanges || Math.abs(t0 - t1) < STALL_EPS_SEC) {
+    out.push({ code: 'DURATION_REPAIR_STALLED', message: `The compression repair did not materially change the timeline (${round2(t0)}s -> ${round2(t1)}s${sameRanges ? ', same source ranges' : ''}).`, beforeSec: round2(t0), afterSec: round2(t1) });
+  } else if (t1 >= t0) {
+    out.push({ code: 'COMPRESSION_NOT_SHORTER', message: `A compression repair must reduce the total: ${round2(t0)}s -> ${round2(t1)}s.`, beforeSec: round2(t0), afterSec: round2(t1) });
+  }
+  return out;
+}
+
+function compressionReminder(d, previous) {
+  const band = d.preferredReductionRangeSec ? ` (${d.preferredReductionRangeSec.minSec}-${d.preferredReductionRangeSec.maxSec}s puts it inside ${d.targetBandMinSec}-${d.targetBandMaxSec}s)` : '';
+  const lines = [`CURRENT TOTAL ${d.currentDurationSec}s. You still need to remove at least ${d.requiredReductionToMaximumSec} seconds to satisfy the hard maximum (${d.maximumDurationSec}s) and approximately ${d.preferredReductionToTargetSec} seconds to reach the preferred target (${d.targetDurationSec}s)${band}.`];
+  if (previous) lines.push(`Your previous compression attempt (${previous.beforeSec}s -> ${previous.afterSec}s) ${previous.accepted ? 'did not remove enough' : `was rejected: ${previous.codes.join(', ')}`}. Do not return the same ranges again; trims that change only text do not count.`);
+  return lines.join('\n');
+}
+
 function validateTextShape(v) {
   if (!v || !v.spine || !Array.isArray(v.spine.beats) || !v.spine.beats.length) throw new StoryError('INVALID_RESPONSE', 'Duration repair returned no beats.');
   assertNotDegenerate(v);
@@ -485,18 +564,28 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     ...extraInput
   };
   const valOpts = { durationSec: engine.duration, targetDurationMinSec: targets.hardMinSec, targetDurationMaxSec: targets.hardMaxSec, reel,
-    narrationEnabled: baseInput.narrationEnabled, preferredDurationSec: targets.targetDurationSec };
+    narrationEnabled: baseInput.narrationEnabled, preferredDurationSec: targets.targetDurationSec,
+    targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec };
   const cuttable = cuttableRanges(reel.ranges).map(([s, e]) => ({ sourceStartSec: round2(s), sourceEndSec: round2(e),
     scopeWindowId: (reel.ranges || []).find(r => s >= num(r.sourceStartSec) - 1e-6 && e <= num(r.sourceEndSec) + 1e-6)?.scopeWindowId || null }));
   const attempts = [];
-  let violations = null, current = extraInput.currentEdl || null, reelObservations = '';
+  let violations = null, current = extraInput.currentEdl || null, reelObservations = '', previousCompression = null;
   for (let attempt = 0; attempt <= maxTechnicalRepairs; attempt++) {
     const technical = attempt > 0;
     // Once the EDL is media-grounded and ONLY duration is wrong, repair it with a
     // lightweight text-only director call instead of re-watching all reel files.
+    // UNDER_MIN extends; OVER_MAX compresses (a distinct, monotonic operation).
     const durationOnly = technical && current && onlyDurationViolations(violations);
-    let result, schemaError, mode, callKey;
-    if (durationOnly) {
+    const compress = durationOnly && violations.some(v => v.code === 'TOTAL_DURATION_OVER_MAX');
+    let result, schemaError, mode, callKey, compressionDelta = null;
+    if (compress) {
+      mode = 'duration_compression'; callKey = `${key}_compress${attempt}`;
+      compressionDelta = durationDelta(timelineSec(current.beats), targets);
+      const input = { ...baseInput, currentEdl: current, violations, reelObservations, beatBudget: beatBudget(current),
+        durationCompression: compressionDelta, ...(previousCompression ? { previousCompression } : {}) };
+      const instr = `${DURATION_COMPRESSION_INSTRUCTION}\n${compressionReminder(compressionDelta, previousCompression)}`;
+      ({ result, schemaError } = await callDirector(engine, callKey, input, instr, [], validateTextShape));
+    } else if (durationOnly) {
       mode = 'duration_lightweight'; callKey = `${key}_duration${attempt}`;
       const input = { ...baseInput, currentEdl: current, violations, reelObservations, cuttableRanges: cuttable,
         durationRepair: durationDelta(timelineSec(current.beats), targets) };
@@ -517,11 +606,38 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       const extra = storyPreservationViolations(current, spine, { allowRemoval: violations.some(v => v.code === 'TOTAL_DURATION_OVER_MAX') });
       if (extra.length) report = { ...report, valid: false, violations: [...report.violations, ...extra] };
     }
-    if (result?.reelObservations && mode !== 'duration_lightweight') reelObservations = result.reelObservations;
-    const entry = { attempt, mode, valid: report.valid, violations: report.violations, metrics: report.metrics, mediaFiles: mode === 'duration_lightweight' ? 0 : evidence.length };
+    let monotonic = null;
+    if (mode === 'duration_compression' && !schemaError) {
+      monotonic = compressionViolations(current, spine);
+      if (monotonic.length) report = { ...report, valid: false, violations: [...monotonic, ...report.violations] };
+    }
+    const textOnly = mode === 'duration_lightweight' || mode === 'duration_compression';
+    if (result?.reelObservations && !textOnly) reelObservations = result.reelObservations;
+    const entry = { attempt, mode, valid: report.valid, violations: report.violations, metrics: report.metrics, mediaFiles: textOnly ? 0 : evidence.length,
+      ...(compressionDelta ? { durationCompression: compressionDelta, beatCountBefore: current.beats.length, beatCountAfter: spine?.beats?.length ?? null } : {}) };
     attempts.push(entry);
-    if (write && root) await write(path.join(root, `${callKey}.json`), { mode, result, validation: report });
+    if (write && root) await write(path.join(root, `${callKey}.json`), { mode, result, validation: report,
+      ...(compressionDelta ? { durationCompression: compressionDelta, beatCountBefore: entry.beatCountBefore, beatCountAfter: entry.beatCountAfter } : {}) });
     if (report.valid) return { spine, report, reelObservations: reelObservations || result.reelObservations, attempts };
+
+    if (mode === 'duration_compression') {
+      const before = compressionDelta.currentDurationSec, after = spine ? round2(timelineSec(spine.beats)) : null;
+      if ((monotonic || []).some(v => v.code === 'DURATION_REPAIR_STALLED')) {
+        // Same ranges / same total: another equivalent call would be wasted.
+        emit('design', `[Director] Duration compression stalled (${before}s -> ${after}s); stopping.`, 'WARNING');
+        throw new StoryError('DIRECTOR_EDL_INVALID', `Editorial Director duration compression stalled at ${after}s (hard maximum ${targets.hardMaxSec}s): DURATION_REPAIR_STALLED`,
+          { violations: report.violations, attempts, spine: current, stalled: true });
+      }
+      const rejected = schemaError ? ['SCHEMA_INVALID'] : (monotonic || []).map(v => v.code);
+      if (rejected.length) {
+        // Rejected response: keep compressing the last accepted EDL.
+        previousCompression = { beforeSec: before, afterSec: after, accepted: false, codes: rejected };
+        emit('design', `[Director] Compression response rejected (${rejected.join(', ')}); retrying from ${before}s.`, 'WARNING');
+        continue;
+      }
+      // Monotonic progress (e.g. 163s -> 108s) is kept; the remaining violations drive the next pass.
+      previousCompression = { beforeSec: before, afterSec: after, accepted: true, codes: [] };
+    }
 
     // Sub-second deficit with no other violation: deterministic technical range
     // reconciliation inside already-watched, same-window footage; same validators rerun.
@@ -541,7 +657,8 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     emit('design', `[Director] EDL needs repair #${attempt + 1} (${onlyDurationViolations(report.violations) ? 'duration-only, lightweight' : 'multimodal'}): ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
     violations = report.violations; current = spine || current;
   }
-  throw new StoryError('DIRECTOR_EDL_INVALID', `Editorial Director EDL failed validation after ${maxTechnicalRepairs} repair pass(es): ${violations.map(v => v.code).join(', ')}`, { violations, attempts, spine: current });
+  const lastViolations = attempts[attempts.length - 1]?.violations || violations;
+  throw new StoryError('DIRECTOR_EDL_INVALID', `Editorial Director EDL failed validation after ${maxTechnicalRepairs} repair pass(es): ${lastViolations.map(v => v.code).join(', ')}`, { violations: lastViolations, attempts, spine: current });
 }
 
 async function directEdl(engine, { model, scope, root = null, write = null, emit = () => {}, scriptId = 1 }) {
@@ -610,5 +727,6 @@ module.exports = {
   validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
   directEdl, repairEdl, repairTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
+  DURATION_COMPRESSION_INSTRUCTION, beatBudget, compressionViolations, compressionReminder,
   DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };

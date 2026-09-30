@@ -85,8 +85,16 @@ async function main() {
     promptTokens: e.promptTokens ?? e.inputTokens ?? null, candidatesTokens: e.candidatesTokens ?? null, thoughtsTokens: e.thoughtsTokens ?? null,
     totalTokens: e.totalTokens ?? null, maxOutputTokens: e.requestedMaxOutputTokens ?? null, thinkingBudget: e.requestedThinkingBudget ?? null,
     finishReason: e.finishReason || '', modelMs: e.modelMs ?? null, usd: e.usd ?? null, error: e.error || '' }));
-  const directorAttempts = (spine?.directorMeta?.attempts || []).map(a => ({ attempt: a.attempt, mode: a.mode, valid: a.valid, mediaFiles: a.mediaFiles,
-    totalSec: a.metrics?.totalSec ?? null, violations: (a.violations || []).map(v => v.code), technicalDurationAdjustment: a.technicalDurationAdjustment || null }));
+  // On a failed run there is no stamped spine: rebuild the path from the per-call artifacts.
+  const attemptFiles = spine?.directorMeta?.attempts ? [] : fs.readdirSync(A).filter(f => /^v5-editorial-director-1(_(fix|duration|compress)\d+)?\.json$/.test(f))
+    .map(f => ({ f, m: fs.statSync(path.join(A, f)).mtimeMs })).sort((a, b) => a.m - b.m);
+  const fromFiles = await Promise.all(attemptFiles.map(async ({ f }, i) => { const j = await readJson(path.join(A, f)); return { attempt: i, mode: j?.mode, valid: j?.validation?.valid,
+    metrics: j?.validation?.metrics, violations: j?.validation?.violations || [], durationCompression: j?.durationCompression, beatCountBefore: j?.beatCountBefore, beatCountAfter: j?.beatCountAfter }; }));
+  const directorAttempts = (spine?.directorMeta?.attempts || fromFiles).map(a => ({ attempt: a.attempt, mode: a.mode, valid: a.valid, mediaFiles: a.mediaFiles,
+    totalSec: a.metrics?.totalSec ?? null, beatCount: a.metrics?.beatCount ?? null, violations: (a.violations || []).map(v => v.code), technicalDurationAdjustment: a.technicalDurationAdjustment || null,
+    ...(a.durationCompression ? { compressedFromSec: a.durationCompression.currentDurationSec, beatsBefore: a.beatCountBefore, beatsAfter: a.beatCountAfter,
+      requiredReductionToMaximumSec: a.durationCompression.requiredReductionToMaximumSec, preferredReductionToTargetSec: a.durationCompression.preferredReductionToTargetSec,
+      preferredReductionRangeSec: a.durationCompression.preferredReductionRangeSec || null } : {}) }));
 
   const summary = {
     generatedAt: new Date().toISOString(), runtimeError: runtimeError?.message || null,
@@ -107,7 +115,7 @@ async function main() {
   log(`Boundary: ${JSON.stringify(summary.storyScope?.explicitScopeBoundary)}`);
   console.table(summary.finalEdl.map(({ observedInFootage, whyNecessaryNow, ...r }) => r));
   if (directorCalls.length) console.table(directorCalls.map(({ error, ...r }) => r));
-  if (directorAttempts.length) log(`Director repair path: ${directorAttempts.map(a => `${a.mode}${a.valid ? '✓' : `✗(${a.violations.join('+')})`}`).join(' -> ')}`);
+  if (directorAttempts.length) log(`Director repair path: ${directorAttempts.map(a => `${a.mode}[${a.totalSec}s/${a.beatCount} beats${a.requiredReductionToMaximumSec !== undefined ? `; from ${a.compressedFromSec}s must cut >=${a.requiredReductionToMaximumSec}s, prefer ~${a.preferredReductionToTargetSec}s` : ''}]${a.valid ? '✓' : `✗(${a.violations.join('+')})`}`).join(' -> ')}`);
   log(`EDL beats ${summary.edlBeatCount} | EDL total ${summary.edlTotalSec}s | final MP4 ${finalMp4} (${finalDuration}s) | verdict ${summary.review?.verdict} | repairs ${summary.review?.repairPasses}`);
   log(`Summary written: ${out}`);
   const inRange = finalDuration >= 65 && finalDuration <= 90;
