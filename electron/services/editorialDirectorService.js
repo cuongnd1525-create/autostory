@@ -110,7 +110,10 @@ const directorSpine = flexible({
 
 const directorEdl = {
   type: 'object', required: ['accessGranted', 'reelObservations', 'spine'], additionalProperties: false,
-  properties: { accessGranted: boolean, reelObservations: text, spine: directorSpine }
+  properties: { accessGranted: boolean, reelObservations: text, spine: directorSpine,
+    // Under-minimum repair only: an honest "this scope cannot reach the minimum
+    // without filler", grounded in the watched footage. Never assumed by JS.
+    repairOutcome: flexible({ status: choice('repaired', 'scope_infeasible'), reason: text }) }
 };
 
 const schemas = { directorEdl, directorBeat, directorSpine };
@@ -239,6 +242,8 @@ function durationDelta(totalSec, { hardMinSec, hardMaxSec, targetDurationSec, ta
   } else {
     out.missingToMinimumSec = out.deficitBelowMinimumSec;
     out.missingToTargetSec = round2(Math.max(0, targetDurationSec - totalSec));
+    out.requiredAdditionToMinimumSec = out.deficitBelowMinimumSec;
+    out.preferredAdditionToTargetSec = out.missingToTargetSec;
   }
   return out;
 }
@@ -363,7 +368,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   const deltaTargets = { hardMinSec: targetDurationMinSec, hardMaxSec: targetDurationMaxSec, targetDurationSec: preferred, targetBandMinSec, targetBandMaxSec };
   if (total < targetDurationMinSec - DUR_EPS) {
     const d = durationDelta(total, deltaTargets);
-    add('TOTAL_DURATION_UNDER_MIN', `The timeline is ${d.currentDurationSec}s: ${d.missingToMinimumSec}s below the hard minimum (${targetDurationMinSec}s) and ${d.missingToTargetSec}s below the preferred target (${d.targetDurationSec}s). Do not add only ${d.missingToMinimumSec}s — repair toward approximately ${d.targetDurationSec}s.`, { totalSec: d.currentDurationSec, ...d });
+    add('TOTAL_DURATION_UNDER_MIN', underMinMessage(d), { totalSec: d.currentDurationSec, ...d });
   }
   if (total > targetDurationMaxSec + DUR_EPS) {
     const d = durationDelta(total, deltaTargets);
@@ -387,6 +392,59 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   }
 
   return { valid: violations.length === 0, violations, metrics: { totalSec: round2(total), beatCount: beats.length } };
+}
+
+function underMinMessage(d) {
+  return `The timeline is ${d.currentDurationSec}s. You MUST add at least ${d.requiredAdditionToMinimumSec} meaningful seconds so the final timeline reaches the ${d.minimumDurationSec}s hard minimum. You MAY add up to ${d.preferredAdditionToTargetSec}s more toward ${d.targetDurationSec}s only if that material genuinely improves comprehension, proof, emotion, contradiction or payoff. Do not add filler merely to reach the preferred target.`;
+}
+
+// Deterministic GEOMETRY (not editorial selection): for each selected beat, how
+// far it could grow inside its own watched, cuttable logical segment before it
+// would leave that footage or collide with another selected beat. No ranking.
+function extensionOpportunities(beats, reel, durationSec = Infinity) {
+  const cuts = cuttableRanges(reel?.ranges || []).map(([a, z]) => [Math.max(0, a), Math.min(durationSec, z)]);
+  return (beats || []).map((b, i) => {
+    const s = num(b.sourceStartSec), e = num(b.sourceEndSec);
+    const home = cuts.find(([a, z]) => s >= a - 1e-6 && e <= z + 1e-6);
+    const row = { beatId: b.beatId, currentStartSec: s, currentEndSec: e };
+    if (!home) return { ...row, cuttableStartSec: null, cuttableEndSec: null, availablePreviousSec: 0, availableNextSec: 0 };
+    const others = beats.filter((_, j) => j !== i).map(o => [num(o.sourceStartSec), num(o.sourceEndSec)]);
+    const nextWall = Math.min(home[1], ...others.filter(([os]) => os >= e - 1e-6).map(([os]) => os));
+    const prevWall = Math.max(home[0], ...others.filter(([, oe]) => oe <= s + 1e-6).map(([, oe]) => oe));
+    const inside = others.some(([os, oe]) => os < e - 1e-6 && oe > s + 1e-6); // already overlapping (e.g. a teaser replay)
+    return { ...row, cuttableStartSec: round2(home[0]), cuttableEndSec: round2(home[1]),
+      availablePreviousSec: inside ? 0 : round2(Math.max(0, s - prevWall)), availableNextSec: inside ? 0 : round2(Math.max(0, nextWall - e)) };
+  });
+}
+
+// An under-minimum response is progress only if the timeline actually changed.
+function underMinStall(before, after) {
+  const a = before?.beats || [], b = after?.beats || [];
+  const same = a.length === b.length && a.every((x, i) => x.beatId === b[i].beatId
+    && Math.abs(num(x.sourceStartSec) - num(b[i].sourceStartSec)) <= COMPRESSION_EPS_SEC && Math.abs(num(x.sourceEndSec) - num(b[i].sourceEndSec)) <= COMPRESSION_EPS_SEC);
+  const t0 = timelineSec(a), t1 = timelineSec(b);
+  // Identical beat ranges (hence identical total) = no timeline change at all. A
+  // changed timeline is judged by the normal validators on its own merits.
+  if (same) {
+    return { code: 'UNDER_MIN_REPAIR_STALLED', message: `The under-minimum repair returned the same ${round2(t1)}s timeline with identical source ranges.`,
+      beforeSec: round2(t0), afterSec: round2(t1), unchangedBeatRanges: b.map(x => ({ beatId: x.beatId, sourceStartSec: x.sourceStartSec, sourceEndSec: x.sourceEndSec })) };
+  }
+  return null;
+}
+
+// A beat the repair GREW must not grow through another selected beat.
+function extensionOverlapViolations(before, after) {
+  const prev = new Map((before?.beats || []).map(b => [b.beatId, b]));
+  const next = after?.beats || [];
+  const out = [];
+  next.forEach((b, i) => {
+    const o = prev.get(b.beatId);
+    if (!o || !(num(b.sourceStartSec) < num(o.sourceStartSec) - COMPRESSION_EPS_SEC || num(b.sourceEndSec) > num(o.sourceEndSec) + COMPRESSION_EPS_SEC)) return;
+    const hit = next.find((x, j) => j !== i && Math.min(num(x.sourceEndSec), num(b.sourceEndSec)) - Math.max(num(x.sourceStartSec), num(b.sourceStartSec)) > COMPRESSION_EPS_SEC
+      && !(Math.min(num(x.sourceEndSec), num(o.sourceEndSec)) - Math.max(num(x.sourceStartSec), num(o.sourceStartSec)) > COMPRESSION_EPS_SEC));
+    if (hit) out.push({ code: 'UNDER_MIN_EXTENSION_OVERLAP', message: `Beat '${b.beatId}' was extended to ${b.sourceStartSec}-${b.sourceEndSec}s, through selected beat '${hit.beatId}' (${hit.sourceStartSec}-${hit.sourceEndSec}s). Extend only into footage no other beat uses.`, beatId: b.beatId, collidesWith: hit.beatId });
+  });
+  return out;
 }
 
 // Structural consistency of the Director's own opening comparison (no teaser rule).
@@ -545,14 +603,13 @@ async function prepareReel(engine, scope, model = null) {
 // > 1s (or one the technical adjustment cannot absorb) goes back to the media-grounded
 // Director with the SAME scope reel attached.
 const UNDER_MIN_REPAIR_INSTRUCTION = `UNDER-MINIMUM REPAIR (the scope reel is attached again: watch it).
-input.currentEdl is editorially coherent and structurally valid, but its total is below the hard minimum — see input.durationRepair (currentDurationSec, minimumDurationSec, missingToMinimumSec, targetDurationSec, missingToTargetSec).
-Priority, in this order:
-1. Reach at least input.targetDurationMinSec seconds. This is required.
-2. Preserve or improve information density and story quality.
-3. Move toward input.targetDurationSec only when additional footage you watch genuinely strengthens comprehension, proof, emotion, contradiction or payoff. Do not pad low-value explanation to reach the preferred target: input.targetBandMinSec..input.targetBandMaxSec is guidance, not a justification for filler. input.targetDurationMinSec..input.targetDurationMaxSec is the hard acceptance range.
-You may lengthen existing beats with footage you can see in the reel, or add beats from footage you watch now. Keep the existing story and change only what the repair needs.
-The final beat must remain the ending (scopeMembership 'ending', from input.storyScope.candidateEndingEvents or an ending_material window): new core material goes BEFORE the ending, never after it.
-Return the COMPLETE EDL in its final order, with spine.deliveryBlocks (every beat exactly once, consecutive beats per block, blocks in EDL order), spine.transitionChecks and spine.openingStrategy. Each beat's whyNecessaryNow is its story reason — never "to reach the duration".`;
+input.currentEdl is editorially coherent and structurally valid, but its total is below the hard minimum — see input.durationRepair (currentDurationSec, minimumDurationSec, targetDurationSec, targetBandMinSec, targetBandMaxSec, requiredAdditionToMinimumSec, preferredAdditionToTargetSec).
+Reaching input.targetDurationMinSec is REQUIRED. Moving toward input.targetDurationSec is OPTIONAL and only for material that genuinely improves comprehension, proof, emotion, contradiction or payoff. Do not add filler or explanatory footage merely for duration. input.targetDurationMinSec..input.targetDurationMaxSec is the hard acceptance range.
+This is a MINIMAL-CHANGE editorial repair. Keep the opening strategy, the strong existing beats, the ending and the block order unless changing them is actually necessary.
+FIRST preference: extend an EXISTING selected beat into adjacent meaningful footage you watch in the reel, inside the same cuttable logical scope segment. input.extensionOpportunities lists, per beat, its current range, its cuttable segment, and how many seconds are free before (availablePreviousSec) and after (availableNextSec) it before leaving that footage or reaching another selected beat. That table is geometry only — you choose which beat, if any, and the exact new range after watching that footage. Never extend a beat through another selected beat or outside its segment.
+Only if meaningful extensions cannot reach the minimum: add a new meaningful beat BEFORE the ending (never after it), and update delivery-block membership as required.
+Return the COMPLETE EDL in its final order, with spine.deliveryBlocks (every beat exactly once, consecutive beats per block, blocks in EDL order), spine.transitionChecks and spine.openingStrategy. Each beat's whyNecessaryNow is its story reason — never "to reach the duration".
+Set repairOutcome.status='repaired'. If, after watching the reel, this Story Scope genuinely cannot reach the hard minimum without filler, return input.currentEdl unchanged with repairOutcome.status='scope_infeasible' and repairOutcome.reason naming what the watched footage lacks. Do not pad instead.`;
 // Kept as an exported alias for callers that referenced the old name; it is now media-grounded.
 const DURATION_REPAIR_INSTRUCTION = UNDER_MIN_REPAIR_INSTRUCTION;
 
@@ -663,7 +720,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
   // ONLY problem is its total duration (structurally valid). A duration repair that
   // returns a structurally invalid EDL is diagnostic only and is never promoted.
   let violations = null, current = extraInput.currentEdl || null, reelObservations = '', previousCompression = null;
-  let lastAccepted = null, lastInvalidRepair = null, previousUnderMin = null;
+  let lastAccepted = null, lastInvalidRepair = null, previousUnderMin = null, stalledRepair = null;
   for (let attempt = 0; attempt <= maxTechnicalRepairs; attempt++) {
     const technical = attempt > 0;
     // Once the EDL is media-grounded and ONLY duration is wrong, repair it with a
@@ -684,12 +741,18 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       // Media-grounded: the Director watches the same scope reel and decides what, if
       // anything, deserves the extra time. No text-only call ever selects new footage.
       mode = 'multimodal_under_min'; callKey = `${key}_undermin${attempt}`;
-      const input = { ...baseInput, currentEdl: current, violations, reelObservations,
-        durationRepair: durationDelta(timelineSec(current.beats), targets), ...(previousUnderMin ? { previousRepair: previousUnderMin } : {}) };
-      const note = previousUnderMin
-        ? `\nYour previous under-minimum repair (${previousUnderMin.beforeSec}s -> ${previousUnderMin.afterSec}s) was rejected: ${previousUnderMin.codes.join(', ')}. It is discarded; repair input.currentEdl (the last valid EDL) again.`
-        : '';
-      const instr = [instruction, repairText, `${UNDER_MIN_REPAIR_INSTRUCTION}${note}`].filter(Boolean).join('\n\n');
+      const d = durationDelta(timelineSec(current.beats), targets);
+      const input = { ...baseInput, currentEdl: current, violations, reelObservations, durationRepair: d,
+        extensionOpportunities: extensionOpportunities(current.beats, reel, engine.duration),
+        ...(previousUnderMin ? { previousUnderMinRepair: previousUnderMin } : {}) };
+      const lines = [UNDER_MIN_REPAIR_INSTRUCTION,
+        `You MUST add at least ${d.requiredAdditionToMinimumSec} meaningful seconds so the final timeline reaches the ${d.minimumDurationSec}s hard minimum. You MAY add up to ${d.preferredAdditionToTargetSec}s more toward ${d.targetDurationSec}s only if that material genuinely improves comprehension, proof, emotion, contradiction or payoff. Do not add filler merely to reach the preferred target.`];
+      if (previousUnderMin?.stalled) {
+        lines.push(`Your previous repair returned the same ${previousUnderMin.afterSec}s timeline and did not satisfy the hard minimum. Do NOT return the same source ranges again (input.previousUnderMinRepair.unchangedBeatRanges). You must make at least one media-grounded timeline change and reach >= ${d.minimumDurationSec}s, or explicitly report repairOutcome.status='scope_infeasible' if this Story Scope cannot reach the hard minimum without filler.`);
+      } else if (previousUnderMin) {
+        lines.push(`Your previous under-minimum repair (${previousUnderMin.beforeSec}s -> ${previousUnderMin.afterSec}s) was rejected: ${previousUnderMin.codes.join(', ')}. It is discarded; repair input.currentEdl (the last valid EDL) again.`);
+      }
+      const instr = [instruction, repairText, lines.join('\n')].filter(Boolean).join('\n\n');
       ({ result, schemaError } = await askDirector(engine, callKey, input, instr, evidence));
     } else {
       mode = technical ? 'multimodal_technical' : 'multimodal'; callKey = `${key}${technical ? `_fix${attempt}` : ''}`;
@@ -715,6 +778,11 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
         report = { ...report, valid: false, violations: [...report.violations, { code: 'ENDING_DISPLACED',
           message: `The repaired EDL no longer ends on its ending beat: '${now.beatId}' (${now.scopeMembership}) comes after it. Place new material BEFORE the ending.`, beatId: now.beatId }] };
       }
+    }
+    // An under-minimum repair may grow existing beats, but never through another selected beat.
+    if (!schemaError && mode === 'multimodal_under_min' && spine && current) {
+      const overlaps = extensionOverlapViolations(current, spine);
+      if (overlaps.length) report = { ...report, valid: false, violations: [...report.violations, ...overlaps] };
     }
     let monotonic = null;
     if (mode === 'duration_compression' && !schemaError) {
@@ -760,7 +828,29 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       previousCompression = { beforeSec: before, afterSec: after, accepted: true, codes: [] };
     }
 
-    if (mode === 'multimodal_under_min' && !structurallyValid) {
+    if (mode === 'multimodal_under_min' && !schemaError && spine) {
+      // Explicit, footage-grounded infeasibility: stop cleanly (no filler, no relaxed minimum).
+      if (result?.repairOutcome?.status === 'scope_infeasible' && String(result.repairOutcome.reason || '').trim()) {
+        entry.repairOutcome = result.repairOutcome;
+        emit('design', `[Director] Under-minimum repair: scope infeasible — ${result.repairOutcome.reason}`, 'WARNING');
+        throw new StoryError('UNDER_MIN_SCOPE_INFEASIBLE', `Editorial Director reports that this Story Scope cannot reach the ${targets.hardMinSec}s hard minimum without filler: ${result.repairOutcome.reason}`,
+          { reason: result.repairOutcome.reason, attempts, spine: lastAccepted || current, lastAcceptedSpine: lastAccepted || current, currentDurationSec: round2(timelineSec((lastAccepted || current).beats)) });
+      }
+    }
+    const structurallyValidNow = Boolean(spine) && !schemaError && onlyDurationViolations(report.violations);
+    if (mode === 'multimodal_under_min' && structurallyValidNow) {
+      const stall = underMinStall(current, spine);
+      if (stall) {
+        // Same timeline again: not a repair. Never promoted; the next pass knows it stalled.
+        previousUnderMin = { beforeSec: stall.beforeSec, afterSec: stall.afterSec, stalled: true, unchangedBeatRanges: stall.unchangedBeatRanges, codes: [stall.code] };
+        entry.stalled = true; entry.violations = [stall, ...report.violations];
+        report = { ...report, violations: [stall, ...report.violations] };
+        stalledRepair = { attempt, mode, spine, violations: report.violations };
+        emit('design', `[Director] Under-minimum repair stalled (${stall.afterSec}s, identical ranges); ${attempt < maxTechnicalRepairs ? 'next repair is told it stalled' : 'no repair slot remains'}.`, 'WARNING');
+        continue;
+      }
+    }
+    if (mode === 'multimodal_under_min' && !structurallyValidNow) {
       // Invalid repair (e.g. core beats appended after the ending, broken delivery
       // blocks): never promoted. The next repair restarts from the last valid EDL.
       const codes = schemaError ? ['SCHEMA_INVALID'] : report.violations.filter(v => !DURATION_CODES.has(v.code)).map(v => v.code);
@@ -798,7 +888,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
   }
   const lastViolations = attempts[attempts.length - 1]?.violations || violations;
   throw new StoryError('DIRECTOR_EDL_INVALID', `Editorial Director EDL failed validation after ${maxTechnicalRepairs} repair pass(es): ${lastViolations.map(v => v.code).join(', ')}`,
-    { violations: lastViolations, attempts, spine: lastAccepted || current, lastAcceptedSpine: lastAccepted, lastInvalidRepair });
+    { violations: lastViolations, attempts, spine: lastAccepted || current, lastAcceptedSpine: lastAccepted, lastInvalidRepair, stalledRepair });
 }
 
 async function directEdl(engine, { model, scope, root = null, write = null, emit = () => {}, scriptId = 1 }) {
@@ -867,6 +957,6 @@ module.exports = {
   validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
   directEdl, repairEdl, repairTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
-  DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, beatBudget, compressionViolations, compressionReminder,
+  DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
   deliveryBeats, openingViolations, OPENING_STRATEGIES, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };

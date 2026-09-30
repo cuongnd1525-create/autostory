@@ -493,7 +493,8 @@ function fakeEngine(asks) {
     const rep = engine.lastAsks[1];
     const v = rep.input.violations.find(x => x.code === 'TOTAL_DURATION_UNDER_MIN');
     assert.deepStrictEqual([v.currentDurationSec, v.minimumDurationSec, v.targetDurationSec, v.missingToMinimumSec, v.missingToTargetSec], [59, 65, 75, 6, 16]);
-    assert.match(v.message, /Do not add only 6s — repair toward approximately 75s/);
+    assert.match(v.message, /You MUST add at least 6 meaningful seconds so the final timeline reaches the 65s hard minimum/);
+    assert.doesNotMatch(v.message, /Do not add only/);
     assert.strictEqual(rep.input.durationRepair.targetDurationSec, 75);
   });
 
@@ -1142,9 +1143,9 @@ function fakeEngine(asks) {
     const rep = engine.lastAsks[1];
     assert.ok(/_undermin1$/.test(rep.key), rep.key);
     assert.ok(rep.instruction.includes(Director.instruction), 'full director contract');
-    assert.match(rep.instruction, /1\. Reach at least input\.targetDurationMinSec seconds\. This is required\./);
-    assert.match(rep.instruction, /Do not pad low-value explanation to reach the preferred target/);
-    assert.match(rep.instruction, /new core material goes BEFORE the ending, never after it/);
+    assert.match(rep.instruction, /Reaching input\.targetDurationMinSec is REQUIRED/);
+    assert.match(rep.instruction, /Do not add filler or explanatory footage merely for duration/);
+    assert.match(rep.instruction, /add a new meaningful beat BEFORE the ending \(never after it\)/);
     assert.strictEqual(rep.input.durationRepair.missingToMinimumSec, 4.4);
     assert.strictEqual(out.spine.directorMeta.attempts[1].mode, 'multimodal_under_min');
     assert.strictEqual(T(out.spine.beats), 67);
@@ -1175,7 +1176,7 @@ function fakeEngine(asks) {
     assert.ok(/_undermin2$/.test(second.key));
     assert.strictEqual(T(second.input.currentEdl.beats), 60.6, 'repair #2 starts from the last accepted 60.6s EDL');
     assert.deepStrictEqual(second.input.currentEdl.beats.map(b => b.beatId), ['h', 'b2', 'b3', 'b4', 'b5', 'end']);
-    assert.ok(second.input.previousRepair.codes.includes('ENDING_DISPLACED'));
+    assert.ok(second.input.previousUnderMinRepair.codes.includes('ENDING_DISPLACED'));
     assert.match(second.instruction, /was rejected: .*ENDING_DISPLACED.*It is discarded/);
     assert.strictEqual(T(out.spine.beats), 67);
   });
@@ -1205,6 +1206,127 @@ function fakeEngine(asks) {
     const text = Director.UNDER_MIN_REPAIR_INSTRUCTION;
     assert.doesNotMatch(text, /\d+(\.\d+)?\s*(s\b|sec|seconds|%)/, 'no duration/percentage literal (targets come from input.*)');
     assert.doesNotMatch(text, /at least \d+\s*%|must (open|start) with a teaser|narrated_story block is required/i);
+  });
+
+
+  // ---------------------------------------------------------------- UNDER_MIN stall contract (minimal-change, media-grounded)
+  const stallScope = () => scopeCandidate({
+    scopeWindows: [{ windowId: 'w1', startSec: 8.5, endSec: 13.5, purposes: ['core'] }, { windowId: 'w2', startSec: 25.5, endSec: 58.5, purposes: ['core', 'hook_material'] },
+      { windowId: 'w3', startSec: 60, endSec: 90, purposes: ['core'] }, { windowId: 'w5', startSec: 100, endSec: 122, purposes: ['ending_material'] }],
+    explicitScopeBoundary: { startSec: 0, endSec: 125, rationale: 'x' },
+    causalSpine: [{ eventId: 'e1', sourceStartSec: 8.5, sourceEndSec: 13.5 }, { eventId: 'e5', sourceStartSec: 100, sourceEndSec: 122 }],
+    candidateEndingEvents: [{ eventId: 'e5', sourceStartSec: 100, sourceEndSec: 122, endingType: 'forward_cliffhanger', whyItIsAConsequence: 'x' }] });
+  const S = { h1: () => beat('b1', 46.5, 49.5, { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook' }),
+    h2: () => beat('b2', 49.5, 53.5, { chronologyMode: 'teaser', scopeMembership: 'hook' }), h3: () => beat('b3', 53.5, 58.5, { chronologyMode: 'teaser', scopeMembership: 'hook' }),
+    b4: () => beat('b4', 8.5, 13.5, { chronologyMode: 'rewind', narrativeRole: 'rewind_context' }), b5: () => beat('b5', 25.5, 28.5), b6: () => beat('b6', 32.5, 35.5),
+    b7: () => beat('b7', 35.5, 41.5), b8: () => beat('b8', 41.5, 46.5), b9: () => beat('b9', 60, 64.6), end: () => cEnd(100, 122) };
+  const stallEdl = (over = {}) => edlOf(['h1', 'h2', 'h3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'end'].map(k => (over[k] ? over[k]() : S[k]())));
+  const T2 = beats => Math.round(Director.timelineSec(beats) * 100) / 100;
+
+  await ok('UNDER_MIN stall A/B: an identical 60.6s repair is UNDER_MIN_REPAIR_STALLED; repair #2 is told it stalled; lastAccepted stays the original', async () => {
+    assert.strictEqual(T2(stallEdl().spine.beats), 60.6);
+    const engine = fakeEngine([stallEdl(), stallEdl(), stallEdl()]);
+    await assert.rejects(Director.directEdl(engine, { model: MODEL, scope: stallScope() }), e => {
+      assert.strictEqual(e.kind, 'DIRECTOR_EDL_INVALID');
+      assert.ok(e.details.attempts[1].stalled && e.details.attempts[2].stalled);
+      assert.ok(e.details.violations.some(v => v.code === 'UNDER_MIN_REPAIR_STALLED'));
+      assert.strictEqual(T2(e.details.lastAcceptedSpine.beats), 60.6);
+      assert.ok(e.details.stalledRepair && e.details.stalledRepair.attempt === 2);
+      return true;
+    });
+    const second = engine.lastAsks[2];
+    const prev = second.input.previousUnderMinRepair;
+    assert.deepStrictEqual([prev.beforeSec, prev.afterSec, prev.stalled], [60.6, 60.6, true]);
+    assert.strictEqual(prev.unchangedBeatRanges.length, 10);
+    assert.match(second.instruction, /Your previous repair returned the same 60\.6s timeline and did not satisfy the hard minimum\./);
+    assert.match(second.instruction, /Do NOT return the same source ranges again/);
+    assert.match(second.instruction, /or explicitly report repairOutcome\.status='scope_infeasible'/);
+    assert.ok(engine.lastAsks.every(a => a.evidence.length > 0), 'both repairs watch the reel');
+  });
+
+  await ok('UNDER_MIN stall C: the repair asks for REQUIRED +4.4s to the minimum and OPTIONAL +14.4s toward target; never "Do not add only"', async () => {
+    const engine = fakeEngine([stallEdl(), stallEdl({ b5: () => beat('b5', 25.5, 32.5) })]);
+    await Director.directEdl(engine, { model: MODEL, scope: stallScope() });
+    const rep = engine.lastAsks[1];
+    const d = rep.input.durationRepair;
+    assert.deepStrictEqual([d.currentDurationSec, d.minimumDurationSec, d.targetDurationSec, d.targetBandMinSec, d.targetBandMaxSec, d.requiredAdditionToMinimumSec, d.preferredAdditionToTargetSec],
+      [60.6, 65, 75, 72, 78, 4.4, 14.4]);
+    assert.match(rep.instruction, /You MUST add at least 4\.4 meaningful seconds so the final timeline reaches the 65s hard minimum\./);
+    assert.match(rep.instruction, /You MAY add up to 14\.4s more toward 75s only if that material genuinely improves comprehension, proof, emotion, contradiction or payoff\./);
+    assert.match(rep.instruction, /Do not add filler merely to reach the preferred target\./);
+    assert.doesNotMatch(rep.instruction + JSON.stringify(rep.input.violations), /Do not add only/);
+    assert.match(rep.instruction, /MINIMAL-CHANGE editorial repair/);
+    assert.match(rep.instruction, /FIRST preference: extend an EXISTING selected beat/);
+  });
+
+  await ok('UNDER_MIN stall D: extension opportunity geometry is exact and JS selects / extends nothing', async () => {
+    const edl = stallEdl();
+    const reel = Scope.planScopeReel(stallScope(), { durationSec: SOURCE_SEC });
+    const rows = new Map(Director.extensionOpportunities(edl.spine.beats, reel, SOURCE_SEC).map(r => [r.beatId, r]));
+    assert.deepStrictEqual(rows.get('b5'), { beatId: 'b5', currentStartSec: 25.5, currentEndSec: 28.5, cuttableStartSec: 25.5, cuttableEndSec: 58.5, availablePreviousSec: 0, availableNextSec: 4 });
+    assert.strictEqual(rows.get('b8').availableNextSec, 0, 'b8 runs into the selected teaser b1');
+    assert.strictEqual(rows.get('b3').availableNextSec, 0, 'end of its logical window');
+    assert.strictEqual(rows.get('b9').availableNextSec, 25.4);
+    assert.strictEqual(rows.get('end').availableNextSec, 0);
+    assert.ok([...rows.values()].every(r => !('recommended' in r) && !('best' in r) && !('priority' in r)), 'geometry only, no ranking');
+    const engine = fakeEngine([edl, stallEdl({ b5: () => beat('b5', 25.5, 32.5) })]);
+    await Director.directEdl(engine, { model: MODEL, scope: stallScope() });
+    const rep = engine.lastAsks[1];
+    assert.deepStrictEqual(rep.input.currentEdl.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]), edl.spine.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]), 'JS did not extend any beat');
+    assert.strictEqual(rep.input.extensionOpportunities.length, 10);
+  });
+
+  await ok('UNDER_MIN stall E/F/G: Gemini extends b5 25.5-28.5 -> 25.5-32.5 (legal, grounded); 64.6s is finished by the <=1s technical adjustment', async () => {
+    const engine = fakeEngine([stallEdl(), stallEdl({ b5: () => beat('b5', 25.5, 32.5) })]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: stallScope() });
+    assert.strictEqual(engine.lastAsks.length, 2, 'no third Director call');
+    const a1 = out.spine.directorMeta.attempts[1];
+    assert.strictEqual(a1.mode, 'multimodal_under_min'); assert.ok(!a1.stalled && a1.structurallyValid);
+    assert.deepStrictEqual(a1.violations.map(v => v.code), ['TOTAL_DURATION_UNDER_MIN']);
+    assert.strictEqual(a1.metrics.totalSec, 64.6);
+    const b5 = out.spine.beats.find(b => b.beatId === 'b5');
+    assert.deepStrictEqual([b5.sourceStartSec, b5.sourceEndSec], [25.5, 32.5]);
+    assert.ok(out.spine.technicalDurationAdjustment && out.spine.technicalDurationAdjustment.addedSec <= 1);
+    assert.ok(T2(out.spine.beats) >= 65);
+  });
+
+  await ok('UNDER_MIN stall H: no extension through another selected beat or outside watched logical footage', async () => {
+    const through = stallEdl({ b5: () => beat('b5', 25.5, 34) });          // into b6 (32.5-35.5)
+    const outside = stallEdl({ b4: () => beat('b4', 8.5, 18.5, { chronologyMode: 'rewind', narrativeRole: 'rewind_context' }) }); // beyond w1 (13.5)
+    const e1 = fakeEngine([stallEdl(), through, stallEdl({ b5: () => beat('b5', 25.5, 32.5) })]);
+    const out = await Director.directEdl(e1, { model: MODEL, scope: stallScope() });
+    assert.ok(out.spine.directorMeta.attempts[1].violations.some(v => v.code === 'UNDER_MIN_EXTENSION_OVERLAP' && v.collidesWith === 'b6'));
+    assert.strictEqual(T2(e1.lastAsks[2].input.currentEdl.beats), 60.6, 'rejected extension never promoted');
+    const e2 = fakeEngine([stallEdl(), outside, stallEdl({ b5: () => beat('b5', 25.5, 32.5) })]);
+    const out2 = await Director.directEdl(e2, { model: MODEL, scope: stallScope() });
+    assert.ok(out2.spine.directorMeta.attempts[1].violations.some(v => v.code === 'OUTSIDE_SCOPE_REEL' && v.beatId === 'b4'));
+    // An existing overlap (a teaser replay) is not an extension and is not flagged.
+    assert.deepStrictEqual(Director.extensionOverlapViolations(stallEdl().spine, stallEdl().spine), []);
+  });
+
+  await ok('UNDER_MIN stall I: an explicit, footage-grounded UNDER_MIN_SCOPE_INFEASIBLE stops cleanly without filler', async () => {
+    const infeasible = { ...stallEdl(), repairOutcome: { status: 'scope_infeasible', reason: 'the remaining watched footage is repeated explanation' } };
+    const engine = fakeEngine([stallEdl(), infeasible]);
+    await assert.rejects(Director.directEdl(engine, { model: MODEL, scope: stallScope() }), e => {
+      assert.strictEqual(e.kind, 'UNDER_MIN_SCOPE_INFEASIBLE');
+      assert.match(e.message, /cannot reach the 65s hard minimum without filler/);
+      assert.strictEqual(T2(e.details.lastAcceptedSpine.beats), 60.6);
+      assert.strictEqual(e.details.currentDurationSec, 60.6);
+      return true;
+    });
+    assert.strictEqual(engine.lastAsks.length, 2, 'no further call, no padding');
+    assert.ok(Director.schemas.directorEdl.properties.repairOutcome);
+    // An infeasible claim with no reason is not accepted as a clean stop.
+    const bare = { ...stallEdl(), repairOutcome: { status: 'scope_infeasible', reason: '' } };
+    await assert.rejects(Director.directEdl(fakeEngine([stallEdl(), bare, stallEdl()]), { model: MODEL, scope: stallScope() }), e => e.kind === 'DIRECTOR_EDL_INVALID');
+  });
+
+  await ok('UNDER_MIN stall J: OVER_MAX compression stays text-only and unchanged; hard 65-90 unchanged', async () => {
+    const engine = fakeEngine([edl163(), edl75from163()]);
+    await Director.directEdl(engine, { model: MODEL, scope: longScope() });
+    assert.ok(/_compress1$/.test(engine.lastAsks[1].key) && engine.lastAsks[1].evidence.length === 0 && !('extensionOpportunities' in engine.lastAsks[1].input));
+    const t = Director.durationTargets(stallScope(), { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
+    assert.deepStrictEqual([t.hardMinSec, t.hardMaxSec], [65, 90]);
   });
 
   // ---------------------------------------------------------------- overfitting guard

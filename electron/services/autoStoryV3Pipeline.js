@@ -631,7 +631,7 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
 // Story Scope -> media-grounded Editorial Director, once per requested output.
 // A failure of one output never discards another output's valid EDL: spines are
 // persisted as each completes and per-script failures are returned.
-const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING']);
+const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING', 'UNDER_MIN_SCOPE_INFEASIBLE']);
 async function directStories(engine, model, root, emit, config) {
   const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit });
   const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model };
@@ -769,7 +769,7 @@ async function run(service, opts) {
       spines = await buildStoryDesign(engine, model, root, emit);
     }
   } catch (err) {
-    if (['STORY_DESIGN_INVALID', 'STORY_DESIGN_HARD_INVALID', 'INPUT_MISSING', 'STORY_SCOPE_INVALID', 'DIRECTOR_EDL_INVALID'].includes(err.kind)) {
+    if (['STORY_DESIGN_INVALID', 'STORY_DESIGN_HARD_INVALID', 'INPUT_MISSING', 'STORY_SCOPE_INVALID', 'DIRECTOR_EDL_INVALID', 'UNDER_MIN_SCOPE_INFEASIBLE'].includes(err.kind)) {
       await update({ autoStoryCapacityWarning: `v3: ${err.message}`, autoStoryState: { phase: 'review_failed', failures: [] } });
       const failures = [{ scriptId: 1, kind: err.kind, error: err.message, details: err.details || null }];
       await write(path.join(root, 'failures.json'), failures);
