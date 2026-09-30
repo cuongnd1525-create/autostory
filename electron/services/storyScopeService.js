@@ -17,6 +17,7 @@
 // Director still chooses exact footage inside it.
 
 const { StoryError } = require('./autoStoryRepairRouter');
+const Packer = require('./scopeReelPacker');
 
 const SCOPE_CONTRACT_VERSION = 'story-scope-v1';
 const DEFAULT_MAX_SCOPE_REEL_SEC = 360;   // cost budget for the director's media reel
@@ -30,15 +31,15 @@ const TIME_EPS = 0.5;
 // schema-level check could only ever produce an opaque "array size outside
 // contract" error that Gemini cannot act on.
 //
-// scopeWindows.max = 10 is an engineering bound, not an editorial one: every
-// unique (non-adjacent) window becomes its own reel proxy file, and the Editorial
-// Director receives all reel files in ONE multimodal request; Gemini video models
-// accept at most 10 video files per prompt. Cost is bounded separately by
-// maxScopeReelSec. Windows are UNIQUE source ranges: a range that is both core
-// and hook/ending material is one window with several purposes, never two.
+// scopeWindows are LOGICAL, EDITORIAL candidate regions and have no count cap.
+// They are NOT transport units: the provider's videos-per-prompt limit applies only
+// to the packed reel FILES (scopeReelPacker), and media cost is bounded by the
+// reel-duration budget (maxScopeReelSec), measured after media packing/compaction.
+// Windows are UNIQUE source ranges: a range that is both core and hook/ending
+// material is one window with several purposes, never two.
 const SCOPE_LIMITS = Object.freeze({
   candidates: { min: 1, max: 4 },
-  scopeWindows: { min: 1, max: 10 },
+  scopeWindows: { min: 1, max: Infinity },
   causalSpine: { min: 2, max: 16 },
   candidateEndingEvents: { min: 1, max: 6 },
   hookCandidates: { min: 0, max: 4 },
@@ -116,7 +117,7 @@ PRINCIPLES
 1. A beat must be both NOVEL and CAUSALLY COHERENT with the active scope. A different timestamp, a different speaker, a new quote or a new fact is NOT progress by itself. Something interesting that belongs to another branch of the incident is the WRONG material for this story.
 2. Prefer one continuous causal episode over a tour of the whole source. Later re-tellings, interviews and procedure that only re-describe the same conflict from another angle are usually out of scope. List them in outOfScopeBranches with the reason.
 3. When the story needs a fact that lives outside the boundary (background, who someone is, a claim made later), put it in allowedSupportingContext with treatment='narration_only'. It will be delivered as one narrated sentence over in-scope footage, not by cutting to it. Use treatment='footage' only when the picture itself is causally necessary.
-4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the source windows the editor will be shown and may cut from. They must hold enough usable footage for the duration, but must stay compact: their total length must not exceed input.maxScopeReelSec.
+4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the logical source regions the editor may cut from; list as many as the conflict needs. They must hold enough usable footage for the duration. The system packs them into a media reel for the editor and compacts broad windows around the model's events and quotes, but the packed reel must fit input.maxScopeReelSec, so keep the windows to the causal spine of ONE conflict.
 5. The hook may borrow from later inside the SAME scope (hook_material window), but the scope must keep something to withhold (mustWithhold).
 6. candidateEndingEvents must lie inside the scope windows and must be consequences of the central conflict, not a new question from another branch.
 
@@ -129,7 +130,7 @@ OUTPUT
 - Never invent events. Reference real event ids and real source seconds from the model. Set accessGranted=true after reading the model.`;
 
 function limitsText() {
-  return Object.entries(SCOPE_LIMITS).map(([k, l]) => `${k} ${l.min ? `${l.min}-` : '<= '}${l.max}`).join('; ');
+  return Object.entries(SCOPE_LIMITS).map(([k, l]) => (Number.isFinite(l.max) ? `${k} ${l.min ? `${l.min}-` : '<= '}${l.max}` : `${k} >= ${l.min} (no count cap)`)).join('; ');
 }
 const repairInstruction = (violations, failing = null) => `REPAIR — your previous Story Scope selection (input.previousSelection) failed validation${failing ? ` in candidate '${failing}'` : ''}. Keep the same story if it is sound. Fix ONLY what these violations require and return the COMPLETE selection again. Returning the same object unchanged will fail again.
 ${violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}
@@ -199,32 +200,17 @@ function chosenScope(selection) {
   return candidates.find(c => c && c.storyScopeId === selection.chosenStoryScopeId) || null;
 }
 
-// Media reel plan for the Editorial Director: the scope windows (+ padding),
-// merged, clamped to the source, with a manifest back to absolute time.
-function planScopeReel(scope, { durationSec, paddingSec = DEFAULT_REEL_PADDING_SEC } = {}) {
-  const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : Infinity;
-  const windows = (scope?.scopeWindows || []).map(w => ({
-    startSec: Math.max(0, num(w.startSec) - paddingSec),
-    endSec: Math.min(dur, num(w.endSec) + paddingSec),
-    purposes: windowPurposes(w)
-  }));
-  const ranges = mergeRanges(windows).map((r, i) => ({
-    reelId: `reel_${String(i + 1).padStart(2, '0')}`,
-    sourceStartSec: round2(r.startSec), sourceEndSec: round2(r.endSec), purposes: r.purposes
-  }));
-  return {
-    contract: SCOPE_CONTRACT_VERSION,
-    storyScopeId: scope?.storyScopeId || null,
-    paddingSec,
-    ranges,
-    totalSec: round2(ranges.reduce((n, r) => n + (r.sourceEndSec - r.sourceStartSec), 0))
-  };
+// Media reel plan for the Editorial Director. Delegates to the media packing layer
+// (scopeReelPacker): logical windows -> media segments (compacted if over budget) ->
+// <= provider-limit composite reel files, with a reel->source manifest.
+function planScopeReel(scope, { durationSec, paddingSec = DEFAULT_REEL_PADDING_SEC, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, model = null, maxReelFiles } = {}) {
+  return Packer.planReel(scope, { durationSec, paddingSec, maxReelSec: maxScopeReelSec, model, maxReelFiles });
 }
 
 // Deterministic STRUCTURAL validation of a Gemini-declared scope. It checks that
 // the declaration is internally consistent, lies inside the source, can support the
 // requested duration, and fits the reel cost budget. It does not judge story quality.
-function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, paddingSec = DEFAULT_REEL_PADDING_SEC } = {}) {
+function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, paddingSec = DEFAULT_REEL_PADDING_SEC, model = null, maxReelFiles } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
   if (!scope || typeof scope !== 'object') {
@@ -262,7 +248,7 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   const normalization = normalizeScopeWindows(declaredWindows);
   const windows = normalization.windows;
   if (!windows.length) add('SCOPE_WINDOWS_EMPTY', 'scopeWindows must list the in-scope source windows the editor will watch.');
-  if (windows.length > SCOPE_LIMITS.scopeWindows.max) {
+  if (Number.isFinite(SCOPE_LIMITS.scopeWindows.max) && windows.length > SCOPE_LIMITS.scopeWindows.max) {
     add('SCOPE_COUNT_OVER_LIMIT', `scopeWindows contains ${windows.length} unique windows${normalization.declaredCount !== windows.length ? ` (${normalization.declaredCount} declared; overlapping duplicates already merged)` : ''}; maximum allowed is ${SCOPE_LIMITS.scopeWindows.max}. Keep only the windows the central conflict needs, or join adjacent moments into one window.`, { field: 'scopeWindows', count: windows.length, declared: normalization.declaredCount, max: SCOPE_LIMITS.scopeWindows.max });
   }
   const inScope = w => w.purposes.some(p => p !== 'supporting_context');
@@ -304,13 +290,13 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   });
 
   const normalizedScope = { ...scope, scopeWindows: windows };
-  const reel = planScopeReel(normalizedScope, { durationSec, paddingSec });
+  const reel = planScopeReel(normalizedScope, { durationSec, paddingSec, maxScopeReelSec, model, maxReelFiles });
   const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
   if (windows.length && watchable < targetDurationMinSec) {
     add('SCOPE_FOOTAGE_INSUFFICIENT', `In-scope windows hold only ${round2(watchable)}s of footage; the requested minimum duration is ${targetDurationMinSec}s. Widen the windows inside the same conflict (or choose a scope whose conflict has enough footage).`);
   }
   if (reel.totalSec > maxScopeReelSec + TIME_EPS) {
-    add('SCOPE_REEL_OVER_BUDGET', `The scope media reel would be ${reel.totalSec}s (windows + ${paddingSec}s padding); the budget is ${maxScopeReelSec}s. Tighten the windows to the causal spine of ONE conflict.`);
+    add('SCOPE_REEL_OVER_BUDGET', `The scope media reel would be ${reel.totalSec}s even after compacting broad windows around their events/quotes (logical footage ${reel.logicalFootageSec}s, ${paddingSec}s context padding); the budget is ${maxScopeReelSec}s. Tighten the windows to the causal spine of ONE conflict.`);
   }
   return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: windows.length, merges: normalization.notes } };
 }
@@ -342,7 +328,9 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
     durationSec: engine.duration || model.durationSec,
     targetDurationMinSec: cfg.targetDurationMinSec || 65,
     maxScopeReelSec: cfg.maxScopeReelSec || DEFAULT_MAX_SCOPE_REEL_SEC,
-    paddingSec: cfg.scopeReelPaddingSec ?? DEFAULT_REEL_PADDING_SEC
+    paddingSec: cfg.scopeReelPaddingSec ?? DEFAULT_REEL_PADDING_SEC,
+    model,
+    maxReelFiles: cfg.maxReelFiles || undefined
   };
   const input = {
     model: modelForScope(model),

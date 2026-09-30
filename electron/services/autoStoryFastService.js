@@ -125,6 +125,14 @@ function highlight(script, story, evidence) {
         source_narrator_detected: s.sourceNarratorPresent, playbackSpeed: 1 };
     }) };
 }
+function tokenTelemetry(meta) {
+  if (!meta || !meta.usage) return {};
+  const u = meta.usage;
+  const n = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+  return { promptTokens: n(u.promptTokenCount), candidatesTokens: n(u.candidatesTokenCount), thoughtsTokens: n(u.thoughtsTokenCount) ?? 0,
+    totalTokens: n(u.totalTokenCount), finishReason: meta.finishReason || '',
+    requestedMaxOutputTokens: meta.requestedMaxOutputTokens ?? null, requestedThinkingBudget: meta.requestedThinkingBudget ?? null };
+}
 class AutoStoryFastService {
   constructor(settings, projectStore, dependencies = {}) {
     this.settings = settings; this.store = projectStore;
@@ -229,7 +237,8 @@ class AutoStoryFastService {
           continue;
         }
         if (/MAX_TOKENS/.test(error.message)) {
-          throw new Error("Vertex AI đã chạm giới hạn sinh nội dung của model (MAX_TOKENS). Auto Story không đặt trần token riêng. JSON chưa hoàn chỉnh được giữ để kiểm tra, không import và không tự gửi lại cùng yêu cầu.");
+          const ceiling = Number(args.maxOutputTokens) > 0 ? `trần kỹ thuật ${Math.round(Number(args.maxOutputTokens))} token của stage` : "giới hạn mặc định của model; Auto Story không đặt trần token riêng";
+          throw new Error(`Vertex AI đã chạm giới hạn sinh nội dung (MAX_TOKENS — ${ceiling}). JSON chưa hoàn chỉnh được giữ để kiểm tra, không import và không tự gửi lại cùng yêu cầu.`);
         }
         if (signal?.aborted || attempt || /403|401|ENOTFOUND|timeout|budget|giới hạn|hard limit/i.test(error.message)) throw error;
         if (invalidResult !== undefined) {
@@ -255,7 +264,9 @@ class AutoStoryFastService {
         usd: cached ? 0 : usage?.estimatedCostUsd ?? null, model: usage?.model || "", error,
         modelMs: cached ? 0 : this.vertex.lastResponseMetadata?.modelMs ?? null,
         prepareMs: cached ? 0 : this.vertex.lastResponseMetadata?.prepareMs ?? null,
-        inputTokens: cached ? 0 : usage?.inputTokens ?? null, outputTokens: cached ? 0 : usage?.outputTokens ?? null });
+        inputTokens: cached ? 0 : usage?.inputTokens ?? null, outputTokens: cached ? 0 : usage?.outputTokens ?? null,
+        // outputTokens (billing) = candidates + thoughts; keep them separable.
+        ...(cached ? {} : tokenTelemetry(this.vertex.lastResponseMetadata)) });
       await this.store.updateProject(this.runWorkspace, this.runProjectId, { autoStoryCosts: summary });
     } catch (e) { this.metricsWarning = e.message; }
   }
@@ -843,4 +854,4 @@ ${JSON.stringify(context)}`;
   }
 }
 module.exports = AutoStoryFastService;
-Object.assign(module.exports, { buildUnits, evidenceRanges, validatePlan, validateEdit, highlight });
+Object.assign(module.exports, { buildUnits, evidenceRanges, validatePlan, validateEdit, highlight, tokenTelemetry });

@@ -29,6 +29,7 @@ const { compileV3 } = require(svc('autoStoryV3Compile.js'));
 const { augmentCoverage } = require(svc('beatCoverageService.js'));
 const durationFit = require(svc('autoStoryDurationFit.js'));
 const SchemaBoundary = require(svc('autoStorySchemaBoundary.js'));
+const Packer = require(svc('scopeReelPacker.js'));
 
 let passed = 0;
 const ok = async (name, fn) => { await fn(); passed++; console.log('  ok -', name); };
@@ -123,7 +124,7 @@ function makeVertex(script) {
         : p.includes('PASS 3 — NARRATION') ? 'narration'
         : p.includes('reviewing a RENDERED edit') ? 'scope_critic'
         : 'other';
-      calls.push({ kind, prompt: p, filePaths: args.filePaths || [] });
+      calls.push({ kind, prompt: p, filePaths: args.filePaths || [], args });
       const handler = script[kind];
       if (!handler) throw new Error(`unscripted provider call: ${kind}`);
       return typeof handler === 'function' ? handler(calls.filter(c => c.kind === kind).length, args) : handler;
@@ -141,7 +142,14 @@ function makeFfmpeg() {
       if (/draft.*\.mp4$/.test(file)) return { duration: 72, width: 1080, height: 1920 };
       throw new Error(`missing ${file}`);
     },
-    createAnalysisProxyChunk: async ({ outputPath, durationSec }) => { await fs.writeFile(outputPath, 'proxy'); durations.set(outputPath, durationSec); }
+    createAnalysisProxyChunk: async ({ outputPath, durationSec }) => { await fs.writeFile(outputPath, 'proxy'); durations.set(outputPath, durationSec); },
+    reels: [],
+    async createScopeReel({ entries, outputPath }) {
+      await fs.writeFile(outputPath, 'reel');
+      const d = entries.reduce((n, e) => n + (e.sourceEndSec - e.sourceStartSec), 0);
+      durations.set(outputPath, d); durations.set(outputPath.replace(/\.\d+\.tmp\.mp4$/, ''), d);
+      this.reels.push(entries); return true;
+    }
   };
 }
 
@@ -167,16 +175,27 @@ function makeService(store, vertex, ffmpeg, dubbing = {}) {
   return s;
 }
 
+async function makeProjectCache(dir) {
+  const base = path.join(dir, '.cineviral', 'auto-story-source');
+  const [hash] = await fs.readdir(base);
+  return path.join(base, hash, 'source-contract-v3');
+}
+
 // Fake engine for unit-level director/scope tests (no disk, no provider).
+const FAKE_CACHE = fsSync.mkdtempSync(path.join(os.tmpdir(), 'scope-cache-'));
 function fakeEngine(asks) {
   return {
     duration: SOURCE_SEC,
+    cache: FAKE_CACHE,
+    project: { sourceVideoPath: '/src/source.mp4' },
+    service: { ffmpeg: makeFfmpeg() },
+    cues: [],
     config: { targetDurationMinSec: 65, targetDurationMaxSec: 90, narration: { enabled: false, measuredWordsPerSecond: 2.5 } },
     prepared: [],
     async prepare(ranges) { this.prepared.push(ranges); return ranges.map((r, i) => ({ id: `clip${i}`, file: `/reel/clip${i}.mp4`, sourceStart: r.sourceStartSec, duration: r.sourceEndSec - r.sourceStartSec, transcript: [] })); },
-    async ask(key, input, schema, instruction, evidence, validate) {
+    async ask(key, input, schema, instruction, evidence, validate, task, options) {
       const r = asks.shift();
-      this.lastAsks = (this.lastAsks || []).concat([{ key, input, instruction, evidence }]);
+      this.lastAsks = (this.lastAsks || []).concat([{ key, input, instruction, evidence, options }]);
       if (!r) throw new Error(`unexpected ask ${key}`);
       const value = typeof r === 'function' ? r(input) : r;
       // Mirror Engine.ask + Service.stage: local JSON-schema check, then the pass
@@ -212,9 +231,11 @@ function fakeEngine(asks) {
     // C: director received video files covering ONLY the scope reel, plus the absolute-time manifest.
     assert.ok(dCall.filePaths.length >= 1, 'director must receive media files');
     const manifest = JSON.parse(dCall.prompt.split('SOURCE MEDIA: ')[1]);
-    assert.ok(manifest.length >= 1 && manifest.every(m => Number.isFinite(m.sourceStartSec) && Number.isFinite(m.sourceEndSec)));
-    assert.ok(manifest.every(m => m.sourceEndSec <= 112 + 1e-6), 'reel stays inside the scope (out-of-scope branch not sent)');
-    assert.ok(!manifest.some(m => m.sourceStartSec < 262 && m.sourceEndSec > 240), 'out-of-scope branch footage is not in the reel');
+    assert.ok(manifest.length >= 1 && manifest.length <= 10 && manifest.every(m => m.composite && m.segments.length >= 1));
+    const segs = manifest.flatMap(m => m.segments);
+    assert.ok(segs.every(g => Number.isFinite(g.sourceStartSec) && Number.isFinite(g.reelStartSec) && g.scopeWindowId));
+    assert.ok(segs.every(g => g.sourceEndSec <= 112 + 1e-6), 'reel stays inside the scope (out-of-scope branch not sent)');
+    assert.ok(!segs.some(g => g.sourceStartSec < 262 && g.sourceEndSec > 240), 'out-of-scope branch footage is not in the reel');
     // Persisted artifacts: scope first-class, canonical spine carries scope + reel.
     const root = path.join(store.getProjectPaths(dir, projectId).analysisDir, 'auto-story-fast');
     const scopeArtifact = JSON.parse(await fs.readFile(path.join(root, 'story-scope.json'), 'utf8'));
@@ -231,7 +252,8 @@ function fakeEngine(asks) {
   });
 
   await ok('A: invalid scope (reel over budget / window outside boundary) goes back to Gemini, never into an EDL', async () => {
-    const bad = scopeCandidate({ scopeWindows: [{ startSec: 2, endSec: 290, purpose: 'core', why: 'everything' }], explicitScopeBoundary: { startSec: 0, endSec: 120, rationale: 'x' } });
+    // 12 short (non-compactable) windows totalling more media than the budget, most outside the boundary.
+    const bad = scopeCandidate({ scopeWindows: Array.from({ length: 12 }, (_, i) => ({ startSec: 2 + i * 24, endSec: 22 + i * 24, purpose: 'core', why: 'x' })), explicitScopeBoundary: { startSec: 0, endSec: 120, rationale: 'x' } });
     const report = Scope.validateStoryScope(bad, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, maxScopeReelSec: 200 });
     const codes = report.violations.map(v => v.code);
     assert.ok(codes.includes('SCOPE_REEL_OVER_BUDGET') && codes.includes('SCOPE_WINDOW_OUTSIDE_BOUNDARY'), codes.join(','));
@@ -244,25 +266,26 @@ function fakeEngine(asks) {
   });
 
   // ---------------------------------------------------------------- Story Scope contract (count limits / normalization / repair)
-  const MAXW = Scope.SCOPE_LIMITS.scopeWindows.max;
+  const MAXE = Scope.SCOPE_LIMITS.candidateEndingEvents.max;
   const nWindows = n => Array.from({ length: n }, (_, i) => ({ windowId: `w${i + 1}`, startSec: 2 + i * 10, endSec: 2 + i * 10 + 8, purposes: ['core'], why: 'x' }));
-  // A generic scope whose windows are spread over a long boundary (valid apart from the count under test).
+  // A generic scope with n logical windows spread over a long boundary.
   const wideScope = (n, extra = {}) => scopeCandidate({
     scopeWindows: nWindows(n), explicitScopeBoundary: { startSec: 0, endSec: 2 + n * 10 + 10, rationale: 'x' },
     causalSpine: [{ eventId: 'e1', sourceStartSec: 2, sourceEndSec: 10 }, { eventId: 'e2', sourceStartSec: 12, sourceEndSec: 20 }],
     candidateEndingEvents: [{ eventId: 'eN', sourceStartSec: 2 + (n - 1) * 10, sourceEndSec: 2 + (n - 1) * 10 + 8, endingType: 'forward_cliffhanger' }], ...extra });
+  const endings = n => Array.from({ length: n }, (_, i) => ({ eventId: `e${i}`, sourceStartSec: 96 + i, sourceEndSec: 97 + i, endingType: 'forward_cliffhanger' }));
 
-  await ok('Scope contract: one source of truth — limit is in the instruction, NOT a schema maxItems, and the validator reports "contains N; maximum M"', async () => {
-    assert.ok(Scope.instruction.includes(`scopeWindows 1-${MAXW}`), 'instruction states the scopeWindows limit');
-    const winSchema = Scope.schemas.storyScope.properties.scopeWindows;
-    assert.strictEqual(winSchema.maxItems, undefined, 'no opaque schema-level array bound');
-    const over = wideScope(MAXW + 1);
+  await ok('Scope contract: limits have one source of truth (instruction + validator, no opaque schema maxItems); "contains N; maximum M"', async () => {
+    assert.ok(Scope.instruction.includes(`candidateEndingEvents 1-${MAXE}`), 'instruction states the limit');
+    assert.ok(Scope.instruction.includes('scopeWindows >= 1 (no count cap)'), 'logical windows are not count-capped');
+    assert.strictEqual(Scope.schemas.storyScope.properties.scopeWindows.maxItems, undefined);
+    assert.strictEqual(Scope.schemas.storyScope.properties.candidateEndingEvents.maxItems, undefined);
+    const over = scopeCandidate({ candidateEndingEvents: endings(MAXE + 1) });
     SchemaBoundary.validate(selection([over]), Scope.schemas.storyScopeSelection); // schema accepts; the validator decides
     const r = Scope.validateStoryScope(over, { durationSec: SOURCE_SEC, targetDurationMinSec: 65 });
-    const v = r.violations.find(x => x.code === 'SCOPE_COUNT_OVER_LIMIT' && x.field === 'scopeWindows');
+    const v = r.violations.find(x => x.code === 'SCOPE_COUNT_OVER_LIMIT' && x.field === 'candidateEndingEvents');
     assert.ok(v, JSON.stringify(r.violations));
-    assert.match(v.message, new RegExp(`scopeWindows contains ${MAXW + 1} unique windows; maximum allowed is ${MAXW}`));
-    assert.strictEqual(r.normalizedScope.scopeWindows.length, MAXW + 1, 'nothing truncated in JS');
+    assert.match(v.message, new RegExp(`candidateEndingEvents contains ${MAXE + 1} items; maximum allowed is ${MAXE}`));
   });
 
   await ok('Scope contract: a range with several roles is ONE window (lossless normalization, counted once)', async () => {
@@ -280,49 +303,261 @@ function fakeEngine(asks) {
     assert.ok(w1.purposeRanges.some(p => p.purpose === 'hook_material' && p.startSec === 60 && p.endSec === 66), 'hook sub-range preserved');
     assert.deepStrictEqual(w2.purposes, ['core', 'ending_material']);
     assert.strictEqual(w1.purpose, 'core', 'primary purpose kept for downstream readers');
-    // Media is identical before/after normalization.
-    assert.deepStrictEqual(Scope.planScopeReel(r.normalizedScope, { durationSec: SOURCE_SEC }).ranges.map(x => [x.sourceStartSec, x.sourceEndSec]),
-      Scope.planScopeReel(dupRoles, { durationSec: SOURCE_SEC }).ranges.map(x => [x.sourceStartSec, x.sourceEndSec]));
+    // No footage is sent twice: media segments never overlap.
+    const segs = Scope.planScopeReel(r.normalizedScope, { durationSec: SOURCE_SEC }).ranges;
+    for (let i = 1; i < segs.length; i++) assert.ok(segs[i].sourceStartSec >= segs[i - 1].sourceEndSec - 1e-6);
   });
 
-  await ok('Scope repair: initial over-limit windows -> repair with explicit count + failing candidate -> valid repair is returned', async () => {
-    const bad = wideScope(MAXW + 1, { storyScopeId: 'scope_over' });
-    const good = wideScope(MAXW, { storyScopeId: 'scope_over' });
+  await ok('Scope repair: initial over-limit -> repair with explicit count + failing candidate -> valid repair is returned', async () => {
+    const bad = scopeCandidate({ storyScopeId: 'scope_over', candidateEndingEvents: endings(MAXE + 1) });
+    const good = scopeCandidate({ storyScopeId: 'scope_over', candidateEndingEvents: endings(MAXE) });
     const engine = fakeEngine([selection([bad]), selection([good])]);
     const out = await Scope.selectStoryScope(engine, MODEL);
-    assert.strictEqual(out.attempts.length, 2);
-    assert.strictEqual(out.attempts[0].valid, false); assert.strictEqual(out.attempts[1].valid, true);
+    assert.deepStrictEqual(out.attempts.map(a => a.valid), [false, true]);
     const repairAsk = engine.lastAsks[1];
     assert.strictEqual(repairAsk.input.failingStoryScopeId, 'scope_over');
-    assert.strictEqual(repairAsk.input.previousSelection.candidates[0].scopeWindows.length, MAXW + 1, 'repair receives the failing candidate');
-    assert.ok(repairAsk.input.violations.some(v => v.field === 'scopeWindows' && v.count === MAXW + 1 && v.max === MAXW));
-    assert.match(repairAsk.instruction, new RegExp(`scopeWindows contains ${MAXW + 1} unique windows; maximum allowed is ${MAXW}`));
+    assert.strictEqual(repairAsk.input.previousSelection.candidates[0].candidateEndingEvents.length, MAXE + 1, 'repair receives the failing candidate');
+    assert.ok(repairAsk.input.violations.some(v => v.field === 'candidateEndingEvents' && v.count === MAXE + 1 && v.max === MAXE));
+    assert.match(repairAsk.instruction, new RegExp(`candidateEndingEvents contains ${MAXE + 1} items; maximum allowed is ${MAXE}`));
     assert.match(repairAsk.instruction, /Returning the same object unchanged will fail again/);
-    assert.strictEqual(out.scope.scopeWindows.length, MAXW, 'the repaired selection replaced the invalid one');
+    assert.strictEqual(out.scope.candidateEndingEvents.length, MAXE, 'the repaired selection replaced the invalid one');
     assert.notStrictEqual(out.attempts[0].selectionFingerprint, out.attempts[1].selectionFingerprint);
   });
 
   await ok('Scope repair: repair #1 still invalid, repair #2 valid -> the SECOND repaired selection is returned', async () => {
-    const bad = wideScope(MAXW + 2, { storyScopeId: 's' });
-    const stillBad = wideScope(MAXW + 1, { storyScopeId: 's' });
-    const good = wideScope(MAXW, { storyScopeId: 's', centralViewerQuestion: 'second repair question' });
+    const bad = scopeCandidate({ storyScopeId: 's', candidateEndingEvents: endings(MAXE + 2) });
+    const stillBad = scopeCandidate({ storyScopeId: 's', candidateEndingEvents: endings(MAXE + 1) });
+    const good = scopeCandidate({ storyScopeId: 's', centralViewerQuestion: 'second repair question' });
     const engine = fakeEngine([selection([bad]), selection([stillBad]), selection([good])]);
     const out = await Scope.selectStoryScope(engine, MODEL);
     assert.deepStrictEqual(out.attempts.map(a => a.valid), [false, false, true]);
     assert.strictEqual(out.scope.centralViewerQuestion, 'second repair question');
-    assert.strictEqual(out.scope.scopeWindows.length, MAXW);
-    assert.strictEqual(engine.lastAsks[2].input.previousSelection.candidates[0].scopeWindows.length, MAXW + 1, 'repair #2 is given repair #1 output');
-    assert.match(engine.lastAsks[2].instruction, new RegExp(`contains ${MAXW + 1} unique windows`));
-    // Exhausted: identical invalid output three times -> STORY_SCOPE_INVALID with the explicit violation.
+    assert.strictEqual(engine.lastAsks[2].input.previousSelection.candidates[0].candidateEndingEvents.length, MAXE + 1, 'repair #2 is given repair #1 output');
+    assert.match(engine.lastAsks[2].instruction, new RegExp(`contains ${MAXE + 1} items`));
     const stuck = fakeEngine([selection([bad]), selection([bad]), selection([bad])]);
     await assert.rejects(Scope.selectStoryScope(stuck, MODEL), e => e.kind === 'STORY_SCOPE_INVALID' && e.details.violations.some(v => /maximum allowed is/.test(v.message)));
   });
 
-  await ok('Scope contract: an unchosen oversized candidate does not block a valid chosen scope', async () => {
-    const engine = fakeEngine([selection([scopeCandidate(), wideScope(MAXW + 3, { storyScopeId: 'alt' })], 'scope_stop_to_detention')]);
+  await ok('Scope contract: an unchosen invalid candidate does not block a valid chosen scope', async () => {
+    const engine = fakeEngine([selection([scopeCandidate(), scopeCandidate({ storyScopeId: 'alt', candidateEndingEvents: endings(MAXE + 3) })], 'scope_stop_to_detention')]);
     const out = await Scope.selectStoryScope(engine, MODEL);
     assert.strictEqual(out.scope.storyScopeId, 'scope_stop_to_detention');
     assert.deepStrictEqual(Scope.alternateScopes(out.selection, 'scope_stop_to_detention', { durationSec: SOURCE_SEC, targetDurationMinSec: 65 }), [], 'invalid alternate is not used');
+  });
+
+  // ---------------------------------------------------------------- media packing (logical windows vs reel files)
+  const MAXF = Packer.PROVIDER_MAX_VIDEO_FILES;
+  await ok('Pack A: 13 logical scopeWindows are a VALID Story Scope (no count cap on editorial windows)', async () => {
+    const r = Scope.validateStoryScope(wideScope(13), { durationSec: SOURCE_SEC, targetDurationMinSec: 65 });
+    assert.ok(r.valid, JSON.stringify(r.violations));
+    assert.strictEqual(r.normalization.uniqueCount, 13);
+    assert.ok(!r.violations.some(v => v.field === 'scopeWindows'));
+  });
+
+  await ok('Pack B/C: 13 logical windows pack into <= provider-limit reel files; manifest maps every segment to exact source time', async () => {
+    const scope = wideScope(13);
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    assert.ok(reel.fileCount <= MAXF, `files ${reel.fileCount}`);
+    assert.strictEqual(reel.logicalWindowCount, 13);
+    assert.strictEqual(new Set(reel.manifest.map(m => m.scopeWindowId)).size, 13, 'every logical window keeps its identity');
+    for (const f of reel.files) {
+      const rows = reel.manifest.filter(m => m.reelFile === f.reelId);
+      let cursor = 0;
+      for (const m of rows) {
+        assert.ok(Math.abs(m.reelStartSec - cursor) < 1e-6, 'segments are contiguous in reel time');
+        assert.ok(Math.abs((m.reelEndSec - m.reelStartSec) - (m.sourceEndSec - m.sourceStartSec)) < 1e-6, 'reel length == source length');
+        const win = scope.scopeWindows.find(w => w.windowId === m.scopeWindowId);
+        assert.ok(m.sourceStartSec <= win.startSec + 1e-6 && m.sourceEndSec >= win.endSec - 1e-6, 'segment covers its whole (uncompacted) window');
+        const mid = (m.reelStartSec + m.reelEndSec) / 2;
+        const back = Packer.reelToSource(reel, f.reelId, mid);
+        assert.strictEqual(back.scopeWindowId, m.scopeWindowId);
+        assert.ok(Math.abs(back.sourceSec - (m.sourceStartSec + (mid - m.reelStartSec))) < 0.01);
+        cursor = m.reelEndSec;
+      }
+      assert.ok(Math.abs(cursor - f.durationSec) < 1e-6);
+    }
+  });
+
+  await ok('Pack D: two distant windows packed into the SAME reel file remain separate logical windows', async () => {
+    const scope = scopeCandidate({ scopeWindows: [{ windowId: 'near', startSec: 10, endSec: 20, purposes: ['core'] }, { windowId: 'far', startSec: 200, endSec: 212, purposes: ['ending_material'] }] });
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC, maxReelFiles: 1 });
+    assert.strictEqual(reel.fileCount, 1);
+    const [a, b] = reel.manifest;
+    assert.deepStrictEqual([a.reelFile, a.scopeWindowId, a.sourceStartSec, a.sourceEndSec], ['reel_01', 'near', 8, 22]);
+    assert.deepStrictEqual([b.reelFile, b.scopeWindowId, b.sourceStartSec, b.sourceEndSec], ['reel_01', 'far', 198, 214]);
+    assert.strictEqual(b.reelStartSec, a.reelEndSec);
+    assert.deepStrictEqual(Packer.reelToSource(reel, 'reel_01', a.reelEndSec + 1), { sourceSec: 199, scopeWindowId: 'far', segmentId: 'far' });
+  });
+
+  await ok('Pack: a broad window is compacted for MEDIA only (event/quote anchored); the logical window is unchanged', async () => {
+    const events = Array.from({ length: 8 }, (_, i) => ({ id: `x${i}`, startSec: 60 + i * 20, endSec: 62 + i * 20 }));
+    const broad = scopeCandidate({ scopeWindows: [{ windowId: 'broad', startSec: 50, endSec: 230, purposes: ['core'] }, { windowId: 'end', startSec: 230, endSec: 240, purposes: ['ending_material'] }],
+      explicitScopeBoundary: { startSec: 0, endSec: 250, rationale: 'x' }, candidateEndingEvents: [{ sourceStartSec: 232, sourceEndSec: 238, endingType: 'forward_cliffhanger' }],
+      causalSpine: [{ eventId: 'x0', sourceStartSec: 60, sourceEndSec: 62 }, { eventId: 'x5', sourceStartSec: 160, sourceEndSec: 162 }] });
+    const reel = Scope.planScopeReel(broad, { durationSec: SOURCE_SEC, maxScopeReelSec: 150, model: { events, quotes: [] } });
+    assert.ok(reel.withinBudget && reel.totalSec <= 150, `media ${reel.totalSec}s`);
+    assert.deepStrictEqual(reel.compactedWindowIds, ['broad']);
+    const parts = reel.manifest.filter(m => m.scopeWindowId === 'broad');
+    assert.ok(parts.length > 1 && parts.every(p => p.compacted && p.windowStartSec === 50 && p.windowEndSec === 230));
+    assert.ok(parts.some(p => p.sourceStartSec <= 50) && parts.some(p => p.sourceEndSec >= 230), 'head and tail context kept');
+    assert.ok(events.every(e => parts.some(p => p.sourceStartSec <= e.startSec && p.sourceEndSec >= e.endSec)), 'every event inside the window is in the media');
+    assert.ok(reel.fileCount <= MAXF);
+    // Without budget pressure the same window is sent whole.
+    assert.deepStrictEqual(Scope.planScopeReel(broad, { durationSec: SOURCE_SEC, model: { events, quotes: [] } }).compactedWindowIds, []);
+    // Validation uses the PACKED media: valid when compaction fits the budget.
+    assert.ok(Scope.validateStoryScope(broad, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, maxScopeReelSec: 150, model: { events, quotes: [] } }).valid);
+  });
+
+  await ok('Pack E/F: director receives <= provider-limit packed files + full manifest; the file limit never caps scope windows', async () => {
+    const scope = wideScope(25, { explicitScopeBoundary: { startSec: 0, endSec: 290, rationale: 'x' } });
+    assert.ok(Scope.validateStoryScope(scope, { durationSec: SOURCE_SEC, targetDurationMinSec: 65 }).valid, 'a 25-window scope is valid');
+    const beats = [
+      beat('b1', 102, 108, { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook' }),
+      ...Array.from({ length: 9 }, (_, i) => beat(`c${i}`, 2 + i * 10, 2 + i * 10 + 8)),
+      beat('end', 242, 250, { narrativeRole: 'cliffhanger', scopeMembership: 'ending' })
+    ];
+    const engine = fakeEngine([{ ...directorEdl(), spine: { ...directorEdl().spine, beats } }]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: { ...scope, candidateEndingEvents: [{ sourceStartSec: 242, sourceEndSec: 250, endingType: 'forward_cliffhanger' }] } });
+    const ask = engine.lastAsks[0];
+    assert.ok(ask.evidence.length <= MAXF && ask.evidence.length >= 1, `files ${ask.evidence.length}`);
+    assert.ok(ask.evidence.every(e => e.composite && e.segments.length >= 1));
+    assert.strictEqual(ask.evidence.reduce((n, e) => n + e.segments.length, 0), 25, 'all 25 windows present across the packed files');
+    assert.strictEqual(ask.input.scopeReelManifest.length, 25, 'full mapping manifest in the director input');
+    assert.ok(ask.input.scopeReelManifest.every(m => m.reelFile && Number.isFinite(m.reelStartSec) && Number.isFinite(m.sourceStartSec) && m.scopeWindowId));
+    assert.strictEqual(out.spine.scopeReel.fileCount, ask.evidence.length);
+    // The provider limit is enforced on reel FILES only.
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    await assert.rejects(Packer.buildReelFiles(engine, { ...reel, fileCount: MAXF + 1, maxReelFiles: MAXF }), /provider limit is 10/);
+  });
+
+  await ok('Pack G: no EDL beat may map outside the original logical scope windows (context padding / compaction gaps are not cuttable)', async () => {
+    const scope = scopeCandidate({ scopeWindows: [{ windowId: 'a', startSec: 10, endSec: 60, purposes: ['core'] }, { windowId: 'z', startSec: 200, endSec: 240, purposes: ['core', 'ending_material'] }],
+      explicitScopeBoundary: { startSec: 0, endSec: 250, rationale: 'x' }, candidateEndingEvents: [{ sourceStartSec: 230, sourceEndSec: 240, endingType: 'forward_cliffhanger' }] });
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    const v = beats => Director.validateDirectorEdl({ beats }, scope, { durationSec: SOURCE_SEC, targetDurationMinSec: 1, targetDurationMaxSec: 300, reel });
+    const hook = beat('h', 20, 26, { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict' });
+    const end = beat('e', 232, 238, { narrativeRole: 'cliffhanger' });
+    assert.ok(v([hook, beat('in', 30, 40), end]).valid, 'inside logical windows is fine');
+    const pad = v([hook, beat('pad', 8, 12), end]); // 8-10 is context padding of window 'a'
+    assert.ok(pad.violations.some(x => x.code === 'OUTSIDE_SCOPE_REEL' && x.beatId === 'pad'));
+    const gap = v([hook, beat('gap', 100, 110), end]); // between windows
+    assert.ok(gap.violations.some(x => x.code === 'OUTSIDE_SCOPE_REEL' && x.beatId === 'gap'));
+    const span = v([hook, beat('span', 55, 205), end]); // spans two distant segments
+    assert.ok(span.violations.some(x => x.code === 'OUTSIDE_SCOPE_REEL' && x.beatId === 'span'));
+  });
+
+  // ---------------------------------------------------------------- duration control (target band, lightweight repair, technical adjustment)
+  const edlOf = beats => ({ ...directorEdl(), spine: { ...directorEdl().spine, beats } });
+  const hookB = (s, e) => beat('h', s, e, { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook' });
+  const endB = (s, e) => beat('end', s, e, { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2' });
+  // 64.6s, inside the scope windows, with free watched footage next to several beats.
+  const edl646 = () => edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 79.6), endB(98, 106)]);
+
+  await ok('Duration A: director aims at Story Scope targetDurationSec (75, derived) band 72-78; a 59s EDL is repaired toward ~75s, not 65s', async () => {
+    const t = Director.durationTargets(scopeCandidate(), { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
+    assert.deepStrictEqual([t.hardMinSec, t.hardMaxSec, t.targetDurationSec, t.targetBandMinSec, t.targetBandMaxSec], [65, 90, 75, 72, 78]);
+    assert.strictEqual(Director.durationTargets(scopeCandidate({ targetDurationSec: 82 }), {}).targetDurationSec, 82, 'derived from the scope, not hardcoded');
+    assert.strictEqual(Director.durationTargets(scopeCandidate({ targetDurationSec: 60 }), {}).targetDurationSec, 70, 'clamped into the hard range with margin');
+    const e59 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 74), endB(98, 106)]); // 59s
+    const e75 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 84), endB(96, 110)]); // 75s, same beats
+    const engine = fakeEngine([e59, e75]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
+    assert.strictEqual(Director.timelineSec(out.spine.beats), 75);
+    assert.strictEqual(out.spine.directorMeta.attempts[1].mode, 'duration_lightweight');
+    const first = engine.lastAsks[0].input;
+    assert.deepStrictEqual([first.targetDurationSec, first.targetBandMinSec, first.targetBandMaxSec, first.targetDurationMinSec, first.targetDurationMaxSec], [75, 72, 78, 65, 90]);
+    assert.match(Director.instruction, /do NOT aim at its minimum/);
+    const rep = engine.lastAsks[1];
+    const v = rep.input.violations.find(x => x.code === 'TOTAL_DURATION_UNDER_MIN');
+    assert.deepStrictEqual([v.currentDurationSec, v.minimumDurationSec, v.targetDurationSec, v.missingToMinimumSec, v.missingToTargetSec], [59, 65, 75, 6, 16]);
+    assert.match(v.message, /Do not add only 6s — repair toward approximately 75s/);
+    assert.strictEqual(rep.input.durationRepair.targetDurationSec, 75);
+  });
+
+  await ok('Duration B: 64.6s, duration is the ONLY violation, safe contiguous watched footage -> technical adjustment >= 65s, no further Gemini call', async () => {
+    const engine = fakeEngine([edl646()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
+    assert.strictEqual(engine.lastAsks.length, 1, 'no second (media or text) Gemini call');
+    const adj = out.spine.technicalDurationAdjustment;
+    assert.ok(adj && adj.addedSec === 0.4 && Math.abs(adj.newEndSec - adj.oldEndSec - 0.4) < 1e-9 && adj.sourceWindowId, JSON.stringify(adj));
+    assert.ok(Director.timelineSec(out.spine.beats) >= 65 - 1e-9);
+    assert.ok(out.spine.directorMeta.attempts[0].technicalDurationAdjustment.beatId === adj.beatId);
+    const b = out.spine.beats.find(x => x.beatId === adj.beatId);
+    assert.deepStrictEqual([b.sourceStartSec, b.sourceEndSec], [adj.newStartSec, adj.newEndSec]);
+  });
+
+  // Scope whose first two windows are tiled exactly by the EDL (no contiguous room anywhere),
+  // plus a third in-scope window the director already watched but did not use.
+  const tightScope = () => scopeCandidate({
+    scopeWindows: [{ windowId: 'A', startSec: 10, endSec: 40, purposes: ['core'] }, { windowId: 'B', startSec: 50, endSec: 84.6, purposes: ['core', 'ending_material'] }, { windowId: 'C', startSec: 120, endSec: 140, purposes: ['core'] }],
+    explicitScopeBoundary: { startSec: 0, endSec: 150, rationale: 'x' },
+    causalSpine: [{ eventId: 'e2', sourceStartSec: 20, sourceEndSec: 30 }, { eventId: 'e4', sourceStartSec: 60, sourceEndSec: 80 }],
+    candidateEndingEvents: [{ sourceStartSec: 70, sourceEndSec: 84.6, endingType: 'forward_cliffhanger' }] });
+  const tiled = () => edlOf([hookB(10, 20), beat('a', 20, 40), endB(50, 84.6)]); // 64.6s, every edge blocked
+
+  await ok('Duration C: 64.6s with no safe contiguous extension -> lightweight text-only duration repair (no media re-upload)', async () => {
+    const fixed = edlOf([hookB(10, 20), beat('a', 20, 40), beat('x', 120, 130), endB(50, 84.6)]);
+    const engine = fakeEngine([tiled(), fixed]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: tightScope() });
+    const rep = engine.lastAsks[1];
+    assert.ok(/_duration1$/.test(rep.key), rep.key);
+    assert.deepStrictEqual(rep.evidence, [], 'no video re-uploaded for a duration-only repair');
+    assert.strictEqual(rep.instruction, Director.DURATION_REPAIR_INSTRUCTION);
+    assert.ok(rep.input.currentEdl && rep.input.cuttableRanges.length === 3 && rep.input.scopeReelManifest.length >= 3);
+    assert.strictEqual(rep.input.durationRepair.missingToTargetSec, 10.4);
+    assert.strictEqual(out.spine.directorMeta.attempts[0].technicalDurationAdjustment.applied, false);
+    assert.strictEqual(out.spine.directorMeta.attempts[1].mode, 'duration_lightweight');
+    assert.strictEqual(out.spine.directorMeta.attempts[1].mediaFiles, 0);
+    assert.strictEqual(Director.timelineSec(out.spine.beats), 74.6);
+    // A lightweight repair that reorders/removes existing beats is rejected.
+    const reordered = edlOf([hookB(10, 20), endB(50, 84.6), beat('a', 20, 40), beat('x', 120, 130)]);
+    const bad = Director.storyPreservationViolations(tiled().spine, reordered.spine);
+    assert.ok(bad.some(v => v.code === 'DURATION_REPAIR_REORDERED'));
+    assert.ok(Director.storyPreservationViolations(tiled().spine, edlOf([hookB(10, 20), endB(50, 84.6)]).spine).some(v => v.code === 'DURATION_REPAIR_REMOVED_BEATS'));
+  });
+
+  await ok('Duration D: 64.6s + another violation (OUTSIDE_SCOPE_REEL) -> NO technical adjustment; full multimodal repair', async () => {
+    const withOutside = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('bad', 242, 254.6), endB(98, 106)]); // 64.6s
+    const engine = fakeEngine([withOutside, directorEdl()]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
+    const a0 = out.spine.directorMeta.attempts[0];
+    assert.ok(a0.violations.some(v => v.code === 'OUTSIDE_SCOPE_REEL') && a0.violations.some(v => v.code === 'TOTAL_DURATION_UNDER_MIN'));
+    assert.strictEqual(a0.technicalDurationAdjustment, undefined);
+    assert.ok(/_fix1$/.test(engine.lastAsks[1].key) && engine.lastAsks[1].evidence.length > 0, 'multimodal repair with the reel media');
+  });
+
+  await ok('Duration E/F: technical adjustment never crosses a logical window / watched segment, never overlaps another beat', async () => {
+    const scope = tightScope();
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    // E: every beat edge sits on its window edge or on another beat -> refused.
+    const e = Director.technicalDurationAdjustment(tiled().spine, reel, { hardMinSec: 65, durationSec: SOURCE_SEC });
+    assert.strictEqual(e.applied, false, JSON.stringify(e));
+    // E: room exists only by crossing into the gap/next window (40->40.4 is padding, not window) -> refused.
+    const crossing = edlOf([hookB(10.4, 20), beat('a', 20, 40), endB(50, 84.6)]).spine; // 64.2s: needs 0.8s, only 0.4 in-window
+    assert.strictEqual(Director.technicalDurationAdjustment(crossing, reel, { hardMinSec: 65, durationSec: SOURCE_SEC }).applied, false);
+    // F: in-window room exists only by overlapping a neighbour -> refused; with room elsewhere it picks that.
+    const f = edlOf([hookB(10, 20), beat('a', 20.2, 40), endB(50, 84.6)]).spine; // 64.4s, gap 20-20.2 is 0.2 only
+    assert.strictEqual(Director.technicalDurationAdjustment(f, reel, { hardMinSec: 65, durationSec: SOURCE_SEC }).applied, false);
+    // Deficit > 1.0s is never technical.
+    const big = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 78.5), endB(98, 106)]).spine; // 63.5s
+    assert.match(Director.technicalDurationAdjustment(big, Scope.planScopeReel(scopeCandidate(), { durationSec: SOURCE_SEC }), { hardMinSec: 65 }).reason, /exceeds 1s/);
+    // A successful adjustment stays inside its window and touches no other range.
+    const ok1 = Director.technicalDurationAdjustment(edl646().spine, Scope.planScopeReel(scopeCandidate(), { durationSec: SOURCE_SEC }), { hardMinSec: 65, durationSec: SOURCE_SEC });
+    assert.ok(ok1.applied);
+    const moved = ok1.spine.beats.find(b => b.beatId === ok1.adjustment.beatId);
+    const win = scopeCandidate().scopeWindows.find(w => moved.sourceStartSec >= w.startSec && moved.sourceEndSec <= w.endSec);
+    assert.ok(win, 'adjusted beat still inside one logical window');
+    for (const o of ok1.spine.beats) if (o !== moved && o.beatId !== 'b5' && o.beatId !== 'h') assert.ok(Math.min(o.sourceEndSec, moved.sourceEndSec) - Math.max(o.sourceStartSec, moved.sourceStartSec) <= 0);
+  });
+
+  await ok('Duration G: the 65-90s hard acceptance range is unchanged', async () => {
+    const scope = scopeCandidate();
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    const total = beats => Director.validateDirectorEdl({ beats }, scope, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, targetDurationMaxSec: 90, reel }).violations.map(v => v.code);
+    assert.ok(total(edl646().spine.beats).includes('TOTAL_DURATION_UNDER_MIN'), '64.6s is still rejected');
+    assert.ok(!total(directorEdl().spine.beats).some(c => c.startsWith('TOTAL_DURATION')), '72s accepted');
+    const d = Director.durationTargets(scope, { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
+    assert.deepStrictEqual([d.hardMinSec, d.hardMaxSec], [65, 90]);
   });
 
   // ---------------------------------------------------------------- D
@@ -528,6 +763,149 @@ function fakeEngine(asks) {
     }
     assert.strictEqual(Pipeline.editorialArchitecture({ autoStoryContractVersion: 4 }), Pipeline.SCOPE_MEDIA_DIRECTOR);
     assert.strictEqual(Pipeline.editorialArchitecture({ autoStoryContractVersion: 3 }), 'legacy_text_design');
+  });
+
+
+  // ---------------------------------------------------------------- director output fuse (MAX_TOKENS)
+  const prose = (n, seed) => `${seed} ` + 'the officer keeps pressing the driver about the open container on the seat'.slice(0, n);
+  const normalEdl = () => {
+    const out = directorEdl();
+    // ~14 beats x ~1k chars ≈ 3.5-4k tokens: the size of real, valid director EDLs.
+    const spans = [[60, 66], [4, 8], [8, 12], [16, 20], [20, 24], [24, 30], [36, 40], [40, 45], [45, 50], [58, 60], [67, 72], [72, 78], [78, 82], [98, 106]];
+    out.spine.beats = spans.map(([a, b], i) => beat(`b${i + 1}`, a, b, {
+      ...(i === 0 ? { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook', payoffTiming: 'part_2' } : {}),
+      ...(i === 1 ? { chronologyMode: 'rewind', narrativeRole: 'rewind_context' } : {}),
+      ...(i === spans.length - 1 ? { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2', isForwardConsequence: true, expectedNextConsequence: 'detention' } : {}),
+      observedInFootage: prose(150, `b${i + 1} seen`), viewerStateBefore: prose(70, 'before'), viewerStateAfter: prose(110, 'after'),
+      newInformation: prose(90, 'info'), whyNecessaryNow: prose(120, 'needed') }));
+    return out;
+  };
+
+  await ok('Output fuse 1: a normal ~4k-token director JSON still parses, validates and is classified complete', async () => {
+    const edl = normalEdl();
+    const text = JSON.stringify(edl, null, 2);
+    assert.ok(text.length > 11000 && text.length < 20000, `fixture size ${text.length}`);
+    SchemaBoundary.validate(JSON.parse(text), Director.schemas.directorEdl);
+    Director.validateShape(JSON.parse(text));
+    assert.strictEqual(Director.diagnoseDirectorOutput(text).classification, 'complete_json');
+    const engine = fakeEngine([edl]);
+    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
+    assert.strictEqual(out.spine.beats.length, 14);
+    assert.ok(Director.timelineSec(out.spine.beats) >= 65);
+  });
+
+  await ok('Output fuse 2: every director call carries an explicit finite output ceiling (12k-16k) and explicit thinking budget', async () => {
+    assert.ok(Number.isFinite(Director.DIRECTOR_MAX_OUTPUT_TOKENS) && Director.DIRECTOR_MAX_OUTPUT_TOKENS >= 12000 && Director.DIRECTOR_MAX_OUTPUT_TOKENS <= 16000);
+    assert.strictEqual(Director.DIRECTOR_THINKING_BUDGET, 0);
+    // multimodal + lightweight duration repair both carry the fuse.
+    const e59 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 74), endB(98, 106)]);
+    const e75 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 84), endB(96, 110)]);
+    const engine = fakeEngine([e59, e75]);
+    await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
+    assert.strictEqual(engine.lastAsks.length, 2);
+    for (const a of engine.lastAsks) assert.deepStrictEqual(a.options, { maxOutputTokens: Director.DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: 0 }, a.key);
+    // End-to-end: the ceiling reaches the provider request.
+    const { dir, store, projectId } = await makeProject();
+    const vertex = makeVertex({ scope: selection(), director: directorEdl() });
+    await Pipeline.run(makeService(store, vertex, makeFfmpeg()), { workspaceRoot: dir, projectId, onProgress: () => {} });
+    const d = vertex.calls.find(c => c.kind === 'director');
+    assert.strictEqual(d.args.maxOutputTokens, Director.DIRECTOR_MAX_OUTPUT_TOKENS);
+    assert.strictEqual(d.args.thinkingBudget, 0);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  await ok('Output fuse 3: a MAX_TOKENS director response is never imported, never resent, raw kept, telemetry split', async () => {
+    const { dir, store, projectId } = await makeProject();
+    const loop = 'The officer walks to the car because the call came in first. '.repeat(400);
+    const raw = `{"accessGranted": true, "reelObservations": "x", "spine": {"centralViewerQuestion": "q", "hookPromise": "p", "beats": [{"beatId": "b1", "sourceStartSec": 4, "sourceEndSec": 14, "whyNecessaryNow": "${loop}`;
+    const vertex = makeVertex({ scope: selection(), director: () => {
+      vertex.lastResponseText = raw;
+      vertex.lastResponseMetadata = { finishReason: 'MAX_TOKENS', model: 'gemini-test', requestedMaxOutputTokens: 16000, requestedThinkingBudget: 0, modelMs: 1,
+        usage: { promptTokenCount: 45000, candidatesTokenCount: 16000, totalTokenCount: 61000 } };
+      vertex.lastUsage = { model: 'gemini-test', inputTokens: 45000, outputTokens: 16000, estimatedCostUsd: 0.05 };
+      throw new Error('Vertex AI không hoàn tất response: MAX_TOKENS');
+    } });
+    const service = makeService(store, vertex, makeFfmpeg());
+    let res, thrown;
+    try { res = await Pipeline.run(service, { workspaceRoot: dir, projectId, onProgress: () => {} }); } catch (e) { thrown = e; }
+    const failure = thrown || res.failures?.[0];
+    assert.ok(failure, 'the run must fail');
+    assert.strictEqual(failure.kind, 'DIRECTOR_OUTPUT_LIMIT', `${failure.kind}: ${failure.message || failure.error}`);
+    assert.strictEqual(vertex.calls.filter(c => c.kind === 'director').length, 1, 'the same multimodal request is not resent');
+    assert.ok(!vertex.calls.some(c => ['scope_critic', 'narration'].includes(c.kind)), 'nothing downstream ran on a partial EDL');
+    const root = path.join(store.getProjectPaths(dir, projectId).analysisDir, 'auto-story-fast');
+    assert.ok(!fsSync.existsSync(path.join(root, 'story-spine.json')) || JSON.parse(await fs.readFile(path.join(root, 'story-spine.json'), 'utf8')).spines.length === 0, 'no spine imported');
+    const cacheDir = (await makeProjectCache(dir));
+    const files = await fs.readdir(cacheDir);
+    assert.ok(files.includes('v5-editorial-director-1-raw-response.txt'), 'raw response preserved');
+    assert.ok(!files.some(f => /^v5-editorial-director-1-[0-9a-f]{20}\.json$/.test(f)), 'partial JSON never cached as a result');
+    const details = failure.details || {};
+    const diag = details.diagnosis || details.failures?.[0]?.details?.diagnosis;
+    assert.strictEqual(diag?.classification, 'repetition_loop', JSON.stringify(Object.keys(details)));
+    const costs = JSON.parse(await fs.readFile(path.join(root, 'run-costs.json'), 'utf8')).entries.find(e => e.stage === 'v5-editorial-director-1');
+    assert.deepStrictEqual([costs.promptTokens, costs.candidatesTokens, costs.thoughtsTokens, costs.totalTokens, costs.finishReason, costs.requestedMaxOutputTokens],
+      [45000, 16000, 0, 61000, 'MAX_TOKENS', 16000]);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  await ok('Output fuse 4: a huge / repeated response fails fast (diagnosed; a closed looping string is rejected without repair)', async () => {
+    const sentence = 'The officer approaches the house as the next action after the call. ';
+    const truncated = `{"accessGranted": true, "spine": {"beats": [{"beatId": "b1", "whyNecessaryNow": "short."}, {"beatId": "b2", "whyNextFollows": "${sentence.repeat(3000)}`;
+    const d = Director.diagnoseDirectorOutput(truncated);
+    assert.deepStrictEqual([d.classification, d.beatIdCount, d.longestString.key, d.endsInsideString], ['repetition_loop', 2, 'whyNextFollows', true]);
+    assert.ok(d.topRepeatedSentence.count >= 2999 && d.head.length <= 160 && d.tail.length <= 160, 'compact stats only');
+    const runaway = `{"spine": {"beats": [${Array.from({ length: 60 }, (_, i) => `{"beatId": "b${i}", "newInformation": "fact ${i} about beat number ${i}."}`).join(',')}`;
+    assert.strictEqual(Director.diagnoseDirectorOutput(runaway).classification, 'runaway_beats');
+    // A loop that happened to close under the ceiling is not imported and not sent back for repair.
+    const closed = directorEdl();
+    closed.spine.beats[2].whyNecessaryNow = sentence.repeat(60);
+    const engine = fakeEngine([closed, directorEdl()]);
+    await assert.rejects(Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() }), e => e.kind === 'DIRECTOR_OUTPUT_DEGENERATE');
+    assert.strictEqual(engine.lastAsks.length, 1, 'no repair call re-feeding the loop');
+    // MAX_TOKENS surfacing from the provider -> typed failure, one call only.
+    const eng2 = fakeEngine([() => { throw new Error('Vertex AI đã chạm giới hạn sinh nội dung (MAX_TOKENS — trần kỹ thuật 16000 token của stage).'); }]);
+    eng2.service.vertex = { lastResponseText: truncated, lastResponseMetadata: { finishReason: 'MAX_TOKENS', requestedMaxOutputTokens: 16000, requestedThinkingBudget: 0,
+      usage: { promptTokenCount: 45668, candidatesTokenCount: 16000, totalTokenCount: 61668 } } };
+    await assert.rejects(Director.directEdl(eng2, { model: MODEL, scope: scopeCandidate() }), e => e.kind === 'DIRECTOR_OUTPUT_LIMIT'
+      && e.details.telemetry.candidatesTokenCount === 16000 && e.details.telemetry.thoughtsTokenCount === 0 && e.details.diagnosis.classification === 'repetition_loop');
+    assert.strictEqual(eng2.lastAsks.length, 1);
+  });
+
+  await ok('Output fuse 5: telemetry separates prompt / candidate / thinking / total tokens and finishReason', async () => {
+    const t = Service.tokenTelemetry({ finishReason: 'STOP', requestedMaxOutputTokens: 16000, requestedThinkingBudget: 512,
+      usage: { promptTokenCount: 45582, candidatesTokenCount: 3649, thoughtsTokenCount: 700, totalTokenCount: 49931 } });
+    assert.deepStrictEqual(t, { promptTokens: 45582, candidatesTokens: 3649, thoughtsTokens: 700, totalTokens: 49931, finishReason: 'STOP', requestedMaxOutputTokens: 16000, requestedThinkingBudget: 512 });
+    assert.strictEqual(Service.tokenTelemetry({ usage: { promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3 } }).thoughtsTokens, 0, 'absent thoughts = 0, not collapsed');
+    assert.deepStrictEqual(Service.tokenTelemetry(null), {});
+  });
+
+  await ok('Output fuse 6: compact contract keeps every field downstream uses; drops only the unused whyNextFollows', async () => {
+    const b = Director.schemas.directorBeat;
+    const consumed = ['beatId', 'sourceStartSec', 'sourceEndSec', 'chronologyMode', 'narrativeRole', 'audioMode', 'scopeMembership', 'observedInFootage', 'newInformation', 'whyNecessaryNow', 'viewerStateBefore', 'viewerStateAfter'];
+    for (const k of consumed) assert.ok(b.required.includes(k), `required ${k}`);
+    for (const k of ['narrationIntent', 'narratorFunction', 'wantsNarration', 'payoffTiming', 'isForwardConsequence', 'expectedNextConsequence', 'cliffhangerQuestion', 'whyCutHere']) assert.ok(b.properties[k], `optional ${k}`);
+    assert.ok(!b.properties.whyNextFollows, 'whyNextFollows is not consumed by any validator, critic, repair or compiler');
+    const electronDir = path.join(__dirname, '..', 'electron');
+    const users = fsSync.readdirSync(electronDir, { recursive: true }).filter(f => String(f).endsWith('.js')).filter(f => fsSync.readFileSync(path.join(electronDir, f), 'utf8').includes('whyNextFollows'));
+    assert.deepStrictEqual(users, [], `still referenced in ${users}`);
+    assert.strictEqual(Director.schemas.directorSpine.properties.beats.maxItems, 40, 'beat ceiling unchanged (no editorial beat-count rule)');
+    assert.doesNotMatch(Director.instruction, /13[-–]16 beats|\b1[3-6] beats\b/);
+    assert.match(Director.instruction, /ONE short sentence/);
+    assert.match(Director.instruction, /The JSON you return is final/);
+    assert.doesNotMatch(Director.instruction + Director.DURATION_REPAIR_INSTRUCTION, /Before answering, add up|adjust until|step by step|think/i);
+  });
+
+  await ok('Output fuse 7: duration targeting stays 72-78 for a 75s scope; grounding + duration validators unchanged', async () => {
+    const t = Director.durationTargets(scopeCandidate(), { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
+    assert.deepStrictEqual([t.hardMinSec, t.hardMaxSec, t.targetDurationSec, t.targetBandMinSec, t.targetBandMaxSec], [65, 90, 75, 72, 78]);
+    const scope = scopeCandidate();
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    const v = beats => Director.validateDirectorEdl({ beats }, scope, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, targetDurationMaxSec: 90, reel, preferredDurationSec: 75 });
+    assert.ok(v(directorEdl().spine.beats).valid);
+    assert.ok(v(edl646().spine.beats).violations.some(x => x.code === 'TOTAL_DURATION_UNDER_MIN'));
+    assert.ok(v([...directorEdl().spine.beats.slice(0, 5), beat('bad', 242, 250), directorEdl().spine.beats[5]]).violations.some(x => x.code === 'OUTSIDE_SCOPE_REEL'));
+    const noObs = directorEdl().spine.beats.map((b, i) => i === 2 ? { ...b, observedInFootage: '' } : b);
+    assert.ok(v(noObs).violations.some(x => x.code === 'BEAT_NOT_GROUNDED'));
   });
 
   // ---------------------------------------------------------------- overfitting guard

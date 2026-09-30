@@ -80,6 +80,13 @@ async function main() {
     .map(f => ({ f, m: fs.statSync(f).mtimeMs })).sort((a, b) => a.m - b.m).map(x => x.f);
   const finalMp4 = mp4s[mp4s.length - 1] || null;
   const finalDuration = finalMp4 ? probe(finalMp4) : null;
+  const costs = await readJson(path.join(A, 'run-costs.json'));
+  const directorCalls = (costs?.entries || []).filter(e => /^v5-editorial-director/.test(e.stage || '')).map(e => ({ stage: e.stage, cached: !!e.cached,
+    promptTokens: e.promptTokens ?? e.inputTokens ?? null, candidatesTokens: e.candidatesTokens ?? null, thoughtsTokens: e.thoughtsTokens ?? null,
+    totalTokens: e.totalTokens ?? null, maxOutputTokens: e.requestedMaxOutputTokens ?? null, thinkingBudget: e.requestedThinkingBudget ?? null,
+    finishReason: e.finishReason || '', modelMs: e.modelMs ?? null, usd: e.usd ?? null, error: e.error || '' }));
+  const directorAttempts = (spine?.directorMeta?.attempts || []).map(a => ({ attempt: a.attempt, mode: a.mode, valid: a.valid, mediaFiles: a.mediaFiles,
+    totalSec: a.metrics?.totalSec ?? null, violations: (a.violations || []).map(v => v.code), technicalDurationAdjustment: a.technicalDurationAdjustment || null }));
 
   const summary = {
     generatedAt: new Date().toISOString(), runtimeError: runtimeError?.message || null,
@@ -87,6 +94,7 @@ async function main() {
     editorialContract: spine?.editorialContract || null,
     finalEdl: (spine?.beats || []).map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec, dur: +(b.sourceEndSec - b.sourceStartSec).toFixed(2),
       chronologyMode: b.chronologyMode, narrativeRole: b.narrativeRole, scopeMembership: b.scopeMembership, audioMode: b.audioMode, observedInFootage: b.observedInFootage, whyNecessaryNow: b.whyNecessaryNow })),
+    directorCalls, directorAttempts, edlBeatCount: (spine?.beats || []).length,
     edlTotalSec: +((spine?.beats || []).reduce((n, b) => n + (b.sourceEndSec - b.sourceStartSec), 0)).toFixed(2),
     finalMp4, finalDuration, allMp4s: mp4s.map(f => ({ f, duration: probe(f) })),
     review: review ? { verdict: review.finalCheck?.verdict, repairPasses: review.repairPasses ?? 0, metrics: review.metrics, issues: review.finalCheck?.issues } : null,
@@ -98,7 +106,9 @@ async function main() {
   log(`Story Scope: ${summary.storyScope?.storyScopeId} — ${summary.storyScope?.centralViewerQuestion}`);
   log(`Boundary: ${JSON.stringify(summary.storyScope?.explicitScopeBoundary)}`);
   console.table(summary.finalEdl.map(({ observedInFootage, whyNecessaryNow, ...r }) => r));
-  log(`EDL total ${summary.edlTotalSec}s | final MP4 ${finalMp4} (${finalDuration}s) | verdict ${summary.review?.verdict} | repairs ${summary.review?.repairPasses}`);
+  if (directorCalls.length) console.table(directorCalls.map(({ error, ...r }) => r));
+  if (directorAttempts.length) log(`Director repair path: ${directorAttempts.map(a => `${a.mode}${a.valid ? '✓' : `✗(${a.violations.join('+')})`}`).join(' -> ')}`);
+  log(`EDL beats ${summary.edlBeatCount} | EDL total ${summary.edlTotalSec}s | final MP4 ${finalMp4} (${finalDuration}s) | verdict ${summary.review?.verdict} | repairs ${summary.review?.repairPasses}`);
   log(`Summary written: ${out}`);
   const inRange = finalDuration >= 65 && finalDuration <= 90;
   console.log(!runtimeError && finalMp4 && inRange ? 'BENCHMARK RUN COMPLETE (review story quality with the comparison step)' : `BENCHMARK RUN INCOMPLETE — ${runtimeError?.message || `duration ${finalDuration}s`}`);

@@ -1037,6 +1037,40 @@ class FfmpegService {
     ], { captureStdout: false });
   }
 
+  // Composite scope reel for the Editorial Director: several (possibly distant)
+  // source ranges cut from the original video into ONE low-res file, each segment
+  // with its absolute SOURCE clock burned in. Returns true if the clock overlay was
+  // rendered, false if this ffmpeg build could not draw text (plain fallback).
+  async createScopeReel({ videoPath, entries, outputPath, fps = 4, width = 640 }) {
+    const meta = await this.probeVideo(videoPath);
+    const w = Math.max(2, Math.round(width / 2) * 2);
+    const fontArg = process.platform === "win32" ? "fontfile='C\\:/Windows/Fonts/arial.ttf':" : "";
+    const build = clock => {
+      const args = ["-y"], filters = [];
+      let inputs = "";
+      entries.forEach((e, i) => {
+        const d = Math.max(0.25, Number(e.sourceEndSec) - Number(e.sourceStartSec));
+        args.push("-ss", String(Math.max(0, Number(e.sourceStartSec))), "-t", String(d), "-i", videoPath);
+        const draw = clock ? `,drawtext=${fontArg}text='SOURCE %{pts\\:hms\\:${Number(e.sourceStartSec)}}':x=8:y=8:fontsize=22:fontcolor=yellow:box=1:boxcolor=black@0.6` : "";
+        filters.push(`[${i}:v]scale=${w}:-2,setsar=1,fps=${Math.max(1, Number(fps))},setpts=PTS-STARTPTS${draw},tpad=stop_mode=clone:stop_duration=${d},trim=duration=${d}[v${i}]`);
+        const audio = meta.hasAudio ? `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,asetpts=PTS-STARTPTS,apad` : "anullsrc=r=48000:cl=stereo";
+        filters.push(`${audio},atrim=duration=${d}[a${i}]`);
+        inputs += `[v${i}][a${i}]`;
+      });
+      filters.push(`${inputs}concat=n=${entries.length}:v=1:a=1[v][a]`);
+      args.push("-filter_complex", filters.join(";"), "-map", "[v]", "-map", "[a]",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "32", "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart", outputPath);
+      return args;
+    };
+    try {
+      await this.run(this.ffmpegPath, build(true), { captureStdout: false });
+      return true;
+    } catch (_) {
+      await this.run(this.ffmpegPath, build(false), { captureStdout: false });
+      return false;
+    }
+  }
+
   async createAutoStoryEvidenceReel(entries, outputPath) {
     const args = ["-y"], filters = [];
     let inputs = "";

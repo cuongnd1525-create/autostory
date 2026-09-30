@@ -39,5 +39,10 @@ async function prepare(service, project, cache, ranges, evidence, duration, cues
   return preparedEvidence;
 }
 // The model sees the source clock, not an offset conversion instruction.
-function manifest(evidence) { return evidence.map(e => { const start = e.sourceStart ?? e.sourceStartSec; const end = start + (e.duration ?? (e.sourceEndSec - e.sourceStartSec)); return { file: e.file ? path.basename(e.file) : e.id, sourceStartSec: start, sourceEndSec: end, transcript: e.transcript }; }); }
+function manifest(evidence) { return evidence.map(e => {
+  // Composite reel (several source ranges in one file): expose the exact
+  // reel-time -> source-time mapping per segment instead of a single range.
+  if (Array.isArray(e.segments) && e.composite) return { file: e.file ? path.basename(e.file) : e.id, composite: true, reelDurationSec: e.duration,
+    sourceClockBurned: e.sourceClockBurned !== false, segments: e.segments, transcript: e.transcript };
+  const start = e.sourceStart ?? e.sourceStartSec; const end = start + (e.duration ?? (e.sourceEndSec - e.sourceStartSec)); return { file: e.file ? path.basename(e.file) : e.id, sourceStartSec: start, sourceEndSec: end, transcript: e.transcript }; }); }
 module.exports = { prepare, manifest, merge };
