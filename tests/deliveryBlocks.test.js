@@ -300,7 +300,8 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
       assert.ok(Critic.ISSUE_TYPES.includes(t), t);
     }
     const tl = [{ beatId: 'n1', outputStartSec: 6, outputEndSec: 11 }, { beatId: 'r1', outputStartSec: 22, outputEndSec: 36 }];
-    const base = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, observedStory: '', summary: '' };
+    const base = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, observedStory: '', summary: '',
+      openingCuriosity: { firstSecondsDescription: 'x', createsCuriosity: true }, transitions: [], finalSeconds: { visualDescription: 'clear', subjectClearlyVisible: true } };
     const n = Critic.normalizeCritique({ ...base, coldViewerCanFollow: true, issues: [{ type: 'weak_narrator_to_raw_handoff', severity: 'blocking', outputStartSec: 20, outputEndSec: 24, evidence: 'x', whyItFails: 'y' }] }, { durationSec: 60, timeline: tl, deliveryAware: true });
     assert.strictEqual(n.isCompliant, false);
     assert.ok(n.weakRegions[0].deliveryIssue && n.weakRegions[0].beatIds.includes('r1'));
@@ -308,12 +309,128 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
     const lost = Critic.normalizeCritique({ ...base, coldViewerCanFollow: false, coldViewerNotes: 'who is talking at 22s?', issues: [] }, { durationSec: 60, timeline: tl, deliveryAware: true });
     assert.strictEqual(lost.isCompliant, false);
     assert.strictEqual(lost.issues[0].derivedFromVerdict, 'coldViewerCanFollow');
-    assert.strictEqual(Critic.normalizeCritique({ ...base, issues: [] }, { durationSec: 60, timeline: tl, deliveryAware: true }).status, 'MEDIA_CRITIC_INVALID');
+    const { coldViewerCanFollow: _c, ...noCold } = { ...base, coldViewerCanFollow: true };
+    assert.strictEqual(Critic.normalizeCritique({ ...noCold, issues: [] }, { durationSec: 60, timeline: tl, deliveryAware: true }).status, 'MEDIA_CRITIC_INVALID');
     const prompt = Critic.buildPrompt({ storyScope: {}, beats: [{ beatId: 'n1' }, { beatId: 'r1' }] }, tl, 60,
       [{ blockId: 'story_setup', mode: 'narrated_story', beatIds: ['n1'], outputStartSec: 6, outputEndSec: 22, narrationText: PASSAGE }]);
     assert.match(prompt, /INTENDED DELIVERY/);
     assert.match(prompt, /who is speaking,\s*why we moved here,\s*what changed,\s*and why the next raw clip matters/);
     assert.match(prompt, /NARRATOR \(voiceover\): "Officers were responding/);
+  });
+
+
+  // ---------------------------------------------------------------- delivery planning contracts (no heuristics)
+  const selfChecked = blocks => blocks.map(b => ({ ...b, blockSummary: `${b.blockId} in one sentence`, viewerStateChanges: 1, ownershipReason: 'why this owner' }));
+  const transitionsFor = blocks => blocks.slice(1).map((b, i) => ({ fromBlockId: blocks[i].blockId, toBlockId: b.blockId, coldViewerUnderstandsWhy: true, howTheViewerKnows: 'the picture shows it' }));
+  const opening = chosen => ({ chronologicalOption: 'open on the call', conflictTeaserOption: 'open on the confrontation, then rewind', chosen, why: 'curiosity' });
+  const directorV = (beats, blocks, extra = {}) => Director.validateDirectorEdl({ beats, deliveryBlocks: blocks, transitionChecks: transitionsFor(blocks),
+    openingStrategy: opening(beats[0].chronologyMode === 'teaser' ? 'conflict_teaser_rewind' : 'chronological'), ...extra }, null,
+    { durationSec: 300, targetDurationMinSec: 1, targetDurationMaxSec: 300, requireDeliveryBlocks: true });
+  const deliveryCodes = r => r.violations.map(v => v.code).filter(c => /DELIVERY|TRANSITION|OPENING|NARRAT/.test(c));
+
+  await ok('Planning: the Director may legally choose ALL raw_evidence when justified (no narrator quota)', async () => {
+    const allRaw = selfChecked([{ blockId: 'all', mode: 'raw_evidence', beatIds: BEATS.map(b => b.beatId), storyFunction: 'story', evidenceFunction: 'the real exchange' }]);
+    assert.deepStrictEqual(deliveryCodes(directorV(BEATS, allRaw)), []);
+  });
+
+  await ok('Planning: the Director may legally choose MANY narrated blocks (no count / share limit)', async () => {
+    const many = selfChecked(BEATS.map((b, i) => (i % 2
+      ? { blockId: `n${i}`, mode: 'narrated_story', beatIds: [b.beatId], storyFunction: 's', narrationIntent: 'orient', narratorFunction: 'CONTEXT', sourceAudioTreatment: 'voiceover_with_ambient' }
+      : { blockId: `r${i}`, mode: 'raw_evidence', beatIds: [b.beatId], storyFunction: 's', evidenceFunction: 'proof' })));
+    many[1] = { ...many[1], beatIds: ['n1', 'n2', 'n3'] }; many.splice(2, 2);
+    assert.deepStrictEqual(deliveryCodes(directorV(BEATS, many)), []);
+  });
+
+  await ok('Planning: block-level density + ownership self-check is required and structural only', async () => {
+    const blocks = selfChecked(BLOCKS());
+    const missing = blocks.map((b, i) => (i === 2 ? { ...b, blockSummary: '', viewerStateChanges: undefined } : b));
+    assert.ok(deliveryCodes(directorV(BEATS, missing)).includes('DELIVERY_BLOCK_SELF_CHECK_MISSING'));
+    // Any honest count is legal; JS does not second-guess it with a duration rule.
+    const long = selfChecked([{ blockId: 'all', mode: 'raw_evidence', beatIds: BEATS.map(b => b.beatId), storyFunction: 's', evidenceFunction: 'x' }]).map(b => ({ ...b, viewerStateChanges: 1 }));
+    assert.deepStrictEqual(deliveryCodes(directorV(BEATS, long)), []);
+    assert.match(Director.instruction, /BLOCK-LEVEL DENSITY/);
+    assert.match(Director.instruction, /WHOLE block in one sentence/);
+    assert.match(Director.instruction, /genuinely new viewer-state changes/);
+    assert.match(Director.instruction, /keep only the strongest real quote\(s\)/);
+    assert.match(Director.instruction, /Or is it mostly explanation or backstory that narration could compress\?/);
+  });
+
+  await ok('Planning: opening strategy comparison is required; the chosen option must match the first beat; no mandatory teaser', async () => {
+    assert.match(Director.instruction, /OPENING STRATEGY \(spine\.openingStrategy\) — compare BOTH/);
+    assert.match(Director.instruction, /chronologicalOption/); assert.match(Director.instruction, /conflictTeaserOption/);
+    assert.match(Director.instruction, /neither is preferred by default/);
+    const blocks = selfChecked(BLOCKS());
+    // Chronological opening (first beat not a teaser) is legal.
+    const chrono = BEATS.map((b, i) => (i === 0 ? { ...b, chronologyMode: 'chronological', narrativeRole: 'hook' } : b));
+    assert.deepStrictEqual(deliveryCodes(directorV(chrono, blocks)), []);
+    // Teaser opening is legal too.
+    assert.deepStrictEqual(deliveryCodes(directorV(BEATS, blocks)), []);
+    // Declared strategy must match what was cut.
+    assert.ok(deliveryCodes(directorV(chrono, blocks, { openingStrategy: opening('conflict_teaser_rewind') })).includes('OPENING_STRATEGY_INCONSISTENT'));
+    assert.ok(deliveryCodes(directorV(BEATS, blocks, { openingStrategy: { chosen: 'chronological' } })).includes('OPENING_COMPARISON_MISSING'));
+    assert.doesNotMatch(Director.instruction, /must (open|start|begin) with a teaser|always (open|start) with/i);
+  });
+
+  await ok('Planning: no narrator quota, no block-count rule, no source-time jump threshold in prompts or validators', async () => {
+    const text = [Director.instruction, Director.repairInstruction('critic'), Director.DURATION_REPAIR_INSTRUCTION, Director.DURATION_COMPRESSION_INSTRUCTION, BlockNarration.INSTRUCTION].join('\n');
+    assert.doesNotMatch(text, /at least \d+\s*%|\d+\s*% of (the )?(video|timeline|runtime)|minimum (narrat|narrator)|must contain (a|one|at least) narrated/i);
+    assert.doesNotMatch(text, /\b\d+\s*(s|sec|seconds)\b[^.\n]{0,40}\b(jump|gap)\b|\b(jump|gap)\b[^.\n]{0,40}\b\d+\s*(s|sec|seconds)\b/i);
+    assert.doesNotMatch(text, /exactly \d+ (delivery )?blocks|at most \d+ (delivery )?blocks|max(imum)? raw|max(imum)? same.speaker/i);
+    // A 10-minute source jump inside a raw block is not rejected by JS: the Director's own transition answer decides.
+    const far = [BEATS[0], { ...BEATS[1], sourceStartSec: 700, sourceEndSec: 705 }, ...BEATS.slice(2)];
+    assert.deepStrictEqual(deliveryCodes(directorV(far, selfChecked(BLOCKS()))), []);
+  });
+
+  await ok('Planning: every block boundary gets a transition answer; a boundary the Director says is not understood goes back for a delivery change', async () => {
+    const blocks = selfChecked(BLOCKS());
+    assert.ok(deliveryCodes(directorV(BEATS, blocks, { transitionChecks: [] })).includes('TRANSITION_CHECK_MISSING'));
+    const lost = transitionsFor(blocks).map((t, i) => (i === 1 ? { ...t, coldViewerUnderstandsWhy: false } : t));
+    const r = directorV(BEATS, blocks, { transitionChecks: lost });
+    const v = r.violations.find(x => x.code === 'TRANSITION_NOT_UNDERSTOOD');
+    assert.ok(v && v.blockIds.join() === 'story_setup,raw_door', JSON.stringify(v));
+    assert.match(Director.instruction, /could a cold viewer understand why the next scene is being shown/);
+    assert.match(Director.instruction, /not from how far apart the timestamps are/);
+  });
+
+  await ok('Critic: prompt inspects the last 3-5 seconds VISUALLY and every transition; transcript is not evidence', async () => {
+    const Critic = require(svc('scopeMediaCriticService.js'));
+    const prompt = Critic.buildPrompt({ storyScope: {}, beats: [{ beatId: 'a' }] }, [{ beatId: 'a', outputStartSec: 0, outputEndSec: 10 }], 10, null);
+    assert.match(prompt, /LOOK at the picture of the last 3-5 seconds itself/);
+    assert.match(prompt, /The transcript or a resolved story is NOT evidence that the picture is usable/);
+    assert.match(prompt, /list EVERY major visual, time, place or perspective change/);
+    assert.match(prompt, /do not rely on the transcript flowing on/);
+    assert.match(prompt, /opening curiosity/);
+    assert.match(prompt, /whether an explanatory raw stretch should have been compressed/);
+    for (const k of ['openingCuriosity', 'transitions', 'finalSeconds']) assert.ok(Critic.responseSchema.required.includes(k), k);
+  });
+
+  await ok('Critic: visual evidence overrides a story-level PASS; transition / opening findings map to delivery blocks for repair', async () => {
+    const Critic = require(svc('scopeMediaCriticService.js'));
+    const tl = [{ beatId: 'h', outputStartSec: 0, outputEndSec: 6, deliveryBlockId: 'raw_hook' }, { beatId: 'r1', outputStartSec: 22, outputEndSec: 36, deliveryBlockId: 'raw_door' },
+      { beatId: 'end', outputStartSec: 48, outputEndSec: 60, deliveryBlockId: 'raw_end' }];
+    const pass = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '',
+      observedStory: 'resolved', summary: '', issues: [], openingCuriosity: { firstSecondsDescription: 'officer walks up a path', createsCuriosity: true },
+      transitions: [{ outputSec: 22, change: 'time', whatViewerSeesAndHears: 'suddenly inside a different room', coldViewerUnderstandsWhy: false }],
+      finalSeconds: { visualDescription: 'the lens is covered by an arm; nothing readable', subjectClearlyVisible: false } };
+    const n = Critic.normalizeCritique(pass, { durationSec: 60, timeline: tl, deliveryAware: true });
+    assert.strictEqual(n.isCompliant, false);
+    assert.strictEqual(n.finalFootageUsable, false, 'finalSeconds visual judgment overrides finalFootageUsable=true');
+    assert.strictEqual(n.finalFootageUsableReported, true);
+    assert.strictEqual(n.coldViewerCanFollow, false, 'a transition not understood makes coldViewerCanFollow false');
+    const jump = n.issues.find(i => i.type === 'unexplained_time_jump');
+    assert.ok(jump && jump.beatIds.includes('r1') && jump.derivedFromVerdict === 'transitions');
+    assert.ok(n.issues.some(i => i.type === 'unusable_footage' && i.beatIds.includes('end') && /lens is covered/.test(i.whyItFails)));
+    // Repair targeting: weak regions carry the delivery block ids (as critiqueScopedRender adds).
+    const blockIds = r => [...new Set(tl.filter(t => r.beatIds.includes(t.beatId)).map(t => t.deliveryBlockId))];
+    assert.deepStrictEqual(blockIds(n.weakRegions.find(r => r.type === 'unexplained_time_jump')), ['raw_door']);
+    const dull = Critic.normalizeCritique({ ...pass, transitions: [], finalSeconds: { visualDescription: 'clear', subjectClearlyVisible: true }, openingCuriosity: { firstSecondsDescription: 'walking', createsCuriosity: false } },
+      { durationSec: 60, timeline: tl, deliveryAware: true });
+    assert.ok(dull.issues.some(i => i.type === 'opening_lacks_curiosity' && i.beatIds.includes('h')));
+    assert.ok(Critic.DELIVERY_ISSUES.has('opening_lacks_curiosity'));
+    // The critic-repair instruction lets the Director repair ownership AND unusable endings.
+    const rep = Director.repairInstruction('critic');
+    assert.match(rep, /deliveryBlockIds/); assert.match(rep, /raw_evidence \/ narrated_story ownership/);
+    assert.match(rep, /replace the ending with another in-scope ending candidate/); assert.match(rep, /shorten the ending beat to a visually usable endpoint/);
   });
 
   console.log(`\n${passed} passed`);

@@ -99,11 +99,16 @@ function autoBlocks(beats) {
     const last = blocks[blocks.length - 1];
     if (last && last.mode === mode && (mode === 'raw_evidence' || last.sourceAudioTreatment === b.audioMode)) { last.beatIds.push(b.beatId); continue; }
     blocks.push({ blockId: `blk${blocks.length + 1}`, mode, beatIds: [b.beatId], storyFunction: b.narrativeRole,
+      blockSummary: `block around ${b.beatId}`, viewerStateChanges: 1, ownershipReason: mode === 'raw_evidence' ? 'the real exchange is the proof' : 'orients the viewer',
       ...(mode === 'narrated_story' ? { sourceAudioTreatment: b.audioMode, narratorFunction: 'CONTEXT', narrationIntent: b.narrationIntent || 'orient the viewer' } : { evidenceFunction: 'the real moment' }) });
   }
   return blocks;
 }
-const withBlocks = edl => ({ ...edl, spine: { ...edl.spine, deliveryBlocks: autoBlocks(edl.spine.beats) } });
+const transitionsFor = blocks => blocks.slice(1).map((b, i) => ({ fromBlockId: blocks[i].blockId, toBlockId: b.blockId, coldViewerUnderstandsWhy: true, howTheViewerKnows: 'the dialogue continues the confrontation' }));
+const openingFor = beats => ({ chronologicalOption: 'open on the stop itself', conflictTeaserOption: 'open on the denial at the window, then rewind',
+  chosen: beats[0]?.chronologyMode === 'teaser' ? 'conflict_teaser_rewind' : 'chronological', why: 'stronger immediate curiosity' });
+const withBlocks = edl => { const deliveryBlocks = autoBlocks(edl.spine.beats);
+  return { ...edl, spine: { ...edl.spine, deliveryBlocks, transitionChecks: transitionsFor(deliveryBlocks), openingStrategy: openingFor(edl.spine.beats) } }; };
 // A valid 72s director EDL: teaser from later in scope, rewind, chronological, ending.
 function directorEdl({ beats } = {}) {
   return withBlocks(directorEdlNoBlocks({ beats }));
@@ -749,6 +754,7 @@ function fakeEngine(asks) {
       renderHighlightFastDraft: async () => { const f = path.join(p.dir, `draft-${renderedFiles.length + 2}.mp4`); await fs.writeFile(f, 'mp4'); renderedFiles.push(f); return { outputPath: f }; }
     };
     const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
+      openingCuriosity: { firstSecondsDescription: 'the denial at the window', createsCuriosity: true }, transitions: [], finalSeconds: { visualDescription: 'driver in cuffs, clearly lit', subjectClearlyVisible: true },
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
     const clean = { ...blocking, issues: [], summary: 'coherent' };
     const repairedEdl = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b4' ? { ...b, sourceStartSec: 38, sourceEndSec: 54 } : b)) });
@@ -833,6 +839,8 @@ function fakeEngine(asks) {
       observedInFootage: prose(150, `b${i + 1} seen`), viewerStateBefore: prose(70, 'before'), viewerStateAfter: prose(110, 'after'),
       newInformation: prose(90, 'info'), whyNecessaryNow: prose(120, 'needed') }));
     out.spine.deliveryBlocks = autoBlocks(out.spine.beats);
+    out.spine.transitionChecks = transitionsFor(out.spine.deliveryBlocks);
+    out.spine.openingStrategy = openingFor(out.spine.beats);
     return out;
   };
 

@@ -84,12 +84,23 @@ const directorBeat = flexible({
   whyCutHere: text
 });
 
+// Opening self-check: both openings are considered before the first beat is chosen.
+const OPENING_STRATEGIES = ['chronological', 'conflict_teaser_rewind'];
+const openingStrategy = flexible({
+  chronologicalOption: text,
+  conflictTeaserOption: text,
+  chosen: choice(...OPENING_STRATEGIES),
+  why: text
+});
+
 const directorSpine = flexible({
   centralViewerQuestion: text,
   hookPromise: text,
   hookStrategy: text,
+  openingStrategy,
   reason: text,
-  beats: list(directorBeat, 40)
+  beats: list(directorBeat, 40),
+  transitionChecks: list(Delivery.transitionCheckSchema, 40)
 }, {
   // Required by validateDirectorEdl (not by the transport schema) so a missing
   // layer is reported with a precise, repairable message.
@@ -135,6 +146,22 @@ DELIVERY BLOCKS (spine.deliveryBlocks) — the audio-ownership layer over your b
 - A narrated block needs enough seconds for its whole passage (input.narrationWordsPerSecond words per second when given, otherwise about 2.5). The narration text itself is written later from your narrationIntent.
 - Each beat's audio follows its block; you do not need to set beat audioMode.
 - If input.narrationEnabled is false, every block must be raw_evidence.
+- A block must not hide a change of scene, time or perspective: put a block boundary where the viewer's sense of where/when/whose account changes, so the transition is visible and can be judged.
+
+DELIVERY SELF-CHECK (answer in the block fields before finalizing spine.deliveryBlocks; the goal is correct ownership, not more or less narration).
+- For every raw_evidence block (ownershipReason): does the viewer need to HEAR this material directly — proof, emotion, confrontation, reaction, authenticity? Or is it mostly explanation or backstory that narration could compress? If several consecutive raw beats do the same explanatory job, keep only the strongest real quote(s) and let a narrated_story block carry the connective information.
+- For every narrated_story block (ownershipReason): what comprehension, compression or orientation does the narrator add, and which real moment does it set up or hand off to?
+- BLOCK-LEVEL DENSITY, not per beat: blockSummary = the WHOLE block in one sentence; viewerStateChanges = how many genuinely new viewer-state changes happen across the whole block. Distinct lines are not distinct changes. A long block whose sentences all serve one explanatory function should be compressed editorially: fewer, stronger raw beats, or narration.
+- An all-raw EDL is legitimate when every stretch truly needs the real audio; many narrated blocks are legitimate when the story needs orientation. Decide from the material.
+
+TRANSITIONS (spine.transitionChecks, one per boundary between consecutive blocks).
+- For each boundary answer: could a cold viewer understand why the next scene is being shown (coldViewerUnderstandsWhy) and how they know (howTheViewerKnows: the picture, the dialogue, or the narration)? Judge from what the viewer sees and hears, not from how far apart the timestamps are.
+- If the honest answer is no, fix it before returning: change delivery ownership, narrationIntent or the block boundary. Do not return coldViewerUnderstandsWhy=false.
+
+OPENING STRATEGY (spine.openingStrategy) — compare BOTH before choosing the first beat:
+1. chronologicalOption: open at the start of the causal spine — what the first seconds show and how much immediate curiosity that creates.
+2. conflictTeaserOption: open on the strongest conflict moment inside the scope (e.g. input.storyScope hook_material) as a teaser, then rewind — which moment, what curiosity it creates, and whether it would spend input.storyScope.mustWithhold or confuse the causal order.
+Choose (chosen) whichever creates the stronger immediate curiosity while preserving mustWithhold and causal clarity; neither is preferred by default. why = the reason. hookStrategy must describe the chosen opening. A conflict_teaser_rewind opening starts with a 'teaser' beat; a chronological opening does not.
 
 HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
 - An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must not spend input.storyScope.mustWithhold.
@@ -158,7 +185,8 @@ ${payload.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\
   return `TARGETED EDITORIAL REPAIR — the RENDERED video of your EDL was watched by a media critic, who found the problems listed in input.criticFindings. Each has an output-time region and the beat ids it maps to (input.weakRegions).
 - Return the COMPLETE repaired EDL.
 - Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order).
-- Delivery findings (who owns the audio) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent for the weak regions. Keep every other block as it was. Return deliveryBlocks covering every beat.
+- Delivery findings (who owns the audio; input.weakRegions[].deliveryBlockIds) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent, and the weak-region beats themselves (e.g. compress an explanatory raw stretch to its strongest quote plus narration). Keep every unaffected block as it was. Return deliveryBlocks and transitionChecks covering every block.
+- Unusable final footage (unusable_footage at the end): replace the ending with another in-scope ending candidate (input.storyScope.candidateEndingEvents or an ending_material window) whose picture is clearly observable, or shorten the ending beat to a visually usable endpoint.
 - Stay inside input.storyScope. Replacement footage must come from the attached scope reel. Do not introduce a new branch of the incident to fill time.
 - Keep the total duration inside input.targetDurationMinSec..input.targetDurationMaxSec.`;
 }
@@ -293,6 +321,11 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
     violations.push(...blockViolations);
     if (!blockViolations.length) audioBeats = Delivery.applyDeliveryBlocks(beats, spine.deliveryBlocks);
   }
+  if (requireDeliveryBlocks) {
+    violations.push(...Delivery.validateDeliveryBlocks(beats, spine?.deliveryBlocks, { narrationEnabled, requireSelfCheck: true }).filter(v => v.code === 'DELIVERY_BLOCK_SELF_CHECK_MISSING'));
+    violations.push(...Delivery.validateTransitionChecks(spine?.deliveryBlocks, spine?.transitionChecks));
+    violations.push(...openingViolations(spine, beats));
+  }
 
   beats.forEach((b, i) => {
     const id = b.beatId || `#${i}`;
@@ -354,6 +387,24 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   }
 
   return { valid: violations.length === 0, violations, metrics: { totalSec: round2(total), beatCount: beats.length } };
+}
+
+// Structural consistency of the Director's own opening comparison (no teaser rule).
+function openingViolations(spine, beats) {
+  const o = spine?.openingStrategy;
+  const out = [];
+  if (!o || !String(o.chronologicalOption || '').trim() || !String(o.conflictTeaserOption || '').trim() || !OPENING_STRATEGIES.includes(o.chosen)) {
+    out.push({ code: 'OPENING_COMPARISON_MISSING', message: 'spine.openingStrategy must describe BOTH the chronological opening and the conflict-first teaser + rewind opening, and name the chosen one.' });
+    return out;
+  }
+  const first = beats[0];
+  if (o.chosen === 'conflict_teaser_rewind' && first?.chronologyMode !== 'teaser') {
+    out.push({ code: 'OPENING_STRATEGY_INCONSISTENT', message: `openingStrategy.chosen is conflict_teaser_rewind but the first beat '${first?.beatId}' is not a 'teaser' beat.`, beatId: first?.beatId });
+  }
+  if (o.chosen === 'chronological' && first?.chronologyMode === 'teaser') {
+    out.push({ code: 'OPENING_STRATEGY_INCONSISTENT', message: `openingStrategy.chosen is chronological but the first beat '${first?.beatId}' is a teaser.`, beatId: first?.beatId });
+  }
+  return out;
 }
 
 // Scope-local slice of the Source Story Model: only what the reel covers.
@@ -494,7 +545,7 @@ You already watched the scope reel in a previous pass. What you saw is recorded 
 The EDL is story-complete and media-grounded. ONLY its total duration is wrong — see input.durationRepair (currentDurationSec, minimumDurationSec, targetDurationSec, missingToMinimumSec, missingToTargetSec) and input.violations.
 Return the COMPLETE EDL with its total inside input.targetBandMinSec..input.targetBandMaxSec, preferably about input.targetDurationSec. Do not repair only to the hard minimum.
 Allowed: lengthen existing beats inside the cuttable range that already contains them, and/or add beats from footage inside input.cuttableRanges that you already observed. Prefer recovering material you already watched next to existing beats.
-Not allowed: footage outside input.cuttableRanges, overlapping another beat's source range, reordering or removing existing beats, new branches of the incident, or any change to the Story Scope. Keep beatIds, order and roles of existing beats. Return spine.deliveryBlocks covering every beat, including any beat you add (a new beat joins a block next to it, or gets its own).
+Not allowed: footage outside input.cuttableRanges, overlapping another beat's source range, reordering or removing existing beats, new branches of the incident, or any change to the Story Scope. Keep beatIds, order and roles of existing beats. Return spine.deliveryBlocks covering every beat, including any beat you add (a new beat joins a block next to it, or gets its own), and spine.transitionChecks for every boundary between consecutive blocks.
 Every beat keeps observedInFootage and whyNecessaryNow. Plan the beat lengths so their sum lands in the band; the JSON you return is final (no arithmetic, drafts or repeated text inside any field). Set accessGranted=true once you have read the EDL.`;
 
 // OVER_MAX is COMPRESSION, a different operation from UNDER_MIN extension: the
@@ -508,7 +559,7 @@ input.durationCompression gives the exact numbers: currentDurationSec, maximumDu
 Allowed: shorten an existing beat by trimming its start and/or its end INSIDE its current range; remove an existing beat that is redundant or least necessary to the central conflict.
 Not allowed: new beats or new beatIds, moving any sourceStartSec earlier or any sourceEndSec later, new source material, reordering the surviving beats, any change to the Story Scope.
 You decide what deserves time. Keep the moments that carry the central conflict; cut repetition, restated arguments, redundant context and slack inside long beats. The first beat keeps its hook role and the final beat remains the ending.
-Surviving beats keep beatId, order and role; observedInFootage must still describe the trimmed range; every beat stays at least 1 second. Return spine.deliveryBlocks for the surviving beats (drop removed beatIds; keep each surviving beat in its block).
+Surviving beats keep beatId, order and role; observedInFootage must still describe the trimmed range; every beat stays at least 1 second. Return spine.deliveryBlocks for the surviving beats (drop removed beatIds; keep each surviving beat in its block) and spine.transitionChecks for every boundary between the resulting consecutive blocks.
 FINAL TIMELINE DURATION = sum(sourceEndSec - sourceStartSec) over every returned beat. The JSON you return is final: no arithmetic, drafts or repeated text inside any field. Set accessGranted=true once you have read the EDL.`;
 
 const COMPRESSION_EPS_SEC = 0.05;   // float/rounding tolerance on a range edge
@@ -765,5 +816,5 @@ module.exports = {
   directEdl, repairEdl, repairTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, beatBudget, compressionViolations, compressionReminder,
-  deliveryBeats, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
+  deliveryBeats, openingViolations, OPENING_STRATEGIES, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };

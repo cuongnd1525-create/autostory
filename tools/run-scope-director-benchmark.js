@@ -116,6 +116,17 @@ async function main() {
   const summary = {
     generatedAt: new Date().toISOString(), runtimeError: runtimeError?.message || null,
     deliveryBlocks: deliveryReport,
+    deliveryPlanning: (() => {
+      const blocksById = new Map((spine?.deliveryBlocks || []).map(b => [b.blockId, b]));
+      const sum = mode => +deliveryReport.filter(b => b.mode === mode).reduce((n, b) => n + Number(b.durationSec || 0), 0).toFixed(2);
+      const raws = deliveryReport.filter(b => b.mode === 'raw_evidence').sort((a, b) => b.durationSec - a.durationSec);
+      const longest = raws[0] ? { ...raws[0], blockSummary: blocksById.get(raws[0].blockId)?.blockSummary || '', viewerStateChanges: blocksById.get(raws[0].blockId)?.viewerStateChanges ?? null,
+        ownershipReason: blocksById.get(raws[0].blockId)?.ownershipReason || '' } : null;
+      return { openingStrategy: spine?.openingStrategy || null, hookStrategy: spine?.hookStrategy || '',
+        blockSequence: deliveryReport.map(b => `${b.mode === 'narrated_story' ? 'N' : 'R'}:${b.blockId}(${Number(b.durationSec).toFixed(1)}s)`).join(' -> '),
+        narratedSec: sum('narrated_story'), rawSec: sum('raw_evidence'), longestRawBlock: longest,
+        directorTransitionChecks: spine?.transitionChecks || [] };
+    })(),
     storyScope: scope?.chosen || null, scopeReel: scope?.reel || null, scopeCandidates: (scope?.candidates || []).map(c => ({ id: c.storyScopeId, question: c.centralViewerQuestion, boundary: c.explicitScopeBoundary })),
     editorialContract: spine?.editorialContract || null,
     finalEdl: (spine?.beats || []).map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec, dur: +(b.sourceEndSec - b.sourceStartSec).toFixed(2),
@@ -125,7 +136,9 @@ async function main() {
     finalMp4, finalDuration, allMp4s: mp4s.map(f => ({ f, duration: probe(f) })),
     review: review ? { verdict: review.finalCheck?.verdict, repairPasses: review.repairPasses ?? 0, metrics: review.metrics, issues: review.finalCheck?.issues } : null,
     lastCritic: lastAudit ? { scopeSurvived: lastAudit.scopeSurvived, centralQuestionActiveThroughout: lastAudit.centralQuestionActiveThroughout, endingIsConsequence: lastAudit.endingIsConsequence,
-      finalFootageUsable: lastAudit.finalFootageUsable, coldViewerCanFollow: lastAudit.coldViewerCanFollow ?? null, coldViewerNotes: lastAudit.coldViewerNotes || '',
+      finalFootageUsable: lastAudit.finalFootageUsable, finalFootageUsableReported: lastAudit.finalFootageUsableReported ?? null, finalSeconds: lastAudit.finalSeconds || null,
+      openingCuriosity: lastAudit.openingCuriosity || null, transitions: lastAudit.transitions || [],
+      coldViewerCanFollow: lastAudit.coldViewerCanFollow ?? null, coldViewerNotes: lastAudit.coldViewerNotes || '',
       deliveryIssues: lastAudit.deliveryIssues || [], observedStory: lastAudit.observedStory, issues: lastAudit.issues } : null
   };
   const out = path.join(A, 'benchmark-summary.json');
@@ -135,6 +148,10 @@ async function main() {
   console.table(summary.finalEdl.map(({ observedInFootage, whyNecessaryNow, ...r }) => r));
   if (directorCalls.length) console.table(directorCalls.map(({ error, ...r }) => r));
   if (directorAttempts.length) log(`Director repair path: ${directorAttempts.map(a => `${a.mode}[${a.totalSec}s/${a.beatCount} beats${a.requiredReductionToMaximumSec !== undefined ? `; from ${a.compressedFromSec}s must cut >=${a.requiredReductionToMaximumSec}s, prefer ~${a.preferredReductionToTargetSec}s` : ''}]${a.valid ? '✓' : `✗(${a.violations.join('+')})`}`).join(' -> ')}`);
+  const dp = summary.deliveryPlanning;
+  log(`Opening: ${dp.openingStrategy?.chosen || '?'} — ${dp.hookStrategy}`);
+  log(`Delivery: ${dp.blockSequence} | narrated ${dp.narratedSec}s, raw ${dp.rawSec}s | longest raw ${dp.longestRawBlock ? `${dp.longestRawBlock.blockId} ${dp.longestRawBlock.durationSec}s (${dp.longestRawBlock.viewerStateChanges} changes): ${dp.longestRawBlock.blockSummary}` : '-'}`);
+  if (summary.lastCritic) log(`Critic: coldViewerCanFollow=${summary.lastCritic.coldViewerCanFollow} finalFootageUsable=${summary.lastCritic.finalFootageUsable} (reported ${summary.lastCritic.finalFootageUsableReported}) transitions=${(summary.lastCritic.transitions || []).map(t => `${t.outputSec}s:${t.change}:${t.coldViewerUnderstandsWhy ? 'ok' : 'LOST'}`).join(', ')}`);
   if (deliveryReport.length) console.table(deliveryReport.map(b => ({ blockId: b.blockId, mode: b.mode, beats: b.beatIds.join(','), out: `${Number(b.outputStartSec).toFixed(1)}-${Number(b.outputEndSec).toFixed(1)}`,
     rawTts: b.rawTtsSec, fitted: b.fittedTtsSec, fit: b.fitRatio, audio: b.sourceAudioTreatment })));
   log(`EDL beats ${summary.edlBeatCount} | EDL total ${summary.edlTotalSec}s | final MP4 ${finalMp4} (${finalDuration}s) | verdict ${summary.review?.verdict} | repairs ${summary.review?.repairPasses}`);

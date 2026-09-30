@@ -25,7 +25,8 @@ const ISSUE_TYPES = [
   'narration_underused',           // the viewer is lost where one narrated passage would orient them
   'narration_overwrites_evidence', // narration talks over / paraphrases a moment that should speak for itself
   'weak_narrator_to_raw_handoff',  // the narrator does not set up why the next real moment matters
-  'weak_raw_to_narrator_handoff'   // coming out of a real moment, the narrator does not connect it forward
+  'weak_raw_to_narrator_handoff',  // coming out of a real moment, the narrator does not connect it forward
+  'opening_lacks_curiosity'        // the first seconds give a cold viewer no reason to keep watching
 ];
 const DELIVERY_ISSUES = new Set(ISSUE_TYPES.slice(ISSUE_TYPES.indexOf('unbridged_perspective_shift')));
 
@@ -38,6 +39,18 @@ const responseSchema = object({
   observedStory: { type: 'string' },
   coldViewerCanFollow: { type: 'boolean' },
   coldViewerNotes: { type: 'string' },
+  // Delivery pass: explicit, visual judgments (not inferred from the transcript).
+  openingCuriosity: object({ firstSecondsDescription: { type: 'string' }, createsCuriosity: { type: 'boolean' } }),
+  transitions: {
+    type: 'array',
+    items: object({
+      outputSec: { type: 'number' },
+      change: { type: 'string', enum: ['scene', 'time', 'place', 'perspective'] },
+      whatViewerSeesAndHears: { type: 'string' },
+      coldViewerUnderstandsWhy: { type: 'boolean' }
+    })
+  },
+  finalSeconds: object({ visualDescription: { type: 'string' }, subjectClearlyVisible: { type: 'boolean' } }),
   issues: {
     type: 'array',
     items: object({
@@ -114,10 +127,12 @@ Answer from what you actually SEE and HEAR:
 1. scopeSurvived: does the rendered video tell this one mini-story?
 2. centralQuestionActiveThroughout: does the viewer question stay open and relevant from start to end?
 3. endingIsConsequenceOfCentralConflict: is the ending a payoff, or a named forward consequence, of this conflict (not a new question from another branch)?
-4. finalFootageUsable: is the final footage clearly observable?
+4. finalFootageUsable: LOOK at the picture of the last 3-5 seconds itself. Is the subject/action clearly visible, or is the frame blocked, dark, covered, pointed away or unreadable? Describe what you literally see there in finalSeconds.visualDescription and set finalSeconds.subjectClearlyVisible. The transcript or a resolved story is NOT evidence that the picture is usable.
 5. issues: every genuine problem, with its output-time region: ${ISSUE_TYPES.join(', ')}. 'blocking' means a viewer would lose the story or feel it is assembled from unrelated moments. 'minor' means it could be better. Do not report a problem just because the location or speaker stays the same: a continuous exchange that keeps changing the conflict is fine. A large source-time jump is fine when the edit makes clear why we are there.
-6. coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? coldViewerNotes: where that breaks, if anywhere.
-7. Judge DELIVERY as you watch: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
+6. transitions: list EVERY major visual, time, place or perspective change you see in the rendered video (outputSec, change, whatViewerSeesAndHears) and for each judge coldViewerUnderstandsWhy — does the picture, dialogue or narration tell a first-time viewer why we are now seeing this? Inspect each transition as you watch; do not rely on the transcript flowing on.
+   coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? It cannot be true while a listed transition is not understood. coldViewerNotes: where that breaks, if anywhere.
+   openingCuriosity: describe the first seconds (firstSecondsDescription) and judge whether they create immediate curiosity for a cold viewer (createsCuriosity).
+7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
 8. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
 Return JSON only.`;
 }
@@ -130,6 +145,19 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   }
   if (!Array.isArray(raw.issues)) return invalid('Critic issues must be an array.');
   if (deliveryAware && typeof raw.coldViewerCanFollow !== 'boolean') return invalid("Critic field 'coldViewerCanFollow' must be boolean.");
+  if (deliveryAware && !Array.isArray(raw.transitions)) return invalid("Critic field 'transitions' must list the rendered video's transitions.");
+  if (deliveryAware && typeof raw.finalSeconds?.subjectClearlyVisible !== 'boolean') return invalid("Critic field 'finalSeconds.subjectClearlyVisible' must be boolean (inspect the last 3-5 seconds visually).");
+  if (deliveryAware && typeof raw.openingCuriosity?.createsCuriosity !== 'boolean') return invalid("Critic field 'openingCuriosity.createsCuriosity' must be boolean.");
+  // Visual evidence wins over story resolution: an ending whose picture is not
+  // clearly visible is unusable, and a cold viewer cannot follow past a transition
+  // the critic itself says is not understood.
+  const transitions = (Array.isArray(raw.transitions) ? raw.transitions : []).filter(t => t && Number.isFinite(Number(t.outputSec)));
+  const lostAt = transitions.filter(t => t.coldViewerUnderstandsWhy === false);
+  const verdict = {
+    finalFootageUsable: raw.finalFootageUsable && raw.finalSeconds?.subjectClearlyVisible !== false,
+    coldViewerCanFollow: typeof raw.coldViewerCanFollow === 'boolean' ? (raw.coldViewerCanFollow && !lostAt.length) : null,
+    openingCreatesCuriosity: typeof raw.openingCuriosity?.createsCuriosity === 'boolean' ? raw.openingCuriosity.createsCuriosity : null
+  };
   const issues = [];
   for (const [i, it] of raw.issues.entries()) {
     if (!it || !ISSUE_TYPES.includes(it.type) || !['blocking', 'minor'].includes(it.severity)) return invalid(`issues[${i}] has an unknown type/severity.`);
@@ -142,34 +170,49 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   // A false verdict with no matching issue still needs a repairable region.
   const lastBeat = timeline[timeline.length - 1];
   const tail = lastBeat ? [lastBeat.outputStartSec, lastBeat.outputEndSec] : [Math.max(0, durationSec - 5), durationSec];
+  const flagValue = flag => (flag in verdict ? verdict[flag] : raw[flag]);
   const ensure = (flag, type, region, why) => {
-    if (raw[flag] === false && !issues.some(x => x.type === type && x.severity === 'blocking')) {
+    if (flagValue(flag) === false && !issues.some(x => x.type === type && x.severity === 'blocking')) {
       issues.push({ type, severity: 'blocking', outputStartSec: region[0], outputEndSec: region[1], evidence: raw.observedStory || '', whyItFails: why, beatIds: beatsInRegion(timeline, region[0], region[1]), derivedFromVerdict: flag });
     }
   };
   ensure('endingIsConsequenceOfCentralConflict', 'ending_not_consequence', tail, 'Critic verdict: the ending is not a consequence of the central conflict.');
-  ensure('finalFootageUsable', 'unusable_footage', tail, 'Critic verdict: the final footage is not clearly observable.');
+  ensure('finalFootageUsable', 'unusable_footage', tail, `Critic verdict: the final footage is not clearly observable${raw.finalSeconds?.visualDescription ? ` (${raw.finalSeconds.visualDescription})` : ''}.`);
+  // Each transition the critic says a cold viewer does not understand is its own repair region.
+  for (const t of lostAt) {
+    const at = Math.max(0, Math.min(durationSec, Number(t.outputSec)));
+    const type = t.change === 'perspective' ? 'unbridged_perspective_shift' : 'unexplained_time_jump';
+    if (issues.some(x => x.severity === 'blocking' && DELIVERY_ISSUES.has(x.type) && x.outputStartSec <= at + 0.5 && x.outputEndSec >= at - 0.5)) continue;
+    const region = [Math.max(0, at - 1), Math.min(durationSec, at + 2)];
+    issues.push({ type, severity: 'blocking', outputStartSec: region[0], outputEndSec: region[1], evidence: t.whatViewerSeesAndHears || '', whyItFails: `Critic transition check: a cold viewer does not understand why we moved here (${t.change}).`, beatIds: beatsInRegion(timeline, region[0], region[1]), derivedFromVerdict: 'transitions' });
+  }
+  if (verdict.openingCreatesCuriosity === false && !issues.some(x => x.severity === 'blocking' && x.type === 'opening_lacks_curiosity')) {
+    const first = timeline[0] ? [timeline[0].outputStartSec, timeline[0].outputEndSec] : [0, Math.min(5, durationSec)];
+    issues.push({ type: 'opening_lacks_curiosity', severity: 'blocking', outputStartSec: first[0], outputEndSec: first[1], evidence: raw.openingCuriosity?.firstSecondsDescription || '', whyItFails: 'Critic verdict: the first seconds do not create immediate curiosity for a cold viewer.', beatIds: beatsInRegion(timeline, first[0], first[1]), derivedFromVerdict: 'openingCuriosity' });
+  }
   if (raw.centralQuestionActiveThroughout === false && !issues.some(x => x.severity === 'blocking' && ['comprehension_gap', 'causal_break', 'low_value_stretch', 'out_of_scope_branch'].includes(x.type))) {
     // No localized cause given: the whole edit is the repair region (the director decides where).
     issues.push({ type: 'comprehension_gap', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec, evidence: raw.observedStory || '', whyItFails: 'Critic verdict: the central viewer question does not stay active through the edit.', beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'centralQuestionActiveThroughout' });
   }
-  if (raw.coldViewerCanFollow === false && !issues.some(x => x.severity === 'blocking' && (DELIVERY_ISSUES.has(x.type) || x.type === 'comprehension_gap'))) {
+  if (verdict.coldViewerCanFollow === false && !issues.some(x => x.severity === 'blocking' && (DELIVERY_ISSUES.has(x.type) || x.type === 'comprehension_gap'))) {
     issues.push({ type: 'comprehension_gap', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec, evidence: raw.coldViewerNotes || raw.observedStory || '', whyItFails: 'Critic verdict: a cold viewer cannot follow who is speaking, why we moved, what changed, or why the next raw clip matters.', beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'coldViewerCanFollow' });
   }
   if (raw.scopeSurvived === false && !issues.some(x => x.severity === 'blocking')) {
     issues.push({ type: 'out_of_scope_branch', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec, evidence: raw.observedStory || '', whyItFails: 'Critic verdict: the intended scope did not survive the render.', beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'scopeSurvived' });
   }
   const blocking = issues.filter(x => x.severity === 'blocking');
-  const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && raw.finalFootageUsable
-    && raw.coldViewerCanFollow !== false && blocking.length === 0;
+  const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && verdict.finalFootageUsable
+    && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false && blocking.length === 0;
   const weakRegions = blocking.map(x => ({ type: x.type, outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds, reason: x.whyItFails, evidence: x.evidence,
     ...(DELIVERY_ISSUES.has(x.type) ? { deliveryIssue: true } : {}) }));
   return {
     status: 'SCOPED_MEDIA_CRITIC_OK', critic: 'scope-media-critic-v1', isCompliant,
     scopeSurvived: raw.scopeSurvived, centralQuestionActiveThroughout: raw.centralQuestionActiveThroughout,
-    endingIsConsequence: raw.endingIsConsequenceOfCentralConflict, finalFootageUsable: raw.finalFootageUsable,
+    endingIsConsequence: raw.endingIsConsequenceOfCentralConflict, finalFootageUsable: verdict.finalFootageUsable,
+    finalFootageUsableReported: raw.finalFootageUsable, finalSeconds: raw.finalSeconds || null,
+    openingCuriosity: raw.openingCuriosity || null, transitions,
     observedStory: raw.observedStory || '', summary: raw.summary || '', issues, weakRegions,
-    coldViewerCanFollow: typeof raw.coldViewerCanFollow === 'boolean' ? raw.coldViewerCanFollow : null, coldViewerNotes: raw.coldViewerNotes || '',
+    coldViewerCanFollow: verdict.coldViewerCanFollow, coldViewerCanFollowReported: typeof raw.coldViewerCanFollow === 'boolean' ? raw.coldViewerCanFollow : null, coldViewerNotes: raw.coldViewerNotes || '',
     deliveryIssues: issues.filter(x => DELIVERY_ISSUES.has(x.type)),
     // Envelope fields the V4 review-state writer already persists.
     weakWindows: weakRegions, mp4Duration: durationSec, criticObservedScore: null, averageRetentionScore: null,

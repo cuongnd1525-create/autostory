@@ -27,13 +27,19 @@ const beatSec = b => Math.max(0, num(b.sourceEndSec) - num(b.sourceStartSec));
 const text = { type: 'string' };
 const deliveryBlockSchema = {
   type: 'object',
-  required: ['blockId', 'mode', 'beatIds', 'storyFunction'],
+  required: ['blockId', 'mode', 'beatIds', 'storyFunction', 'blockSummary', 'viewerStateChanges', 'ownershipReason'],
   additionalProperties: true,
   properties: {
     blockId: text,
     mode: { type: 'string', enum: MODES },
     beatIds: { type: 'array', items: text, maxItems: 40 },
     storyFunction: text,
+    // Director self-check (block level, not per beat): the whole block in one
+    // sentence, how many genuinely NEW viewer-state changes it produces, and why
+    // this ownership (raw proof/emotion vs narrated comprehension/compression).
+    blockSummary: text,
+    viewerStateChanges: { type: 'number' },
+    ownershipReason: text,
     // narrated_story only
     sourceAudioTreatment: { type: 'string', enum: NARRATED_SOURCE_AUDIO },
     narratorFunction: text,
@@ -44,9 +50,17 @@ const deliveryBlockSchema = {
   }
 };
 
+// Director's transition self-check, one per boundary between consecutive blocks.
+const transitionCheckSchema = {
+  type: 'object',
+  required: ['fromBlockId', 'toBlockId', 'coldViewerUnderstandsWhy', 'howTheViewerKnows'],
+  additionalProperties: true,
+  properties: { fromBlockId: text, toBlockId: text, coldViewerUnderstandsWhy: { type: 'boolean' }, howTheViewerKnows: text }
+};
+
 // ---------------------------------------------------------------- structure
 // Pure structural validation. Returns violations in the director's format.
-function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true } = {}) {
+function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true, requireSelfCheck = false } = {}) {
   const out = [];
   const add = (code, message, extra = {}) => out.push({ code, message, ...extra });
   if (!Array.isArray(blocks) || !blocks.length) {
@@ -78,6 +92,9 @@ function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true } 
       if (sorted[0] <= lastEnd) add('DELIVERY_BLOCK_ORDER', `Block '${id}' starts before the previous block ends; blocks must follow EDL order.`, { blockId: id });
       lastEnd = Math.max(lastEnd, sorted[sorted.length - 1]);
     }
+    if (requireSelfCheck && !String(blk?.blockSummary || '').trim()) add('DELIVERY_BLOCK_SELF_CHECK_MISSING', `Block '${id}' needs blockSummary: the whole block in one sentence.`, { blockId: id });
+    if (requireSelfCheck && !(Number.isFinite(blk?.viewerStateChanges) && blk.viewerStateChanges >= 0)) add('DELIVERY_BLOCK_SELF_CHECK_MISSING', `Block '${id}' needs viewerStateChanges: how many genuinely new viewer-state changes the whole block produces.`, { blockId: id });
+    if (requireSelfCheck && !String(blk?.ownershipReason || '').trim()) add('DELIVERY_BLOCK_SELF_CHECK_MISSING', `Block '${id}' needs ownershipReason: why the real moment (raw_evidence) or the narrator (narrated_story) owns it.`, { blockId: id });
     if (blk?.mode === 'narrated_story') {
       if (!narrationEnabled) add('NARRATION_DISABLED', `Block '${id}' is narrated_story but narration is disabled for this project; use raw_evidence.`, { blockId: id });
       if (!String(blk.narrationIntent || '').trim()) add('NARRATED_BLOCK_WITHOUT_INTENT', `Narrated block '${id}' needs narrationIntent: what the passage must make the viewer understand.`, { blockId: id });
@@ -86,6 +103,24 @@ function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true } 
   });
   const unassigned = beats.map(b => b.beatId).filter(bid => !owner.has(bid));
   if (unassigned.length) add('DELIVERY_BEAT_UNASSIGNED', `Every beat must belong to exactly one delivery block; unassigned: ${unassigned.join(', ')}.`, { beatIds: unassigned });
+  return out;
+}
+
+// The Director's own transition answers. Structure only: every boundary between
+// consecutive blocks is answered, and a boundary the Director itself says a cold
+// viewer would NOT understand is sent back for a delivery change. No timestamp rule.
+function validateTransitionChecks(blocks, checks) {
+  const out = [];
+  if (!Array.isArray(blocks) || blocks.length < 2) return out;
+  const list = Array.isArray(checks) ? checks : [];
+  for (let i = 1; i < blocks.length; i++) {
+    const from = blocks[i - 1].blockId, to = blocks[i].blockId;
+    const c = list.find(x => x && x.fromBlockId === from && x.toBlockId === to);
+    if (!c) { out.push({ code: 'TRANSITION_CHECK_MISSING', message: `Answer spine.transitionChecks for the transition ${from} -> ${to}: could a cold viewer understand why the next scene is shown?`, blockIds: [from, to] }); continue; }
+    if (c.coldViewerUnderstandsWhy === false) {
+      out.push({ code: 'TRANSITION_NOT_UNDERSTOOD', message: `You judged that a cold viewer would not understand why ${to} follows ${from} (${c.howTheViewerKnows || 'no bridge'}). Change delivery ownership, narrationIntent or the block boundary so the viewer knows why we are there.`, blockIds: [from, to] });
+    }
+  }
   return out;
 }
 
@@ -166,7 +201,7 @@ function blockFingerprint(block, beats = []) {
 }
 
 module.exports = {
-  DELIVERY_CONTRACT, MODES, NARRATED_SOURCE_AUDIO, DEFAULT_NARRATED_SOURCE_AUDIO, deliveryBlockSchema,
-  validateDeliveryBlocks, applyDeliveryBlocks, audioModeFor, legacyBlocks, blocksOf, isLegacy, pruneRemovedBeats,
+  DELIVERY_CONTRACT, MODES, NARRATED_SOURCE_AUDIO, DEFAULT_NARRATED_SOURCE_AUDIO, deliveryBlockSchema, transitionCheckSchema,
+  validateDeliveryBlocks, validateTransitionChecks, applyDeliveryBlocks, audioModeFor, legacyBlocks, blocksOf, isLegacy, pruneRemovedBeats,
   blockTimeline, blockSafeWords, blockFingerprint
 };
