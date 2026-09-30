@@ -30,6 +30,8 @@ const { validateEdlQuality } = require('./edlQualityValidator');
 const StoryScope = require('./storyScopeService');
 const Director = require('./editorialDirectorService');
 const ScopeCritic = require('./scopeMediaCriticService');
+const Delivery = require('./deliveryBlockService');
+const BlockNarration = require('./blockNarrationService');
 
 // Editorial architecture selection. Contract 4 (V4 production) uses the
 // Story Scope -> media-grounded Editorial Director path by default. Contract 3 and
@@ -518,6 +520,11 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
     emit('editing', `[V3] Coverage: structural deficit but ${coverage.reason} (script ${story.scriptId})`);
   }
   emit('editing', `[V3] Beat Casting completed (${beats.length} beats) for script ${story.scriptId}`);
+  // Delivery blocks (director EDLs): each beat's audio follows its block. Spines
+  // without blocks keep the old per-beat narration path unchanged.
+  const deliveryBlocks = directorMode ? Delivery.blocksOf(story) : null;
+  const blockMode = Boolean(deliveryBlocks) && !Delivery.isLegacy(deliveryBlocks);
+  if (blockMode) beats = Delivery.applyDeliveryBlocks(beats, deliveryBlocks);
   beats = assignAudioRoles(beats, model, engine.config);
   emit('editing', `[V3] Audio roles planned for script ${story.scriptId}`);
 
@@ -525,40 +532,51 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
   const ranges = beats.map(b => ({ sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec }));
   let evidence = await engine.prepare(ranges, 2);
 
-  // Narration pass (info-gap only), then BLOCKING gate + up to 2 targeted repairs.
-  let lines = await writeNarration(engine, story, model, beats.filter(b => b.speaks), evidence);
-  beats = applyNarration(beats, lines);
-  emit('editing', `[V3] Narration generated for script ${story.scriptId}`);
+  let narratedBlocks = null;
+  if (blockMode) {
+    // ONE coherent passage per narrated_story block, gated and voice-fitted against
+    // the WHOLE block; unfixable blocks become a director repair request.
+    const narrated = await BlockNarration.narrateBlocks({ engine, service, story, model, beats, blocks: deliveryBlocks, evidence });
+    narratedBlocks = narrated.blocks;
+    beats = beats.map(b => ({ ...b, narratorText: '', previewVi: '' }));
+    await write(path.join(root, `block-narration-${story.scriptId}.json`), narrated.audit);
+    emit('editing', `[V5] Delivery: ${narratedBlocks.filter(b => b.mode === 'narrated_story').length} narrated block(s), ${narratedBlocks.filter(b => b.mode === 'raw_evidence').length} raw block(s) for script ${story.scriptId}`);
+  } else {
+    // Narration pass (info-gap only), then BLOCKING gate + up to 2 targeted repairs.
+    let lines = await writeNarration(engine, story, model, beats.filter(b => b.speaks), evidence);
+    beats = applyNarration(beats, lines);
+    emit('editing', `[V3] Narration generated for script ${story.scriptId}`);
 
-  // Bug-1 fix: overlong narration is repaired per-beat (<=2 targeted rewrites),
-  // then demoted to original audio — never fatal to the whole script.
-  const beforeSafe = beats.filter(b => b.speaks).length;
-  beats = await enforceSafeWords(beats, engine.config, async (over, _budgets, attempt) => {
-    const relines = await writeNarration(engine, story, model, over, evidence, attempt + 1);
-    return over.map(b => { const l = relines.get(b.beatId); return { beatId: b.beatId, voiceoverText: l?.voiceoverText || '', previewVi: l?.previewVi }; });
-  });
-  const afterSafe = beats.filter(b => b.speaks).length;
-  if (afterSafe < beforeSafe) emit('editing', `[V3] safeWords fit: demoted ${beforeSafe - afterSafe} overlong beat(s) to original audio (script ${story.scriptId})`);
+    // Bug-1 fix: overlong narration is repaired per-beat (<=2 targeted rewrites),
+    // then demoted to original audio — never fatal to the whole script.
+    const beforeSafe = beats.filter(b => b.speaks).length;
+    beats = await enforceSafeWords(beats, engine.config, async (over, _budgets, attempt) => {
+      const relines = await writeNarration(engine, story, model, over, evidence, attempt + 1);
+      return over.map(b => { const l = relines.get(b.beatId); return { beatId: b.beatId, voiceoverText: l?.voiceoverText || '', previewVi: l?.previewVi }; });
+    });
+    const afterSafe = beats.filter(b => b.speaks).length;
+    if (afterSafe < beforeSafe) emit('editing', `[V3] safeWords fit: demoted ${beforeSafe - afterSafe} overlong beat(s) to original audio (script ${story.scriptId})`);
 
-  let gateReport = narrationGate.inspect(beats.map((b, i) => ({ ...b, order: i, audioIntent: b.speaks ? 'narration' : 'original' })), model);
-  for (let attempt = 0; attempt < 2 && !gateReport.passed; attempt++) {
-    const repairIds = new Set(gateReport.repairBeatIds);
-    const toFix = beats.filter(b => repairIds.has(b.beatId) && b.speaks);
-    if (!toFix.length) break;
-    try {
-      lines = await writeNarration(engine, story, model, toFix, evidence);
-      beats = applyNarration(beats, lines);
-    } catch (_) { /* fall through to demotion */ }
-    gateReport = narrationGate.inspect(beats.map((b, i) => ({ ...b, order: i, audioIntent: b.speaks ? 'narration' : 'original' })), model);
-    if (!gateReport.passed) beats = demote(beats, gateReport.repairBeatIds);
-    gateReport = narrationGate.inspect(beats.map((b, i) => ({ ...b, order: i, audioIntent: b.speaks ? 'narration' : 'original' })), model);
+    let gateReport = narrationGate.inspect(beats.map((b, i) => ({ ...b, order: i, audioIntent: b.speaks ? 'narration' : 'original' })), model);
+    for (let attempt = 0; attempt < 2 && !gateReport.passed; attempt++) {
+      const repairIds = new Set(gateReport.repairBeatIds);
+      const toFix = beats.filter(b => repairIds.has(b.beatId) && b.speaks);
+      if (!toFix.length) break;
+      try {
+        lines = await writeNarration(engine, story, model, toFix, evidence);
+        beats = applyNarration(beats, lines);
+      } catch (_) { /* fall through to demotion */ }
+      gateReport = narrationGate.inspect(beats.map((b, i) => ({ ...b, order: i, audioIntent: b.speaks ? 'narration' : 'original' })), model);
+      if (!gateReport.passed) beats = demote(beats, gateReport.repairBeatIds);
+      gateReport = narrationGate.inspect(beats.map((b, i) => ({ ...b, order: i, audioIntent: b.speaks ? 'narration' : 'original' })), model);
+    }
+    emit('editing', `[V3] Narration gates ${gateReport.passed ? 'passed' : `repaired/demoted (${gateReport.repairBeatIds.length})`} for script ${story.scriptId}`);
+    // Gate rewrites could reintroduce an overlong line — final demote sweep before compile.
+    // NOTE: demotion changes audio mode only, not beat durations, so the timeline
+    // length is unchanged here; the Duration Fit stage below still runs regardless.
+    beats = demoteOverflow(beats, engine.config);
+    await write(path.join(root, `narration-gates-${story.scriptId}.json`), gateReport);
   }
-  emit('editing', `[V3] Narration gates ${gateReport.passed ? 'passed' : `repaired/demoted (${gateReport.repairBeatIds.length})`} for script ${story.scriptId}`);
-  // Gate rewrites could reintroduce an overlong line — final demote sweep before compile.
-  // NOTE: demotion changes audio mode only, not beat durations, so the timeline
-  // length is unchanged here; the Duration Fit stage below still runs regardless.
-  beats = demoteOverflow(beats, engine.config);
-  await write(path.join(root, `narration-gates-${story.scriptId}.json`), gateReport);
 
   // Deterministic Duration Fit (before final validation). Observability first.
   const cfg = engine.config;
@@ -604,7 +622,7 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
   const script = compileV3(beats, {
     story: { scriptId: story.scriptId, title: story.title, centralViewerQuestion: story.centralViewerQuestion,
       spine: story.spine, openLoops: story.openLoops },
-    evidence, config: engine.config, sourceDuration: engine.duration
+    evidence, config: engine.config, sourceDuration: engine.duration, deliveryBlocks: narratedBlocks
   });
   await write(path.join(root, `beat-casting-${story.scriptId}.json`), { beats, unresolved: cast.unresolved });
   return { script, evidence, editorial };

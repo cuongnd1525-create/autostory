@@ -535,6 +535,46 @@ function getHighlightAmbientVolume(segment = {}, project = {}) {
   return Math.max(0.08, Math.min(0.3, segVol));
 }
 
+// Ambient bed under a narrated block (voiceover_with_ambient): same policy as a
+// voiced segment, applied once to the whole block.
+function getBlockAmbientVolume(segment = {}, project = {}) {
+  const projectVol = getHighlightNarrationSourceVolume(project);
+  if (projectVol > 0) return projectVol;
+  const segVol = safeNumber(segment.sourceAmbientVolume ?? segment.source_ambient_volume, 0.15);
+  return Math.max(0.08, Math.min(0.3, segVol));
+}
+
+// Per-member draft report for a block: visual timing only (the voice belongs to
+// the block, so no member is voice-fitted or retimed on its own).
+function memberReportsFor(pieces = [], blockReport = {}) {
+  return pieces.map((p, offset) => ({
+    index: (blockReport.startIndex || 0) + offset,
+    sceneId: p.segment.sceneId || p.segment.id,
+    startSec: Number(p.sourceStartSec.toFixed(3)),
+    endSec: Number(p.sourceEndSec.toFixed(3)),
+    sourceDurationSec: Number(p.sourceDurationSec.toFixed(3)),
+    requestedTimelineSec: Number(p.durationSec.toFixed(3)),
+    timelineSec: Number(p.durationSec.toFixed(3)),
+    playbackSpeed: Number((p.sourceDurationSec / Math.max(0.3, p.durationSec)).toFixed(4)),
+    mode: "narrated_block_member",
+    deliveryBlockId: blockReport.blockId || p.segment.deliveryBlockId,
+    audioMode: blockReport.sourceAudioTreatment || p.segment.audioMode,
+    visualFitStrategy: "as_requested",
+    voiceFitStrategy: "block_continuous"
+  }));
+}
+
+// Output placement of each rendered block (visual durations are the EDL's).
+function placeNarratedBlocks(segments = [], blockReports = []) {
+  const starts = []; let cursor = 0;
+  segments.forEach((segment, index) => { starts[index] = cursor; cursor += Math.max(0.3, safeNumber(segment.duration, 0)); });
+  return blockReports.map((report) => {
+    const outputStartSec = Number((starts[report.startIndex] || 0).toFixed(3));
+    return { ...report, outputStartSec, outputEndSec: Number((outputStartSec + report.blockTimelineSec).toFixed(3)), durationSec: report.blockTimelineSec,
+      fittedVoicePath: undefined, blockVideoPath: undefined };
+  });
+}
+
 function resolveHighlightVoiceFit(segment = {}, plannedDurationSec, actualVoiceDurationSec) {
   const audioMode = getHighlightAudioMode(segment, true);
   const protectedVisual = segment.actionOverride === true
@@ -830,6 +870,14 @@ function buildDraftVoiceAlignmentReport({ project = {}, segments = [], draftVoic
       timing.severity = "ok";
       timing.problem = "Cảnh dùng âm thanh gốc, không có voice thuyết minh.";
       timing.recommendation = "Giữ nguyên audio mode.";
+      timing.suggestedWordDelta = 0;
+    }
+    if (report.mode === "narrated_block_member") {
+      // Voice belongs to the continuous narrated block, fitted once for the whole block.
+      timing.status = "ok";
+      timing.severity = "ok";
+      timing.problem = `Thuộc khối narrator liên tục ${report.deliveryBlockId}; voice được đo và khớp một lần cho cả khối.`;
+      timing.recommendation = "Giữ nguyên.";
       timing.suggestedWordDelta = 0;
     }
 
@@ -1198,13 +1246,15 @@ async function autoStoryDraftKey(project, variant, settings) {
   const source = await fs.stat(project.sourceVideoPath);
   const subtitles = project.subtitleSourcePath ? await fs.stat(project.subtitleSourcePath).catch(() => null) : null;
   return crypto.createHash("sha256").update(JSON.stringify({
-    version: 2, source: [project.sourceVideoPath, source.size, source.mtimeMs],
+    version: 3, source: [project.sourceVideoPath, source.size, source.mtimeMs],
     subtitles: [project.subtitleSourcePath, subtitles?.size, subtitles?.mtimeMs], title: variant.title,
     decoration: effective.videoDecoration, mask: effective.sourceSubtitleMask, mixer: effective.mixer,
     subtitleStyle: project.subtitleStyle, draftVoiceMode: project.draftVoiceMode,
     segments: variant.segments.map(s => ({ sourceStartSec: s.sourceStartSec, sourceEndSec: s.sourceEndSec, duration: s.duration,
       audio: getHighlightAudioMode(s, Boolean(getHighlightVoiceText(s)), project),
       voice: getHighlightVoiceText(s) ? getVoiceCacheInfo({ settings, project, text: getHighlightVoiceText(s), outputPath: "voice.wav", voiceRenderOptions: getSegmentVoiceRenderOptions(s) }).spec : null,
+      block: s.deliveryBlockId ? [s.deliveryBlockId, s.deliveryMode, s.deliveryBlockPosition, s.blockSourceAudio,
+        s.blockNarrationText ? getVoiceCacheInfo({ settings, project, text: s.blockNarrationText, outputPath: "voice.wav", voiceRenderOptions: getSegmentVoiceRenderOptions(s) }).spec : null] : null,
       previewVi: undefined, cues: undefined }))
   })).digest("hex");
 }
@@ -1489,6 +1539,36 @@ function buildSrt(segments, field = "translatedText") {
   }).join("\n\n");
 }
 
+// Consecutive members of one narrated block, and exactly one canonical passage
+// (on the first member). Anything else would make the renderer guess.
+function narratedBlockRuns(segments = []) {
+  const runs = [];
+  segments.forEach((segment, index) => {
+    if (segment.deliveryMode !== "narrated_story" || !segment.deliveryBlockId) return;
+    const last = runs[runs.length - 1];
+    if (last && last.blockId === segment.deliveryBlockId && last.end === index - 1) { last.end = index; return; }
+    runs.push({ blockId: segment.deliveryBlockId, start: index, end: index });
+  });
+  return runs;
+}
+
+function validateNarratedDeliveryBlocks(segments = []) {
+  const runs = narratedBlockRuns(segments);
+  const seen = new Set();
+  for (const run of runs) {
+    if (seen.has(run.blockId)) throw new Error(`Narrated block ${run.blockId} is split into non-consecutive segments.`);
+    seen.add(run.blockId);
+    const members = segments.slice(run.start, run.end + 1);
+    const withText = members.filter((segment) => segment.blockNarrationText);
+    if (withText.length !== 1 || !members[0].blockNarrationText) {
+      throw new Error(`Narrated block ${run.blockId} must carry exactly one block_narration_text on its first segment (found ${withText.length}).`);
+    }
+    if (members.some((segment) => segment.voiceoverText)) throw new Error(`Narrated block ${run.blockId} members must not carry per-segment voiceover_text.`);
+    if (new Set(members.map((segment) => segment.blockSourceAudio)).size !== 1) throw new Error(`Narrated block ${run.blockId} must use one source audio treatment.`);
+  }
+  return runs;
+}
+
 function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
   const parsed = typeof rawScript === "string" ? JSON.parse(rawScript) : rawScript;
   const sourceSegments = Array.isArray(parsed?.segments) ? parsed.segments : [];
@@ -1520,6 +1600,17 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     const originalSourceEndSec = sourceEndSec;
     const requestedAudioMode = safeText(segment.audio_mode || segment.audioMode || "").toLowerCase();
     const sourceNarratorDetected = segment.source_narrator_detected === true || segment.sourceNarratorDetected === true;
+    // AutoStory V5 delivery blocks: a narrated_story block owns ONE continuous
+    // narration passage (on its first member only); members carry no voiceover_text.
+    const deliveryBlockId = safeText(segment.delivery_block_id || segment.deliveryBlockId || "");
+    const deliveryMode = deliveryBlockId ? safeText(segment.delivery_mode || segment.deliveryMode || "") : "";
+    const inNarratedBlock = deliveryMode === "narrated_story";
+    const blockNarrationText = inNarratedBlock
+      ? safeText(segment.block_narration_text || segment.blockNarrationText || "").replace(/\s+/g, " ").trim()
+      : "";
+    const blockSourceAudio = inNarratedBlock
+      ? (safeText(segment.block_source_audio || segment.blockSourceAudio || "") === "voiceover_only" || sourceNarratorDetected ? "voiceover_only" : "voiceover_with_ambient")
+      : "";
     const rawVoiceoverText = String(
       segment.voiceoverText || segment.voiceover_text || segment.dubbingLine || segment.narration
       || (requestedAudioMode && requestedAudioMode !== "original_audio" ? segment.text : "") || ""
@@ -1541,7 +1632,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     if (sourceStartSec < 0 || sourceEndSec <= sourceStartSec) {
       throw new Error(`Highlight segment ${index + 1} thiếu timestamp nguồn hợp lệ. Dùng sourceStartSec/sourceEndSec hoặc startSec/endSec, với 0 <= start < end.`);
     }
-    if (sourceNarratorDetected && !voiceoverText) {
+    if (sourceNarratorDetected && !voiceoverText && !inNarratedBlock) {
       throw new Error(
         `Highlight segment ${index + 1} đánh dấu source_narrator_detected=true nhưng thiếu voiceover_text. `
         + "Hãy dùng lời narrator đã xác minh để tool thay bằng giọng được chọn."
@@ -1554,7 +1645,9 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     } else if (videoDuration && sourceEndSec > videoDuration + 0.5) {
       throw new Error(`Highlight segment ${index + 1} vượt quá thời lượng video (${sourceEndSec.toFixed(2)}s > ${videoDuration.toFixed(2)}s).`);
     }
-    let normalizedAudioMode = voiceoverText
+    let normalizedAudioMode = inNarratedBlock
+      ? blockSourceAudio
+      : voiceoverText
       ? (["voiceover_with_ambient", "mixed_ducking"].includes(requestedAudioMode) ? "voiceover_with_ambient" : "voiceover_only")
       : "original_audio";
     if (sourceNarratorDetected && normalizedAudioMode === "voiceover_with_ambient") {
@@ -1570,7 +1663,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     )));
     const sourceVolume = normalizedAudioMode === "voiceover_with_ambient"
       ? sourceAmbientVolume
-      : voiceoverText ? 0 : 1;
+      : (voiceoverText || inNarratedBlock) ? 0 : 1;
     const sourceDuration = sourceEndSec - sourceStartSec;
     const playbackSpeedRaw = safeNumber(segment.playbackSpeed ?? segment.playback_speed, NaN);
     const outputStartValue = segment.startSec ?? segment.outputStartSec;
@@ -1657,6 +1750,21 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
       completeNarrativeBeatType: safeText(segment.completeNarrativeBeatType || segment.complete_narrative_beat_type || ""),
       sustainedBeatId: safeText(segment.sustainedBeatId || segment.sustained_beat_id || ""),
       sustainedBeatOverride: segment.sustainedBeatOverride === true || segment.sustained_beat_override === true,
+      beatId: safeText(segment.beat_id || segment.beatId || ""),
+      deliveryBlockId,
+      deliveryMode,
+      deliveryBlockOrder: deliveryBlockId ? safeNumber(segment.delivery_block_order ?? segment.deliveryBlockOrder, 0) : null,
+      deliveryBlockPosition: deliveryBlockId ? safeNumber(segment.delivery_block_position ?? segment.deliveryBlockPosition, 0) : null,
+      deliveryBlockSize: deliveryBlockId ? safeNumber(segment.delivery_block_size ?? segment.deliveryBlockSize, 1) : null,
+      blockSourceAudio,
+      blockNarrationText,
+      blockNarrationPreviewVi: blockNarrationText ? safeText(segment.block_narration_preview_vi || segment.blockNarrationPreviewVi || "") : "",
+      blockNarratorFunction: blockNarrationText ? safeText(segment.block_narrator_function || segment.blockNarratorFunction || "") : "",
+      blockNarrationIntent: blockNarrationText ? safeText(segment.block_narration_intent || segment.blockNarrationIntent || "") : "",
+      blockStoryFunction: blockNarrationText ? safeText(segment.block_story_function || segment.blockStoryFunction || "") : "",
+      blockEmotionTag: blockNarrationText ? safeText(segment.block_emotion_tag || segment.blockEmotionTag || "") : "",
+      blockHandoffTargetBeatId: blockNarrationText ? safeText(segment.block_handoff_target_beat_id || segment.blockHandoffTargetBeatId || "") : "",
+      blockNarrationHash: blockNarrationText ? safeText(segment.block_narration_hash || segment.blockNarrationHash || "") : "",
       index,
       startSec: Number(startSec.toFixed(3)),
       endSec: Number(endSec.toFixed(3)),
@@ -1705,6 +1813,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
       maxWords: maxWordsForDuration(duration)
     };
   });
+  validateNarratedDeliveryBlocks(segments);
   const totalDuration = Number((segments.at(-1)?.endSec || 0).toFixed(3));
   const requestedTotal = safeNumber(parsed.total_target_sec ?? parsed.totalTargetSec, totalDuration);
   const warnings = [...timelineRepairWarnings];
@@ -1750,7 +1859,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     );
   }
   const sparseVoiceSegments = segments
-    .filter((segment) => segment.audioMode !== "original_audio")
+    .filter((segment) => segment.audioMode !== "original_audio" && segment.deliveryMode !== "narrated_story")
     .map((segment) => ({
       index: segment.index + 1,
       audioMode: segment.audioMode,
@@ -6026,7 +6135,27 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const draftVoiceReports = [];
     const draftVoiceProvider = this.getFastDraftVoiceProvider(project, settings);
     const draftVoiceExt = audioExtensionForProvider(draftVoiceProvider);
-    for (const [index, segment] of segments.entries()) {
+    const blockRuns = new Map(narratedBlockRuns(segments).map((run) => [run.start, run]));
+    const blockVoiceReports = [];
+    for (let index = 0; index < segments.length; index++) {
+      const segment = segments[index];
+      const blockRun = blockRuns.get(index);
+      if (blockRun) {
+        // AutoStory V5: narrated_story delivery block — ONE narration passage,
+        // synthesized once, fitted once, mixed and ducked once across all of the
+        // block's visual cuts. Visual durations stay exactly the EDL's.
+        onProgress?.({ projectId, step: "draft", percent: Math.min(82, 10 + Math.round((index / Math.max(1, segments.length)) * 68)),
+          message: `Đang render khối narrator ${blockRun.blockId} (${blockRun.end - blockRun.start + 1} cảnh)` });
+        const block = await this.renderNarratedDeliveryBlock({
+          ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat,
+          members: segments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start
+        });
+        clipPaths.push(block.clipPath);
+        blockVoiceReports.push(block.report);
+        block.memberReports.forEach((report, offset) => { draftVoiceReports[blockRun.start + offset] = report; });
+        index = blockRun.end;
+        continue;
+      }
       const sourceStartSec = Math.max(0, Number(segment.sourceStartSec ?? segment.startSec ?? 0));
       const sourceEndSec = Math.max(sourceStartSec + 0.3, Number(segment.sourceEndSec ?? sourceStartSec + Number(segment.sourceDuration || segment.duration || 1)));
       const sourceDurationSec = sourceEndSec - sourceStartSec;
@@ -6245,6 +6374,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       generatedAt: voiceAlignmentReport.generatedAt
     });
     const resolvedTimelinePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-resolved-timeline.json`);
+    const deliveryBlockReportPath = blockVoiceReports.length
+      ? path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-delivery-blocks.json`) : "";
+    const blockNarrationSubtitlePath = blockVoiceReports.length
+      ? path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.narration.srt`) : "";
+    if (blockVoiceReports.length) {
+      const blockOutput = placeNarratedBlocks(segments, blockVoiceReports);
+      await this.projectStore.writeJson(deliveryBlockReportPath, { contract: "continuous-narrated-blocks-v1", generatedAt: new Date().toISOString(), blocks: blockOutput }).catch(() => {});
+      await this.projectStore.writeText(blockNarrationSubtitlePath, buildSrt(blockOutput.map((b) => ({
+        startSec: b.outputStartSec, endSec: b.outputStartSec + Math.min(b.fittedTtsSec || b.rawTtsSec || b.durationSec, b.durationSec), text: b.narrationText
+      })), "text")).catch(() => {});
+    }
     await this.projectStore.writeJson(voiceWarningReportPath, voiceAlignmentReport).catch(() => {});
     await this.projectStore.writeJson(resolvedTimelinePath, resolvedTimeline).catch(() => {});
     await this.projectStore.writeText(geminiRewritePromptPath, voiceAlignmentReport.geminiPrompt || "").catch(() => {});
@@ -6309,6 +6449,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         fastDraftVoiceWarningReportPath: voiceWarningReportPath,
         fastDraftResolvedTimelinePath: resolvedTimelinePath,
         fastDraftGeminiRewritePromptPath: geminiRewritePromptPath,
+        fastDraftDeliveryBlockReportPath: deliveryBlockReportPath,
+        fastDraftBlockNarrationSubtitlePath: blockNarrationSubtitlePath,
         fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
         autoStoryDraftKey: autoStoryKey
       }
@@ -6354,8 +6496,111 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       voiceWarningCount: voiceAlignmentReport.warningCount,
       voiceWarningReportPath,
       resolvedTimelinePath,
-      geminiRewritePromptPath
+      geminiRewritePromptPath,
+      deliveryBlockReportPath,
+      deliveryBlocks: blockVoiceReports
     };
+  }
+
+  // AutoStory V5 continuous block primitive. members = the consecutive segments
+  // of ONE narrated_story delivery block (first member carries the passage).
+  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex }) {
+    const lead = members[0];
+    const text = safeText(lead.blockNarrationText);
+    if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
+    const treatment = lead.blockSourceAudio === "voiceover_only" ? "voiceover_only" : "voiceover_with_ambient";
+    const tag = `draft-highlight-${variantSuffix}-block-${String(startIndex + 1).padStart(4, "0")}`;
+    const pieces = members.map((segment) => {
+      const sourceStartSec = Math.max(0, Number(segment.sourceStartSec ?? segment.startSec ?? 0));
+      const sourceEndSec = Math.max(sourceStartSec + 0.3, Number(segment.sourceEndSec ?? sourceStartSec + Number(segment.sourceDuration || segment.duration || 1)));
+      const sourceDurationSec = sourceEndSec - sourceStartSec;
+      // Exact EDL timing: a narrated block never retimes a visual beat.
+      const durationSec = Math.max(0.3, Number(segment.duration ?? sourceDurationSec));
+      return { segment, sourceStartSec, sourceEndSec, sourceDurationSec, durationSec };
+    });
+    const blockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
+    const ambientVolume = treatment === "voiceover_only" ? 0 : getBlockAmbientVolume(lead, project);
+    const duck = project.mixer?.narrationDuckDefault === true;
+    const voiceVolume = Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100);
+    const maxStretchRatio = Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08);
+    const voiceRenderOptions = getSegmentVoiceRenderOptions(lead);
+    const rawVoicePath = path.join(paths.audioDir, `${tag}${draftVoiceExt}`);
+    const fittedVoicePath = path.join(paths.audioDir, `${tag}.m4a`);
+    const blockVideoPath = path.join(paths.clipsDir, `${tag}-video.mp4`);
+    const voicedClipPath = path.join(paths.clipsDir, `${tag}-voiced.mp4`);
+
+    let cache = null;
+    if (autoStorySourceStat) {
+      const key = crypto.createHash("sha256").update(JSON.stringify({
+        version: 1, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+        pieces: pieces.map((p) => [p.sourceStartSec, p.sourceDurationSec, p.durationSec]), treatment, ambientVolume, duck, voiceVolume, maxStretchRatio,
+        voice: getVoiceCacheInfo({ settings, project, text, outputPath: rawVoicePath, voiceRenderOptions }).spec,
+        normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true
+      })).digest("hex");
+      const cacheDir = path.join(paths.clipsDir, ".auto-story-cache");
+      await fs.mkdir(cacheDir, { recursive: true });
+      cache = { clip: path.join(cacheDir, `${key}.mp4`), report: path.join(cacheDir, `${key}.json`) };
+      try {
+        const cached = JSON.parse(await fs.readFile(cache.report, "utf8"));
+        if ((await fs.stat(cache.clip)).size > 512 && cached?.blockId === lead.deliveryBlockId) {
+          return { clipPath: cache.clip, report: { ...cached, cached: true }, memberReports: memberReportsFor(pieces, cached) };
+        }
+      } catch (_) { /* render */ }
+    }
+
+    // 1-4. Extract + normalize every visual range exactly as the per-segment path
+    // does, keeping (or silencing) the source audio, then concat into ONE block video.
+    const piecePaths = [];
+    for (const [offset, p] of pieces.entries()) {
+      const rawClipPath = path.join(paths.clipsDir, `${tag}-${String(offset + 1).padStart(2, "0")}-raw.mp4`);
+      const normalizedClipPath = path.join(paths.clipsDir, `${tag}-${String(offset + 1).padStart(2, "0")}-normalized.mp4`);
+      await ffmpeg.extractVoiceDrivenClipWithAudio({
+        sourcePath: project.sourceVideoPath, outputPath: rawClipPath, startSec: p.sourceStartSec, sourceDurationSec: p.sourceDurationSec,
+        targetDurationSec: p.durationSec, width: 540, preset: "ultrafast", crf: 32, includeAudio: treatment === "voiceover_with_ambient"
+      });
+      await ffmpeg.normalizeVideoKeepAudio({ inputPath: rawClipPath, outputPath: normalizedClipPath, targetDuration: p.durationSec });
+      piecePaths.push(normalizedClipPath);
+    }
+    await ffmpeg.concatSegmentsByFilter(piecePaths, blockVideoPath);
+
+    // 5-6. Synthesize the WHOLE passage once; measure it.
+    await this.synthesizeFastDraftVoice({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions });
+    const rawVoiceMeta = await ffmpeg.probeAudio(rawVoicePath);
+    const rawVoiceSec = Number(rawVoiceMeta.duration || 0);
+    const fitRatio = rawVoiceSec / Math.max(0.3, blockTimelineSec);
+    // Never trim spoken words: a passage longer than the safe speed-up must be rewritten upstream.
+    if (fitRatio > 1 + maxStretchRatio + 1e-6) {
+      const error = new Error(`BLOCK_VOICE_OVERFLOW: narrated block ${lead.deliveryBlockId} voice ${rawVoiceSec.toFixed(2)}s exceeds its ${blockTimelineSec.toFixed(2)}s block (ratio ${fitRatio.toFixed(3)} > ${(1 + maxStretchRatio).toFixed(2)}). Rewrite the block narration; words are never trimmed.`);
+      error.code = "BLOCK_VOICE_OVERFLOW";
+      error.details = { blockId: lead.deliveryBlockId, rawVoiceSec, blockTimelineSec, fitRatio };
+      throw error;
+    }
+    // 7. Fit ONCE against the whole block (light speed-up or natural finish + silence pad).
+    const fit = await ffmpeg.fitDubbingClusterAudio({
+      inputPath: rawVoicePath, outputPath: fittedVoicePath, targetDuration: blockTimelineSec, maxStretchRatio,
+      normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true,
+      allowTrim: false, allowSlowDown: false, allowSpeedUp: true
+    });
+    // 8-9. Mix ONCE; the sidechain duck runs continuously across the internal cuts.
+    await ffmpeg.mixVideoAudioWithVoice({ videoPath: blockVideoPath, voicePath: fittedVoicePath, outputPath: voicedClipPath,
+      sourceVolume: ambientVolume, voiceVolume, limiter: true, duck });
+    await this.recordVoiceProfileSample({ workspaceRoot, settings, project, text, measuredDurationSec: rawVoiceSec,
+      segmentDurationSec: blockTimelineSec, source: "highlight_fast_draft_block", providerOverride: draftVoiceProvider }).catch(() => null);
+    const report = {
+      mode: "narrated_block", blockId: lead.deliveryBlockId, beatIds: members.map((m) => m.beatId || ""), segmentIds: members.map((m) => m.id),
+      startIndex, memberCount: members.length, narrationText: text, textHash: textHash(text),
+      blockTimelineSec: Number(blockTimelineSec.toFixed(3)), rawTtsSec: Number(rawVoiceSec.toFixed(3)),
+      fittedTtsSec: Number(Number(fit?.outputDuration || rawVoiceSec).toFixed(3)), fitRatio: Number(fitRatio.toFixed(3)),
+      voiceFitStrategy: fit?.fitStrategy || "", sourceAudioTreatment: treatment, sourceAmbientVolume: ambientVolume, duck,
+      internalCutOffsetsSec: pieces.slice(0, -1).reduce((acc, p) => [...acc, Number(((acc.at(-1) || 0) + p.durationSec).toFixed(3))], []),
+      storyFunction: lead.blockStoryFunction || "", narratorFunction: lead.blockNarratorFunction || "", narrationIntent: lead.blockNarrationIntent || "",
+      handoffTargetBeatId: lead.blockHandoffTargetBeatId || "", fittedVoicePath, blockVideoPath
+    };
+    if (cache) {
+      await fs.copyFile(voicedClipPath, cache.clip);
+      await fs.writeFile(cache.report, JSON.stringify(report));
+    }
+    return { clipPath: voicedClipPath, report, memberReports: memberReportsFor(pieces, report) };
   }
 
   async renderAllHighlightFastDraftVariants({ workspaceRoot, projectId, settings, onProgress, onVariantReady, reuseCompleted = false }) {
@@ -8527,6 +8772,9 @@ module.exports.buildDraftReviewReadiness = buildDraftReviewReadiness;
 module.exports.buildDraftVoiceAlignmentReport = buildDraftVoiceAlignmentReport;
 module.exports.buildDraftVoiceGeminiPrompt = buildDraftVoiceGeminiPrompt;
 module.exports.normalizeHighlightCutScript = normalizeHighlightCutScript;
+module.exports.narratedBlockRuns = narratedBlockRuns;
+module.exports.placeNarratedBlocks = placeNarratedBlocks;
+module.exports.autoStoryDraftKey = autoStoryDraftKey;
 module.exports.resolveReviewedHighlightVariant = resolveReviewedHighlightVariant;
 module.exports.getInspectedDraftRevision = getInspectedDraftRevision;
 module.exports.resolveDraftReviewBinding = resolveDraftReviewBinding;

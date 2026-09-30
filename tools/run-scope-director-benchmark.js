@@ -96,8 +96,26 @@ async function main() {
       requiredReductionToMaximumSec: a.durationCompression.requiredReductionToMaximumSec, preferredReductionToTargetSec: a.durationCompression.preferredReductionToTargetSec,
       preferredReductionRangeSec: a.durationCompression.preferredReductionRangeSec || null } : {}) }));
 
+  // Delivery report: compiled blocks (script) joined with the renderer's measured block voice.
+  const scriptDoc = await readJson(path.join(A, 'script-1.json'));
+  const renderDirs = [paths.outputDir, path.join(paths.rootDir, '.variant-workers', '1', PROJECT_ID, 'output')].filter(d => fs.existsSync(d));
+  const blockReports = renderDirs.flatMap(d => fs.readdirSync(d).filter(f => f.endsWith('-delivery-blocks.json')).map(f => path.join(d, f)))
+    .map(f => ({ f, m: fs.statSync(f).mtimeMs })).sort((a, b) => a.m - b.m).map(x => x.f);
+  const rendered = blockReports.length ? await readJson(blockReports[blockReports.length - 1]) : null;
+  const compiledBlocks = scriptDoc?.delivery_blocks || [];
+  const deliveryReport = compiledBlocks.map((b, i) => {
+    const r = (rendered?.blocks || []).find(x => x.blockId === b.blockId) || {};
+    return { blockId: b.blockId, mode: b.mode, beatIds: b.beatIds, outputStartSec: b.outputStartSec, outputEndSec: b.outputEndSec, durationSec: b.durationSec,
+      storyFunction: b.storyFunction || '', narratorFunction: b.narratorFunction || '', narrationIntent: b.narrationIntent || '', narrationText: b.narrationText || '',
+      rawTtsSec: r.rawTtsSec ?? b.rawBlockVoiceSec ?? null, fittedTtsSec: r.fittedTtsSec ?? null, fitRatio: r.fitRatio ?? b.fitRatio ?? null,
+      sourceAudioTreatment: b.sourceAudioTreatment, handoffFrom: compiledBlocks[i - 1]?.blockId || null, handoffTo: compiledBlocks[i + 1]?.blockId || null,
+      handoffTargetBeatId: b.handoffTargetBeatId || null };
+  });
+  if (deliveryReport.length) await fsp.writeFile(path.join(A, 'delivery-report.json'), JSON.stringify({ contract: scriptDoc?.delivery_contract || null, blocks: deliveryReport, renderedBlockReport: blockReports[blockReports.length - 1] || null }, null, 2));
+
   const summary = {
     generatedAt: new Date().toISOString(), runtimeError: runtimeError?.message || null,
+    deliveryBlocks: deliveryReport,
     storyScope: scope?.chosen || null, scopeReel: scope?.reel || null, scopeCandidates: (scope?.candidates || []).map(c => ({ id: c.storyScopeId, question: c.centralViewerQuestion, boundary: c.explicitScopeBoundary })),
     editorialContract: spine?.editorialContract || null,
     finalEdl: (spine?.beats || []).map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec, dur: +(b.sourceEndSec - b.sourceStartSec).toFixed(2),
@@ -107,7 +125,8 @@ async function main() {
     finalMp4, finalDuration, allMp4s: mp4s.map(f => ({ f, duration: probe(f) })),
     review: review ? { verdict: review.finalCheck?.verdict, repairPasses: review.repairPasses ?? 0, metrics: review.metrics, issues: review.finalCheck?.issues } : null,
     lastCritic: lastAudit ? { scopeSurvived: lastAudit.scopeSurvived, centralQuestionActiveThroughout: lastAudit.centralQuestionActiveThroughout, endingIsConsequence: lastAudit.endingIsConsequence,
-      finalFootageUsable: lastAudit.finalFootageUsable, observedStory: lastAudit.observedStory, issues: lastAudit.issues } : null
+      finalFootageUsable: lastAudit.finalFootageUsable, coldViewerCanFollow: lastAudit.coldViewerCanFollow ?? null, coldViewerNotes: lastAudit.coldViewerNotes || '',
+      deliveryIssues: lastAudit.deliveryIssues || [], observedStory: lastAudit.observedStory, issues: lastAudit.issues } : null
   };
   const out = path.join(A, 'benchmark-summary.json');
   await fsp.writeFile(out, JSON.stringify(summary, null, 2));
@@ -116,6 +135,8 @@ async function main() {
   console.table(summary.finalEdl.map(({ observedInFootage, whyNecessaryNow, ...r }) => r));
   if (directorCalls.length) console.table(directorCalls.map(({ error, ...r }) => r));
   if (directorAttempts.length) log(`Director repair path: ${directorAttempts.map(a => `${a.mode}[${a.totalSec}s/${a.beatCount} beats${a.requiredReductionToMaximumSec !== undefined ? `; from ${a.compressedFromSec}s must cut >=${a.requiredReductionToMaximumSec}s, prefer ~${a.preferredReductionToTargetSec}s` : ''}]${a.valid ? '✓' : `✗(${a.violations.join('+')})`}`).join(' -> ')}`);
+  if (deliveryReport.length) console.table(deliveryReport.map(b => ({ blockId: b.blockId, mode: b.mode, beats: b.beatIds.join(','), out: `${Number(b.outputStartSec).toFixed(1)}-${Number(b.outputEndSec).toFixed(1)}`,
+    rawTts: b.rawTtsSec, fitted: b.fittedTtsSec, fit: b.fitRatio, audio: b.sourceAudioTreatment })));
   log(`EDL beats ${summary.edlBeatCount} | EDL total ${summary.edlTotalSec}s | final MP4 ${finalMp4} (${finalDuration}s) | verdict ${summary.review?.verdict} | repairs ${summary.review?.repairPasses}`);
   log(`Summary written: ${out}`);
   const inRange = finalDuration >= 65 && finalDuration <= 90;

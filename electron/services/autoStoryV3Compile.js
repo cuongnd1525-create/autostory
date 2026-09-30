@@ -8,6 +8,7 @@ const compiler = require('./autoStoryTimelineCompiler');
 const { StoryError } = require('./autoStoryRepairRouter');
 const { toV2Role, strategyToAudioMode } = require('./autoStoryV3Taxonomy');
 const { resolveTtsIntent } = require('./ttsIntent');
+const Delivery = require('./deliveryBlockService');
 
 // A beat is "unclean" when the chosen source audio is an external narrator.
 // "mixed" in bodycam audio is diegetic shouting/struggle, which should be ducked, not muted.
@@ -49,7 +50,8 @@ function mapBeatsToDecisions(beats = []) {
         closesLoopId: beat.closesLoopId || null,
         newInformation: beat.newInformation || [],
         newInformationRefs: beat.newInformationRefs || [],
-        sourceEventId: beat.sourceEventId || null
+        sourceEventId: beat.sourceEventId || null,
+        deliveryBlockId: beat.deliveryBlockId || null
       }
     };
   });
@@ -58,9 +60,18 @@ function mapBeatsToDecisions(beats = []) {
 // Build renderer-compatible segments. Mirrors autoStoryTimelineCompiler.compile
 // but honors v3 audio semantics (does not force requireOriginal at .85, because
 // the audio-role state machine + source-model classification already gate this).
-function compileV3(beats, { story, evidence, config, sourceDuration = Infinity }) {
+function compileV3(beats, { story, evidence, config, sourceDuration = Infinity, deliveryBlocks = null }) {
   const decisions = mapBeatsToDecisions(beats);
   if (!decisions.length) throw new StoryError('STRUCTURAL_STORY', 'No v3 beats to compile.');
+  // Delivery blocks: the audio of a narrated_story block is ONE passage owned by
+  // the block (canonical text lives once, on the block), never per beat.
+  const blocks = Array.isArray(deliveryBlocks) && deliveryBlocks.length ? deliveryBlocks : null;
+  if (blocks) {
+    const problems = Delivery.validateDeliveryBlocks(beats, blocks, { narrationEnabled: config.narration?.enabled !== false });
+    if (problems.length) throw new StoryError('LOCAL_EDITORIAL', `Delivery blocks do not cover the EDL: ${problems.map(v => v.code).join(', ')}`, { violations: problems });
+  }
+  const blockOf = new Map();
+  (blocks || []).forEach((b, order) => b.beatIds.forEach((id, position) => blockOf.set(id, { block: b, order, position })));
 
   const seen = new Set();
   let cursor = 0;
@@ -74,11 +85,16 @@ function compileV3(beats, { story, evidence, config, sourceDuration = Infinity }
     });
     if (!clip) throw new StoryError('EVIDENCE_REQUIRED', 'v3 range not covered by one evidence clip.', { start, end });
 
-    const key = compiler.hash([start, end, d.audioIntent, d.voiceoverText]);
+    const member = blockOf.get(d._v3.beatId) || null;
+    const key = compiler.hash([start, end, d.audioIntent, d.voiceoverText, member ? `${member.block.blockId}:${member.block.narrationText || ''}` : '']);
     if (seen.has(key)) throw new StoryError('LOCAL_EDITORIAL', 'Exact duplicate footage and meaning.', { index });
     seen.add(key);
 
-    if (d.audioIntent === 'narration') {
+    if (member && member.block.mode === 'narrated_story') {
+      if (d.voiceoverText.trim()) throw new StoryError('LOCAL_EDITORIAL', 'A beat inside a narrated block must not carry its own narration line.', { index });
+    } else if (member && d.audioIntent === 'narration') {
+      throw new StoryError('LOCAL_EDITORIAL', 'A raw_evidence block beat cannot be narrated.', { index });
+    } else if (d.audioIntent === 'narration') {
       if (!config.narration?.enabled || !d.voiceoverText.trim()) {
         throw new StoryError('LOCAL_EDITORIAL', 'Narration disabled or empty on a narration beat.', { index });
       }
@@ -113,11 +129,18 @@ function compileV3(beats, { story, evidence, config, sourceDuration = Infinity }
       informationClass: v3.informationClass,
       opensLoopId: v3.opensLoopId, closesLoopId: v3.closesLoopId,
       newInformation: v3.newInformation, newInformationRefs: v3.newInformationRefs,
-      sourceEventId: v3.sourceEventId
+      sourceEventId: v3.sourceEventId,
+      beatId: v3.beatId
     };
+    if (member) {
+      Object.assign(segment, { deliveryBlockId: member.block.blockId, deliveryMode: member.block.mode,
+        deliveryBlockOrder: member.order, deliveryBlockPosition: member.position, deliveryBlockSize: member.block.beatIds.length });
+    }
     cursor = segment.outputEndSec;
     return segment;
   });
+
+  const compiledBlocks = blocks ? compileDeliveryBlocks(blocks, segments, config) : null;
 
   if (segments[0].storyRole !== 'hook') throw new StoryError('STRUCTURAL_STORY', 'Opening must map to a hook.');
 
@@ -126,10 +149,43 @@ function compileV3(beats, { story, evidence, config, sourceDuration = Infinity }
     narrationArc: story.centralViewerQuestion,
     spine: story.spine || null,
     openLoops: story.openLoops || [],
-    segments, measuredDuration: cursor, sourceDecisions: decisions.map(d => ({ ...d, _v3: undefined }))
+    segments, measuredDuration: cursor, sourceDecisions: decisions.map(d => ({ ...d, _v3: undefined })),
+    ...(compiledBlocks ? { deliveryContract: Delivery.DELIVERY_CONTRACT, deliveryBlocks: compiledBlocks } : {})
   };
   compiler.validateDuration(script, config);
   return script;
+}
+
+// One canonical passage per narrated block; ONE source-audio treatment per block.
+function compileDeliveryBlocks(blocks, segments, config) {
+  return blocks.map((b, order) => {
+    const members = segments.filter(s => s.deliveryBlockId === b.blockId);
+    const outputStartSec = members[0].outputStartSec, outputEndSec = members[members.length - 1].outputEndSec;
+    const durationSec = outputEndSec - outputStartSec;
+    const base = { blockId: b.blockId, mode: b.mode, order, beatIds: [...b.beatIds], segmentIds: members.map(s => s.id),
+      outputStartSec, outputEndSec, durationSec, storyFunction: b.storyFunction || '' };
+    if (b.mode !== 'narrated_story') {
+      members.forEach(s => { if (s.audioMode !== 'original_audio') throw new StoryError('LOCAL_EDITORIAL', `Raw block '${b.blockId}' must keep original audio.`, { blockId: b.blockId }); });
+      return { ...base, evidenceFunction: b.evidenceFunction || '', sourceAudioTreatment: 'original_audio' };
+    }
+    const narrationText = String(b.narrationText || '').trim();
+    if (!config.narration?.enabled || !narrationText) throw new StoryError('LOCAL_EDITORIAL', `Narrated block '${b.blockId}' has no narration passage or narration is disabled.`, { blockId: b.blockId });
+    const safeWords = Delivery.blockSafeWords(durationSec, config.narration.measuredWordsPerSecond);
+    if (safeWords > 0 && compiler.words(narrationText) > safeWords) {
+      throw new StoryError('VOICE_BUDGET', `Narrated block '${b.blockId}' exceeds its whole-block safe word ceiling.`, { blockId: b.blockId, safeWords });
+    }
+    // Technical treatment: a member whose source carries another narrator forces voiceover_only.
+    const treatment = members.some(s => s.audioMode === 'voiceover_only') || Delivery.audioModeFor(b) === 'voiceover_only' ? 'voiceover_only' : 'voiceover_with_ambient';
+    members.forEach(s => Object.assign(s, { audioMode: treatment, duck: treatment === 'voiceover_with_ambient', mute: treatment === 'voiceover_only',
+      blockSourceAudio: treatment, voiceoverText: '', previewVi: '' }));
+    const fingerprint = compiler.hash([b.blockId, treatment, narrationText, ...members.map(s => `${s.sourceStartSec}-${s.sourceEndSec}`)]);
+    Object.assign(members[0], { blockNarrationText: narrationText, blockNarrationPreviewVi: b.previewVi || '', blockNarratorFunction: b.narratorFunction || '',
+      blockNarrationIntent: b.narrationIntent || '', blockStoryFunction: b.storyFunction || '', blockEmotionTag: b.emotionTag || 'NEUTRAL',
+      blockHandoffTargetBeatId: b.handoffTargetBeatId || '', blockNarrationHash: fingerprint });
+    return { ...base, narratorFunction: b.narratorFunction || '', narrationIntent: b.narrationIntent || '', handoffTargetBeatId: b.handoffTargetBeatId || null,
+      sourceAudioTreatment: treatment, narrationText, previewVi: b.previewVi || '', newInformation: b.newInformation || [], newInformationRefs: b.newInformationRefs || [],
+      safeWords, words: compiler.words(narrationText), rawBlockVoiceSec: b.rawBlockVoiceSec ?? null, fitRatio: b.fitRatio ?? null, fingerprint };
+  });
 }
 
 // Final artifact consumed by the Highlight renderer (superset of v2's highlight()).
@@ -156,10 +212,23 @@ function highlightV3(script, story, evidence) {
         emotionTag: s.emotionTag, prosody: s.prosody,
         information_class: s.informationClass,
         opens_loop_id: s.opensLoopId, closes_loop_id: s.closesLoopId,
-        source_narrator_detected: s.sourceNarratorPresent, playbackSpeed: 1
+        source_narrator_detected: s.deliveryMode === 'narrated_story' ? false : s.sourceNarratorPresent, playbackSpeed: 1,
+        beat_id: s.beatId || '',
+        ...(s.deliveryBlockId ? {
+          delivery_block_id: s.deliveryBlockId, delivery_mode: s.deliveryMode, delivery_block_order: s.deliveryBlockOrder,
+          delivery_block_position: s.deliveryBlockPosition, delivery_block_size: s.deliveryBlockSize,
+          ...(s.deliveryMode === 'narrated_story' ? { block_source_audio: s.blockSourceAudio } : {}),
+          ...(s.blockNarrationText ? {
+            block_narration_text: s.blockNarrationText, block_narration_preview_vi: s.blockNarrationPreviewVi,
+            block_narrator_function: s.blockNarratorFunction, block_narration_intent: s.blockNarrationIntent,
+            block_story_function: s.blockStoryFunction, block_emotion_tag: s.blockEmotionTag,
+            block_handoff_target_beat_id: s.blockHandoffTargetBeatId, block_narration_hash: s.blockNarrationHash
+          } : {})
+        } : {})
       };
-    })
+    }),
+    ...(script.deliveryBlocks ? { delivery_contract: script.deliveryContract, delivery_blocks: script.deliveryBlocks } : {})
   };
 }
 
-module.exports = { mapBeatsToDecisions, compileV3, highlightV3, isUncleanAudio };
+module.exports = { mapBeatsToDecisions, compileV3, compileDeliveryBlocks, highlightV3, isUncleanAudio };

@@ -91,8 +91,24 @@ function beat(id, s, e, extra = {}) {
     newInformation: `info ${id}`, whyNecessaryNow: 'advances the denial vs evidence', whyNextFollows: 'next step of the stop', payoffTiming: 'delayed', ...extra
   };
 }
+// Delivery blocks for a fixture: consecutive beats with the same audio mode share a block.
+function autoBlocks(beats) {
+  const blocks = [];
+  for (const b of beats) {
+    const mode = b.audioMode && b.audioMode !== 'original_audio' ? 'narrated_story' : 'raw_evidence';
+    const last = blocks[blocks.length - 1];
+    if (last && last.mode === mode && (mode === 'raw_evidence' || last.sourceAudioTreatment === b.audioMode)) { last.beatIds.push(b.beatId); continue; }
+    blocks.push({ blockId: `blk${blocks.length + 1}`, mode, beatIds: [b.beatId], storyFunction: b.narrativeRole,
+      ...(mode === 'narrated_story' ? { sourceAudioTreatment: b.audioMode, narratorFunction: 'CONTEXT', narrationIntent: b.narrationIntent || 'orient the viewer' } : { evidenceFunction: 'the real moment' }) });
+  }
+  return blocks;
+}
+const withBlocks = edl => ({ ...edl, spine: { ...edl.spine, deliveryBlocks: autoBlocks(edl.spine.beats) } });
 // A valid 72s director EDL: teaser from later in scope, rewind, chronological, ending.
 function directorEdl({ beats } = {}) {
+  return withBlocks(directorEdlNoBlocks({ beats }));
+}
+function directorEdlNoBlocks({ beats } = {}) {
   return {
     accessGranted: true,
     reelObservations: 'Continuous roadside stop; denial at the window; container visible; wobbly test; detention.',
@@ -121,6 +137,7 @@ function makeVertex(script) {
       const kind = p.includes('PASS 1A — STORY SCOPE SELECTION') ? 'scope'
         : p.includes('PASS 1B — MEDIA-GROUNDED EDITORIAL DIRECTOR') ? 'director'
         : p.includes('PASS 1 — GEMINI EDITORIAL DIRECTOR') ? 'legacy_design'
+        : p.includes('PASS 3B — BLOCK NARRATION') ? 'block_narration'
         : p.includes('PASS 3 — NARRATION') ? 'narration'
         : p.includes('reviewing a RENDERED edit') ? 'scope_critic'
         : 'other';
@@ -416,7 +433,7 @@ function fakeEngine(asks) {
       ...Array.from({ length: 9 }, (_, i) => beat(`c${i}`, 2 + i * 10, 2 + i * 10 + 8)),
       beat('end', 242, 250, { narrativeRole: 'cliffhanger', scopeMembership: 'ending' })
     ];
-    const engine = fakeEngine([{ ...directorEdl(), spine: { ...directorEdl().spine, beats } }]);
+    const engine = fakeEngine([withBlocks({ ...directorEdl(), spine: { ...directorEdl().spine, beats } })]);
     const out = await Director.directEdl(engine, { model: MODEL, scope: { ...scope, candidateEndingEvents: [{ sourceStartSec: 242, sourceEndSec: 250, endingType: 'forward_cliffhanger' }] } });
     const ask = engine.lastAsks[0];
     assert.ok(ask.evidence.length <= MAXF && ask.evidence.length >= 1, `files ${ask.evidence.length}`);
@@ -447,7 +464,7 @@ function fakeEngine(asks) {
   });
 
   // ---------------------------------------------------------------- duration control (target band, lightweight repair, technical adjustment)
-  const edlOf = beats => ({ ...directorEdl(), spine: { ...directorEdl().spine, beats } });
+  const edlOf = beats => withBlocks({ ...directorEdl(), spine: { ...directorEdl().spine, beats } });
   const hookB = (s, e) => beat('h', s, e, { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook' });
   const endB = (s, e) => beat('end', s, e, { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2' });
   // 64.6s, inside the scope windows, with free watched footage next to several beats.
@@ -642,7 +659,7 @@ function fakeEngine(asks) {
     await p.store.updateProject(p.dir, p.projectId, { autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, audioBalance: 'balanced' } });
     const narrated = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b2' ? { ...b, audioMode: 'voiceover_with_ambient', wantsNarration: true, narratorFunction: 'CONTEXT', narrationIntent: 'Who called and why' } : b)) });
     const vertex = makeVertex({ scope: selection(), director: narrated,
-      narration: { accessGranted: true, narrations: [{ beatId: 'b2', voiceoverText: 'A caller reported a car swerving.', previewVi: 'x', narratorFunction: 'CONTEXT', newInformation: ['call'], newInformationRefs: ['e1'], emotionTag: 'NEUTRAL' }] } });
+      block_narration: { accessGranted: true, narrations: [{ blockId: 'blk2', narrationText: 'A caller reported a car swerving.', previewVi: 'x', narratorFunction: 'CONTEXT', newInformation: ['call'], newInformationRefs: ['e1'], emotionTag: 'NEUTRAL' }] } });
     const service = new Service({}, p.store, { vertex, ffmpeg: makeFfmpeg(), dubbing: {}, callBudget: { calls: 0, runId: 't16' } });
     service.measuredVoice = async () => ({ meta: { duration: 6 } });
     const res = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
@@ -650,8 +667,45 @@ function fakeEngine(asks) {
     const script = JSON.parse(await fs.readFile(res.scriptPaths[0], 'utf8'));
     const seg = script.segments[1];
     assert.notStrictEqual(seg.audio_mode, 'original_audio', 'director voiceover choice survives');
-    assert.match(seg.voiceover_text, /caller/);
+    assert.match(seg.block_narration_text, /caller/);
+    assert.strictEqual(seg.voiceover_text, '', 'block passage is canonical on the block, not per segment');
     assert.ok(service.callBudget.calls <= 16, `calls used ${service.callBudget.calls}`);
+    await fs.rm(p.dir, { recursive: true, force: true });
+  });
+
+
+  await ok('Delivery (pipeline): a 2-beat narrated block -> ONE passage request, ONE voice measurement, ONE canonical text; EDL/scope untouched', async () => {
+    const p = await makeProject();
+    await p.store.updateProject(p.dir, p.projectId, { autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, audioBalance: 'balanced' } });
+    const narrate = new Set(['b2', 'b3']);
+    const edl = directorEdl({ beats: directorEdl().spine.beats.map(b => (narrate.has(b.beatId) ? { ...b, audioMode: 'voiceover_with_ambient', narrationIntent: 'who called and what the officer walks into' } : b)) });
+    assert.deepStrictEqual(edl.spine.deliveryBlocks.find(x => x.mode === 'narrated_story').beatIds, ['b2', 'b3']);
+    const passage = 'A caller reported a car swerving across both lanes. The officer pulls it over and the driver insists he has not been drinking.';
+    const vertex = makeVertex({ scope: selection(), director: edl,
+      block_narration: { accessGranted: true, narrations: [{ blockId: 'blk2', narrationText: passage, previewVi: 'x', narratorFunction: 'CONTEXT', newInformation: ['call'], newInformationRefs: ['e1'], emotionTag: 'NEUTRAL' }] } });
+    const service = new Service({}, p.store, { vertex, ffmpeg: makeFfmpeg(), dubbing: {}, callBudget: { calls: 0, runId: 'blk' } });
+    const measured = [];
+    service.measuredVoice = async (_proj, text) => { measured.push(text); return { meta: { duration: text === passage ? 9.5 : 6 } }; };
+    const res = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
+    assert.deepStrictEqual(res.failures, [], JSON.stringify(res.failures));
+    const calls = vertex.calls.filter(c => c.kind === 'block_narration');
+    assert.strictEqual(calls.length, 1);
+    const input = JSON.parse(calls[0].prompt.split('INPUT (data): ')[1].split('\nSOURCE MEDIA: ')[0]);
+    assert.strictEqual(input.blocks.length, 1);
+    assert.strictEqual(input.blocks[0].blockVisualDurationSec, 24);
+    assert.strictEqual(measured.filter(t => t === passage).length, 1, 'block voice measured once');
+    const script = JSON.parse(await fs.readFile(res.scriptPaths[0], 'utf8'));
+    const members = script.segments.filter(s => s.delivery_block_id === 'blk2');
+    assert.deepStrictEqual(members.map(s => s.block_narration_text || ''), [passage, '']);
+    assert.ok(script.segments.every(s => s.voiceover_text === ''));
+    assert.strictEqual(script.delivery_blocks.length, edl.spine.deliveryBlocks.length);
+    // No Story Scope / EDL timestamps mutated.
+    const root = path.join(p.store.getProjectPaths(p.dir, p.projectId).analysisDir, 'auto-story-fast');
+    const spine = JSON.parse(await fs.readFile(path.join(root, 'story-spine.json'), 'utf8')).spines[0];
+    assert.deepStrictEqual(script.segments.map(s => [s.beat_id, s.sourceStartSec, s.sourceEndSec]), spine.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]));
+    assert.deepStrictEqual(spine.beats.map(b => [b.sourceStartSec, b.sourceEndSec]), edl.spine.beats.map(b => [b.sourceStartSec, b.sourceEndSec]));
+    const chosen = JSON.parse(await fs.readFile(path.join(root, 'story-scope.json'), 'utf8')).chosen;
+    assert.deepStrictEqual(spine.storyScope, chosen, 'Story Scope unchanged by delivery/narration/compile');
     await fs.rm(p.dir, { recursive: true, force: true });
   });
 
@@ -660,7 +714,7 @@ function fakeEngine(asks) {
     const engine = fakeEngine([vo, directorEdl()]);
     await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
     assert.strictEqual(engine.lastAsks[0].input.narrationEnabled, false);
-    assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'NARRATION_DISABLED' && v.beatId === 'b2'));
+    assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'NARRATION_DISABLED' && v.blockId === 'blk2'));
   });
 
   await ok('Coverage honours the director castLock marker on its own', async () => {
@@ -694,7 +748,7 @@ function fakeEngine(asks) {
       },
       renderHighlightFastDraft: async () => { const f = path.join(p.dir, `draft-${renderedFiles.length + 2}.mp4`); await fs.writeFile(f, 'mp4'); renderedFiles.push(f); return { outputPath: f }; }
     };
-    const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, observedStory: 'x',
+    const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
     const clean = { ...blocking, issues: [], summary: 'coherent' };
     const repairedEdl = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b4' ? { ...b, sourceStartSec: 38, sourceEndSec: 54 } : b)) });
@@ -778,6 +832,7 @@ function fakeEngine(asks) {
       ...(i === spans.length - 1 ? { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2', isForwardConsequence: true, expectedNextConsequence: 'detention' } : {}),
       observedInFootage: prose(150, `b${i + 1} seen`), viewerStateBefore: prose(70, 'before'), viewerStateAfter: prose(110, 'after'),
       newInformation: prose(90, 'info'), whyNecessaryNow: prose(120, 'needed') }));
+    out.spine.deliveryBlocks = autoBlocks(out.spine.beats);
     return out;
   };
 
@@ -881,8 +936,11 @@ function fakeEngine(asks) {
 
   await ok('Output fuse 6: compact contract keeps every field downstream uses; drops only the unused whyNextFollows', async () => {
     const b = Director.schemas.directorBeat;
-    const consumed = ['beatId', 'sourceStartSec', 'sourceEndSec', 'chronologyMode', 'narrativeRole', 'audioMode', 'scopeMembership', 'observedInFootage', 'newInformation', 'whyNecessaryNow', 'viewerStateBefore', 'viewerStateAfter'];
+    const consumed = ['beatId', 'sourceStartSec', 'sourceEndSec', 'chronologyMode', 'narrativeRole', 'scopeMembership', 'observedInFootage', 'newInformation', 'whyNecessaryNow', 'viewerStateBefore', 'viewerStateAfter'];
     for (const k of consumed) assert.ok(b.required.includes(k), `required ${k}`);
+    // Audio ownership moved to spine.deliveryBlocks; beat audioMode is derived from the block.
+    assert.ok(b.properties.audioMode && !b.required.includes('audioMode'));
+    assert.ok(Director.schemas.directorSpine.properties.deliveryBlocks);
     for (const k of ['narrationIntent', 'narratorFunction', 'wantsNarration', 'payoffTiming', 'isForwardConsequence', 'expectedNextConsequence', 'cliffhangerQuestion', 'whyCutHere']) assert.ok(b.properties[k], `optional ${k}`);
     assert.ok(!b.properties.whyNextFollows, 'whyNextFollows is not consumed by any validator, critic, repair or compiler');
     const electronDir = path.join(__dirname, '..', 'electron');

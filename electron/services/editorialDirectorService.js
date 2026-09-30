@@ -17,6 +17,7 @@ const { StoryError } = require('./autoStoryRepairRouter');
 const { NARRATIVE_ROLES, NARRATOR_FUNCTIONS, toV2Role } = require('./autoStoryV3Taxonomy');
 const Scope = require('./storyScopeService');
 const Packer = require('./scopeReelPacker');
+const Delivery = require('./deliveryBlockService');
 
 const DIRECTOR_CONTRACT = 'scope-media-director-v1';
 const DIRECTOR_REEL_FPS = 4;          // proxy encode fps (Vertex samples at videoFps=2)
@@ -62,7 +63,6 @@ const directorBeat = flexible({
   sourceEndSec: number,
   chronologyMode: choice('teaser', 'chronological', 'rewind', 'callback'),
   narrativeRole: choice(...NARRATIVE_ROLES),
-  audioMode: choice('original_audio', 'voiceover_with_ambient', 'voiceover_only'),
   scopeMembership: choice(...SCOPE_MEMBERSHIP),
   observedInFootage: text,
   viewerStateBefore: text,
@@ -70,6 +70,8 @@ const directorBeat = flexible({
   newInformation: text,
   whyNecessaryNow: text
 }, {
+  // Derived from the owning delivery block (JS); accepted for backwards compatibility.
+  audioMode: choice('original_audio', 'voiceover_with_ambient', 'voiceover_only'),
   wantsNarration: boolean,
   narratorFunction: choice(...NARRATOR_FUNCTIONS, 'NONE'),
   narrationIntent: text,
@@ -89,6 +91,9 @@ const directorSpine = flexible({
   reason: text,
   beats: list(directorBeat, 40)
 }, {
+  // Required by validateDirectorEdl (not by the transport schema) so a missing
+  // layer is reported with a precise, repairable message.
+  deliveryBlocks: list(Delivery.deliveryBlockSchema, 40),
   openLoops: list(flexible({ id: text, question: text }), 12)
 });
 
@@ -112,13 +117,24 @@ EVERY BEAT MUST BE BOTH NOVEL AND CAUSALLY COHERENT WITH THE SCOPE.
 - A different timestamp, speaker or line is not progress. "It is interesting" is not a reason.
 - If removing a beat makes the story clearer with no causal loss, remove it.
 - A continuous exchange in one place can be excellent when each exchange changes the conflict, exposes a contradiction, raises the stakes or moves toward the consequence. Do not cut away just to get visual variety.
-- Large jumps in source time are fine when the viewer understands why they are now seeing the later moment (use a one-line narration bridge). An unexplained jump from one interesting moment to another is not fine.
+- Large jumps in source time are fine when the viewer understands why they are now seeing the later moment (a narrated block can bridge it). An unexplained jump from one interesting moment to another is not fine.
 
-ORIGINAL FOOTAGE TELLS THE STORY ("edited, not generated").
-- Use original audio for confrontation, allegation, denial, contradiction, emotional reaction, commands, discovery and consequence.
-- Use narration (voiceover_with_ambient) only to fill a real comprehension gap: who someone is, what the call was, a fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) compressed into one sentence, or a time bridge. The narration runs over in-scope footage that fits it. narrationIntent says exactly what the line must convey. Never replace strong original dialogue with narration.
-- A narrated beat needs enough seconds for its sentence (input.narrationWordsPerSecond words per second when given, otherwise about 2.5).
-- If input.narrationEnabled is false, every beat must use original_audio.
+DELIVERY: THE NARRATOR AND THE REAL MOMENT SHARE THE STORY.
+The NARRATOR owns comprehension, compression, orientation, causal connection, anticipation and momentum.
+SOURCE AUDIO owns proof, confrontation, emotion, authenticity, the strongest quote, reaction, discovery and consequence.
+For each stretch of the EDL decide: does the viewer need to UNDERSTAND this section? A narrated_story block may own it. Does the viewer need to EXPERIENCE or BELIEVE this moment? A raw_evidence block should own it.
+Useful grammar when it fits: NARRATE TO THE MOMENT -> LET THE REAL MOMENT SPEAK -> NARRATE OUT OF IT.
+Narration may: set up or rewind context, identify people, compress procedural or repetitive explanation, bridge a meaningful time jump, establish whose account we are hearing, frame a contradiction, build anticipation, set up a reveal, open an unresolved question.
+Narration must not: describe obvious movement, paraphrase a strong quote we are about to hear, talk over an important confrontation, invent information, or spoil input.storyScope.mustWithhold.
+A fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) can only enter as narration over in-scope footage that fits it.
+
+DELIVERY BLOCKS (spine.deliveryBlocks) — the audio-ownership layer over your beats.
+- Every beat belongs to exactly one block; a block's beatIds are CONSECUTIVE beats in EDL order; blocks follow EDL order. Blocks never change a beat's range, order or role.
+- raw_evidence: the real moment speaks with its original audio. Give evidenceFunction (what the viewer must see/hear/believe).
+- narrated_story: ONE continuous narration passage runs across ALL of the block's beats (visual cuts stay; only the voice spans them). Give storyFunction, narratorFunction, narrationIntent (exactly what the passage must make the viewer understand) and sourceAudioTreatment: voiceover_with_ambient (keep and duck the scene ambience) or voiceover_only (mute the source, e.g. it contains another narrator or unusable speech). handoffTargetBeatId names the raw beat the passage hands the viewer to, when there is one.
+- A narrated block needs enough seconds for its whole passage (input.narrationWordsPerSecond words per second when given, otherwise about 2.5). The narration text itself is written later from your narrationIntent.
+- Each beat's audio follows its block; you do not need to set beat audioMode.
+- If input.narrationEnabled is false, every block must be raw_evidence.
 
 HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
 - An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must not spend input.storyScope.mustWithhold.
@@ -136,12 +152,13 @@ Set accessGranted=true only after actually watching the attached reel. reelObser
 
 function repairInstruction(kind, payload) {
   if (kind === 'technical') {
-    return `TECHNICAL REPAIR — your EDL failed deterministic validation. Return the COMPLETE EDL again. Change only what these violations require and keep every unaffected beat exactly as it was (same ranges, same order). Replacement footage must come from the attached reel and serve the same story function inside the same scope:
+    return `TECHNICAL REPAIR — your EDL failed deterministic validation. Return the COMPLETE EDL again, including spine.deliveryBlocks covering every beat. Change only what these violations require and keep every unaffected beat exactly as it was (same ranges, same order). Replacement footage must come from the attached reel and serve the same story function inside the same scope:
 ${payload.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}`;
   }
   return `TARGETED EDITORIAL REPAIR — the RENDERED video of your EDL was watched by a media critic, who found the problems listed in input.criticFindings. Each has an output-time region and the beat ids it maps to (input.weakRegions).
 - Return the COMPLETE repaired EDL.
-- Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order, same audio mode).
+- Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order).
+- Delivery findings (who owns the audio) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent for the weak regions. Keep every other block as it was. Return deliveryBlocks covering every beat.
 - Stay inside input.storyScope. Replacement footage must come from the attached scope reel. Do not introduce a new branch of the incident to fill time.
 - Keep the total duration inside input.targetDurationMinSec..input.targetDurationMaxSec.`;
 }
@@ -258,7 +275,7 @@ function coveredByReel(b, reelRanges) {
   return inside / (e - s);
 }
 
-function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null } = {}) {
+function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null, requireDeliveryBlocks = false } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
   const beats = Array.isArray(spine?.beats) ? spine.beats : [];
@@ -269,6 +286,13 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : Infinity;
   const reelRanges = reel?.ranges || [];
   const ids = new Set();
+  // Delivery blocks: STRUCTURE only. When valid, each beat's audio follows its block.
+  let audioBeats = beats;
+  if (requireDeliveryBlocks || spine?.deliveryBlocks !== undefined) {
+    const blockViolations = Delivery.validateDeliveryBlocks(beats, spine?.deliveryBlocks, { narrationEnabled });
+    violations.push(...blockViolations);
+    if (!blockViolations.length) audioBeats = Delivery.applyDeliveryBlocks(beats, spine.deliveryBlocks);
+  }
 
   beats.forEach((b, i) => {
     const id = b.beatId || `#${i}`;
@@ -286,7 +310,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
     }
     if (!String(b.observedInFootage || '').trim()) add('BEAT_NOT_GROUNDED', `Beat '${id}' has no observedInFootage: say what is seen/heard in that range.`, { beatId: id });
     if (!String(b.whyNecessaryNow || '').trim()) add('BEAT_UNJUSTIFIED', `Beat '${id}' has no whyNecessaryNow.`, { beatId: id });
-    if (!narrationEnabled && b.audioMode && b.audioMode !== 'original_audio') {
+    if (!narrationEnabled && audioBeats[i].audioMode && audioBeats[i].audioMode !== 'original_audio' && !audioBeats[i].deliveryBlockId) {
       add('NARRATION_DISABLED', `Beat '${id}' uses ${b.audioMode} but narration is disabled for this project; use original_audio.`, { beatId: id });
     }
   });
@@ -295,7 +319,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   for (let i = 0; i < beats.length; i++) {
     for (let j = i + 1; j < beats.length; j++) {
       const a = beats[i], c = beats[j];
-      if (Math.abs(num(a.sourceStartSec) - num(c.sourceStartSec)) <= DUP_EPS && Math.abs(num(a.sourceEndSec) - num(c.sourceEndSec)) <= DUP_EPS && (a.audioMode || '') === (c.audioMode || '')) {
+      if (Math.abs(num(a.sourceStartSec) - num(c.sourceStartSec)) <= DUP_EPS && Math.abs(num(a.sourceEndSec) - num(c.sourceEndSec)) <= DUP_EPS && (audioBeats[i].audioMode || '') === (audioBeats[j].audioMode || '')) {
         add('EXACT_EDL_DUPLICATE', `Beat '${c.beatId}' repeats the exact footage and audio of '${a.beatId}' (${a.sourceStartSec}-${a.sourceEndSec}s).`, { firstBeatId: a.beatId, secondBeatId: c.beatId });
       }
     }
@@ -433,9 +457,18 @@ function stampSpine(spine, scope, reel, meta = {}) {
     editorialContract: DIRECTOR_CONTRACT,
     storyScope: scope,
     scopeReel: reel,
-    beats: spine.beats.map((b, i) => ({ ...b, beatIndex: i, castLock: DIRECTOR_CONTRACT })),
+    beats: deliveryBeats(spine).map((b, i) => ({ ...b, beatIndex: i, castLock: DIRECTOR_CONTRACT })),
+    deliveryContract: Array.isArray(spine.deliveryBlocks) ? Delivery.DELIVERY_CONTRACT : undefined,
     directorMeta: meta
   };
+}
+
+// Each beat's technical audio mode follows its (structurally valid) delivery block.
+function deliveryBeats(spine) {
+  const beats = spine?.beats || [];
+  if (!Array.isArray(spine?.deliveryBlocks)) return beats;
+  if (Delivery.validateDeliveryBlocks(beats, spine.deliveryBlocks).length) return beats;
+  return Delivery.applyDeliveryBlocks(beats, spine.deliveryBlocks);
 }
 
 function isDirectorSpine(spine) { return spine?.editorialContract === DIRECTOR_CONTRACT; }
@@ -461,7 +494,7 @@ You already watched the scope reel in a previous pass. What you saw is recorded 
 The EDL is story-complete and media-grounded. ONLY its total duration is wrong — see input.durationRepair (currentDurationSec, minimumDurationSec, targetDurationSec, missingToMinimumSec, missingToTargetSec) and input.violations.
 Return the COMPLETE EDL with its total inside input.targetBandMinSec..input.targetBandMaxSec, preferably about input.targetDurationSec. Do not repair only to the hard minimum.
 Allowed: lengthen existing beats inside the cuttable range that already contains them, and/or add beats from footage inside input.cuttableRanges that you already observed. Prefer recovering material you already watched next to existing beats.
-Not allowed: footage outside input.cuttableRanges, overlapping another beat's source range, reordering or removing existing beats, new branches of the incident, or any change to the Story Scope. Keep beatIds, order, roles and audio modes of existing beats.
+Not allowed: footage outside input.cuttableRanges, overlapping another beat's source range, reordering or removing existing beats, new branches of the incident, or any change to the Story Scope. Keep beatIds, order and roles of existing beats. Return spine.deliveryBlocks covering every beat, including any beat you add (a new beat joins a block next to it, or gets its own).
 Every beat keeps observedInFootage and whyNecessaryNow. Plan the beat lengths so their sum lands in the band; the JSON you return is final (no arithmetic, drafts or repeated text inside any field). Set accessGranted=true once you have read the EDL.`;
 
 // OVER_MAX is COMPRESSION, a different operation from UNDER_MIN extension: the
@@ -475,7 +508,7 @@ input.durationCompression gives the exact numbers: currentDurationSec, maximumDu
 Allowed: shorten an existing beat by trimming its start and/or its end INSIDE its current range; remove an existing beat that is redundant or least necessary to the central conflict.
 Not allowed: new beats or new beatIds, moving any sourceStartSec earlier or any sourceEndSec later, new source material, reordering the surviving beats, any change to the Story Scope.
 You decide what deserves time. Keep the moments that carry the central conflict; cut repetition, restated arguments, redundant context and slack inside long beats. The first beat keeps its hook role and the final beat remains the ending.
-Surviving beats keep beatId, order, role and audioMode; observedInFootage must still describe the trimmed range; every beat stays at least 1 second.
+Surviving beats keep beatId, order and role; observedInFootage must still describe the trimmed range; every beat stays at least 1 second. Return spine.deliveryBlocks for the surviving beats (drop removed beatIds; keep each surviving beat in its block).
 FINAL TIMELINE DURATION = sum(sourceEndSec - sourceStartSec) over every returned beat. The JSON you return is final: no arithmetic, drafts or repeated text inside any field. Set accessGranted=true once you have read the EDL.`;
 
 const COMPRESSION_EPS_SEC = 0.05;   // float/rounding tolerance on a range edge
@@ -565,7 +598,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
   };
   const valOpts = { durationSec: engine.duration, targetDurationMinSec: targets.hardMinSec, targetDurationMaxSec: targets.hardMaxSec, reel,
     narrationEnabled: baseInput.narrationEnabled, preferredDurationSec: targets.targetDurationSec,
-    targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec };
+    targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec, requireDeliveryBlocks: true };
   const cuttable = cuttableRanges(reel.ranges).map(([s, e]) => ({ sourceStartSec: round2(s), sourceEndSec: round2(e),
     scopeWindowId: (reel.ranges || []).find(r => s >= num(r.sourceStartSec) - 1e-6 && e <= num(r.sourceEndSec) + 1e-6)?.scopeWindowId || null }));
   const attempts = [];
@@ -598,7 +631,11 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       // (+ critic findings), so a resumed run reuses them instead of re-paying.
       ({ result, schemaError } = await askDirector(engine, callKey, input, instr, evidence));
     }
-    const spine = result?.spine || null;
+    let spine = result?.spine || null;
+    // A compression may remove beats: drop block references to beats that no longer exist.
+    if (spine && mode === 'duration_compression' && Array.isArray(spine.deliveryBlocks)) {
+      spine = { ...spine, deliveryBlocks: Delivery.pruneRemovedBeats(spine.deliveryBlocks, spine.beats) };
+    }
     let report = schemaError
       ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the EDL contract: ${schemaError}` }], metrics: {} }
       : validateDirectorEdl(spine, scope, valOpts);
@@ -728,5 +765,5 @@ module.exports = {
   directEdl, repairEdl, repairTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, beatBudget, compressionViolations, compressionReminder,
-  DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
+  deliveryBeats, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };
