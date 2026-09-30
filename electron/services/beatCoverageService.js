@@ -3,7 +3,7 @@
 // PROBLEM this solves (the "16.8s -> 65s via extend" smell): Story Design +
 // Beat Casting can produce very few beats that together cover only a fraction
 // of the requested duration. Duration Fit then STRETCHES those same few clips
-// (one doorway) to fill time, so the video is editorially thin and repetitive.
+// (one static scene) to fill time, so the video is editorially thin and repetitive.
 //
 // FIX: after deterministic casting and BEFORE narration, detect a STRUCTURAL
 // deficit (too little real content OR too few distinct events) and augment the
@@ -188,7 +188,7 @@ function augmentCoverage(beats = [], model = {}, config = {}, options = {}) {
 
   // Guardrail: When Gemini Editorial Director outputs the exact EDL,
   // Coverage must NOT inject filler or reorder beats for diversity or duration.
-  const hasEdlLock = beats.some(b => b.castReason === 'editorial director explicit edl lock');
+  const hasEdlLock = beats.some(b => b.castReason === 'editorial director explicit edl lock' || b.castLock);
   if (hasEdlLock || options.disableCoverageAugment) {
     return {
       beats, augmented: false, added: 0, base, structural: false,

@@ -135,12 +135,29 @@ function removeWeakest(beats) {
   return null;
 }
 
-function planDurationFit(beats, { config, sourceDuration = Infinity, model = {} } = {}) {
+function planDurationFit(beats, { config, sourceDuration = Infinity, model = {}, validateOnly = false } = {}) {
   const min = config.targetDurationMinSec, max = config.targetDurationMaxSec;
   const inRange = d => d >= min - EPS && d <= max + EPS;
   const current = (beats || []).map(b => ({ ...b }));
   const actualBefore = timelineSeconds(current);
   const operations = [];
+
+  // Validator-only mode (media-grounded Editorial Director path): Duration Fit never
+  // chooses, extends, trims or removes story material. It only reports; an
+  // out-of-range timeline is returned to Gemini for an EDL repair.
+  if (validateOnly) {
+    const fitted = inRange(actualBefore);
+    return {
+      beats: current, actualBefore, actualAfter: actualBefore, min, max,
+      fitted, impossible: !fitted, changed: false, passes: 0, operations,
+      structuralDeficit: false, undercast: false, extensionRatio: 0, validateOnly: true,
+      violation: fitted ? null : {
+        code: actualBefore < min ? 'TOTAL_DURATION_UNDER_MIN' : 'TOTAL_DURATION_OVER_MAX',
+        message: `The timeline is ${round(actualBefore)}s; it must be within ${min}-${max}s.`,
+        totalSec: round(actualBefore)
+      }
+    };
+  }
 
   const isStructuralDeficit = actualBefore < (min * STRUCTURAL_DEFICIT_RATIO);
   const hasEdlLock = current.some(b => b.castReason === 'editorial director explicit edl lock');

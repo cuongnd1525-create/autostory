@@ -1,0 +1,2087 @@
+diff --git a/electron/services/autoStoryDurationFit.js b/electron/services/autoStoryDurationFit.js
+index 6ed4f53..bbe6c41 100644
+--- a/electron/services/autoStoryDurationFit.js
++++ b/electron/services/autoStoryDurationFit.js
+@@ -135,13 +135,30 @@ function removeWeakest(beats) {
+   return null;
+ }
+ 
+-function planDurationFit(beats, { config, sourceDuration = Infinity, model = {} } = {}) {
++function planDurationFit(beats, { config, sourceDuration = Infinity, model = {}, validateOnly = false } = {}) {
+   const min = config.targetDurationMinSec, max = config.targetDurationMaxSec;
+   const inRange = d => d >= min - EPS && d <= max + EPS;
+   const current = (beats || []).map(b => ({ ...b }));
+   const actualBefore = timelineSeconds(current);
+   const operations = [];
+ 
++  // Validator-only mode (media-grounded Editorial Director path): Duration Fit never
++  // chooses, extends, trims or removes story material. It only reports; an
++  // out-of-range timeline is returned to Gemini for an EDL repair.
++  if (validateOnly) {
++    const fitted = inRange(actualBefore);
++    return {
++      beats: current, actualBefore, actualAfter: actualBefore, min, max,
++      fitted, impossible: !fitted, changed: false, passes: 0, operations,
++      structuralDeficit: false, undercast: false, extensionRatio: 0, validateOnly: true,
++      violation: fitted ? null : {
++        code: actualBefore < min ? 'TOTAL_DURATION_UNDER_MIN' : 'TOTAL_DURATION_OVER_MAX',
++        message: `The timeline is ${round(actualBefore)}s; it must be within ${min}-${max}s.`,
++        totalSec: round(actualBefore)
++      }
++    };
++  }
++
+   const isStructuralDeficit = actualBefore < (min * STRUCTURAL_DEFICIT_RATIO);
+   const hasEdlLock = current.some(b => b.castReason === 'editorial director explicit edl lock');
+ 
+diff --git a/electron/services/autoStoryV3Pipeline.js b/electron/services/autoStoryV3Pipeline.js
+index fc329de..173792d 100644
+--- a/electron/services/autoStoryV3Pipeline.js
++++ b/electron/services/autoStoryV3Pipeline.js
+@@ -27,6 +27,23 @@ const audioEvents = require('./audioEventService');
+ const { StoryError } = require('./autoStoryRepairRouter');
+ const { planRetentionArc } = require('./retentionArcPlanService');
+ const { validateEdlQuality } = require('./edlQualityValidator');
++const StoryScope = require('./storyScopeService');
++const Director = require('./editorialDirectorService');
++const ScopeCritic = require('./scopeMediaCriticService');
++
++// Editorial architecture selection. Contract 4 (V4 production) uses the
++// Story Scope -> media-grounded Editorial Director path by default. Contract 3 and
++// an explicit 'legacy_v4' opt-out keep the text-only Story Design path unchanged.
++const SCOPE_MEDIA_DIRECTOR = 'scope_media_director';
++function editorialArchitecture(project, config = {}) {
++  // 1. explicit user/project choice; 2. V4 contract; 3. the architecture persisted by a
++  // previous V4 run (run() rewrites the contract to 3 for the renderer); 4. legacy.
++  const explicit = project?.autoStoryConfig?.editorialArchitecture || config.editorialArchitecture;
++  if (explicit) return explicit;
++  if (project?.autoStoryContractVersion === 4) return SCOPE_MEDIA_DIRECTOR;
++  if (project?.autoStoryEditorialArchitecture) return project.autoStoryEditorialArchitecture;
++  return 'legacy_text_design';
++}
+ 
+ const SETUP_FUNCTIONS = new Set(['FORESHADOW', 'CONTEXT', 'IDENTITY', 'TIME_JUMP', 'LOCATION_CHANGE', 'CLARIFICATION']);
+ const HIGH_IMPACT_ROLES = new Set(['confrontation', 'apprehension', 'reveal', 'reversal', 'pursuit', 'complication']);
+@@ -397,6 +414,7 @@ async function writeNarration(engine, story, model, speakingBeats, evidence, rep
+     return { beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec,
+       narratorFunction: b.narratorFunction, viewerQuestion: b.viewerQuestion,
+       plannedNewInformation: b.newInformation || [], availableVisualSec: seconds,
++      ...(b.narrationIntent ? { narrationIntent: b.narrationIntent, observedInFootage: b.observedInFootage || '' } : {}),
+       safeWords: compiler.budget(seconds, engine.config.narration.measuredWordsPerSecond) };
+   });
+   const instruction = repair
+@@ -460,15 +478,33 @@ function demote(beats, beatIds) {
+ }
+ 
+ async function buildScript(engine, service, opts, story, model, root, emit = () => {}) {
+-  // Retention Arc Plan (Phase 3-6): translates Story Design into a structured retention arc
+-  const retentionArc = planRetentionArc(story, model, engine.config, opts);
+-  await write(path.join(root, `retention-arc-${story.scriptId}.json`), retentionArc);
+-  emit('editing', `[V3] Retention Arc Plan compiled (${retentionArc.beats.length} beats, ${retentionArc.openLoops.length} loops) for script ${story.scriptId}`);
+-
+-  // Deterministic casting over the shared model using the retention arc beats
+-  const cast = castBeats(retentionArc.beats, model, { preferContinuity: retentionArc.isSerialized });
++  // Media-grounded Editorial Director EDLs have exactly ONE timeline owner. On that
++  // path Retention Arc / Coverage / Duration Fit are validator-only and Beat Casting
++  // only bounds-checks; assertEdlIntact() proves nothing downstream edited the story.
++  const directorMode = Director.isDirectorSpine(story);
++  let retentionArc, cast;
++  if (directorMode) {
++    retentionArc = {
++      schemaVersion: 1, mode: 'validator_only', owner: Director.DIRECTOR_CONTRACT,
++      storyScopeId: story.storyScope?.storyScopeId || null,
++      note: 'Retention Arc does not reorder, re-role or re-time a director EDL.',
++      beats: story.beats.map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec, narrativeRole: b.narrativeRole, scopeMembership: b.scopeMembership })),
++      openLoops: story.openLoops || []
++    };
++    await write(path.join(root, `retention-arc-${story.scriptId}.json`), retentionArc);
++    emit('editing', `[Director] EDL locked (${story.beats.length} beats, scope ${retentionArc.storyScopeId}) for script ${story.scriptId}; retention arc is validator-only.`);
++    cast = castBeats(story.beats, model, { preferContinuity: true });
++  } else {
++    // Retention Arc Plan (Phase 3-6): translates Story Design into a structured retention arc
++    retentionArc = planRetentionArc(story, model, engine.config, opts);
++    await write(path.join(root, `retention-arc-${story.scriptId}.json`), retentionArc);
++    emit('editing', `[V3] Retention Arc Plan compiled (${retentionArc.beats.length} beats, ${retentionArc.openLoops.length} loops) for script ${story.scriptId}`);
++    // Deterministic casting over the shared model using the retention arc beats
++    cast = castBeats(retentionArc.beats, model, { preferContinuity: retentionArc.isSerialized });
++  }
+   let beats = cast.beats.filter(b => !b.unresolved);
+   if (beats.length < 2) throw new StoryError('BAD_CANDIDATE', 'Not enough castable beats for this story.');
++  if (directorMode) Director.assertEdlIntact(story.beats, beats, engine.duration);
+ 
+   // Coverage augmentation (deterministic, no Vertex): if casting produced a
+   // structurally thin timeline (e.g. 16.8s of one scene for a 65s target), pull
+@@ -497,8 +533,8 @@ async function buildScript(engine, service, opts, story, model, root, emit = ()
+   // Bug-1 fix: overlong narration is repaired per-beat (<=2 targeted rewrites),
+   // then demoted to original audio — never fatal to the whole script.
+   const beforeSafe = beats.filter(b => b.speaks).length;
+-  beats = await enforceSafeWords(beats, engine.config, async (over) => {
+-    const relines = await writeNarration(engine, story, model, over, evidence, true);
++  beats = await enforceSafeWords(beats, engine.config, async (over, _budgets, attempt) => {
++    const relines = await writeNarration(engine, story, model, over, evidence, attempt + 1);
+     return over.map(b => { const l = relines.get(b.beatId); return { beatId: b.beatId, voiceoverText: l?.voiceoverText || '', previewVi: l?.previewVi }; });
+   });
+   const afterSafe = beats.filter(b => b.speaks).length;
+@@ -531,7 +567,11 @@ async function buildScript(engine, service, opts, story, model, root, emit = ()
+     ? `shortBy=${(cfg.targetDurationMinSec - beforeSec).toFixed(1)}s`
+     : beforeSec > cfg.targetDurationMaxSec ? `overBy=${(beforeSec - cfg.targetDurationMaxSec).toFixed(1)}s` : 'in range';
+   emit('editing', `[V3] Duration check: actual=${beforeSec.toFixed(1)}s, requested=${cfg.targetDurationMinSec}-${cfg.targetDurationMaxSec}s, ${delta} (script ${story.scriptId})`);
+-  const fit = durationFit.planDurationFit(beats, { config: cfg, sourceDuration: engine.duration, model });
++  const fit = durationFit.planDurationFit(beats, { config: cfg, sourceDuration: engine.duration, model, validateOnly: directorMode });
++  if (directorMode && fit.impossible) {
++    // JS never picks new story material: the EDL goes back to the Editorial Director.
++    throw new StoryError('DIRECTOR_REPAIR_REQUIRED', `Director EDL duration ${fit.actualBefore.toFixed(1)}s is outside ${cfg.targetDurationMinSec}-${cfg.targetDurationMaxSec}s.`, { violations: [fit.violation] });
++  }
+   if (fit.changed) {
+     beats = fit.beats;
+     // Ranges moved/added — re-prepare evidence so compile finds a covering clip per beat.
+@@ -560,6 +600,7 @@ async function buildScript(engine, service, opts, story, model, root, emit = ()
+   if (metrics.flags.length) emit('editing', `[V3] Editorial flags for script ${story.scriptId}: ${metrics.flags.join(', ')}`);
+   emit('editing', `[V3] Editorial: ${metrics.beatCount} beats, ${metrics.distinctEvents} distinct events, ${metrics.distinctLocations} locations, coverageRatio=${metrics.coverageRatio}, maxSameSceneRun=${metrics.maxConsecutiveSameLocation}, extensionRatio=${metrics.extensionRatio} (script ${story.scriptId})`);
+ 
++  if (directorMode) Director.assertEdlIntact(story.beats, beats, engine.duration);
+   const script = compileV3(beats, {
+     story: { scriptId: story.scriptId, title: story.title, centralViewerQuestion: story.centralViewerQuestion,
+       spine: story.spine, openLoops: story.openLoops },
+@@ -569,6 +610,57 @@ async function buildScript(engine, service, opts, story, model, root, emit = ()
+   return { script, evidence, editorial };
+ }
+ 
++// Story Scope -> media-grounded Editorial Director, once per requested output.
++// A failure of one output never discards another output's valid EDL: spines are
++// persisted as each completes and per-script failures are returned.
++const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING']);
++async function directStories(engine, model, root, emit, config) {
++  const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit });
++  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC };
++  const alternates = StoryScope.alternateScopes(selected.selection, selected.scope.storyScopeId, scopeOpts)
++    .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION, targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
++  const scopes = [selected.scope, ...alternates].slice(0, Math.max(1, config.outputCount || 1));
++  await write(path.join(root, 'story-scope.json'), { contract: StoryScope.SCOPE_CONTRACT_VERSION, chosen: selected.scope, reel: selected.reel,
++    selectionRationale: selected.selection.selectionRationale, candidates: selected.selection.candidates, attempts: selected.attempts, usedScopes: scopes.map(x => x.storyScopeId) });
++  const spines = [], failures = [];
++  for (let i = 0; i < scopes.length; i++) {
++    try {
++      const directed = await Director.directEdl(engine, { model, scope: scopes[i], root, write, emit, scriptId: i + 1 });
++      spines.push({ ...directed.spine, scriptId: i + 1 });
++      await write(path.join(root, 'story-spine.json'), { spines });
++    } catch (err) {
++      // The primary script failing with anything but a director contract failure is fatal (as before).
++      if (!DIRECTOR_FAILURE_KINDS.has(err.kind) && (i === 0 || engine.signal?.aborted)) throw err;
++      failures.push({ scriptId: i + 1, storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR', error: err.message, details: err.details || null });
++      emit('failed', `[Director] Script ${i + 1}: ${err.message}`);
++    }
++  }
++  if (!spines.length) {
++    const first = failures[0] || {};
++    throw new StoryError(first.kind || 'DIRECTOR_EDL_INVALID', first.error || 'No director EDL produced.', first.details || { failures });
++  }
++  emit('design', `[Director] ${spines.length} media-grounded EDL(s) ready.`, 40);
++  spines.failures = failures;
++  return spines;
++}
++
++// Downstream technical findings on a director EDL go back to the director (never
++// JS story edits). Compile-level StoryErrors are routed the same way.
++const DIRECTOR_ROUTABLE_KINDS = new Set(['DIRECTOR_REPAIR_REQUIRED', 'EVIDENCE_REQUIRED', 'LOCAL_EDITORIAL', 'VOICE_BUDGET', 'STRUCTURAL_STORY', 'EDITORIAL_UNDERCAST', 'REGIONAL_EDITORIAL', 'BAD_CANDIDATE']);
++async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical } = {}) {
++  const { engine, service, opts, model, root, emit, scriptId } = ctx;
++  try {
++    return { built: await build(engine, service, opts, story, model, root, emit), story };
++  } catch (e) {
++    if (!Director.isDirectorSpine(story) || !DIRECTOR_ROUTABLE_KINDS.has(e.kind)) throw e;
++    emit('design', `[Director] Script ${scriptId}: ${e.kind} (${e.message}) — returning EDL to the director.`, 'WARNING');
++    const violations = e.details?.violations || [{ code: e.kind, message: e.message, details: e.details || null }];
++    const fixed = await repair(engine, { model, spine: story, violations, root, write, emit, scriptId });
++    const repairedStory = { ...story, ...fixed.spine };
++    return { built: await build(engine, service, opts, repairedStory, model, root, emit), story: repairedStory, repairedSpine: fixed.spine };
++  }
++}
++
+ async function run(service, opts) {
+   const { root, project: original } = await initialize(service, opts);
+   let project = { ...original, draftVoiceMode: 'final' };
+@@ -579,6 +671,11 @@ async function run(service, opts) {
+   if (project.autoStoryConfig?.targetDurationMaxSec) {
+     config.targetDurationMaxSec = Math.max(config.targetDurationMinSec, project.autoStoryConfig.targetDurationMaxSec);
+   }
++  // Editorial-architecture knobs survive normalization so auditDrafts/repair see them.
++  const rawCfg = project.autoStoryConfig || {};
++  config.editorialArchitecture = editorialArchitecture(project, {});
++  if (rawCfg.storyMode) config.storyMode = rawCfg.storyMode;
++  if (Number.isFinite(Number(rawCfg.maxScopeReelSec)) && Number(rawCfg.maxScopeReelSec) > 0) config.maxScopeReelSec = Number(rawCfg.maxScopeReelSec);
+   const update = patch => service.store.updateProject(opts.workspaceRoot, opts.projectId, patch);
+   const emit = (stage, message, percent) => opts.onProgress?.({ stage, message, ...(percent === undefined ? {} : { percent }) });
+ 
+@@ -604,6 +701,7 @@ async function run(service, opts) {
+   // v3 sets duck-by-default (Phase 13): source preserved and ducked, not muted.
+   project = await update({
+     autoStoryContractVersion: 3, autoStoryPipelineVersion: 'source-story-v3',
++    autoStoryEditorialArchitecture: config.editorialArchitecture,
+     autoStoryConfig: { ...project.autoStoryConfig, outputCount: config.outputCount },
+     autoStoryEditorialConfig: config, autoStorySourceV3: { identity, cache, duration: probe.duration },
+     draftVoiceMode: 'final', showSubtitles: true, narrationLanguage: 'en',
+@@ -638,14 +736,22 @@ async function run(service, opts) {
+   }
+   emit('understand', `[V3] Source Story Model completed — ${model.events.length} events, ${model.quotes.length} quotes, ${(model.audioEvents || []).length} audio events.`, 25);
+ 
+-  // Phase 4-5: story design (text only; no video re-sent). Persists raw/normalized/
+-  // metadata, does ONE bounded text-only repair on empty spines, and only then fails.
+-  emit('design', '[V3] Story Design started (text-only).', 30);
++  const architecture = config.editorialArchitecture;
+   let spines;
+   try {
+-    spines = await buildStoryDesign(engine, model, root, emit);
++    if (architecture === SCOPE_MEDIA_DIRECTOR) {
++      // Phase 4-5 (V4 production): STORY SCOPE first, then the media-grounded
++      // Editorial Director watches the scope reel and owns the exact EDL.
++      emit('design', '[Scope] Story Scope selection started.', 30);
++      spines = await directStories(engine, model, root, emit, config);
++    } else {
++      // Phase 4-5 (legacy): story design (text only; no video re-sent). Persists raw/normalized/
++      // metadata, does ONE bounded text-only repair on empty spines, and only then fails.
++      emit('design', '[V3] Story Design started (text-only).', 30);
++      spines = await buildStoryDesign(engine, model, root, emit);
++    }
+   } catch (err) {
+-    if (err.kind === 'STORY_DESIGN_INVALID' || err.kind === 'STORY_DESIGN_HARD_INVALID' || err.kind === 'INPUT_MISSING') {
++    if (['STORY_DESIGN_INVALID', 'STORY_DESIGN_HARD_INVALID', 'INPUT_MISSING', 'STORY_SCOPE_INVALID', 'DIRECTOR_EDL_INVALID'].includes(err.kind)) {
+       await update({ autoStoryCapacityWarning: `v3: ${err.message}`, autoStoryState: { phase: 'review_failed', failures: [] } });
+       const failures = [{ scriptId: 1, kind: err.kind, error: err.message, details: err.details || null }];
+       await write(path.join(root, 'failures.json'), failures);
+@@ -656,16 +762,23 @@ async function run(service, opts) {
+   }
+   await write(path.join(root, 'story-spine.json'), { spines });
+ 
+-  const scriptPaths = [], failures = [];
++  const scriptPaths = [], failures = [...(spines.failures || [])];
+   const chosen = spines.slice(0, config.outputCount);
+   for (let i = 0; i < chosen.length; i++) {
+-    const scriptId = i + 1;
++    const scriptId = Number(chosen[i].scriptId) || i + 1;
+     const story = { ...chosen[i], scriptId, title: chosen[i].hookPromise || `Story ${scriptId}`,
+       spine: { centralViewerQuestion: chosen[i].centralViewerQuestion, hookPromise: chosen[i].hookPromise, informationBudget: chosen[i].informationBudget },
+       openLoops: chosen[i].openLoops || [] };
+     try {
+       emit('editing', `[V3] Script ${scriptId}: casting beats, planning audio, writing narration.`, 45 + i * 10);
+-      const { script, evidence } = await buildScript(engine, service, opts, story, model, root, emit);
++      const outcome = await buildDirectorScript({ engine, service, opts, model, root, emit, scriptId }, story);
++      if (outcome.repairedSpine) {
++        Object.assign(story, outcome.repairedSpine);
++        const at = spines.findIndex(sp => Number(sp.scriptId) === scriptId);
++        spines[at >= 0 ? at : i] = { ...outcome.repairedSpine, scriptId };
++        await write(path.join(root, 'story-spine.json'), { spines });
++      }
++      const { script, evidence } = outcome.built;
+       const scriptPath = path.join(root, `script-${scriptId}.json`);
+       await write(scriptPath, highlightV3(script, story, evidence));
+       scriptPaths.push(scriptPath);
+@@ -685,6 +798,136 @@ async function run(service, opts) {
+ }
+ 
+ 
++// Atomic canonical persistence of an accepted EDL into story-spine.json.
++async function persistAcceptedSpine(root, id, spine) {
++  const spinePath = path.join(root, 'story-spine.json');
++  let data = { spines: [] };
++  try { data = JSON.parse(await fs.readFile(spinePath, 'utf8')); } catch (_) {}
++  if (!Array.isArray(data.spines)) data.spines = [];
++  const idx = data.spines.findIndex(s => Number(s.scriptId) === id);
++  if (idx >= 0) data.spines[idx] = { ...spine, scriptId: id };
++  else if (data.spines.length >= id) data.spines[id - 1] = { ...spine, scriptId: id };
++  else data.spines.push({ ...spine, scriptId: id });
++  const tempPath = `${spinePath}.${crypto.randomUUID()}.tmp`;
++  await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
++  await fs.rename(tempPath, spinePath);
++}
++
++async function critiqueDirectorRender(ai, spine, mp4, probe, script) {
++  const meta = await probe(mp4);
++  let critique = await ScopeCritic.critiqueScopedRender(spine, { aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script });
++  if (critique.status === 'MEDIA_CRITIC_INVALID') {
++    console.warn(`[Director] Scope critic returned ${critique.status} (${critique.summary}). Retrying once on the same MP4...`);
++    critique = await ScopeCritic.critiqueScopedRender(spine, { aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script });
++  }
++  return { critique, duration: meta.duration };
++}
++
++function directorAudit(id, verdict, extra = {}) {
++  return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, ...verdict, ...extra };
++}
++
++// Review loop for director-owned EDLs: render -> scope critic -> director repair (<=2).
++async function auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine, script, ai }) {
++  const { workspaceRoot, projectId, onProgress, onDraft, signal } = opts;
++  const probe = f => service.ffmpeg.probeVideo(f);
++  const summarize = c => ({ scopeSurvived: c.scopeSurvived, centralQuestionActiveThroughout: c.centralQuestionActiveThroughout,
++    endingIsConsequence: c.endingIsConsequence, finalFootageUsable: c.finalFootageUsable, blockingIssues: (c.issues || []).filter(x => x.severity === 'blocking').length, mp4Duration: c.mp4Duration });
++  const criticFailed = async (critique, duration, repairPasses) => {
++    const audit = directorAudit(id, { needsUserReview: true, status: 'MEDIA_CRITIC_FAILED', failureType: 'MEDIA_CRITIC_FAILED' }, {
++      repairPasses, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
++      metrics: { mp4Duration: duration }, auditResult: critique });
++    await fs.writeFile(record, JSON.stringify(audit, null, 2));
++    const err = new Error(`MEDIA_CRITIC_FAILED: Scope critic failed after retry (${critique.summary})`);
++    err.code = 'MEDIA_CRITIC_FAILED'; err.audit = audit; throw err;
++  };
++
++  // The rendered MP4 was built from script-N.json, whose story_contract is the exact
++  // director spine that produced it. Critique (and repair) THAT spine so beat mapping
++  // can never drift from what was rendered.
++  if (Director.isDirectorSpine(script?.story_contract) && Array.isArray(script.story_contract.beats)) {
++    const { title: _t, spine: _s, openLoops: _o, ...rendered } = script.story_contract;
++    spine = { ...rendered, openLoops: _o || rendered.openLoops || [] };
++  }
++  onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (initial render)...` });
++  let { critique, duration } = await critiqueDirectorRender(ai, spine, currentMp4, probe, script);
++  await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
++  await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
++  if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
++  if (critique.isCompliant) {
++    const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
++    await fs.writeFile(record, JSON.stringify(audit, null, 2));
++    return audit;
++  }
++
++  let current = spine;
++  const passFailure = async (pass, err) => {
++    // Budget exhaustion / an unrepairable director or compile failure is a reviewable
++    // outcome for this script, not a crash that drops the other scripts' audits.
++    const budget = /yêu cầu AI|call limit|budget/i.test(err.message || '');
++    if (!budget && !err.kind) throw err;
++    const audit = directorAudit(id, { needsUserReview: true, status: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind, failureType: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind }, {
++      repairPasses: pass - 1, finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: `Repair pass ${pass} could not complete: ${err.message}` }] }, metrics: summarize(critique) });
++    await fs.writeFile(record, JSON.stringify(audit, null, 2));
++    return audit;
++  };
++  for (let pass = 1; pass <= 2; pass++) {
++    signal?.throwIfAborted();
++    try {
++    const emitProgress = (st, msg, pct) => onProgress?.({ stage: st, message: msg, percent: pct });
++    const repaired = await Director.repairEdl(engine, { model, spine: current, critique, weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id });
++    await fs.writeFile(path.join(root, `repair-${pass}-request-${id}.json`), JSON.stringify({
++      storyScopeId: repaired.request.scope?.storyScopeId, weakRegions: repaired.request.weakRegions,
++      criticSummary: critique.summary, reelRanges: repaired.request.reel.ranges, evidenceFiles: repaired.request.evidenceFiles.map(f => path.basename(f || ''))
++    }, null, 2));
++    current = { ...repaired.spine, scriptId: id };
++    await fs.writeFile(path.join(root, `repair-${pass}-story-spine-${id}.json`), JSON.stringify(current, null, 2));
++
++    const story = { ...current, scriptId: id, title: current.hookPromise || `Story ${id}`,
++      spine: { centralViewerQuestion: current.centralViewerQuestion, hookPromise: current.hookPromise, informationBudget: current.informationBudget },
++      openLoops: current.openLoops || [] };
++    const outcome = await buildDirectorScript({ engine, service, opts, model, root, emit: emitProgress, scriptId: id }, story);
++    if (outcome.repairedSpine) current = { ...outcome.repairedSpine, scriptId: id };
++    const rebuilt = outcome.built;
++    const scriptPath = path.join(root, `script-${id}.json`);
++    const highlight = highlightV3(rebuilt.script, outcome.story, rebuilt.evidence);
++    await fs.writeFile(scriptPath, JSON.stringify(highlight, null, 2));
++    const importedProject = await service.dubbing.importReviewedScriptProject({ workspaceRoot, projectId, settings: service.settings, jsonPath: scriptPath });
++    const variant = importedProject.analysis?.highlightVariants?.find(v => Number(v.scriptId) === id) || importedProject.analysis?.highlightVariants?.[0];
++    const rendered = await service.dubbing.renderHighlightFastDraft({ workspaceRoot, projectId, settings: service.settings,
++      project: { ...importedProject, analysis: { ...importedProject.analysis, activeVariantId: variant.id, segments: variant.segments } }, onProgress });
++    currentMp4 = rendered.outputPath || rendered.internalOutputPath || variant.artifacts?.fastDraftVideoPath;
++    onDraft?.(await service.store.getProject(workspaceRoot, projectId));
++
++    await fs.writeFile(path.join(root, `last-rendered-story-spine-${id}.json`), JSON.stringify(current, null, 2));
++    onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (repair pass ${pass})...` });
++    ({ critique, duration } = await critiqueDirectorRender(ai, current, currentMp4, probe, highlight));
++    } catch (err) {
++      if (signal?.aborted) throw err;
++      return passFailure(pass, err);
++    }
++    await fs.writeFile(path.join(root, `repair-${pass}-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
++    if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass);
++    if (critique.isCompliant) {
++      try { await persistAcceptedSpine(root, id, current); }
++      catch (err) {
++        const audit = directorAudit(id, { needsUserReview: true, status: 'PERSIST_ACCEPTED_EDL_FAILED', failureType: 'PERSIST_ACCEPTED_EDL_FAILED' }, {
++          repairPasses: pass, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `PERSIST_ACCEPTED_EDL_FAILED: ${err.message}` }] }, metrics: summarize(critique) });
++        await fs.writeFile(record, JSON.stringify(audit, null, 2)).catch(() => {});
++        const e = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`); e.code = 'PERSIST_ACCEPTED_EDL_FAILED'; e.audit = audit; throw e;
++      }
++      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
++      await fs.writeFile(record, JSON.stringify(audit, null, 2));
++      return audit;
++    }
++  }
++  const audit = directorAudit(id, { needsUserReview: true }, { repairPasses: 2,
++    finalCheck: { complete: true, verdict: 'FAIL', issues: (critique.weakRegions || []).map(r => ({ reason: `${r.type}: ${r.reason}`, outputStartSec: r.outputStartSec, outputEndSec: r.outputEndSec, beatIds: r.beatIds })) },
++    metrics: summarize(critique) });
++  await fs.writeFile(record, JSON.stringify(audit, null, 2));
++  return audit;
++}
++
+ async function auditDrafts(service, opts) {
+   const { workspaceRoot, projectId, signal, onProgress, onDraft } = opts;
+   const project = await service.store.getProject(workspaceRoot, projectId);
+@@ -728,9 +971,16 @@ async function auditDrafts(service, opts) {
+     throw new Error(`Failed to load canonical Source Story Model from ${sourceCachePath}`);
+   }
+ 
++  let auditCues = [];
++  try {
++    if (project.subtitleSourcePath && service.dubbing?.readSubtitleSegments) {
++      auditCues = Dubbing.normalizeRollingSubtitleCues(await service.dubbing.readSubtitleSegments(project.subtitleSourcePath));
++    }
++  } catch (_) { auditCues = []; }
+   const engine = new Engine(service, {
+     project,
+     root,
++    cues: auditCues,
+     cache: sourceCachePath,
+     config: project.autoStoryEditorialConfig || project.autoStoryConfig || {},
+     signal,
+@@ -770,6 +1020,13 @@ async function auditDrafts(service, opts) {
+ 
+     let currentSpine = spine;
+ 
++    // Director-owned EDLs: scope-aware critic identifies problems, the Editorial
++    // Director repairs them (scope + EDL + weak regions + the same scope reel).
++    if (Director.isDirectorSpine(currentSpine)) {
++      audits.push(await auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine: currentSpine, script, ai }));
++      continue;
++    }
++
+     // 1. Initial render audit
+     const meta = await service.ffmpeg.probeVideo(currentMp4);
+     onProgress?.({ stage: 'reviewing', message: `Script ${id}: [V4] Chạy Media-Grounded Critic (Initial)...` });
+@@ -1037,5 +1294,5 @@ async function auditDrafts(service, opts) {
+ 
+   return { project: await service.store.getProject(workspaceRoot, projectId), audits };
+ }
+-module.exports = { run, auditDrafts, assignAudioRoles, buildScript, enforceSafeWords, demoteOverflow, safeWordsFor, isOverflow,
++module.exports = { run, auditDrafts, auditDirectorDraft, directStories, buildDirectorScript, editorialArchitecture, SCOPE_MEDIA_DIRECTOR, assignAudioRoles, buildScript, enforceSafeWords, demoteOverflow, safeWordsFor, isOverflow,
+   assertStoryModelInput, validateStoryDesign, validateNarration, buildStoryDesign, chooseSpines, completeSpines };
+diff --git a/electron/services/beatCoverageService.js b/electron/services/beatCoverageService.js
+index 40ec919..742eac1 100644
+--- a/electron/services/beatCoverageService.js
++++ b/electron/services/beatCoverageService.js
+@@ -3,7 +3,7 @@
+ // PROBLEM this solves (the "16.8s -> 65s via extend" smell): Story Design +
+ // Beat Casting can produce very few beats that together cover only a fraction
+ // of the requested duration. Duration Fit then STRETCHES those same few clips
+-// (one doorway) to fill time, so the video is editorially thin and repetitive.
++// (one static scene) to fill time, so the video is editorially thin and repetitive.
+ //
+ // FIX: after deterministic casting and BEFORE narration, detect a STRUCTURAL
+ // deficit (too little real content OR too few distinct events) and augment the
+@@ -188,7 +188,7 @@ function augmentCoverage(beats = [], model = {}, config = {}, options = {}) {
+ 
+   // Guardrail: When Gemini Editorial Director outputs the exact EDL,
+   // Coverage must NOT inject filler or reorder beats for diversity or duration.
+-  const hasEdlLock = beats.some(b => b.castReason === 'editorial director explicit edl lock');
++  const hasEdlLock = beats.some(b => b.castReason === 'editorial director explicit edl lock' || b.castLock);
+   if (hasEdlLock || options.disableCoverageAugment) {
+     return {
+       beats, augmented: false, added: 0, base, structural: false,
+diff --git a/electron/services/editorialDirectorService.js b/electron/services/editorialDirectorService.js
+new file mode 100644
+index 0000000..647ecb7
+--- /dev/null
++++ b/electron/services/editorialDirectorService.js
+@@ -0,0 +1,360 @@
++// AutoStory — MEDIA-GROUNDED EDITORIAL DIRECTOR (single owner of the exact EDL).
++//
++// Gemini WATCHES a compact reel of the selected Story Scope (source-clock proxies
++// with a manifest back to absolute source time) and returns the complete EDL:
++// exact ranges, order, teaser borrowing, rewind placement, narrative role, audio
++// role (original dialogue vs narration), and the ending.
++//
++// Downstream JS must not re-rank, reorder, inject, extend or trim this EDL. The
++// deterministic checks here are TECHNICAL only (bounds, duration, exact
++// duplicates, renderer requirements) plus one grounding check: every beat must
++// come from footage the director was actually shown, which is the scope reel.
++// Any violation goes back to Gemini for a targeted repair (max 2 passes). JS never
++// picks replacement material.
++
++const path = require('path');
++const { StoryError } = require('./autoStoryRepairRouter');
++const { NARRATIVE_ROLES, NARRATOR_FUNCTIONS, toV2Role } = require('./autoStoryV3Taxonomy');
++const Scope = require('./storyScopeService');
++
++const DIRECTOR_CONTRACT = 'scope-media-director-v1';
++const DIRECTOR_REEL_FPS = 4;          // proxy encode fps (Vertex samples at videoFps=2)
++const MIN_BEAT_SEC = 1.0;             // renderer/playability floor, not an editorial rule
++const REEL_COVERAGE_MIN = 0.9;        // share of a beat that must lie inside watched reel footage
++const DUR_EPS = 0.25;
++const DUP_EPS = 0.05;
++
++const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
++const round2 = n => Math.round(n * 100) / 100;
++
++// ---------------------------------------------------------------- schema
++const flexible = (required, optional = {}) => ({ type: 'object', required: Object.keys(required), properties: { ...required, ...optional }, additionalProperties: true });
++const text = { type: 'string' };
++const number = { type: 'number' };
++const boolean = { type: 'boolean' };
++const list = (items, maxItems = 40) => ({ type: 'array', items, maxItems });
++const choice = (...values) => ({ type: 'string', enum: values });
++
++const SCOPE_MEMBERSHIP = ['hook', 'core', 'supporting_context', 'bridge_picture', 'ending'];
++
++const directorBeat = flexible({
++  beatId: text,
++  sourceStartSec: number,
++  sourceEndSec: number,
++  chronologyMode: choice('teaser', 'chronological', 'rewind', 'callback'),
++  narrativeRole: choice(...NARRATIVE_ROLES),
++  audioMode: choice('original_audio', 'voiceover_with_ambient', 'voiceover_only'),
++  scopeMembership: choice(...SCOPE_MEMBERSHIP),
++  observedInFootage: text,
++  viewerStateBefore: text,
++  viewerStateAfter: text,
++  newInformation: text,
++  whyNecessaryNow: text
++}, {
++  wantsNarration: boolean,
++  narratorFunction: choice(...NARRATOR_FUNCTIONS, 'NONE'),
++  narrationIntent: text,
++  sourceEventId: text,
++  viewerQuestion: text,
++  whyNextFollows: text,
++  payoffTiming: choice('immediate', 'delayed', 'part_2', 'none'),
++  isForwardConsequence: boolean,
++  expectedNextConsequence: text,
++  cliffhangerQuestion: text,
++  whyCutHere: text
++});
++
++const directorSpine = flexible({
++  centralViewerQuestion: text,
++  hookPromise: text,
++  hookStrategy: text,
++  reason: text,
++  beats: list(directorBeat, 40)
++}, {
++  openLoops: list(flexible({ id: text, question: text }), 12)
++});
++
++const directorEdl = {
++  type: 'object', required: ['accessGranted', 'reelObservations', 'spine'], additionalProperties: false,
++  properties: { accessGranted: boolean, reelObservations: text, spine: directorSpine }
++};
++
++const schemas = { directorEdl, directorBeat, directorSpine };
++
++// ---------------------------------------------------------------- instruction
++const instruction = `PASS 1B — MEDIA-GROUNDED EDITORIAL DIRECTOR. You own the exact EDL.
++The attached video files are the ONLY footage you may cut from. They are the reel of the selected Story Scope. Each file is listed in SOURCE MEDIA with its absolute sourceStartSec/sourceEndSec, and the picture has the SOURCE clock burned in. Always output ABSOLUTE source seconds.
++input.storyScope is the story you are telling. Do not tell a different one.
++
++WATCH FIRST. Before choosing a range, look at what is actually on screen and what is actually said there. observedInFootage must describe what you SAW and HEARD in that exact range: who is visible, the physical action, the key words. Never pick a range because of a text summary. If the footage does not show it, the beat does not exist.
++
++EVERY BEAT MUST BE BOTH NOVEL AND CAUSALLY COHERENT WITH THE SCOPE.
++- For every beat, answer: why is it needed NOW (whyNecessaryNow), what changes for the viewer (viewerStateBefore -> viewerStateAfter, newInformation), and why the next beat follows (whyNextFollows).
++- A different timestamp, speaker or line is not progress. "It is interesting" is not a reason.
++- If removing a beat makes the story clearer with no causal loss, remove it.
++- A continuous exchange in one place can be excellent when each exchange changes the conflict, exposes a contradiction, raises the stakes or moves toward the consequence. Do not cut away just to get visual variety.
++- Large jumps in source time are fine when the viewer understands why they are now seeing the later moment (use a one-line narration bridge). An unexplained jump from one interesting moment to another is not fine.
++
++ORIGINAL FOOTAGE TELLS THE STORY ("edited, not generated").
++- Use original audio for confrontation, allegation, denial, contradiction, emotional reaction, commands, discovery and consequence.
++- Use narration (voiceover_with_ambient) only to fill a real comprehension gap: who someone is, what the call was, a fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) compressed into one sentence, or a time bridge. The narration runs over in-scope footage that fits it. narrationIntent says exactly what the line must convey. Never replace strong original dialogue with narration.
++- A narrated beat needs enough seconds for its sentence (input.narrationWordsPerSecond words per second when given, otherwise about 2.5).
++- If input.narrationEnabled is false, every beat must use original_audio.
++
++HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
++- An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must not spend input.storyScope.mustWithhold.
++- Then rewind (chronologyMode 'rewind') to the start of the causal spine. After the rewind the viewer must still have an open question. Replaying part of the hook later in its full context is allowed. An exact duplicate of a range is not.
++- The FIRST beat must use a hook role (teaser_conflict, cold_open, cold_open_hook, hook or micro_payoff).
++
++ENDING = A CONSEQUENCE OF THE CENTRAL CONFLICT.
++- The final beat (scopeMembership 'ending') must come from input.storyScope.candidateEndingEvents or an ending_material window, and must match input.storyScope.scopeEndTarget. For a forward cliffhanger, name the specific consequence that is now likely and stop before it is shown (payoffTiming 'part_2', isForwardConsequence=true, expectedNextConsequence, whyCutHere). A new question from another branch is not an ending.
++
++SCOPE MEMBERSHIP
++- hook | core | supporting_context | bridge_picture | ending. bridge_picture = in-reel footage used as picture under a narration bridge. Beats outside the reel are impossible.
++
++DURATION: the beats must sum to between input.targetDurationMinSec and input.targetDurationMaxSec seconds. Choose beat lengths editorially (a beat may be short or long), but every beat must be at least 1 second.
++Set accessGranted=true only after actually watching the attached reel. reelObservations: 2-4 sentences on what the reel actually shows.`;
++
++function repairInstruction(kind, payload) {
++  if (kind === 'technical') {
++    return `TECHNICAL REPAIR — your EDL failed deterministic validation. Return the COMPLETE EDL again. Change only what these violations require and keep every unaffected beat exactly as it was (same ranges, same order). Replacement footage must come from the attached reel and serve the same story function inside the same scope:
++${payload.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}`;
++  }
++  return `TARGETED EDITORIAL REPAIR — the RENDERED video of your EDL was watched by a media critic, who found the problems listed in input.criticFindings. Each has an output-time region and the beat ids it maps to (input.weakRegions).
++- Return the COMPLETE repaired EDL.
++- Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order, same audio mode).
++- Stay inside input.storyScope. Replacement footage must come from the attached scope reel. Do not introduce a new branch of the incident to fill time.
++- Keep the total duration inside input.targetDurationMinSec..input.targetDurationMaxSec.`;
++}
++
++// ---------------------------------------------------------------- pure checks
++function beatLen(b) { return Math.max(0, num(b.sourceEndSec) - num(b.sourceStartSec)); }
++function timelineSec(beats) { return (beats || []).reduce((n, b) => n + beatLen(b), 0); }
++
++function coveredByReel(b, reelRanges) {
++  const s = num(b.sourceStartSec), e = num(b.sourceEndSec);
++  if (!(e > s)) return 0;
++  const inside = reelRanges.reduce((n, r) => n + Math.max(0, Math.min(e, r.sourceEndSec) - Math.max(s, r.sourceStartSec)), 0);
++  return inside / (e - s);
++}
++
++function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true } = {}) {
++  const violations = [];
++  const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
++  const beats = Array.isArray(spine?.beats) ? spine.beats : [];
++  if (!beats.length) {
++    add('EMPTY_BEATS', 'The EDL contains no beats.');
++    return { valid: false, violations, metrics: { totalSec: 0, beatCount: 0 } };
++  }
++  const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : Infinity;
++  const reelRanges = reel?.ranges || [];
++  const ids = new Set();
++
++  beats.forEach((b, i) => {
++    const id = b.beatId || `#${i}`;
++    if (ids.has(id)) add('DUPLICATE_BEAT_ID', `beatId '${id}' is used more than once.`, { beatId: id });
++    ids.add(id);
++    const s = num(b.sourceStartSec), e = num(b.sourceEndSec);
++    if (!(Number.isFinite(s) && Number.isFinite(e)) || s < 0 || e > dur + 1e-6 || e <= s) {
++      add('SOURCE_OUT_OF_BOUNDS', `Beat '${id}' has invalid source range ${b.sourceStartSec}-${b.sourceEndSec}s (source is 0-${round2(dur)}s).`, { beatId: id });
++      return;
++    }
++    if (e - s < MIN_BEAT_SEC) add('BEAT_TOO_SHORT', `Beat '${id}' is ${round2(e - s)}s; every beat must be at least ${MIN_BEAT_SEC}s to be playable.`, { beatId: id });
++    const cov = coveredByReel(b, reelRanges);
++    if (cov < REEL_COVERAGE_MIN) {
++      add('OUTSIDE_SCOPE_REEL', `Beat '${id}' (${s}-${e}s) is not footage from the attached scope reel (${Math.round(cov * 100)}% inside). Only watched, in-scope footage may be cut.`, { beatId: id, coverage: round2(cov) });
++    }
++    if (!String(b.observedInFootage || '').trim()) add('BEAT_NOT_GROUNDED', `Beat '${id}' has no observedInFootage: say what is seen/heard in that range.`, { beatId: id });
++    if (!String(b.whyNecessaryNow || '').trim()) add('BEAT_UNJUSTIFIED', `Beat '${id}' has no whyNecessaryNow.`, { beatId: id });
++    if (!narrationEnabled && b.audioMode && b.audioMode !== 'original_audio') {
++      add('NARRATION_DISABLED', `Beat '${id}' uses ${b.audioMode} but narration is disabled for this project; use original_audio.`, { beatId: id });
++    }
++  });
++
++  // Exact duplicate guard: identical footage with identical audio treatment.
++  for (let i = 0; i < beats.length; i++) {
++    for (let j = i + 1; j < beats.length; j++) {
++      const a = beats[i], c = beats[j];
++      if (Math.abs(num(a.sourceStartSec) - num(c.sourceStartSec)) <= DUP_EPS && Math.abs(num(a.sourceEndSec) - num(c.sourceEndSec)) <= DUP_EPS && (a.audioMode || '') === (c.audioMode || '')) {
++        add('EXACT_EDL_DUPLICATE', `Beat '${c.beatId}' repeats the exact footage and audio of '${a.beatId}' (${a.sourceStartSec}-${a.sourceEndSec}s).`, { firstBeatId: a.beatId, secondBeatId: c.beatId });
++      }
++    }
++  }
++
++  const total = timelineSec(beats);
++  if (total < targetDurationMinSec - DUR_EPS) add('TOTAL_DURATION_UNDER_MIN', `The timeline is ${round2(total)}s; it must be at least ${targetDurationMinSec}s.`, { totalSec: round2(total) });
++  if (total > targetDurationMaxSec + DUR_EPS) add('TOTAL_DURATION_OVER_MAX', `The timeline is ${round2(total)}s; it must be at most ${targetDurationMaxSec}s.`, { totalSec: round2(total) });
++
++  if (toV2Role(beats[0].narrativeRole) !== 'hook') {
++    add('FIRST_BEAT_NOT_HOOK', `The first beat '${beats[0].beatId}' has role '${beats[0].narrativeRole}'; the opening must use a hook role.`, { beatId: beats[0].beatId });
++  }
++
++  // Ending must be one of the scope's declared consequence endings (Gemini's own declaration).
++  const last = beats[beats.length - 1];
++  const endingRanges = [
++    ...(scope?.candidateEndingEvents || []).map(e => [num(e.sourceStartSec), num(e.sourceEndSec)]),
++    ...(scope?.scopeWindows || []).filter(w => w.purpose === 'ending_material').map(w => [num(w.startSec), num(w.endSec)])
++  ].filter(([s, e]) => e > s);
++  const ls = num(last.sourceStartSec), le = num(last.sourceEndSec);
++  if (endingRanges.length && !endingRanges.some(([s, e]) => Math.min(le, e) - Math.max(ls, s) > 0)) {
++    add('ENDING_NOT_IN_SCOPE', `The final beat '${last.beatId}' (${ls}-${le}s) is not one of the scope's candidate endings or ending_material windows.`, { beatId: last.beatId });
++  }
++
++  return { valid: violations.length === 0, violations, metrics: { totalSec: round2(total), beatCount: beats.length } };
++}
++
++// Scope-local slice of the Source Story Model: only what the reel covers.
++function modelContextForReel(model, reel) {
++  const inReel = (s, e) => (reel?.ranges || []).some(r => Math.min(e, r.sourceEndSec) - Math.max(s, r.sourceStartSec) > 0);
++  const events = (model?.events || []).filter(e => inReel(num(e.startSec), num(e.endSec)))
++    .map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, type: e.type, summary: e.summary, location: e.location, peopleIds: e.peopleIds }));
++  const quotes = (model?.quotes || []).filter(q => inReel(num(q.startSec), num(q.endSec)))
++    .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic }));
++  return { people: model?.people || [], events, quotes };
++}
++
++function validateShape(v) {
++  if (!v || !v.spine || !Array.isArray(v.spine.beats) || !v.spine.beats.length) throw new StoryError('INVALID_RESPONSE', 'Editorial Director returned no beats.');
++  if (v.accessGranted !== true) throw new StoryError('INVALID_RESPONSE', 'Editorial Director did not confirm watching the attached scope reel (accessGranted must be true).');
++  return v;
++}
++
++// Schema/shape failures are repairable like any other violation: the invalid
++// artifact is handed back to the director instead of aborting the run.
++async function askDirector(engine, key, input, instr, evidence, opts) {
++  try {
++    return { result: await engine.ask(key, input, schemas.directorEdl, instr, evidence, validateShape, 'auto_story_edit', opts) };
++  } catch (e) {
++    if (e?.invalidArtifact === undefined && e?.kind !== 'INVALID_RESPONSE') throw e;
++    return { result: e.invalidArtifact || null, schemaError: e.message };
++  }
++}
++
++// Stamp the director contract onto a validated spine. The scope and reel ride
++// along so render/critic/repair all see exactly what the director saw.
++function stampSpine(spine, scope, reel, meta = {}) {
++  return {
++    ...spine,
++    editorialContract: DIRECTOR_CONTRACT,
++    storyScope: scope,
++    scopeReel: reel,
++    beats: spine.beats.map((b, i) => ({ ...b, beatIndex: i, castLock: DIRECTOR_CONTRACT })),
++    directorMeta: meta
++  };
++}
++
++function isDirectorSpine(spine) { return spine?.editorialContract === DIRECTOR_CONTRACT; }
++
++// ---------------------------------------------------------------- Gemini stage
++async function prepareReel(engine, scope) {
++  const reel = Scope.planScopeReel(scope, { durationSec: engine.duration, paddingSec: engine.config?.scopeReelPaddingSec ?? Scope.DEFAULT_REEL_PADDING_SEC });
++  if (!reel.ranges.length) throw new StoryError('STORY_SCOPE_INVALID', 'Story Scope has no reel windows.');
++  const evidence = await engine.prepare(reel.ranges.map(r => ({ sourceStartSec: r.sourceStartSec, sourceEndSec: r.sourceEndSec })), 0, engine.config?.directorReelFps || DIRECTOR_REEL_FPS);
++  return { reel, evidence };
++}
++
++// One director pass (initial or repair) followed by <=maxTechnicalRepairs technical
++// repair passes. Returns { spine, report, evidence, reel, attempts }.
++async function runDirector(engine, { model, scope, reel, evidence, key, extraInput = {}, repairText = null, root, write, emit = () => {}, maxTechnicalRepairs = 2 }) {
++  const cfg = engine.config || {};
++  const baseInput = {
++    storyScope: scope,
++    scopeReel: reel.ranges,
++    sourceDurationSec: engine.duration,
++    targetDurationMinSec: cfg.targetDurationMinSec || 65,
++    targetDurationMaxSec: cfg.targetDurationMaxSec || 90,
++    storyMode: cfg.storyMode || 'serialized_part',
++    narrationEnabled: cfg.narration?.enabled !== false,
++    narrationWordsPerSecond: cfg.narration?.measuredWordsPerSecond || null,
++    modelContext: modelContextForReel(model, reel),
++    ...extraInput
++  };
++  const valOpts = { durationSec: engine.duration, targetDurationMinSec: baseInput.targetDurationMinSec, targetDurationMaxSec: baseInput.targetDurationMaxSec, reel, narrationEnabled: baseInput.narrationEnabled };
++  const attempts = [];
++  let violations = null, current = extraInput.currentEdl || null;
++  for (let attempt = 0; attempt <= maxTechnicalRepairs; attempt++) {
++    const technical = attempt > 0;
++    const input = technical ? { ...baseInput, currentEdl: current, violations } : baseInput;
++    const instr = [instruction, repairText, technical ? repairInstruction('technical', { violations }) : null].filter(Boolean).join('\n\n');
++    // Repairs are cacheable: their fingerprint already includes currentEdl + violations
++    // (+ critic findings), so a resumed run reuses them instead of re-paying.
++    const { result, schemaError } = await askDirector(engine, `${key}${technical ? `_fix${attempt}` : ''}`, input, instr, evidence, {});
++    const spine = result?.spine || null;
++    const report = schemaError
++      ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the EDL contract: ${schemaError}` }], metrics: {} }
++      : validateDirectorEdl(spine, scope, valOpts);
++    attempts.push({ attempt, valid: report.valid, violations: report.violations, metrics: report.metrics });
++    if (write && root) await write(path.join(root, `${key}${technical ? `-fix-${attempt}` : ''}.json`), { result, validation: report });
++    if (report.valid) return { spine, report, reelObservations: result.reelObservations, attempts };
++    emit('design', `[Director] EDL needs technical repair #${attempt + 1}: ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
++    violations = report.violations; current = spine || current;
++  }
++  throw new StoryError('DIRECTOR_EDL_INVALID', `Editorial Director EDL failed validation after ${maxTechnicalRepairs} repair pass(es): ${violations.map(v => v.code).join(', ')}`, { violations, attempts, spine: current });
++}
++
++async function directEdl(engine, { model, scope, root = null, write = null, emit = () => {}, scriptId = 1 }) {
++  if (!scope) throw new StoryError('INPUT_MISSING', 'Editorial Director requires a selected Story Scope.');
++  const { reel, evidence } = await prepareReel(engine, scope);
++  emit('design', `[Director] Watching scope reel: ${reel.ranges.length} window(s), ${reel.totalSec}s of source footage.`);
++  const out = await runDirector(engine, { model, scope, reel, evidence, key: `v5-editorial-director-${scriptId}`, root, write, emit });
++  const spine = stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts });
++  return { spine, evidence, reel, report: out.report };
++}
++
++// Repair from the RENDERED MP4 critique. Receives scope + complete current EDL +
++// weak regions + the SAME scope reel media (cached proxies, not the whole source).
++async function repairEdl(engine, { model, spine, critique, weakRegions = [], root = null, write = null, emit = () => {}, pass = 1, scriptId = 1 }) {
++  if (!isDirectorSpine(spine)) throw new StoryError('INPUT_MISSING', 'repairEdl requires a director-owned spine.');
++  const scope = spine.storyScope;
++  const { reel, evidence } = await prepareReel(engine, scope);
++  const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
++  const out = await runDirector(engine, {
++    model, scope, reel, evidence, key: `v5-editorial-director-repair-${scriptId}-${pass}`,
++    extraInput: {
++      currentEdl,
++      weakRegions,
++      criticFindings: { summary: critique?.summary || '', issues: critique?.issues || [], scopeSurvived: critique?.scopeSurvived, endingIsConsequence: critique?.endingIsConsequence }
++    },
++    repairText: repairInstruction('critic'),
++    root, write, emit
++  });
++  const repaired = stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, repairPass: pass });
++  return { spine: repaired, evidence, reel, report: out.report, request: { scope, currentEdl, weakRegions, reel, evidenceFiles: evidence.map(e => e.file) } };
++}
++
++// Repair for a deterministic downstream finding (e.g. duration check in buildScript).
++// Same owner, same scope, same reel; JS only reports the violation.
++async function repairTechnical(engine, { model, spine, violations, root = null, write = null, emit = () => {}, scriptId = 1 }) {
++  if (!isDirectorSpine(spine)) throw new StoryError('INPUT_MISSING', 'repairTechnical requires a director-owned spine.');
++  const scope = spine.storyScope;
++  const { reel, evidence } = await prepareReel(engine, scope);
++  const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
++  const out = await runDirector(engine, {
++    model, scope, reel, evidence, key: `v5-editorial-director-downstream-fix-${scriptId}`,
++    extraInput: { currentEdl, violations }, repairText: repairInstruction('technical', { violations }), root, write, emit
++  });
++  return { spine: stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, downstreamRepair: true }), evidence, reel, report: out.report };
++}
++
++// Integrity check used by buildScript: downstream stages must hand the compiler
++// exactly the director's ranges, in the director's order.
++function assertEdlIntact(directorBeats, finalBeats, durationSec = Infinity) {
++  const a = directorBeats || [], b = finalBeats || [];
++  const fail = (message, extra) => { throw new StoryError('EDL_MUTATED', `Downstream stage altered the director EDL: ${message}`, extra); };
++  if (a.length !== b.length) fail(`beat count ${a.length} -> ${b.length}`, { before: a.length, after: b.length });
++  a.forEach((x, i) => {
++    const y = b[i];
++    if ((x.beatId || '') !== (y.beatId || '')) fail(`order/identity changed at index ${i} (${x.beatId} -> ${y.beatId})`, { index: i });
++    const xs = Math.max(0, num(x.sourceStartSec)), xe = Math.min(durationSec, num(x.sourceEndSec));
++    if (Math.abs(xs - num(y.sourceStartSec)) > 1e-6 || Math.abs(xe - num(y.sourceEndSec)) > 1e-6) {
++      fail(`range of '${x.beatId}' changed ${x.sourceStartSec}-${x.sourceEndSec} -> ${y.sourceStartSec}-${y.sourceEndSec}`, { beatId: x.beatId });
++    }
++  });
++  return true;
++}
++
++module.exports = {
++  DIRECTOR_CONTRACT, SCOPE_MEMBERSHIP, schemas, instruction, repairInstruction,
++  validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
++  directEdl, repairEdl, repairTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel
++};
+diff --git a/electron/services/edlQualityValidator.js b/electron/services/edlQualityValidator.js
+index cf53555..c093864 100644
+--- a/electron/services/edlQualityValidator.js
++++ b/electron/services/edlQualityValidator.js
+@@ -143,53 +143,52 @@ function deduceVisualStateCluster(beat = {}) {
+     return 'street_deception_scene';
+   }
+ 
+-  // 5. Domestic / Residence benchmark interactions (backward compatible)
+-  const isDomesticBenchmark = text.includes('mother') || text.includes('nathan') || text.includes('daughter') || text.includes('melody') || text.includes('stepfather') || text.includes('stepdad') || text.includes('bathroom') || text.includes('stairs');
+-
+-  if (start >= 0 && end <= 15.0 && (beat.chronologyMode === 'rewind' || beat.narrativeRole === 'rewind_context' || text.includes('dispatch') || text.includes('arrive'))) {
+-    return 'police_cruiser_arrival';
++  // 5. Residence / interior interactions — generic location/action vocabulary only.
++  // (No person names, no incident-specific wording, no source timestamps.)
++  if (start >= 0 && (beat.chronologyMode === 'rewind' || beat.narrativeRole === 'rewind_context') && (text.includes('dispatch') || text.includes('arrive') || text.includes('call'))) {
++    return 'responder_arrival';
+   }
+-  if (text.includes('outside') || text.includes('street') || text.includes('sidewalk') || text.includes('curb') || text.includes('nathan')) {
++  if (text.includes('outside') || text.includes('street') || text.includes('sidewalk') || text.includes('curb')) {
+     return 'outside_scene';
+   }
+-  if (text.includes('front door') || text.includes('doorway') || text.includes('porch') || text.includes('entrance') || (isDomesticBenchmark && start >= 32.0 && end <= 36.5 && text.includes('door'))) {
+-    if (text.includes('talking') || text.includes('defend') || text.includes('excuse') || text.includes('deny') || (isDomesticBenchmark && start >= 80.0 && end <= 245.0 && text.includes('mother'))) {
+-      return 'doorway_mother_talking';
++  if (text.includes('front door') || text.includes('porch') || text.includes('entrance')) {
++    if (text.includes('talking') || text.includes('defend') || text.includes('excuse') || text.includes('deny') || text.includes('explain')) {
++      return 'entrance_subject_talking';
+     }
+-    return 'front_door_interaction';
++    return 'entrance_interaction';
+   }
+-  if (text.includes('stairs') || text.includes('staircase') || (isDomesticBenchmark && start >= 40.0 && end <= 48.0 && text.includes('upstairs'))) {
+-    return 'staircase_rush';
++  if (text.includes('stairs') || text.includes('staircase') || text.includes('upstairs')) {
++    return 'staircase_movement';
+   }
+-  if (text.includes('bathroom') || text.includes('pinning') || text.includes('holding down') || (isDomesticBenchmark && start >= 48.0 && end <= 70.5 && text.includes('holding'))) {
+-    return 'bathroom_intervention';
++  if (text.includes('pinning') || text.includes('holding down') || text.includes('pinned')) {
++    return 'interior_restraint_intervention';
+   }
+-  if (text.includes('hallway') || text.includes('corridor') || (isDomesticBenchmark && start >= 70.0 && end <= 84.0)) {
++  if (text.includes('hallway') || text.includes('corridor')) {
+     return 'hallway_separation';
+   }
+ 
+   // Physical restraint / Handcuffing / Search across any incident
+-  if (text.includes('double lock') || (isDomesticBenchmark && start >= 308.0 && end <= 325.0)) {
++  if (text.includes('double lock')) {
+     return 'officer_double_lock_action';
+   }
+-  if (text.includes('handcuff') || text.includes('cuff') || text.includes('restrain') || (isDomesticBenchmark && start >= 245.0 && end <= 260.0)) {
++  if (text.includes('handcuff') || text.includes('cuff') || text.includes('restrain')) {
+     return 'officer_handcuffs_action';
+   }
+ 
+   // Evidence / Injury / Contradiction reveal
+-  if (text.includes('wrist') || text.includes('marks') || text.includes('bruise') || text.includes('injury') || text.includes('wound') || (isDomesticBenchmark && start >= 860.0 && end <= 890.0)) {
++  if (text.includes('wrist') || text.includes('marks') || text.includes('bruise') || text.includes('injury') || text.includes('wound')) {
+     return 'physical_evidence_inspection';
+   }
+   if (text.includes('weapon') || text.includes('glock') || text.includes('gun') || text.includes('knife') || text.includes('contraband') || text.includes('drugs') || text.includes('stolen')) {
+     return 'weapon_contraband_discovery';
+   }
+-  if (text.includes('punch') || text.includes('battery') || text.includes('escort') || (isDomesticBenchmark && start >= 1095.0 && end <= 1115.0)) {
+-    return 'daughter_battery_escort';
++  if (text.includes('punch') || text.includes('battery') || text.includes('escort')) {
++    return 'custody_escort';
+   }
+ 
+   // Fallback to subject/location
+-  const subject = beat.subject || (text.includes('driver') ? 'driver' : text.includes('mother') ? 'mother' : text.includes('nathan') ? 'nathan' : text.includes('daughter') ? 'daughter' : text.includes('suspect') ? 'suspect' : text.includes('officer') ? 'officer' : 'scene');
+-  const loc = beat.location || (text.includes('car') ? 'car' : text.includes('bathroom') ? 'bathroom' : text.includes('hallway') ? 'hallway' : text.includes('street') ? 'street' : 'general');
++  const subject = beat.subject || (text.includes('driver') ? 'driver' : text.includes('suspect') ? 'suspect' : text.includes('victim') ? 'victim' : text.includes('witness') ? 'witness' : text.includes('officer') ? 'officer' : 'scene');
++  const loc = beat.location || (text.includes('car') ? 'car' : text.includes('hallway') ? 'hallway' : text.includes('street') ? 'street' : 'general');
+   return `${subject}_${loc}`;
+ }
+ 
+@@ -856,13 +855,13 @@ function validateEdlQuality(spine = {}, options = {}) {
+       currentSemanticRunCount = 1;
+     }
+ 
+-    // Static speaker plateau detection (3 consecutive beats in doorway talking position without physical action)
++    // Static speaker plateau detection (3 consecutive beats of a subject talking at an entrance without physical action)
+     if (i >= 2) {
+       const bPrev1 = beats[i - 1];
+       const bPrev2 = beats[i - 2];
+       const c1 = deduceVisualStateCluster(bPrev1);
+       const c2 = deduceVisualStateCluster(bPrev2);
+-      if (cluster === 'doorway_mother_talking' && c1 === 'doorway_mother_talking' && c2 === 'doorway_mother_talking') {
++      if (cluster === 'entrance_subject_talking' && c1 === 'entrance_subject_talking' && c2 === 'entrance_subject_talking') {
+         const hasActionOrReveal = [bPrev2, bPrev1, b].some(x =>
+           x.retentionReason === 'visual_reveal' ||
+           x.retentionReason === 'escalation' ||
+@@ -872,7 +871,7 @@ function validateEdlQuality(spine = {}, options = {}) {
+           staticSpeakerPlateauCount++;
+           violations.push({
+             code: 'STATIC_SPEAKER_PLATEAU',
+-            message: `Detected 3 consecutive beats ('${bPrev2.beatId}', '${bPrev1.beatId}', '${b.beatId}') featuring the mother in a static doorway position without physical action or visual reveal. REJECTED: Viewer retention collapses.`,
++            message: `Detected 3 consecutive beats ('${bPrev2.beatId}', '${bPrev1.beatId}', '${b.beatId}') featuring the same subject talking in a static entrance position without physical action or visual reveal. REJECTED: Viewer retention collapses.`,
+             beatId: b.beatId
+           });
+         }
+diff --git a/electron/services/retentionArcPlanService.js b/electron/services/retentionArcPlanService.js
+index dd2ca76..74beda8 100644
+--- a/electron/services/retentionArcPlanService.js
++++ b/electron/services/retentionArcPlanService.js
+@@ -36,11 +36,9 @@ function planRetentionArc(story, model, config = {}, options = {}) {
+ 
+   // 1. Identify key structural milestones in the source
+   // In true-crime / bodycam, check whether this is a serialized episode (Part 1) or full digest
++  // Serialized mode is a configuration decision, never inferred from story wording.
+   const isSerialized = options.storyMode === 'serialized_part' ||
+-                       options.preferCliffhanger !== false ||
+-                       Boolean(story.centralViewerQuestion?.toLowerCase().includes('what happened') ||
+-                               story.hookPromise?.toLowerCase().includes('nightmare') ||
+-                               story.hookPromise?.toLowerCase().includes('georgia'));
++                       options.preferCliffhanger !== false;
+ 
+   // Detect final resolution / arrest events to enforce the Anti-Spoiler rule
+   const resolutionEventIds = new Set(
+@@ -166,7 +164,7 @@ function planRetentionArc(story, model, config = {}, options = {}) {
+     if (role === 'cold_open_hook') {
+       informationWithheld = 'The background history of the family, whether anyone has a weapon, and who gets arrested.';
+     } else if (role === 'crisis_context') {
+-      informationWithheld = 'What the officer will find behind the door / inside the bathroom.';
++      informationWithheld = 'What the responding officer is about to find.';
+     } else if (role === 'cliffhanger') {
+       informationWithheld = 'The final verdict, court outcome, and exact sentencing.';
+     } else {
+diff --git a/electron/services/scopeMediaCriticService.js b/electron/services/scopeMediaCriticService.js
+new file mode 100644
+index 0000000..04f8de5
+--- /dev/null
++++ b/electron/services/scopeMediaCriticService.js
+@@ -0,0 +1,153 @@
++// AutoStory — SCOPE-AWARE MEDIA CRITIC.
++//
++// Watches the ACTUAL rendered MP4 and reports whether the intended Story Scope
++// survived the render. It identifies problems with output-time regions. It does
++// NOT own the timeline and does not compute a quality score: the Editorial
++// Director repairs whatever the critic finds.
++//
++// JS here only (a) validates the critic's JSON, (b) maps output-time regions to
++// beat ids from the compiled timeline, and (c) derives compliance from the
++// critic's own findings (no blocking issue + scope/ending/footage verdicts true).
++
++const ISSUE_TYPES = [
++  'causal_break',              // the viewer cannot tell why this follows the previous moment
++  'low_value_stretch',         // a stretch that adds little to the central question
++  'repeated_dialogue_function',// the same argument/claim restated without changing anything
++  'out_of_scope_branch',       // material from a different branch of the incident
++  'hook_spends_payoff',        // the cold open gives away what the story should withhold
++  'ending_not_consequence',    // the ending is not a consequence of the central conflict
++  'unusable_footage',          // black / blocked / unreadable picture where it matters
++  'comprehension_gap'          // the viewer lacks a fact needed to follow the story
++];
++
++const object = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required });
++const responseSchema = object({
++  scopeSurvived: { type: 'boolean' },
++  centralQuestionActiveThroughout: { type: 'boolean' },
++  endingIsConsequenceOfCentralConflict: { type: 'boolean' },
++  finalFootageUsable: { type: 'boolean' },
++  observedStory: { type: 'string' },
++  issues: {
++    type: 'array',
++    items: object({
++      type: { type: 'string', enum: ISSUE_TYPES },
++      severity: { type: 'string', enum: ['blocking', 'minor'] },
++      outputStartSec: { type: 'number' },
++      outputEndSec: { type: 'number' },
++      evidence: { type: 'string' },
++      whyItFails: { type: 'string' }
++    })
++  },
++  summary: { type: 'string' }
++});
++
++// Output-time map of the compiled timeline: segments are contiguous in beat order.
++function outputTimeline(spine, script) {
++  const beats = spine?.beats || [];
++  const segs = Array.isArray(script?.segments) ? script.segments : [];
++  let cursor = 0;
++  return beats.map((b, i) => {
++    const seg = segs[i];
++    const len = seg && Number.isFinite(seg.sourceEndSec) && Number.isFinite(seg.sourceStartSec)
++      ? seg.sourceEndSec - seg.sourceStartSec
++      : Math.max(0, (Number(b.sourceEndSec) || 0) - (Number(b.sourceStartSec) || 0));
++    const row = { beatId: b.beatId, outputStartSec: cursor, outputEndSec: cursor + len, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec };
++    cursor += len;
++    return row;
++  });
++}
++
++function beatsInRegion(timeline, s, e) {
++  return timeline.filter(t => Math.min(e, t.outputEndSec) - Math.max(s, t.outputStartSec) > 0.05).map(t => t.beatId);
++}
++
++function buildPrompt(spine, timeline, durationSec) {
++  const scope = spine.storyScope || {};
++  const lines = timeline.map((t, i) => {
++    const b = spine.beats[i] || {};
++    return `- ${t.outputStartSec.toFixed(1)}-${t.outputEndSec.toFixed(1)}s [${b.beatId}] ${b.scopeMembership || ''} ${b.audioMode || ''}: intended "${String(b.newInformation || b.whyNecessaryNow || '').slice(0, 160)}"`;
++  }).join('\n');
++  return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS only: scope, causal flow, dialogue function, hook, ending. Ignore captions, fonts, framing, blur, music, colour and FPS.
++
++INTENDED STORY SCOPE
++- Central conflict: ${scope.centralConflict || ''}
++- Central viewer question: ${scope.centralViewerQuestion || ''}
++- Scope boundary: ${scope.explicitScopeBoundary ? `${scope.explicitScopeBoundary.startSec}-${scope.explicitScopeBoundary.endSec}s of the source — ${scope.explicitScopeBoundary.rationale || ''}` : ''}
++- Deliberately out of scope: ${(scope.outOfScopeBranches || []).map(b => b.description).join(' | ')}
++- Must be withheld until the end: ${(scope.mustWithhold || []).join(' | ')}
++- Intended ending type: ${scope.scopeEndTarget || ''}
++
++INTENDED EDL (output time in the rendered video)
++${lines}
++
++Answer from what you actually SEE and HEAR:
++1. scopeSurvived: does the rendered video tell this one mini-story?
++2. centralQuestionActiveThroughout: does the viewer question stay open and relevant from start to end?
++3. endingIsConsequenceOfCentralConflict: is the ending a payoff, or a named forward consequence, of this conflict (not a new question from another branch)?
++4. finalFootageUsable: is the final footage clearly observable?
++5. issues: every genuine problem, with its output-time region: ${ISSUE_TYPES.join(', ')}. 'blocking' means a viewer would lose the story or feel it is assembled from unrelated moments. 'minor' means it could be better. Do not report a problem just because the location or speaker stays the same: a continuous exchange that keeps changing the conflict is fine. A large source-time jump is fine when the edit makes clear why we are there.
++6. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
++Return JSON only.`;
++}
++
++function normalizeCritique(raw, { durationSec, timeline }) {
++  const invalid = summary => ({ status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary, issues: [], weakWindows: [], weakRegions: [] });
++  if (!raw || typeof raw !== 'object') return invalid('Critic returned no object.');
++  for (const k of ['scopeSurvived', 'centralQuestionActiveThroughout', 'endingIsConsequenceOfCentralConflict', 'finalFootageUsable']) {
++    if (typeof raw[k] !== 'boolean') return invalid(`Critic field '${k}' must be boolean.`);
++  }
++  if (!Array.isArray(raw.issues)) return invalid('Critic issues must be an array.');
++  const issues = [];
++  for (const [i, it] of raw.issues.entries()) {
++    if (!it || !ISSUE_TYPES.includes(it.type) || !['blocking', 'minor'].includes(it.severity)) return invalid(`issues[${i}] has an unknown type/severity.`);
++    let s = Number(it.outputStartSec), e = Number(it.outputEndSec);
++    if (!Number.isFinite(s) || !Number.isFinite(e)) return invalid(`issues[${i}] needs numeric outputStartSec/outputEndSec.`);
++    s = Math.max(0, Math.min(durationSec, s)); e = Math.max(0, Math.min(durationSec, e));
++    if (e <= s) e = Math.min(durationSec, s + 0.5);
++    issues.push({ ...it, outputStartSec: s, outputEndSec: e, beatIds: beatsInRegion(timeline, s, e) });
++  }
++  // A false verdict with no matching issue still needs a repairable region.
++  const lastBeat = timeline[timeline.length - 1];
++  const tail = lastBeat ? [lastBeat.outputStartSec, lastBeat.outputEndSec] : [Math.max(0, durationSec - 5), durationSec];
++  const ensure = (flag, type, region, why) => {
++    if (raw[flag] === false && !issues.some(x => x.type === type && x.severity === 'blocking')) {
++      issues.push({ type, severity: 'blocking', outputStartSec: region[0], outputEndSec: region[1], evidence: raw.observedStory || '', whyItFails: why, beatIds: beatsInRegion(timeline, region[0], region[1]), derivedFromVerdict: flag });
++    }
++  };
++  ensure('endingIsConsequenceOfCentralConflict', 'ending_not_consequence', tail, 'Critic verdict: the ending is not a consequence of the central conflict.');
++  ensure('finalFootageUsable', 'unusable_footage', tail, 'Critic verdict: the final footage is not clearly observable.');
++  if (raw.centralQuestionActiveThroughout === false && !issues.some(x => x.severity === 'blocking' && ['comprehension_gap', 'causal_break', 'low_value_stretch', 'out_of_scope_branch'].includes(x.type))) {
++    // No localized cause given: the whole edit is the repair region (the director decides where).
++    issues.push({ type: 'comprehension_gap', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec, evidence: raw.observedStory || '', whyItFails: 'Critic verdict: the central viewer question does not stay active through the edit.', beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'centralQuestionActiveThroughout' });
++  }
++  if (raw.scopeSurvived === false && !issues.some(x => x.severity === 'blocking')) {
++    issues.push({ type: 'out_of_scope_branch', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec, evidence: raw.observedStory || '', whyItFails: 'Critic verdict: the intended scope did not survive the render.', beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'scopeSurvived' });
++  }
++  const blocking = issues.filter(x => x.severity === 'blocking');
++  const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && raw.finalFootageUsable && blocking.length === 0;
++  const weakRegions = blocking.map(x => ({ type: x.type, outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds, reason: x.whyItFails, evidence: x.evidence }));
++  return {
++    status: 'SCOPED_MEDIA_CRITIC_OK', critic: 'scope-media-critic-v1', isCompliant,
++    scopeSurvived: raw.scopeSurvived, centralQuestionActiveThroughout: raw.centralQuestionActiveThroughout,
++    endingIsConsequence: raw.endingIsConsequenceOfCentralConflict, finalFootageUsable: raw.finalFootageUsable,
++    observedStory: raw.observedStory || '', summary: raw.summary || '', issues, weakRegions,
++    // Envelope fields the V4 review-state writer already persists.
++    weakWindows: weakRegions, mp4Duration: durationSec, criticObservedScore: null, averageRetentionScore: null,
++    outputTimeline: timeline
++  };
++}
++
++async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null } = {}) {
++  if (!aiService || !mp4Path || !actualMp4DurationSec) throw new Error('Scope media critic requires aiService, mp4Path, and actualMp4DurationSec');
++  const timeline = outputTimeline(spine, script);
++  const prompt = buildPrompt(spine, timeline, actualMp4DurationSec);
++  let raw;
++  try {
++    raw = await aiService.generateJsonFromFiles({ filePaths: [mp4Path], prompt, responseSchema, taskType: 'analysis' });
++  } catch (error) {
++    return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${error.message}`, issues: [], weakWindows: [], weakRegions: [] };
++  }
++  return normalizeCritique(raw, { durationSec: actualMp4DurationSec, timeline });
++}
++
++module.exports = { ISSUE_TYPES, responseSchema, outputTimeline, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
+diff --git a/electron/services/sourceStoryModelService.js b/electron/services/sourceStoryModelService.js
+index aa8dd4d..03e7206 100644
+--- a/electron/services/sourceStoryModelService.js
++++ b/electron/services/sourceStoryModelService.js
+@@ -57,6 +57,11 @@ const CHUNK_MIN_WINDOW_SEC = 60;          // never plan an initial window smalle
+ // loops, not a guess: Story Design (1) + per script [narration(1) + safeWords repairs(<=2)
+ // + gate repairs(<=2)] = 5.
+ const STORY_DESIGN_CALLS = 1;
++// First-pass calls of the scope-media-director path (repairs draw on the shared remaining
++// budget, like Story Design repairs did). Kept minimal so a long cache-MISS source still
++// gets enough chunk-first windows under the default 16-call cap.
++const SCOPE_SELECTION_CALLS = 1;
++const DIRECTOR_CALLS_PER_SCRIPT = 1;
+ const NARRATION_CALLS_PER_SCRIPT = 5;
+ const SOURCE_MODEL_MIN_CALLS = 4;         // floor so a large outputCount can't starve extraction to 0
+ // Recursive-subdivision guards for a chunk that STILL hits MAX_TOKENS: keep
+@@ -334,6 +339,11 @@ function callLimit(service) {
+ // pipeline's own bounded loops (not a guess).
+ function downstreamReserve(config) {
+   const outputCount = Math.max(1, Number(config?.outputCount) || 1);
++  // Scope-media-director path: one Story Scope selection, then per script one director
++  // EDL call (replacing Story Design) plus the narration calls.
++  if (config?.editorialArchitecture === 'scope_media_director') {
++    return SCOPE_SELECTION_CALLS + outputCount * (DIRECTOR_CALLS_PER_SCRIPT + NARRATION_CALLS_PER_SCRIPT);
++  }
+   return STORY_DESIGN_CALLS + outputCount * NARRATION_CALLS_PER_SCRIPT;
+ }
+ // The request budget split for this run.
+diff --git a/electron/services/storyScopeService.js b/electron/services/storyScopeService.js
+new file mode 100644
+index 0000000..ed59f6c
+--- /dev/null
++++ b/electron/services/storyScopeService.js
+@@ -0,0 +1,304 @@
++// AutoStory — STORY SCOPE stage (first-class, runs BEFORE any exact EDL exists).
++//
++// A Story Scope declares WHICH mini-story a short-form edit tells: one central
++// conflict, one active viewer question, a causal spine of source events, the
++// explicit source-time boundary, the branches that are deliberately left out,
++// and the candidate endings that are consequences of the central conflict.
++//
++// Ownership split (do not blur it):
++//   - Gemini CHOOSES the scope (story judgment) from the canonical Source Story Model.
++//   - This module only VALIDATES the structure of what Gemini declared (bounds,
++//     internal consistency, footage/cost budget) and turns the scope into a
++//     compact media reel plan with a manifest back to absolute source time.
++//   - No story-quality ranking happens here. There are no genre, character,
++//     location or timestamp rules.
++//
++// The scope is a STORY CONSTRAINT, not an EDL: the media-grounded Editorial
++// Director still chooses exact footage inside it.
++
++const { StoryError } = require('./autoStoryRepairRouter');
++
++const SCOPE_CONTRACT_VERSION = 'story-scope-v1';
++const DEFAULT_MAX_SCOPE_REEL_SEC = 360;   // cost budget for the director's media reel
++const DEFAULT_REEL_PADDING_SEC = 2;       // context around each declared window
++const TIME_EPS = 0.5;
++
++const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
++const round2 = n => Math.round(n * 100) / 100;
++
++// ---------------------------------------------------------------- schema
++const object = properties => ({ type: 'object', required: Object.keys(properties), properties, additionalProperties: false });
++const flexible = (required, optional = {}) => ({ type: 'object', required: Object.keys(required), properties: { ...required, ...optional }, additionalProperties: true });
++const text = { type: 'string' };
++const number = { type: 'number' };
++const boolean = { type: 'boolean' };
++const list = (items, maxItems = 20) => ({ type: 'array', items, maxItems });
++const choice = (...values) => ({ type: 'string', enum: values });
++
++const END_TARGETS = ['payoff', 'partial_payoff', 'forward_cliffhanger'];
++const WINDOW_PURPOSES = ['core', 'hook_material', 'ending_material', 'supporting_context'];
++
++const spineNode = flexible({ eventId: text, sourceStartSec: number, sourceEndSec: number }, { role: text, whyInScope: text });
++const scopeWindow = flexible({ startSec: number, endSec: number, purpose: choice(...WINDOW_PURPOSES) }, { why: text });
++const supportingContext = flexible({ description: text, sourceStartSec: number, sourceEndSec: number, treatment: choice('narration_only', 'footage') });
++const branch = flexible({ description: text, sourceStartSec: number, sourceEndSec: number }, { whyExcluded: text });
++const ending = flexible({ sourceStartSec: number, sourceEndSec: number, endingType: choice(...END_TARGETS) }, { eventId: text, whyItIsAConsequence: text });
++
++const storyScope = flexible({
++  storyScopeId: text,
++  centralConflict: text,
++  centralViewerQuestion: text,
++  scopeStartState: text,
++  scopeEndTarget: choice(...END_TARGETS),
++  whyThisIsOneStory: text,
++  primaryEntities: list(text, 8),
++  causalSpine: list(spineNode, 16),
++  scopeWindows: list(scopeWindow, 8),
++  mustResolve: list(text, 8),
++  mustWithhold: list(text, 8),
++  allowedSupportingContext: list(supportingContext, 8),
++  explicitScopeBoundary: flexible({ startSec: number, endSec: number }, { rationale: text }),
++  outOfScopeBranches: list(branch, 12),
++  targetDurationSec: number,
++  candidateEndingEvents: list(ending, 6),
++  footageAvailability: text
++});
++
++const storyScopeSelection = flexible({
++  accessGranted: boolean,
++  candidates: list(storyScope, 4),
++  chosenStoryScopeId: text
++}, { selectionRationale: text });
++
++const schemas = { storyScope, storyScopeSelection };
++
++// ---------------------------------------------------------------- instruction
++const instruction = `PASS 1A — STORY SCOPE SELECTION (runs BEFORE any exact EDL).
++You are the senior story editor of a short-form true-crime / bodycam channel. You are NOT cutting footage yet.
++Your job: decide WHICH ONE mini-story this short video tells. The input is the canonical Source Story Model of the whole source (events, quotes, people, absolute source seconds).
++
++WHAT A STORY SCOPE IS
++- ONE central conflict and ONE viewer question that stays open across the whole edit.
++- A CAUSAL SPINE: the ordered source events that belong to that conflict. Each one must be needed to understand or escalate it, or to deliver its consequence.
++- An EXPLICIT BOUNDARY in source time. Everything outside it is out of scope, even if it is dramatic.
++- The ending is a consequence of the central conflict: a payoff, a partial payoff, or a forward cliffhanger that names a specific consequence without showing it.
++
++PRINCIPLES
++1. A beat must be both NOVEL and CAUSALLY COHERENT with the active scope. A different timestamp, a different speaker, a new quote or a new fact is NOT progress by itself. Something interesting that belongs to another branch of the incident is the WRONG material for this story.
++2. Prefer one continuous causal episode over a tour of the whole source. Later re-tellings, interviews and procedure that only re-describe the same conflict from another angle are usually out of scope. List them in outOfScopeBranches with the reason.
++3. When the story needs a fact that lives outside the boundary (background, who someone is, a claim made later), put it in allowedSupportingContext with treatment='narration_only'. It will be delivered as one narrated sentence over in-scope footage, not by cutting to it. Use treatment='footage' only when the picture itself is causally necessary.
++4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the source windows the editor will be shown and may cut from. They must hold enough usable footage for the duration, but must stay compact: their total length must not exceed input.maxScopeReelSec.
++5. The hook may borrow from later inside the SAME scope (hook_material window), but the scope must keep something to withhold (mustWithhold).
++6. candidateEndingEvents must lie inside the scope windows and must be consequences of the central conflict, not a new question from another branch.
++
++OUTPUT
++- Propose 2-4 candidate scopes (different mini-stories the source could support). For each, fill every field with absolute source seconds.
++- Choose ONE (chosenStoryScopeId) and explain why in selectionRationale. Judge by: clear conflict, causal completeness, footage and dialogue strength, physical/event progression, support for the requested duration, a strong in-scope ending, and minimal dependency on unrelated branches.
++- scopeWindows purposes: core | hook_material | ending_material | supporting_context. supporting_context windows are only for allowedSupportingContext items with treatment='footage'.
++- explicitScopeBoundary.startSec/endSec must contain every core, hook_material and ending_material window.
++- Never invent events. Reference real event ids and real source seconds from the model. Set accessGranted=true after reading the model.`;
++
++const repairInstruction = violations => `REPAIR — the previous Story Scope failed structural validation. Keep the same story if it is sound. Fix ONLY what these violations require and return the COMPLETE selection again:
++${violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}`;
++
++// ---------------------------------------------------------------- pure helpers
++function mergeRanges(ranges) {
++  const sorted = ranges
++    .filter(r => Number.isFinite(r.startSec) && Number.isFinite(r.endSec) && r.endSec > r.startSec)
++    .map(r => ({ ...r, purposes: [...(r.purposes || (r.purpose ? [r.purpose] : []))] }))
++    .sort((a, b) => a.startSec - b.startSec);
++  const out = [];
++  for (const r of sorted) {
++    const last = out[out.length - 1];
++    if (last && r.startSec <= last.endSec + 0.01) {
++      last.endSec = Math.max(last.endSec, r.endSec);
++      for (const p of r.purposes) if (!last.purposes.includes(p)) last.purposes.push(p);
++    } else out.push({ startSec: r.startSec, endSec: r.endSec, purposes: r.purposes });
++  }
++  return out;
++}
++const totalSec = ranges => ranges.reduce((n, r) => n + (r.endSec - r.startSec), 0);
++const overlaps = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
++
++function chosenScope(selection) {
++  const candidates = Array.isArray(selection?.candidates) ? selection.candidates : [];
++  return candidates.find(c => c && c.storyScopeId === selection.chosenStoryScopeId) || null;
++}
++
++// Media reel plan for the Editorial Director: the scope windows (+ padding),
++// merged, clamped to the source, with a manifest back to absolute time.
++function planScopeReel(scope, { durationSec, paddingSec = DEFAULT_REEL_PADDING_SEC } = {}) {
++  const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : Infinity;
++  const windows = (scope?.scopeWindows || []).map(w => ({
++    startSec: Math.max(0, num(w.startSec) - paddingSec),
++    endSec: Math.min(dur, num(w.endSec) + paddingSec),
++    purpose: w.purpose
++  }));
++  const ranges = mergeRanges(windows).map((r, i) => ({
++    reelId: `reel_${String(i + 1).padStart(2, '0')}`,
++    sourceStartSec: round2(r.startSec), sourceEndSec: round2(r.endSec), purposes: r.purposes
++  }));
++  return {
++    contract: SCOPE_CONTRACT_VERSION,
++    storyScopeId: scope?.storyScopeId || null,
++    paddingSec,
++    ranges,
++    totalSec: round2(ranges.reduce((n, r) => n + (r.sourceEndSec - r.sourceStartSec), 0))
++  };
++}
++
++// Deterministic STRUCTURAL validation of a Gemini-declared scope. It checks that
++// the declaration is internally consistent, lies inside the source, can support the
++// requested duration, and fits the reel cost budget. It does not judge story quality.
++function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, paddingSec = DEFAULT_REEL_PADDING_SEC } = {}) {
++  const violations = [];
++  const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
++  if (!scope || typeof scope !== 'object') {
++    add('SCOPE_MISSING', 'No chosen story scope (chosenStoryScopeId must match one candidate).');
++    return { valid: false, violations, reel: null };
++  }
++  const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : Infinity;
++  const inSource = (s, e) => Number.isFinite(s) && Number.isFinite(e) && s >= -TIME_EPS && e <= dur + TIME_EPS && e > s;
++
++  for (const f of ['storyScopeId', 'centralConflict', 'centralViewerQuestion', 'whyThisIsOneStory']) {
++    if (!String(scope[f] || '').trim()) add('SCOPE_FIELD_EMPTY', `storyScope.${f} must be a non-empty string.`, { field: f });
++  }
++  if (!END_TARGETS.includes(scope.scopeEndTarget)) add('SCOPE_FIELD_EMPTY', `scopeEndTarget must be one of ${END_TARGETS.join('|')}.`, { field: 'scopeEndTarget' });
++
++  const b = scope.explicitScopeBoundary || {};
++  const b0 = num(b.startSec), b1 = num(b.endSec);
++  if (!inSource(b0, b1)) add('SCOPE_BOUNDARY_INVALID', `explicitScopeBoundary ${b.startSec}-${b.endSec}s must be a valid range inside the source (0-${round2(dur)}s).`);
++
++  const windows = Array.isArray(scope.scopeWindows) ? scope.scopeWindows : [];
++  if (!windows.length) add('SCOPE_WINDOWS_EMPTY', 'scopeWindows must list the in-scope source windows the editor will watch.');
++  const supportingFootage = (scope.allowedSupportingContext || []).filter(c => c && c.treatment === 'footage');
++  windows.forEach((w, i) => {
++    const s = num(w.startSec), e = num(w.endSec);
++    if (!inSource(s, e)) { add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}] ${w.startSec}-${w.endSec}s is not a valid source range.`, { index: i }); return; }
++    if (!WINDOW_PURPOSES.includes(w.purpose)) add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}].purpose must be one of ${WINDOW_PURPOSES.join('|')}.`, { index: i });
++    if (w.purpose === 'supporting_context') {
++      const declared = supportingFootage.some(c => overlaps(s, e, num(c.sourceStartSec), num(c.sourceEndSec)) > 0);
++      if (!declared) add('SCOPE_SUPPORT_UNDECLARED', `scopeWindows[${i}] is supporting_context but no allowedSupportingContext item with treatment='footage' covers ${s}-${e}s.`, { index: i });
++    } else if (Number.isFinite(b0) && Number.isFinite(b1) && (s < b0 - TIME_EPS || e > b1 + TIME_EPS)) {
++      add('SCOPE_WINDOW_OUTSIDE_BOUNDARY', `scopeWindows[${i}] (${w.purpose}) ${s}-${e}s lies outside explicitScopeBoundary ${b0}-${b1}s.`, { index: i });
++    }
++  });
++
++  const spine = Array.isArray(scope.causalSpine) ? scope.causalSpine : [];
++  if (spine.length < 2) add('SCOPE_SPINE_TOO_SHORT', 'causalSpine must list at least two ordered source events of the central conflict.');
++  spine.forEach((n, i) => {
++    const s = num(n.sourceStartSec), e = num(n.sourceEndSec);
++    if (!inSource(s, e)) add('SCOPE_SPINE_INVALID', `causalSpine[${i}] ${n.sourceStartSec}-${n.sourceEndSec}s is not a valid source range.`, { index: i });
++    else if (!windows.some(w => overlaps(s, e, num(w.startSec), num(w.endSec)) > 0)) {
++      add('SCOPE_SPINE_NOT_WATCHABLE', `causalSpine[${i}] (${n.eventId}) ${s}-${e}s is not covered by any scopeWindow, so the editor could not see it.`, { index: i });
++    }
++  });
++
++  const endings = Array.isArray(scope.candidateEndingEvents) ? scope.candidateEndingEvents : [];
++  if (!endings.length) add('SCOPE_ENDING_MISSING', 'candidateEndingEvents must name at least one in-scope ending that is a consequence of the central conflict.');
++  endings.forEach((en, i) => {
++    const s = num(en.sourceStartSec), e = num(en.sourceEndSec);
++    if (!inSource(s, e)) add('SCOPE_ENDING_INVALID', `candidateEndingEvents[${i}] ${en.sourceStartSec}-${en.sourceEndSec}s is not a valid source range.`, { index: i });
++    else if (!windows.some(w => w.purpose !== 'supporting_context' && overlaps(s, e, num(w.startSec), num(w.endSec)) > 0)) {
++      add('SCOPE_ENDING_OUTSIDE_SCOPE', `candidateEndingEvents[${i}] ${s}-${e}s is not inside an in-scope window.`, { index: i });
++    }
++  });
++
++  const reel = planScopeReel(scope, { durationSec, paddingSec });
++  const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: num(w.startSec), endSec: num(w.endSec) }))));
++  if (windows.length && watchable < targetDurationMinSec) {
++    add('SCOPE_FOOTAGE_INSUFFICIENT', `In-scope windows hold only ${round2(watchable)}s of footage; the requested minimum duration is ${targetDurationMinSec}s. Widen the windows inside the same conflict (or choose a scope whose conflict has enough footage).`);
++  }
++  if (reel.totalSec > maxScopeReelSec + TIME_EPS) {
++    add('SCOPE_REEL_OVER_BUDGET', `The scope media reel would be ${reel.totalSec}s (windows + ${paddingSec}s padding); the budget is ${maxScopeReelSec}s. Tighten the windows to the causal spine of ONE conflict.`);
++  }
++  return { valid: violations.length === 0, violations, reel };
++}
++
++function validateSelectionShape(v) {
++  if (!v || !Array.isArray(v.candidates) || !v.candidates.length) throw new StoryError('INVALID_RESPONSE', 'Story Scope selection returned no candidates.');
++  if (!chosenScope(v)) throw new StoryError('INVALID_RESPONSE', 'chosenStoryScopeId does not match any candidate.');
++  return v;
++}
++
++// Compact, text-only view of the model for scope selection.
++function modelForScope(model) {
++  return {
++    durationSec: model.durationSec,
++    people: model.people || [],
++    events: (model.events || []).map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, type: e.type, summary: e.summary, location: e.location, peopleIds: e.peopleIds, tension: e.tension, isReveal: e.isReveal })),
++    quotes: (model.quotes || []).map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic }))
++  };
++}
++
++// ---------------------------------------------------------------- Gemini stage
++// Returns { scope, selection, reel, attempts } or throws StoryError('STORY_SCOPE_INVALID').
++async function selectStoryScope(engine, model, { root = null, write = null, emit = () => {}, maxRepairs = 2 } = {}) {
++  if (!model || !Array.isArray(model.events) || !model.events.length) {
++    throw new StoryError('INPUT_MISSING', 'Story Scope requires a Source Story Model with events.');
++  }
++  const cfg = engine.config || {};
++  const opts = {
++    durationSec: engine.duration || model.durationSec,
++    targetDurationMinSec: cfg.targetDurationMinSec || 65,
++    maxScopeReelSec: cfg.maxScopeReelSec || DEFAULT_MAX_SCOPE_REEL_SEC,
++    paddingSec: cfg.scopeReelPaddingSec ?? DEFAULT_REEL_PADDING_SEC
++  };
++  const input = {
++    model: modelForScope(model),
++    targetDurationMinSec: cfg.targetDurationMinSec || 65,
++    targetDurationMaxSec: cfg.targetDurationMaxSec || 90,
++    maxScopeReelSec: opts.maxScopeReelSec,
++    storyMode: cfg.storyMode || 'serialized_part'
++  };
++  const attempts = [];
++  let violations = null, previous = null;
++  for (let attempt = 0; attempt <= maxRepairs; attempt++) {
++    const repair = attempt > 0;
++    let selection = null, schemaError = null;
++    try {
++      selection = await engine.ask(
++        `v5-story-scope${repair ? `_repair${attempt}` : ''}`,
++        repair ? { ...input, previousSelection: previous, violations } : input,
++        schemas.storyScopeSelection,
++        repair ? `${instruction}\n\n${repairInstruction(violations)}` : instruction,
++        [],
++        validateSelectionShape,
++        'auto_story_edit',
++        {}
++      );
++    } catch (e) {
++      if (e?.invalidArtifact === undefined && e?.kind !== 'INVALID_RESPONSE') throw e;
++      selection = e.invalidArtifact || null; schemaError = e.message;
++    }
++    const scope = schemaError ? null : chosenScope(selection);
++    const report = schemaError
++      ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the Story Scope contract: ${schemaError}` }], reel: null }
++      : validateStoryScope(scope, opts);
++    attempts.push({ attempt, chosenStoryScopeId: selection?.chosenStoryScopeId || null, valid: report.valid, violations: report.violations });
++    if (write && root) {
++      await write(require('path').join(root, `story-scope-selection${repair ? `-repair-${attempt}` : ''}.json`), { selection, validation: report });
++    }
++    if (report.valid) {
++      const finalScope = { ...scope, contract: SCOPE_CONTRACT_VERSION, targetDurationMinSec: input.targetDurationMinSec, targetDurationMaxSec: input.targetDurationMaxSec };
++      emit('design', `[Scope] Story Scope selected: ${finalScope.storyScopeId} — ${finalScope.centralViewerQuestion}`);
++      return { scope: finalScope, selection, reel: report.reel, attempts };
++    }
++    emit('design', `[Scope] Story Scope needs repair #${attempt + 1}: ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
++    violations = report.violations; previous = selection || previous;
++  }
++  throw new StoryError('STORY_SCOPE_INVALID', `Story Scope failed structural validation after ${maxRepairs} repair pass(es): ${violations.map(v => v.code).join(', ')}`, { violations, attempts });
++}
++
++// Additional in-scope candidates (validated) for outputCount > 1.
++function alternateScopes(selection, chosenId, opts) {
++  return (selection?.candidates || [])
++    .filter(c => c && c.storyScopeId !== chosenId)
++    .filter(c => validateStoryScope(c, opts).valid);
++}
++
++module.exports = {
++  SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC,
++  schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
++  chosenScope, alternateScopes, modelForScope
++};
+diff --git a/electron/services/structuralCriticService.js b/electron/services/structuralCriticService.js
+index 2a40722..ec9028a 100644
+--- a/electron/services/structuralCriticService.js
++++ b/electron/services/structuralCriticService.js
+@@ -245,8 +245,8 @@ For EVERY window listed above, output a JSON object in 'windows' array with thes
+   * stakesChange: boolean (did danger, charges, or consequence severity change?)
+   * futureConsequenceChange: boolean (is a consequence now imminent?)
+ - visualState: object containing:
+-  * primarySubject: string (who is the primary visual focus on screen? e.g. "officer", "mother", "boyfriend_witness", "daughter", "suspect", "multiple", "environment", "darkness")
+-  * locationState: string (where is this visually taking place? e.g. "police_cruiser", "doorway_porch", "stairway_hallway", "bedroom", "lawn_driveway", "curbside", "obscured_black")
++  * primarySubject: string (who is the primary visual focus on screen? e.g. "officer", "suspect", "victim", "witness", "family_member", "multiple", "environment", "darkness")
++  * locationState: string (where is this visually taking place? e.g. "police_cruiser", "building_entrance", "interior_hallway", "interior_room", "exterior_yard", "roadside", "obscured_black")
+   * activityState: string (what activity is physically occurring? e.g. "conversational_interview", "conversational_argument", "physical_restraint", "walking_search", "inspecting_evidence", "standing_talking")
+   * shotState: string (camera shot type, e.g. "bodycam_wide", "bodycam_medium", "dashcam", "blocked_lens", "blackout")
+ - viewerStateChanged: boolean
+@@ -266,7 +266,7 @@ For EVERY window listed above, output a JSON object in 'windows' array with thes
+ 
+ CRITICAL INSTRUCTIONS:
+ 1. SEPARATE SEMANTIC DIALOGUE PROGRESS FROM VIEWER-STATE PROGRESS:
+-Different words from a talking subject in the same doorway or lawn do NOT constitute a viewer state change. If the scene is someone standing and talking about what happened earlier, viewerStateChanged = false.
++Different words from a talking subject in the same spot do NOT constitute a viewer state change. If the scene is someone standing and talking about what happened earlier, viewerStateChanged = false.
+ 2. ENDING OBSERVABILITY:
+ Look closely at the final window. If the video ends on a black screen, blocked lens, or visually unobservable footage, visualObservability MUST be 'mostly_obscured' or 'black_or_unusable'.
+ 3. CAUSAL CONTINUITY:
+diff --git a/tests/autoStoryV4ProductionRepair.test.js b/tests/autoStoryV4ProductionRepair.test.js
+index 6431b41..dc99e57 100644
+--- a/tests/autoStoryV4ProductionRepair.test.js
++++ b/tests/autoStoryV4ProductionRepair.test.js
+@@ -911,7 +911,9 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
+     });
+ 
+     await testStore.updateProject(testDir, proj.id, {
+-      autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, narration: { enabled: false } },
++      // This case exercises the LEGACY text-only Story Design hard-block; contract 4
++      // now defaults to the scope-media-director path, so opt out explicitly.
++      autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, narration: { enabled: false }, editorialArchitecture: 'legacy_v4' },
+       autoStoryEditorialConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1 }
+     });
+ 
+diff --git a/tests/storyScopeArchitecture.test.js b/tests/storyScopeArchitecture.test.js
+new file mode 100644
+index 0000000..b63c756
+--- /dev/null
++++ b/tests/storyScopeArchitecture.test.js
+@@ -0,0 +1,460 @@
++// Story Scope + media-grounded Editorial Director architecture tests.
++// Run: node tests/storyScopeArchitecture.test.js
++//
++// These tests exercise the REAL pipeline modules (autoStoryV3Pipeline.run,
++// buildScript, auditDrafts, compileV3, Service.stage, Engine.ask/prepare) with a
++// scripted provider, and assert the architecture contracts:
++//   A scope before EDL · B director receives scope · C director receives media +
++//   manifest · D no silent out-of-scope injection · E retention arc does not reorder ·
++//   F duration failure returns to Gemini · G exact duplicate guard · H repair gets
++//   scope+EDL+weak region+media · I legacy path unchanged · no benchmark literals.
++// The fixture is a GENERIC synthetic incident (not the benchmark source).
++
++const assert = require('node:assert');
++const fs = require('fs/promises');
++const fsSync = require('fs');
++const os = require('os');
++const path = require('path');
++const crypto = require('crypto');
++
++const svc = p => path.join(__dirname, '..', 'electron', 'services', p);
++const Store = require(svc('projectStore.js'));
++const Service = require(svc('autoStoryFastService.js'));
++const Pipeline = require(svc('autoStoryV3Pipeline.js'));
++const Scope = require(svc('storyScopeService.js'));
++const Director = require(svc('editorialDirectorService.js'));
++const Critic = require(svc('scopeMediaCriticService.js'));
++const sourceModel = require(svc('sourceStoryModelService.js'));
++const { compileV3 } = require(svc('autoStoryV3Compile.js'));
++const { augmentCoverage } = require(svc('beatCoverageService.js'));
++const durationFit = require(svc('autoStoryDurationFit.js'));
++
++let passed = 0;
++const ok = async (name, fn) => { await fn(); passed++; console.log('  ok -', name); };
++
++// ------------------------------------------------------------------ fixture
++const SOURCE_SEC = 300;
++const MODEL = {
++  modelVersion: sourceModel.MODEL_VERSION, durationSec: SOURCE_SEC,
++  people: [{ id: 'p1', label: 'Officer', role: 'police', firstSeenSec: 2 }, { id: 'p2', label: 'Driver', role: 'subject', firstSeenSec: 10 }],
++  events: [
++    { id: 'e1', startSec: 2, endSec: 14, type: 'stop', summary: 'Officer stops a car for swerving', location: 'roadside', peopleIds: ['p1'], tension: 0.3, visualQuality: 0.8, novelty: 0.5, dialogueImpact: 0.4, isReveal: false, audioType: 'officer_speech', audioConfidence: 0.9 },
++    { id: 'e2', startSec: 14, endSec: 34, type: 'questioning', summary: 'Driver claims he had no drinks', location: 'driver window', peopleIds: ['p1', 'p2'], tension: 0.5, visualQuality: 0.8, novelty: 0.6, dialogueImpact: 0.7, isReveal: false, audioType: 'participant_speech', audioConfidence: 0.9 },
++    { id: 'e3', startSec: 34, endSec: 58, type: 'contradiction', summary: 'Open container spotted in console', location: 'driver window', peopleIds: ['p1', 'p2'], tension: 0.7, visualQuality: 0.8, novelty: 0.8, dialogueImpact: 0.8, isReveal: true, audioType: 'participant_speech', audioConfidence: 0.9 },
++    { id: 'e4', startSec: 58, endSec: 84, type: 'test', summary: 'Field sobriety test falters', location: 'roadside', peopleIds: ['p1', 'p2'], tension: 0.8, visualQuality: 0.8, novelty: 0.7, dialogueImpact: 0.6, isReveal: false, audioType: 'officer_speech', audioConfidence: 0.9 },
++    { id: 'e5', startSec: 84, endSec: 110, type: 'arrest_decision', summary: 'Officer announces detention', location: 'roadside', peopleIds: ['p1', 'p2'], tension: 0.9, visualQuality: 0.8, novelty: 0.8, dialogueImpact: 0.9, isReveal: true, audioType: 'officer_speech', audioConfidence: 0.9 },
++    // A dramatic but OUT-OF-SCOPE branch (later, different conflict).
++    { id: 'e9', startSec: 240, endSec: 262, type: 'unrelated_fight', summary: 'Bystander brawl across the street', location: 'parking lot', peopleIds: [], tension: 1, visualQuality: 1, novelty: 1, dialogueImpact: 1, isReveal: true, audioType: 'mixed', audioConfidence: 0.9 }
++  ],
++  quotes: [{ id: 'q1', eventId: 'e2', speaker: 'Driver', startSec: 20, endSec: 23, text: 'I did not drink anything tonight.', epistemic: 'suspect_statement', editorialValue: 0.9 }],
++  audioEvents: []
++};
++
++function scopeCandidate(overrides = {}) {
++  return {
++    storyScopeId: 'scope_stop_to_detention',
++    centralConflict: 'Driver denies drinking while the evidence builds against him.',
++    centralViewerQuestion: 'Will his denial survive what the officer finds?',
++    scopeStartState: 'Routine stop for swerving.',
++    scopeEndTarget: 'forward_cliffhanger',
++    whyThisIsOneStory: 'One stop, one denial, one escalating evidence chain, one consequence.',
++    primaryEntities: ['Officer', 'Driver'],
++    causalSpine: [
++      { eventId: 'e1', sourceStartSec: 2, sourceEndSec: 14, role: 'setup', whyInScope: 'Starts the conflict' },
++      { eventId: 'e2', sourceStartSec: 14, sourceEndSec: 34, role: 'claim', whyInScope: 'The denial' },
++      { eventId: 'e3', sourceStartSec: 34, sourceEndSec: 58, role: 'contradiction', whyInScope: 'Evidence contradicts the denial' },
++      { eventId: 'e5', sourceStartSec: 84, sourceEndSec: 110, role: 'consequence', whyInScope: 'Detention follows' }
++    ],
++    scopeWindows: [
++      { startSec: 2, endSec: 84, purpose: 'core', why: 'stop through test' },
++      { startSec: 84, endSec: 110, purpose: 'ending_material', why: 'detention announcement' }
++    ],
++    mustResolve: ['Is he impaired?'], mustWithhold: ['The detention outcome'],
++    allowedSupportingContext: [{ description: 'Earlier call about a swerving car', sourceStartSec: 0, sourceEndSec: 2, treatment: 'narration_only' }],
++    explicitScopeBoundary: { startSec: 0, endSec: 112, rationale: 'The stop until the detention decision.' },
++    outOfScopeBranches: [{ description: 'Bystander brawl across the street', sourceStartSec: 240, sourceEndSec: 262, whyExcluded: 'Different conflict; does not affect the denial.' }],
++    targetDurationSec: 75,
++    candidateEndingEvents: [{ eventId: 'e5', sourceStartSec: 96, sourceEndSec: 110, endingType: 'forward_cliffhanger', whyItIsAConsequence: 'The failed test leads to detention.' }],
++    footageAvailability: 'Continuous bodycam, clear audio.',
++    ...overrides
++  };
++}
++const selection = (cands = [scopeCandidate()], chosen = cands[0].storyScopeId) => ({ accessGranted: true, candidates: cands, chosenStoryScopeId: chosen, selectionRationale: 'Clear single conflict with strong ending.' });
++
++function beat(id, s, e, extra = {}) {
++  return {
++    beatId: id, sourceStartSec: s, sourceEndSec: e, chronologyMode: 'chronological', narrativeRole: 'escalation',
++    audioMode: 'original_audio', wantsNarration: false, narratorFunction: 'NONE', narrationIntent: '', scopeMembership: 'core',
++    sourceEventId: '', observedInFootage: `seen ${s}-${e}`, viewerQuestion: 'Will the denial hold?', viewerStateBefore: 'before', viewerStateAfter: 'after',
++    newInformation: `info ${id}`, whyNecessaryNow: 'advances the denial vs evidence', whyNextFollows: 'next step of the stop', payoffTiming: 'delayed', ...extra
++  };
++}
++// A valid 72s director EDL: teaser from later in scope, rewind, chronological, ending.
++function directorEdl({ beats } = {}) {
++  return {
++    accessGranted: true,
++    reelObservations: 'Continuous roadside stop; denial at the window; container visible; wobbly test; detention.',
++    spine: {
++      centralViewerQuestion: 'Will his denial survive what the officer finds?', hookPromise: 'He swears he is sober.', hookStrategy: 'teaser then rewind', reason: 'one conflict',
++      beats: beats || [
++        beat('b1', 60, 66, { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook', payoffTiming: 'part_2' }),
++        beat('b2', 4, 14, { chronologyMode: 'rewind', narrativeRole: 'rewind_context' }),
++        beat('b3', 16, 30),
++        beat('b4', 36, 50, { narrativeRole: 'contradiction' }),
++        beat('b5', 58, 82, { narrativeRole: 'escalation' }),
++        beat('b6', 98, 106, { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2', isForwardConsequence: true, expectedNextConsequence: 'detention' })
++      ]
++    }
++  };
++}
++
++// Scripted provider: routes by pass marker and records every call.
++function makeVertex(script) {
++  const calls = [];
++  return {
++    calls,
++    getModel: () => 'gemini-test',
++    generateJsonFromFiles: async args => {
++      const p = String(args.prompt || '');
++      const kind = p.includes('PASS 1A — STORY SCOPE SELECTION') ? 'scope'
++        : p.includes('PASS 1B — MEDIA-GROUNDED EDITORIAL DIRECTOR') ? 'director'
++        : p.includes('PASS 1 — GEMINI EDITORIAL DIRECTOR') ? 'legacy_design'
++        : p.includes('PASS 3 — NARRATION') ? 'narration'
++        : p.includes('reviewing a RENDERED edit') ? 'scope_critic'
++        : 'other';
++      calls.push({ kind, prompt: p, filePaths: args.filePaths || [] });
++      const handler = script[kind];
++      if (!handler) throw new Error(`unscripted provider call: ${kind}`);
++      return typeof handler === 'function' ? handler(calls.filter(c => c.kind === kind).length, args) : handler;
++    }
++  };
++}
++
++function makeFfmpeg() {
++  const durations = new Map();
++  return {
++    durations,
++    probeVideo: async file => {
++      if (durations.has(file)) return { duration: durations.get(file), width: 640, height: 360 };
++      if (/source\.mp4$/.test(file)) return { duration: SOURCE_SEC, width: 1920, height: 1080 };
++      if (/draft.*\.mp4$/.test(file)) return { duration: 72, width: 1080, height: 1920 };
++      throw new Error(`missing ${file}`);
++    },
++    createAnalysisProxyChunk: async ({ outputPath, durationSec }) => { await fs.writeFile(outputPath, 'proxy'); durations.set(outputPath, durationSec); }
++  };
++}
++
++async function makeProject({ contractVersion = 4, architecture = null } = {}) {
++  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'scope-arch-'));
++  const store = new Store();
++  const sourceData = `synthetic source ${crypto.randomUUID()}`;
++  await fs.writeFile(path.join(dir, 'source.mp4'), sourceData);
++  const hash = crypto.createHash('sha256').update(sourceData).digest('hex');
++  const cache = path.join(dir, '.cineviral', 'auto-story-source', hash, 'source-contract-v3');
++  await fs.mkdir(cache, { recursive: true });
++  await sourceModel.persist(cache, MODEL);
++  const proj = await store.createProject(dir, { name: 'scope test', autoStoryContractVersion: contractVersion, sourceVideoPath: path.join(dir, 'source.mp4') });
++  await store.updateProject(dir, proj.id, {
++    autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, audioBalance: 'original_only', ...(architecture ? { editorialArchitecture: architecture } : {}) }
++  });
++  return { dir, store, projectId: proj.id, cache };
++}
++
++function makeService(store, vertex, ffmpeg, dubbing = {}) {
++  const s = new Service({ vertexAutoStoryMaxCalls: 40 }, store, { vertex, ffmpeg, dubbing, callBudget: { calls: 0, runId: 'test' } });
++  s.measuredVoice = async () => ({ meta: { duration: 2 } });
++  return s;
++}
++
++// Fake engine for unit-level director/scope tests (no disk, no provider).
++function fakeEngine(asks) {
++  return {
++    duration: SOURCE_SEC,
++    config: { targetDurationMinSec: 65, targetDurationMaxSec: 90, narration: { enabled: false, measuredWordsPerSecond: 2.5 } },
++    prepared: [],
++    async prepare(ranges) { this.prepared.push(ranges); return ranges.map((r, i) => ({ id: `clip${i}`, file: `/reel/clip${i}.mp4`, sourceStart: r.sourceStartSec, duration: r.sourceEndSec - r.sourceStartSec, transcript: [] })); },
++    async ask(key, input, schema, instruction, evidence, validate) {
++      const r = asks.shift();
++      this.lastAsks = (this.lastAsks || []).concat([{ key, input, instruction, evidence }]);
++      if (!r) throw new Error(`unexpected ask ${key}`);
++      const value = typeof r === 'function' ? r(input) : r;
++      await validate(value); return value;
++    }
++  };
++}
++
++(async () => {
++  console.log('Story Scope + media-grounded Editorial Director');
++
++  // ---------------------------------------------------------------- A, B, C
++  await ok('A/B/C: run() selects Story Scope BEFORE the EDL; director receives the scope and scope-reel MEDIA + manifest', async () => {
++    const { dir, store, projectId } = await makeProject();
++    const vertex = makeVertex({ scope: selection(), director: directorEdl() });
++    const ffmpeg = makeFfmpeg();
++    const result = await Pipeline.run(makeService(store, vertex, ffmpeg), { workspaceRoot: dir, projectId, onProgress: () => {} });
++    assert.deepStrictEqual(result.failures, [], JSON.stringify(result.failures));
++    assert.strictEqual(result.scriptPaths.length, 1);
++    const kinds = vertex.calls.map(c => c.kind);
++    assert.ok(kinds.indexOf('scope') >= 0, 'scope pass ran');
++    assert.ok(kinds.indexOf('scope') < kinds.indexOf('director'), `scope must precede director: ${kinds}`);
++    assert.ok(!kinds.includes('legacy_design'), 'text-only legacy design must not run on the director path');
++    const scopeCall = vertex.calls.find(c => c.kind === 'scope');
++    assert.strictEqual(scopeCall.filePaths.length, 0, 'scope selection is text-only over the source model');
++    const dCall = vertex.calls.find(c => c.kind === 'director');
++    // B: the chosen scope is in the director's input.
++    assert.match(dCall.prompt, /"storyScopeId":"scope_stop_to_detention"/);
++    assert.match(dCall.prompt, /"centralViewerQuestion":"Will his denial survive what the officer finds\?"/);
++    // C: director received video files covering ONLY the scope reel, plus the absolute-time manifest.
++    assert.ok(dCall.filePaths.length >= 1, 'director must receive media files');
++    const manifest = JSON.parse(dCall.prompt.split('SOURCE MEDIA: ')[1]);
++    assert.ok(manifest.length >= 1 && manifest.every(m => Number.isFinite(m.sourceStartSec) && Number.isFinite(m.sourceEndSec)));
++    assert.ok(manifest.every(m => m.sourceEndSec <= 112 + 1e-6), 'reel stays inside the scope (out-of-scope branch not sent)');
++    assert.ok(!manifest.some(m => m.sourceStartSec < 262 && m.sourceEndSec > 240), 'out-of-scope branch footage is not in the reel');
++    // Persisted artifacts: scope first-class, canonical spine carries scope + reel.
++    const root = path.join(store.getProjectPaths(dir, projectId).analysisDir, 'auto-story-fast');
++    const scopeArtifact = JSON.parse(await fs.readFile(path.join(root, 'story-scope.json'), 'utf8'));
++    assert.strictEqual(scopeArtifact.chosen.storyScopeId, 'scope_stop_to_detention');
++    const spine = JSON.parse(await fs.readFile(path.join(root, 'story-spine.json'), 'utf8')).spines[0];
++    assert.strictEqual(spine.editorialContract, Director.DIRECTOR_CONTRACT);
++    assert.strictEqual(spine.storyScope.storyScopeId, 'scope_stop_to_detention');
++    // E (integration): compiled script keeps the director's exact order and ranges.
++    const script = JSON.parse(await fs.readFile(result.scriptPaths[0], 'utf8'));
++    assert.deepStrictEqual(script.segments.map(s => [s.sourceStartSec, s.sourceEndSec]), directorEdl().spine.beats.map(b => [b.sourceStartSec, b.sourceEndSec]));
++    const arc = JSON.parse(await fs.readFile(path.join(root, 'retention-arc-1.json'), 'utf8'));
++    assert.strictEqual(arc.mode, 'validator_only');
++    await fs.rm(dir, { recursive: true, force: true });
++  });
++
++  await ok('A: invalid scope (reel over budget / window outside boundary) goes back to Gemini, never into an EDL', async () => {
++    const bad = scopeCandidate({ scopeWindows: [{ startSec: 2, endSec: 290, purpose: 'core', why: 'everything' }], explicitScopeBoundary: { startSec: 0, endSec: 120, rationale: 'x' } });
++    const report = Scope.validateStoryScope(bad, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, maxScopeReelSec: 200 });
++    const codes = report.violations.map(v => v.code);
++    assert.ok(codes.includes('SCOPE_REEL_OVER_BUDGET') && codes.includes('SCOPE_WINDOW_OUTSIDE_BOUNDARY'), codes.join(','));
++    const engine = fakeEngine([selection([bad]), selection()]);
++    engine.config.maxScopeReelSec = 200;
++    const out = await Scope.selectStoryScope(engine, MODEL);
++    assert.strictEqual(out.attempts.length, 2);
++    assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'SCOPE_REEL_OVER_BUDGET'), 'repair request carries the violations');
++    assert.ok(engine.lastAsks[1].key.includes('repair'));
++  });
++
++  // ---------------------------------------------------------------- D
++  await ok('D: an out-of-scope dramatic beat is rejected back to Gemini; Coverage/DurationFit cannot inject it', async () => {
++    const scope = scopeCandidate();
++    const withOutlier = directorEdl({ beats: [...directorEdl().spine.beats.slice(0, 5), beat('bX', 242, 250, { scopeMembership: 'core' }), directorEdl().spine.beats[5]] });
++    const engine = fakeEngine([withOutlier, directorEdl()]);
++    const out = await Director.directEdl(engine, { model: MODEL, scope });
++    const first = engine.lastAsks[0], second = engine.lastAsks[1];
++    assert.ok(second.input.violations.some(v => v.code === 'OUTSIDE_SCOPE_REEL' && v.beatId === 'bX'), 'outside-reel beat is a violation, not silently accepted');
++    assert.ok(!out.spine.beats.some(b => b.sourceStartSec >= 240), 'final EDL has no out-of-scope beat');
++    assert.ok(first.evidence.length > 0); assert.deepStrictEqual(second.evidence.map(e => e.file), first.evidence.map(e => e.file), 'repair reuses the same reel media');
++    // Coverage: director-locked beats are never augmented even when "thin".
++    const thin = out.spine.beats.slice(0, 2).map(b => ({ ...b, castReason: 'editorial director explicit edl lock' }));
++    const cov = augmentCoverage(thin, MODEL, { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
++    assert.strictEqual(cov.augmented, false); assert.strictEqual(cov.beats.length, 2);
++    // DurationFit validator-only: reports, never adds the unused dramatic event.
++    const fit = durationFit.planDurationFit(thin, { config: { targetDurationMinSec: 65, targetDurationMaxSec: 90 }, model: MODEL, sourceDuration: SOURCE_SEC, validateOnly: true });
++    assert.strictEqual(fit.changed, false); assert.strictEqual(fit.impossible, true);
++    assert.strictEqual(fit.beats.length, 2); assert.strictEqual(fit.violation.code, 'TOTAL_DURATION_UNDER_MIN');
++    // Contrast: the legacy fit WOULD pull unused events (proves the guard matters).
++    const legacy = durationFit.planDurationFit(thin.map(b => ({ ...b, castReason: undefined })), { config: { targetDurationMinSec: 65, targetDurationMaxSec: 90 }, model: MODEL, sourceDuration: SOURCE_SEC });
++    assert.ok(legacy.changed, 'legacy mode modifies the timeline');
++  });
++
++  // ---------------------------------------------------------------- E
++  await ok('E: buildScript never reorders / re-roles / re-times a director EDL (teaser-before-rewind preserved)', async () => {
++    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'scope-e-'));
++    const engine = fakeEngine([]);
++    const scope = scopeCandidate();
++    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
++    const spine = Director.stampSpine(directorEdl().spine, scope, reel);
++    const story = { ...spine, scriptId: 1, title: 't', spine: {}, openLoops: [] };
++    const { script } = await Pipeline.buildScript(engine, {}, {}, story, MODEL, dir, () => {});
++    assert.deepStrictEqual(script.segments.map(s => s.sourceStartSec), spine.beats.map(b => b.sourceStartSec));
++    assert.deepStrictEqual(script.segments.map(s => s.narrativeRoleV3), spine.beats.map(b => b.narrativeRole));
++    assert.strictEqual(script.segments[0].storyRole, 'hook');
++    // A mutated beat list is detected as an integrity failure.
++    assert.throws(() => Director.assertEdlIntact(spine.beats, [...spine.beats].reverse()), e => e.kind === 'EDL_MUTATED');
++    assert.throws(() => Director.assertEdlIntact(spine.beats, spine.beats.map((b, i) => i === 2 ? { ...b, sourceEndSec: b.sourceEndSec + 1 } : b)), e => e.kind === 'EDL_MUTATED');
++    await fs.rm(dir, { recursive: true, force: true });
++  });
++
++  // ---------------------------------------------------------------- F
++  await ok('F: a duration failure goes back to Gemini (director) — JS selects no source material', async () => {
++    // F1: director-level validation.
++    const short = directorEdl({ beats: directorEdl().spine.beats.map(b => ({ ...b, sourceEndSec: b.sourceStartSec + 4 })) });
++    const engine = fakeEngine([short, directorEdl()]);
++    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
++    assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'TOTAL_DURATION_UNDER_MIN'));
++    assert.ok(engine.lastAsks[1].input.currentEdl, 'repair receives the current EDL');
++    assert.ok(Director.timelineSec(out.spine.beats) >= 65);
++    // F2: downstream (buildScript) duration finding -> DIRECTOR_REPAIR_REQUIRED, not a JS edit.
++    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'scope-f-'));
++    const scope = scopeCandidate();
++    const spine = Director.stampSpine(short.spine, scope, Scope.planScopeReel(scope, { durationSec: SOURCE_SEC }));
++    await assert.rejects(Pipeline.buildScript(fakeEngine([]), {}, {}, { ...spine, scriptId: 1, spine: {}, openLoops: [] }, MODEL, dir, () => {}),
++      e => e.kind === 'DIRECTOR_REPAIR_REQUIRED' && e.details.violations[0].code === 'TOTAL_DURATION_UNDER_MIN');
++    // F3: the downstream routing helper used by run() and auditDrafts sends the finding
++    // back to the director (repairTechnical) with the violations, then rebuilds from the
++    // DIRECTOR's repaired EDL — JS never edits the story itself.
++    const seen = { builds: [], repairs: [] };
++    const good = Director.stampSpine(directorEdl().spine, scope, Scope.planScopeReel(scope, { durationSec: SOURCE_SEC }));
++    const outcome = await Pipeline.buildDirectorScript({ engine: fakeEngine([]), service: {}, opts: {}, model: MODEL, root: dir, emit: () => {}, scriptId: 1 },
++      { ...spine, scriptId: 1 }, {
++        build: async (_e, _s, _o, story) => { seen.builds.push(story.beats.map(b => b.sourceEndSec)); if (seen.builds.length === 1) throw Object.assign(new Error('short'), { kind: 'DIRECTOR_REPAIR_REQUIRED', details: { violations: [{ code: 'TOTAL_DURATION_UNDER_MIN' }] } }); return { script: 'ok' }; },
++        repair: async (_e, args) => { seen.repairs.push(args); return { spine: good }; }
++      });
++    assert.strictEqual(seen.repairs.length, 1);
++    assert.strictEqual(seen.repairs[0].violations[0].code, 'TOTAL_DURATION_UNDER_MIN');
++    assert.strictEqual(seen.repairs[0].spine.storyScope.storyScopeId, scope.storyScopeId, 'repair gets the scope-bearing spine');
++    assert.deepStrictEqual(seen.builds[1], good.beats.map(b => b.sourceEndSec), 'rebuild uses the director-repaired EDL');
++    assert.strictEqual(outcome.repairedSpine, good);
++    // Non-routable errors (code bugs such as EDL_MUTATED) are NOT papered over by a repair.
++    await assert.rejects(Pipeline.buildDirectorScript({ engine: fakeEngine([]), service: {}, opts: {}, model: MODEL, root: dir, emit: () => {}, scriptId: 1 }, { ...spine, scriptId: 1 },
++      { build: async () => { throw Object.assign(new Error('mut'), { kind: 'EDL_MUTATED' }); }, repair: async () => { throw new Error('must not repair'); } }), e => e.kind === 'EDL_MUTATED');
++    await fs.rm(dir, { recursive: true, force: true });
++  });
++
++  await ok('F/budget: realistic narrated run fits the DEFAULT 16-call budget; director voiceover choice is honoured', async () => {
++    const p = await makeProject();
++    await p.store.updateProject(p.dir, p.projectId, { autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, audioBalance: 'balanced' } });
++    const narrated = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b2' ? { ...b, audioMode: 'voiceover_with_ambient', wantsNarration: true, narratorFunction: 'CONTEXT', narrationIntent: 'Who called and why' } : b)) });
++    const vertex = makeVertex({ scope: selection(), director: narrated,
++      narration: { accessGranted: true, narrations: [{ beatId: 'b2', voiceoverText: 'A caller reported a car swerving.', previewVi: 'x', narratorFunction: 'CONTEXT', newInformation: ['call'], newInformationRefs: ['e1'], emotionTag: 'NEUTRAL' }] } });
++    const service = new Service({}, p.store, { vertex, ffmpeg: makeFfmpeg(), dubbing: {}, callBudget: { calls: 0, runId: 't16' } });
++    service.measuredVoice = async () => ({ meta: { duration: 6 } });
++    const res = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
++    assert.deepStrictEqual(res.failures, [], JSON.stringify(res.failures));
++    const script = JSON.parse(await fs.readFile(res.scriptPaths[0], 'utf8'));
++    const seg = script.segments[1];
++    assert.notStrictEqual(seg.audio_mode, 'original_audio', 'director voiceover choice survives');
++    assert.match(seg.voiceover_text, /caller/);
++    assert.ok(service.callBudget.calls <= 16, `calls used ${service.callBudget.calls}`);
++    await fs.rm(p.dir, { recursive: true, force: true });
++  });
++
++  await ok('Narration disabled: director voiceover beats are rejected back to the director (not silently re-roled)', async () => {
++    const vo = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b2' ? { ...b, audioMode: 'voiceover_with_ambient' } : b)) });
++    const engine = fakeEngine([vo, directorEdl()]);
++    await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
++    assert.strictEqual(engine.lastAsks[0].input.narrationEnabled, false);
++    assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'NARRATION_DISABLED' && v.beatId === 'b2'));
++  });
++
++  await ok('Coverage honours the director castLock marker on its own', async () => {
++    const locked = directorEdl().spine.beats.slice(0, 2).map(b => ({ ...b, castLock: Director.DIRECTOR_CONTRACT }));
++    const cov = augmentCoverage(locked, MODEL, { targetDurationMinSec: 65, targetDurationMaxSec: 90 });
++    assert.strictEqual(cov.augmented, false); assert.strictEqual(cov.beats.length, 2);
++  });
++
++  // ---------------------------------------------------------------- G
++  await ok('G: exact duplicate guard stays active (director validation AND compileV3)', async () => {
++    const beats = directorEdl().spine.beats;
++    const dup = [...beats.slice(0, 4), { ...beats[3], beatId: 'b4dup' }, ...beats.slice(4)];
++    const report = Director.validateDirectorEdl({ beats: dup }, scopeCandidate(), { durationSec: SOURCE_SEC, reel: Scope.planScopeReel(scopeCandidate(), { durationSec: SOURCE_SEC }) });
++    assert.ok(report.violations.some(v => v.code === 'EXACT_EDL_DUPLICATE'));
++    // Partial in-context replay of the hook (not exact) is allowed.
++    const replay = Director.validateDirectorEdl({ beats }, scopeCandidate(), { durationSec: SOURCE_SEC, reel: Scope.planScopeReel(scopeCandidate(), { durationSec: SOURCE_SEC }) });
++    assert.ok(replay.valid, JSON.stringify(replay.violations));
++    const evidence = [{ id: 'clip', sourceStart: 0, duration: SOURCE_SEC }];
++    assert.throws(() => compileV3(dup.map(b => ({ ...b, audioStrategy: 'original' })), { story: { scriptId: 1 }, evidence, config: { targetDurationMinSec: 65, targetDurationMaxSec: 90, narration: {} }, sourceDuration: SOURCE_SEC }),
++      e => /duplicate footage/i.test(e.message));
++  });
++
++  // ---------------------------------------------------------------- H
++  await ok('H: critic finding -> repair receives scope + complete EDL + weak region + scope media; accepted EDL persisted', async () => {
++    const p = await makeProject();
++    const renderedFiles = [];
++    const dubbing = {
++      importReviewedScriptProject: async ({ jsonPath }) => {
++        const cur = await p.store.getProject(p.dir, p.projectId);
++        return { ...cur, analysis: { highlightVariants: [{ id: 'v1', scriptId: 1, segments: JSON.parse(await fs.readFile(jsonPath, 'utf8')).segments, artifacts: {} }] } };
++      },
++      renderHighlightFastDraft: async () => { const f = path.join(p.dir, `draft-${renderedFiles.length + 2}.mp4`); await fs.writeFile(f, 'mp4'); renderedFiles.push(f); return { outputPath: f }; }
++    };
++    const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, observedStory: 'x',
++      issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
++    const clean = { ...blocking, issues: [], summary: 'coherent' };
++    const repairedEdl = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b4' ? { ...b, sourceStartSec: 38, sourceEndSec: 54 } : b)) });
++    const vertex = makeVertex({ scope: selection(), director: n => (n === 1 ? directorEdl() : repairedEdl), scope_critic: n => (n === 1 ? blocking : clean) });
++    const service = makeService(p.store, vertex, makeFfmpeg(), dubbing);
++    const run = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
++    assert.deepStrictEqual(run.failures, []);
++    const first = path.join(p.dir, 'draft-1.mp4'); await fs.writeFile(first, 'mp4');
++    await p.store.updateProject(p.dir, p.projectId, { analysis: { highlightVariants: [{ id: 'v1', scriptId: 1, artifacts: { fastDraftVideoPath: first } }] } });
++    const res = await Pipeline.auditDrafts(makeService(p.store, vertex, makeFfmpeg(), dubbing), { workspaceRoot: p.dir, projectId: p.projectId, scriptId: 1, onProgress: () => {} });
++    const audit = res.audits[0];
++    assert.strictEqual(audit.finalCheck.verdict, 'PASS', JSON.stringify(audit));
++    assert.strictEqual(audit.repairPasses, 1);
++    const repairCall = vertex.calls.filter(c => c.kind === 'director')[1];
++    assert.ok(repairCall.filePaths.length >= 1, 'repair watches the scope reel media');
++    assert.match(repairCall.prompt, /TARGETED EDITORIAL REPAIR/);
++    assert.match(repairCall.prompt, /"storyScopeId":"scope_stop_to_detention"/, 'repair receives the scope');
++    assert.match(repairCall.prompt, /"currentEdl":\{/, 'repair receives the complete current EDL');
++    assert.match(repairCall.prompt, /"weakRegions":\[\{"type":"low_value_stretch","outputStartSec":30,"outputEndSec":40,"beatIds":\["b4"/, 'repair receives the mapped weak region');
++    const root = path.join(p.store.getProjectPaths(p.dir, p.projectId).analysisDir, 'auto-story-fast');
++    const canonical = JSON.parse(await fs.readFile(path.join(root, 'story-spine.json'), 'utf8')).spines[0];
++    assert.strictEqual(canonical.beats.find(b => b.beatId === 'b4').sourceStartSec, 38, 'accepted repaired EDL persisted canonically');
++    assert.strictEqual(canonical.storyScope.storyScopeId, 'scope_stop_to_detention');
++    // The critic watched the ACTUAL rendered MP4 of the repaired EDL.
++    const criticCalls = vertex.calls.filter(c => c.kind === 'scope_critic');
++    assert.deepStrictEqual(criticCalls.map(c => c.filePaths[0]), [first, renderedFiles[0]]);
++    await fs.rm(p.dir, { recursive: true, force: true });
++  });
++
++  await ok('Critic: verdicts/issues map to beat ids; false ending verdict yields a repairable blocking region', async () => {
++    const scope = scopeCandidate();
++    const spine = Director.stampSpine(directorEdl().spine, scope, Scope.planScopeReel(scope, { durationSec: SOURCE_SEC }));
++    const tl = Critic.outputTimeline(spine, null);
++    const n = Critic.normalizeCritique({ scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: false, finalFootageUsable: true, observedStory: '', issues: [], summary: '' }, { durationSec: 72, timeline: tl });
++    assert.strictEqual(n.isCompliant, false);
++    assert.deepStrictEqual(n.weakRegions[0].beatIds, ['b6']);
++    const q = Critic.normalizeCritique({ scopeSurvived: true, centralQuestionActiveThroughout: false, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, observedStory: '', issues: [{ type: 'low_value_stretch', severity: 'minor', outputStartSec: 10, outputEndSec: 12, evidence: '', whyItFails: '' }], summary: '' }, { durationSec: 72, timeline: tl });
++    assert.strictEqual(q.isCompliant, false);
++    assert.ok(q.weakRegions.length >= 1 && q.weakRegions[0].beatIds.length === tl.length, 'a question-lost verdict still yields a repair region');
++    const bad = Critic.normalizeCritique({ scopeSurvived: 'yes', issues: [] }, { durationSec: 72, timeline: tl });
++    assert.strictEqual(bad.status, 'MEDIA_CRITIC_INVALID');
++  });
++
++  await ok('Schema/shape failure (e.g. director did not watch the reel) is repaired by the director, not fatal', async () => {
++    const notWatched = { ...directorEdl(), accessGranted: false };
++    const engine = fakeEngine([notWatched, directorEdl()]);
++    const out = await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
++    assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'SCHEMA_INVALID'));
++    assert.strictEqual(out.spine.editorialContract, Director.DIRECTOR_CONTRACT);
++    // Exhausted repairs -> DIRECTOR_EDL_INVALID (run() records a failure; no JS fallback EDL).
++    const bad = fakeEngine([notWatched, notWatched, notWatched]);
++    await assert.rejects(Director.directEdl(bad, { model: MODEL, scope: scopeCandidate() }), e => e.kind === 'DIRECTOR_EDL_INVALID');
++  });
++
++  // ---------------------------------------------------------------- I
++  await ok('I: legacy paths unchanged (contract 3, and contract 4 with legacy_v4 opt-out) use text-only Story Design, no scope pass', async () => {
++    for (const cfg of [{ contractVersion: 3 }, { contractVersion: 4, architecture: 'legacy_v4' }]) {
++      const p = await makeProject(cfg);
++      const vertex = makeVertex({ legacy_design: { accessGranted: true, spines: [] }, scope: selection(), director: directorEdl() });
++      const res = await Pipeline.run(makeService(p.store, vertex, makeFfmpeg()), { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
++      const kinds = vertex.calls.map(c => c.kind);
++      assert.ok(kinds.includes('legacy_design'), `legacy design ran for ${JSON.stringify(cfg)}`);
++      assert.ok(!kinds.includes('scope') && !kinds.includes('director'), `no scope/director calls for ${JSON.stringify(cfg)}: ${kinds}`);
++      assert.strictEqual(res.failures[0].kind, 'STORY_DESIGN_INVALID');
++      await fs.rm(p.dir, { recursive: true, force: true });
++    }
++    assert.strictEqual(Pipeline.editorialArchitecture({ autoStoryContractVersion: 4 }), Pipeline.SCOPE_MEDIA_DIRECTOR);
++    assert.strictEqual(Pipeline.editorialArchitecture({ autoStoryContractVersion: 3 }), 'legacy_text_design');
++  });
++
++  // ---------------------------------------------------------------- overfitting guard
++  await ok('No benchmark-specific literals in production AutoStory code', async () => {
++    const dirs = [path.join(__dirname, '..', 'electron')];
++    const forbidden = /\b(mother|daughter|bathroom|doorway|lawn|boyfriend|nathan|melody|nightmare|georgia)\b|\b(46\.5|223\.8|431\.6|749\.4|1327\.7|1410\.7)\b/i;
++    // Pre-existing generic relationship lexicon of the movie-recap fact guard (not AutoStory, not benchmark-derived).
++    const allow = [/^viralIntelligenceService\.js:\d+: \{ term: "mother", aliases: \["mother", "mom", "nguoi me"\], category: "relationship" \},/];
++    const hits = [];
++    const walk = d => { for (const e of fsSync.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else if (f.endsWith('.js')) fsSync.readFileSync(f, 'utf8').split('\n').forEach((l, i) => { if (forbidden.test(l)) hits.push(`${path.basename(f)}:${i + 1}: ${l.trim()}`); }); } };
++    dirs.forEach(walk);
++    const real = hits.filter(h => !allow.some(a => a.test(h)));
++    assert.deepStrictEqual(real, [], real.join('\n'));
++  });
++
++  console.log(`\n${passed} passed`);
++})().catch(e => { console.error(e); process.exit(1); });
+diff --git a/tools/run-scope-director-benchmark.js b/tools/run-scope-director-benchmark.js
+new file mode 100644
+index 0000000..c32767d
+--- /dev/null
++++ b/tools/run-scope-director-benchmark.js
+@@ -0,0 +1,107 @@
++#!/usr/bin/env node
++'use strict';
++/**
++ * AUTOSTORY — STORY SCOPE + MEDIA-GROUNDED DIRECTOR — REAL PRODUCTION BENCHMARK
++ *
++ * Development tool (not a runtime dependency). Runs the normal production flow:
++ *   AutoStoryRunner -> V3 pipeline (contract 4 => scope_media_director)
++ *   -> Source Story Model (cache-first; reused if identity/version match)
++ *   -> Story Scope selection (Gemini) -> scope reel -> Editorial Director (Gemini watches reel)
++ *   -> buildScript (validator-only downstream) -> render -> scope-aware media critic
++ *   -> targeted director repair (<=2) -> final render.
++ *
++ * It does NOT inject an EDL, does NOT supply timestamps, and the viral reference
++ * is NOT available to the runtime. Usage (Windows, from the repo root):
++ *   node tools/run-scope-director-benchmark.js
++ * Optional env: BENCH_SOURCE, BENCH_WORKSPACE, BENCH_PROJECT_ID, BENCH_CONFIG.
++ */
++const fs = require('fs');
++const fsp = require('fs/promises');
++const path = require('path');
++const { execFileSync } = require('child_process');
++const ProjectStore = require('../electron/services/projectStore');
++const DubbingService = require('../electron/services/dubbingService');
++const AutoStoryRunner = require('../electron/services/autoStoryRunner');
++
++const CONFIG_PATH = process.env.BENCH_CONFIG || 'C:\\Users\\Admin\\AppData\\Roaming\\cineviral-studio\\config.json';
++const SOURCE_PATH = process.env.BENCH_SOURCE || 'C:\\Users\\Admin\\Videos\\YTDown.com_YouTube_Abusive-Mom-s-Worst-Nightmare-Came-True_Media_Y6A531KEfhM_001_1080p.mp4';
++const WORKSPACE_ROOT = process.env.BENCH_WORKSPACE || 'D:\\OutputVideo';
++const PROJECT_ID = process.env.BENCH_PROJECT_ID || 'v5-scope-director-benchmark';
++
++const log = msg => console.log(`[${new Date().toISOString().slice(11, 19)}] ${msg}`);
++const probe = f => { try { return Number(Number(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', f], { encoding: 'utf8' }).trim()).toFixed(2)); } catch (_) { return null; } };
++const readJson = async f => { try { return JSON.parse(await fsp.readFile(f, 'utf8')); } catch (_) { return null; } };
++
++async function main() {
++  if (!fs.existsSync(SOURCE_PATH)) throw new Error(`Source video not found: ${SOURCE_PATH}`);
++  const settings = JSON.parse(await fsp.readFile(CONFIG_PATH, 'utf8'));
++  const store = new ProjectStore();
++  const dubbing = new DubbingService(store);
++  await store.ensureWorkspaceRoot(WORKSPACE_ROOT);
++  const paths = store.getProjectPaths(WORKSPACE_ROOT, PROJECT_ID);
++  if (fs.existsSync(paths.rootDir)) { log(`Cleaning previous benchmark project ${paths.rootDir}`); await fsp.rm(paths.rootDir, { recursive: true, force: true }); }
++  for (const d of [paths.rootDir, paths.analysisDir, paths.assetsDir, paths.audioDir, paths.clipsDir, paths.outputDir, paths.tempDir]) await fsp.mkdir(d, { recursive: true });
++
++  const autoStoryConfig = {
++    outputCount: 1, targetDurationMinSec: 65, targetDurationMaxSec: 90,
++    narration: { enabled: true, style: 'investigative' }, storyMode: 'serialized_part', preferCliffhanger: true,
++    editorialArchitecture: 'scope_media_director'
++  };
++  await store.saveProject(WORKSPACE_ROOT, {
++    id: PROJECT_ID, title: 'Scope Director Benchmark', sourceVideoPath: SOURCE_PATH,
++    exportRoot: 'D:\\Video', exportLayout: 'flat', mode: 'highlight_cut', analysisWorkflow: 'vertex_auto_story',
++    autoStoryContractVersion: 4, autoStoryPipelineVersion: 'source-story-v3',
++    targetLanguage: 'en', sourceLanguage: 'en', draftVoiceMode: 'final', draftVoiceProvider: 'kokoro', draftVoiceId: 'am_adam',
++    autoFitVoice: false, showSubtitles: false, subtitleStyle: 'white_black_outline',
++    videoDecoration: { canvasEnabled: true, canvasAspect: '9:16', customWidth: 1080, customHeight: 1920, blurBackgroundEnabled: false, blurStrength: 24,
++      topCaptionEnabled: false, foregroundScalePercent: 100, foregroundXPercent: 50, foregroundYPercent: 50 },
++    mixer: { voiceVolume: 100, sourceVolume: 28, narrationSourceAudioOverride: true, narrationDuckDefault: true, bgmVolume: 40, ducking: 70, bgmPath: '' },
++    autoStoryConfig, autoStoryEditorialConfig: autoStoryConfig
++  });
++
++  const runner = new AutoStoryRunner(settings, store, dubbing);
++  const t0 = Date.now();
++  let runtimeError = null;
++  try {
++    await runner.run({ workspaceRoot: WORKSPACE_ROOT, projectId: PROJECT_ID, scriptId: 1,
++      onProgress: p => log(`${p.percent !== undefined ? `[${p.percent}%] ` : ''}${p.stage ? `<${p.stage}> ` : ''}${p.message || ''}`) });
++  } catch (e) { runtimeError = e; log(`Runner error: ${e.message}`); }
++  log(`Runner finished in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
++
++  const A = path.join(paths.analysisDir, 'auto-story-fast');
++  const scope = await readJson(path.join(A, 'story-scope.json'));
++  const spineDoc = await readJson(path.join(A, 'story-spine.json'));
++  const spine = spineDoc?.spines?.[0] || null;
++  const review = await readJson(path.join(A, 'review-state-1.json'));
++  const audits = ['initial-media-audit-1.json', 'repair-1-media-audit-1.json', 'repair-2-media-audit-1.json'];
++  const lastAudit = (await Promise.all(audits.map(f => readJson(path.join(A, f))))).filter(Boolean).pop() || null;
++  const mp4s = [paths.outputDir, path.join(paths.rootDir, '.variant-workers', '1', PROJECT_ID, 'output')]
++    .filter(d => fs.existsSync(d)).flatMap(d => fs.readdirSync(d).filter(f => f.endsWith('.mp4')).map(f => path.join(d, f)))
++    .map(f => ({ f, m: fs.statSync(f).mtimeMs })).sort((a, b) => a.m - b.m).map(x => x.f);
++  const finalMp4 = mp4s[mp4s.length - 1] || null;
++  const finalDuration = finalMp4 ? probe(finalMp4) : null;
++
++  const summary = {
++    generatedAt: new Date().toISOString(), runtimeError: runtimeError?.message || null,
++    storyScope: scope?.chosen || null, scopeReel: scope?.reel || null, scopeCandidates: (scope?.candidates || []).map(c => ({ id: c.storyScopeId, question: c.centralViewerQuestion, boundary: c.explicitScopeBoundary })),
++    editorialContract: spine?.editorialContract || null,
++    finalEdl: (spine?.beats || []).map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec, dur: +(b.sourceEndSec - b.sourceStartSec).toFixed(2),
++      chronologyMode: b.chronologyMode, narrativeRole: b.narrativeRole, scopeMembership: b.scopeMembership, audioMode: b.audioMode, observedInFootage: b.observedInFootage, whyNecessaryNow: b.whyNecessaryNow })),
++    edlTotalSec: +((spine?.beats || []).reduce((n, b) => n + (b.sourceEndSec - b.sourceStartSec), 0)).toFixed(2),
++    finalMp4, finalDuration, allMp4s: mp4s.map(f => ({ f, duration: probe(f) })),
++    review: review ? { verdict: review.finalCheck?.verdict, repairPasses: review.repairPasses ?? 0, metrics: review.metrics, issues: review.finalCheck?.issues } : null,
++    lastCritic: lastAudit ? { scopeSurvived: lastAudit.scopeSurvived, centralQuestionActiveThroughout: lastAudit.centralQuestionActiveThroughout, endingIsConsequence: lastAudit.endingIsConsequence,
++      finalFootageUsable: lastAudit.finalFootageUsable, observedStory: lastAudit.observedStory, issues: lastAudit.issues } : null
++  };
++  const out = path.join(A, 'benchmark-summary.json');
++  await fsp.writeFile(out, JSON.stringify(summary, null, 2));
++  log(`Story Scope: ${summary.storyScope?.storyScopeId} — ${summary.storyScope?.centralViewerQuestion}`);
++  log(`Boundary: ${JSON.stringify(summary.storyScope?.explicitScopeBoundary)}`);
++  console.table(summary.finalEdl.map(({ observedInFootage, whyNecessaryNow, ...r }) => r));
++  log(`EDL total ${summary.edlTotalSec}s | final MP4 ${finalMp4} (${finalDuration}s) | verdict ${summary.review?.verdict} | repairs ${summary.review?.repairPasses}`);
++  log(`Summary written: ${out}`);
++  const inRange = finalDuration >= 65 && finalDuration <= 90;
++  console.log(!runtimeError && finalMp4 && inRange ? 'BENCHMARK RUN COMPLETE (review story quality with the comparison step)' : `BENCHMARK RUN INCOMPLETE — ${runtimeError?.message || `duration ${finalDuration}s`}`);
++  if (runtimeError) process.exit(1);
++}
++main().catch(e => { console.error(e); process.exit(1); });

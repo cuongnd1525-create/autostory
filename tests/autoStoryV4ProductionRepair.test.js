@@ -911,7 +911,9 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
     });
 
     await testStore.updateProject(testDir, proj.id, {
-      autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, narration: { enabled: false } },
+      // This case exercises the LEGACY text-only Story Design hard-block; contract 4
+      // now defaults to the scope-media-director path, so opt out explicitly.
+      autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, narration: { enabled: false }, editorialArchitecture: 'legacy_v4' },
       autoStoryEditorialConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1 }
     });
 

@@ -143,53 +143,52 @@ function deduceVisualStateCluster(beat = {}) {
     return 'street_deception_scene';
   }
 
-  // 5. Domestic / Residence benchmark interactions (backward compatible)
-  const isDomesticBenchmark = text.includes('mother') || text.includes('nathan') || text.includes('daughter') || text.includes('melody') || text.includes('stepfather') || text.includes('stepdad') || text.includes('bathroom') || text.includes('stairs');
-
-  if (start >= 0 && end <= 15.0 && (beat.chronologyMode === 'rewind' || beat.narrativeRole === 'rewind_context' || text.includes('dispatch') || text.includes('arrive'))) {
-    return 'police_cruiser_arrival';
+  // 5. Residence / interior interactions — generic location/action vocabulary only.
+  // (No person names, no incident-specific wording, no source timestamps.)
+  if (start >= 0 && (beat.chronologyMode === 'rewind' || beat.narrativeRole === 'rewind_context') && (text.includes('dispatch') || text.includes('arrive') || text.includes('call'))) {
+    return 'responder_arrival';
   }
-  if (text.includes('outside') || text.includes('street') || text.includes('sidewalk') || text.includes('curb') || text.includes('nathan')) {
+  if (text.includes('outside') || text.includes('street') || text.includes('sidewalk') || text.includes('curb')) {
     return 'outside_scene';
   }
-  if (text.includes('front door') || text.includes('doorway') || text.includes('porch') || text.includes('entrance') || (isDomesticBenchmark && start >= 32.0 && end <= 36.5 && text.includes('door'))) {
-    if (text.includes('talking') || text.includes('defend') || text.includes('excuse') || text.includes('deny') || (isDomesticBenchmark && start >= 80.0 && end <= 245.0 && text.includes('mother'))) {
-      return 'doorway_mother_talking';
+  if (text.includes('front door') || text.includes('porch') || text.includes('entrance')) {
+    if (text.includes('talking') || text.includes('defend') || text.includes('excuse') || text.includes('deny') || text.includes('explain')) {
+      return 'entrance_subject_talking';
     }
-    return 'front_door_interaction';
+    return 'entrance_interaction';
   }
-  if (text.includes('stairs') || text.includes('staircase') || (isDomesticBenchmark && start >= 40.0 && end <= 48.0 && text.includes('upstairs'))) {
-    return 'staircase_rush';
+  if (text.includes('stairs') || text.includes('staircase') || text.includes('upstairs')) {
+    return 'staircase_movement';
   }
-  if (text.includes('bathroom') || text.includes('pinning') || text.includes('holding down') || (isDomesticBenchmark && start >= 48.0 && end <= 70.5 && text.includes('holding'))) {
-    return 'bathroom_intervention';
+  if (text.includes('pinning') || text.includes('holding down') || text.includes('pinned')) {
+    return 'interior_restraint_intervention';
   }
-  if (text.includes('hallway') || text.includes('corridor') || (isDomesticBenchmark && start >= 70.0 && end <= 84.0)) {
+  if (text.includes('hallway') || text.includes('corridor')) {
     return 'hallway_separation';
   }
 
   // Physical restraint / Handcuffing / Search across any incident
-  if (text.includes('double lock') || (isDomesticBenchmark && start >= 308.0 && end <= 325.0)) {
+  if (text.includes('double lock')) {
     return 'officer_double_lock_action';
   }
-  if (text.includes('handcuff') || text.includes('cuff') || text.includes('restrain') || (isDomesticBenchmark && start >= 245.0 && end <= 260.0)) {
+  if (text.includes('handcuff') || text.includes('cuff') || text.includes('restrain')) {
     return 'officer_handcuffs_action';
   }
 
   // Evidence / Injury / Contradiction reveal
-  if (text.includes('wrist') || text.includes('marks') || text.includes('bruise') || text.includes('injury') || text.includes('wound') || (isDomesticBenchmark && start >= 860.0 && end <= 890.0)) {
+  if (text.includes('wrist') || text.includes('marks') || text.includes('bruise') || text.includes('injury') || text.includes('wound')) {
     return 'physical_evidence_inspection';
   }
   if (text.includes('weapon') || text.includes('glock') || text.includes('gun') || text.includes('knife') || text.includes('contraband') || text.includes('drugs') || text.includes('stolen')) {
     return 'weapon_contraband_discovery';
   }
-  if (text.includes('punch') || text.includes('battery') || text.includes('escort') || (isDomesticBenchmark && start >= 1095.0 && end <= 1115.0)) {
-    return 'daughter_battery_escort';
+  if (text.includes('punch') || text.includes('battery') || text.includes('escort')) {
+    return 'custody_escort';
   }
 
   // Fallback to subject/location
-  const subject = beat.subject || (text.includes('driver') ? 'driver' : text.includes('mother') ? 'mother' : text.includes('nathan') ? 'nathan' : text.includes('daughter') ? 'daughter' : text.includes('suspect') ? 'suspect' : text.includes('officer') ? 'officer' : 'scene');
-  const loc = beat.location || (text.includes('car') ? 'car' : text.includes('bathroom') ? 'bathroom' : text.includes('hallway') ? 'hallway' : text.includes('street') ? 'street' : 'general');
+  const subject = beat.subject || (text.includes('driver') ? 'driver' : text.includes('suspect') ? 'suspect' : text.includes('victim') ? 'victim' : text.includes('witness') ? 'witness' : text.includes('officer') ? 'officer' : 'scene');
+  const loc = beat.location || (text.includes('car') ? 'car' : text.includes('hallway') ? 'hallway' : text.includes('street') ? 'street' : 'general');
   return `${subject}_${loc}`;
 }
 
@@ -856,13 +855,13 @@ function validateEdlQuality(spine = {}, options = {}) {
       currentSemanticRunCount = 1;
     }
 
-    // Static speaker plateau detection (3 consecutive beats in doorway talking position without physical action)
+    // Static speaker plateau detection (3 consecutive beats of a subject talking at an entrance without physical action)
     if (i >= 2) {
       const bPrev1 = beats[i - 1];
       const bPrev2 = beats[i - 2];
       const c1 = deduceVisualStateCluster(bPrev1);
       const c2 = deduceVisualStateCluster(bPrev2);
-      if (cluster === 'doorway_mother_talking' && c1 === 'doorway_mother_talking' && c2 === 'doorway_mother_talking') {
+      if (cluster === 'entrance_subject_talking' && c1 === 'entrance_subject_talking' && c2 === 'entrance_subject_talking') {
         const hasActionOrReveal = [bPrev2, bPrev1, b].some(x =>
           x.retentionReason === 'visual_reveal' ||
           x.retentionReason === 'escalation' ||
@@ -872,7 +871,7 @@ function validateEdlQuality(spine = {}, options = {}) {
           staticSpeakerPlateauCount++;
           violations.push({
             code: 'STATIC_SPEAKER_PLATEAU',
-            message: `Detected 3 consecutive beats ('${bPrev2.beatId}', '${bPrev1.beatId}', '${b.beatId}') featuring the mother in a static doorway position without physical action or visual reveal. REJECTED: Viewer retention collapses.`,
+            message: `Detected 3 consecutive beats ('${bPrev2.beatId}', '${bPrev1.beatId}', '${b.beatId}') featuring the same subject talking in a static entrance position without physical action or visual reveal. REJECTED: Viewer retention collapses.`,
             beatId: b.beatId
           });
         }

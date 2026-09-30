@@ -27,6 +27,23 @@ const audioEvents = require('./audioEventService');
 const { StoryError } = require('./autoStoryRepairRouter');
 const { planRetentionArc } = require('./retentionArcPlanService');
 const { validateEdlQuality } = require('./edlQualityValidator');
+const StoryScope = require('./storyScopeService');
+const Director = require('./editorialDirectorService');
+const ScopeCritic = require('./scopeMediaCriticService');
+
+// Editorial architecture selection. Contract 4 (V4 production) uses the
+// Story Scope -> media-grounded Editorial Director path by default. Contract 3 and
+// an explicit 'legacy_v4' opt-out keep the text-only Story Design path unchanged.
+const SCOPE_MEDIA_DIRECTOR = 'scope_media_director';
+function editorialArchitecture(project, config = {}) {
+  // 1. explicit user/project choice; 2. V4 contract; 3. the architecture persisted by a
+  // previous V4 run (run() rewrites the contract to 3 for the renderer); 4. legacy.
+  const explicit = project?.autoStoryConfig?.editorialArchitecture || config.editorialArchitecture;
+  if (explicit) return explicit;
+  if (project?.autoStoryContractVersion === 4) return SCOPE_MEDIA_DIRECTOR;
+  if (project?.autoStoryEditorialArchitecture) return project.autoStoryEditorialArchitecture;
+  return 'legacy_text_design';
+}
 
 const SETUP_FUNCTIONS = new Set(['FORESHADOW', 'CONTEXT', 'IDENTITY', 'TIME_JUMP', 'LOCATION_CHANGE', 'CLARIFICATION']);
 const HIGH_IMPACT_ROLES = new Set(['confrontation', 'apprehension', 'reveal', 'reversal', 'pursuit', 'complication']);
@@ -397,6 +414,7 @@ async function writeNarration(engine, story, model, speakingBeats, evidence, rep
     return { beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec,
       narratorFunction: b.narratorFunction, viewerQuestion: b.viewerQuestion,
       plannedNewInformation: b.newInformation || [], availableVisualSec: seconds,
+      ...(b.narrationIntent ? { narrationIntent: b.narrationIntent, observedInFootage: b.observedInFootage || '' } : {}),
       safeWords: compiler.budget(seconds, engine.config.narration.measuredWordsPerSecond) };
   });
   const instruction = repair
@@ -460,15 +478,33 @@ function demote(beats, beatIds) {
 }
 
 async function buildScript(engine, service, opts, story, model, root, emit = () => {}) {
-  // Retention Arc Plan (Phase 3-6): translates Story Design into a structured retention arc
-  const retentionArc = planRetentionArc(story, model, engine.config, opts);
-  await write(path.join(root, `retention-arc-${story.scriptId}.json`), retentionArc);
-  emit('editing', `[V3] Retention Arc Plan compiled (${retentionArc.beats.length} beats, ${retentionArc.openLoops.length} loops) for script ${story.scriptId}`);
-
-  // Deterministic casting over the shared model using the retention arc beats
-  const cast = castBeats(retentionArc.beats, model, { preferContinuity: retentionArc.isSerialized });
+  // Media-grounded Editorial Director EDLs have exactly ONE timeline owner. On that
+  // path Retention Arc / Coverage / Duration Fit are validator-only and Beat Casting
+  // only bounds-checks; assertEdlIntact() proves nothing downstream edited the story.
+  const directorMode = Director.isDirectorSpine(story);
+  let retentionArc, cast;
+  if (directorMode) {
+    retentionArc = {
+      schemaVersion: 1, mode: 'validator_only', owner: Director.DIRECTOR_CONTRACT,
+      storyScopeId: story.storyScope?.storyScopeId || null,
+      note: 'Retention Arc does not reorder, re-role or re-time a director EDL.',
+      beats: story.beats.map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec, narrativeRole: b.narrativeRole, scopeMembership: b.scopeMembership })),
+      openLoops: story.openLoops || []
+    };
+    await write(path.join(root, `retention-arc-${story.scriptId}.json`), retentionArc);
+    emit('editing', `[Director] EDL locked (${story.beats.length} beats, scope ${retentionArc.storyScopeId}) for script ${story.scriptId}; retention arc is validator-only.`);
+    cast = castBeats(story.beats, model, { preferContinuity: true });
+  } else {
+    // Retention Arc Plan (Phase 3-6): translates Story Design into a structured retention arc
+    retentionArc = planRetentionArc(story, model, engine.config, opts);
+    await write(path.join(root, `retention-arc-${story.scriptId}.json`), retentionArc);
+    emit('editing', `[V3] Retention Arc Plan compiled (${retentionArc.beats.length} beats, ${retentionArc.openLoops.length} loops) for script ${story.scriptId}`);
+    // Deterministic casting over the shared model using the retention arc beats
+    cast = castBeats(retentionArc.beats, model, { preferContinuity: retentionArc.isSerialized });
+  }
   let beats = cast.beats.filter(b => !b.unresolved);
   if (beats.length < 2) throw new StoryError('BAD_CANDIDATE', 'Not enough castable beats for this story.');
+  if (directorMode) Director.assertEdlIntact(story.beats, beats, engine.duration);
 
   // Coverage augmentation (deterministic, no Vertex): if casting produced a
   // structurally thin timeline (e.g. 16.8s of one scene for a 65s target), pull
@@ -497,8 +533,8 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
   // Bug-1 fix: overlong narration is repaired per-beat (<=2 targeted rewrites),
   // then demoted to original audio — never fatal to the whole script.
   const beforeSafe = beats.filter(b => b.speaks).length;
-  beats = await enforceSafeWords(beats, engine.config, async (over) => {
-    const relines = await writeNarration(engine, story, model, over, evidence, true);
+  beats = await enforceSafeWords(beats, engine.config, async (over, _budgets, attempt) => {
+    const relines = await writeNarration(engine, story, model, over, evidence, attempt + 1);
     return over.map(b => { const l = relines.get(b.beatId); return { beatId: b.beatId, voiceoverText: l?.voiceoverText || '', previewVi: l?.previewVi }; });
   });
   const afterSafe = beats.filter(b => b.speaks).length;
@@ -531,7 +567,11 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
     ? `shortBy=${(cfg.targetDurationMinSec - beforeSec).toFixed(1)}s`
     : beforeSec > cfg.targetDurationMaxSec ? `overBy=${(beforeSec - cfg.targetDurationMaxSec).toFixed(1)}s` : 'in range';
   emit('editing', `[V3] Duration check: actual=${beforeSec.toFixed(1)}s, requested=${cfg.targetDurationMinSec}-${cfg.targetDurationMaxSec}s, ${delta} (script ${story.scriptId})`);
-  const fit = durationFit.planDurationFit(beats, { config: cfg, sourceDuration: engine.duration, model });
+  const fit = durationFit.planDurationFit(beats, { config: cfg, sourceDuration: engine.duration, model, validateOnly: directorMode });
+  if (directorMode && fit.impossible) {
+    // JS never picks new story material: the EDL goes back to the Editorial Director.
+    throw new StoryError('DIRECTOR_REPAIR_REQUIRED', `Director EDL duration ${fit.actualBefore.toFixed(1)}s is outside ${cfg.targetDurationMinSec}-${cfg.targetDurationMaxSec}s.`, { violations: [fit.violation] });
+  }
   if (fit.changed) {
     beats = fit.beats;
     // Ranges moved/added — re-prepare evidence so compile finds a covering clip per beat.
@@ -560,6 +600,7 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
   if (metrics.flags.length) emit('editing', `[V3] Editorial flags for script ${story.scriptId}: ${metrics.flags.join(', ')}`);
   emit('editing', `[V3] Editorial: ${metrics.beatCount} beats, ${metrics.distinctEvents} distinct events, ${metrics.distinctLocations} locations, coverageRatio=${metrics.coverageRatio}, maxSameSceneRun=${metrics.maxConsecutiveSameLocation}, extensionRatio=${metrics.extensionRatio} (script ${story.scriptId})`);
 
+  if (directorMode) Director.assertEdlIntact(story.beats, beats, engine.duration);
   const script = compileV3(beats, {
     story: { scriptId: story.scriptId, title: story.title, centralViewerQuestion: story.centralViewerQuestion,
       spine: story.spine, openLoops: story.openLoops },
@@ -567,6 +608,57 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
   });
   await write(path.join(root, `beat-casting-${story.scriptId}.json`), { beats, unresolved: cast.unresolved });
   return { script, evidence, editorial };
+}
+
+// Story Scope -> media-grounded Editorial Director, once per requested output.
+// A failure of one output never discards another output's valid EDL: spines are
+// persisted as each completes and per-script failures are returned.
+const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING']);
+async function directStories(engine, model, root, emit, config) {
+  const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit });
+  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC };
+  const alternates = StoryScope.alternateScopes(selected.selection, selected.scope.storyScopeId, scopeOpts)
+    .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION, targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
+  const scopes = [selected.scope, ...alternates].slice(0, Math.max(1, config.outputCount || 1));
+  await write(path.join(root, 'story-scope.json'), { contract: StoryScope.SCOPE_CONTRACT_VERSION, chosen: selected.scope, reel: selected.reel,
+    selectionRationale: selected.selection.selectionRationale, candidates: selected.selection.candidates, attempts: selected.attempts, usedScopes: scopes.map(x => x.storyScopeId) });
+  const spines = [], failures = [];
+  for (let i = 0; i < scopes.length; i++) {
+    try {
+      const directed = await Director.directEdl(engine, { model, scope: scopes[i], root, write, emit, scriptId: i + 1 });
+      spines.push({ ...directed.spine, scriptId: i + 1 });
+      await write(path.join(root, 'story-spine.json'), { spines });
+    } catch (err) {
+      // The primary script failing with anything but a director contract failure is fatal (as before).
+      if (!DIRECTOR_FAILURE_KINDS.has(err.kind) && (i === 0 || engine.signal?.aborted)) throw err;
+      failures.push({ scriptId: i + 1, storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR', error: err.message, details: err.details || null });
+      emit('failed', `[Director] Script ${i + 1}: ${err.message}`);
+    }
+  }
+  if (!spines.length) {
+    const first = failures[0] || {};
+    throw new StoryError(first.kind || 'DIRECTOR_EDL_INVALID', first.error || 'No director EDL produced.', first.details || { failures });
+  }
+  emit('design', `[Director] ${spines.length} media-grounded EDL(s) ready.`, 40);
+  spines.failures = failures;
+  return spines;
+}
+
+// Downstream technical findings on a director EDL go back to the director (never
+// JS story edits). Compile-level StoryErrors are routed the same way.
+const DIRECTOR_ROUTABLE_KINDS = new Set(['DIRECTOR_REPAIR_REQUIRED', 'EVIDENCE_REQUIRED', 'LOCAL_EDITORIAL', 'VOICE_BUDGET', 'STRUCTURAL_STORY', 'EDITORIAL_UNDERCAST', 'REGIONAL_EDITORIAL', 'BAD_CANDIDATE']);
+async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical } = {}) {
+  const { engine, service, opts, model, root, emit, scriptId } = ctx;
+  try {
+    return { built: await build(engine, service, opts, story, model, root, emit), story };
+  } catch (e) {
+    if (!Director.isDirectorSpine(story) || !DIRECTOR_ROUTABLE_KINDS.has(e.kind)) throw e;
+    emit('design', `[Director] Script ${scriptId}: ${e.kind} (${e.message}) — returning EDL to the director.`, 'WARNING');
+    const violations = e.details?.violations || [{ code: e.kind, message: e.message, details: e.details || null }];
+    const fixed = await repair(engine, { model, spine: story, violations, root, write, emit, scriptId });
+    const repairedStory = { ...story, ...fixed.spine };
+    return { built: await build(engine, service, opts, repairedStory, model, root, emit), story: repairedStory, repairedSpine: fixed.spine };
+  }
 }
 
 async function run(service, opts) {
@@ -579,6 +671,11 @@ async function run(service, opts) {
   if (project.autoStoryConfig?.targetDurationMaxSec) {
     config.targetDurationMaxSec = Math.max(config.targetDurationMinSec, project.autoStoryConfig.targetDurationMaxSec);
   }
+  // Editorial-architecture knobs survive normalization so auditDrafts/repair see them.
+  const rawCfg = project.autoStoryConfig || {};
+  config.editorialArchitecture = editorialArchitecture(project, {});
+  if (rawCfg.storyMode) config.storyMode = rawCfg.storyMode;
+  if (Number.isFinite(Number(rawCfg.maxScopeReelSec)) && Number(rawCfg.maxScopeReelSec) > 0) config.maxScopeReelSec = Number(rawCfg.maxScopeReelSec);
   const update = patch => service.store.updateProject(opts.workspaceRoot, opts.projectId, patch);
   const emit = (stage, message, percent) => opts.onProgress?.({ stage, message, ...(percent === undefined ? {} : { percent }) });
 
@@ -604,6 +701,7 @@ async function run(service, opts) {
   // v3 sets duck-by-default (Phase 13): source preserved and ducked, not muted.
   project = await update({
     autoStoryContractVersion: 3, autoStoryPipelineVersion: 'source-story-v3',
+    autoStoryEditorialArchitecture: config.editorialArchitecture,
     autoStoryConfig: { ...project.autoStoryConfig, outputCount: config.outputCount },
     autoStoryEditorialConfig: config, autoStorySourceV3: { identity, cache, duration: probe.duration },
     draftVoiceMode: 'final', showSubtitles: true, narrationLanguage: 'en',
@@ -638,14 +736,22 @@ async function run(service, opts) {
   }
   emit('understand', `[V3] Source Story Model completed — ${model.events.length} events, ${model.quotes.length} quotes, ${(model.audioEvents || []).length} audio events.`, 25);
 
-  // Phase 4-5: story design (text only; no video re-sent). Persists raw/normalized/
-  // metadata, does ONE bounded text-only repair on empty spines, and only then fails.
-  emit('design', '[V3] Story Design started (text-only).', 30);
+  const architecture = config.editorialArchitecture;
   let spines;
   try {
-    spines = await buildStoryDesign(engine, model, root, emit);
+    if (architecture === SCOPE_MEDIA_DIRECTOR) {
+      // Phase 4-5 (V4 production): STORY SCOPE first, then the media-grounded
+      // Editorial Director watches the scope reel and owns the exact EDL.
+      emit('design', '[Scope] Story Scope selection started.', 30);
+      spines = await directStories(engine, model, root, emit, config);
+    } else {
+      // Phase 4-5 (legacy): story design (text only; no video re-sent). Persists raw/normalized/
+      // metadata, does ONE bounded text-only repair on empty spines, and only then fails.
+      emit('design', '[V3] Story Design started (text-only).', 30);
+      spines = await buildStoryDesign(engine, model, root, emit);
+    }
   } catch (err) {
-    if (err.kind === 'STORY_DESIGN_INVALID' || err.kind === 'STORY_DESIGN_HARD_INVALID' || err.kind === 'INPUT_MISSING') {
+    if (['STORY_DESIGN_INVALID', 'STORY_DESIGN_HARD_INVALID', 'INPUT_MISSING', 'STORY_SCOPE_INVALID', 'DIRECTOR_EDL_INVALID'].includes(err.kind)) {
       await update({ autoStoryCapacityWarning: `v3: ${err.message}`, autoStoryState: { phase: 'review_failed', failures: [] } });
       const failures = [{ scriptId: 1, kind: err.kind, error: err.message, details: err.details || null }];
       await write(path.join(root, 'failures.json'), failures);
@@ -656,16 +762,23 @@ async function run(service, opts) {
   }
   await write(path.join(root, 'story-spine.json'), { spines });
 
-  const scriptPaths = [], failures = [];
+  const scriptPaths = [], failures = [...(spines.failures || [])];
   const chosen = spines.slice(0, config.outputCount);
   for (let i = 0; i < chosen.length; i++) {
-    const scriptId = i + 1;
+    const scriptId = Number(chosen[i].scriptId) || i + 1;
     const story = { ...chosen[i], scriptId, title: chosen[i].hookPromise || `Story ${scriptId}`,
       spine: { centralViewerQuestion: chosen[i].centralViewerQuestion, hookPromise: chosen[i].hookPromise, informationBudget: chosen[i].informationBudget },
       openLoops: chosen[i].openLoops || [] };
     try {
       emit('editing', `[V3] Script ${scriptId}: casting beats, planning audio, writing narration.`, 45 + i * 10);
-      const { script, evidence } = await buildScript(engine, service, opts, story, model, root, emit);
+      const outcome = await buildDirectorScript({ engine, service, opts, model, root, emit, scriptId }, story);
+      if (outcome.repairedSpine) {
+        Object.assign(story, outcome.repairedSpine);
+        const at = spines.findIndex(sp => Number(sp.scriptId) === scriptId);
+        spines[at >= 0 ? at : i] = { ...outcome.repairedSpine, scriptId };
+        await write(path.join(root, 'story-spine.json'), { spines });
+      }
+      const { script, evidence } = outcome.built;
       const scriptPath = path.join(root, `script-${scriptId}.json`);
       await write(scriptPath, highlightV3(script, story, evidence));
       scriptPaths.push(scriptPath);
@@ -684,6 +797,136 @@ async function run(service, opts) {
   return { project, scriptPaths, config, analysisDir: root, failures };
 }
 
+
+// Atomic canonical persistence of an accepted EDL into story-spine.json.
+async function persistAcceptedSpine(root, id, spine) {
+  const spinePath = path.join(root, 'story-spine.json');
+  let data = { spines: [] };
+  try { data = JSON.parse(await fs.readFile(spinePath, 'utf8')); } catch (_) {}
+  if (!Array.isArray(data.spines)) data.spines = [];
+  const idx = data.spines.findIndex(s => Number(s.scriptId) === id);
+  if (idx >= 0) data.spines[idx] = { ...spine, scriptId: id };
+  else if (data.spines.length >= id) data.spines[id - 1] = { ...spine, scriptId: id };
+  else data.spines.push({ ...spine, scriptId: id });
+  const tempPath = `${spinePath}.${crypto.randomUUID()}.tmp`;
+  await fs.writeFile(tempPath, JSON.stringify(data, null, 2));
+  await fs.rename(tempPath, spinePath);
+}
+
+async function critiqueDirectorRender(ai, spine, mp4, probe, script) {
+  const meta = await probe(mp4);
+  let critique = await ScopeCritic.critiqueScopedRender(spine, { aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script });
+  if (critique.status === 'MEDIA_CRITIC_INVALID') {
+    console.warn(`[Director] Scope critic returned ${critique.status} (${critique.summary}). Retrying once on the same MP4...`);
+    critique = await ScopeCritic.critiqueScopedRender(spine, { aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script });
+  }
+  return { critique, duration: meta.duration };
+}
+
+function directorAudit(id, verdict, extra = {}) {
+  return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, ...verdict, ...extra };
+}
+
+// Review loop for director-owned EDLs: render -> scope critic -> director repair (<=2).
+async function auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine, script, ai }) {
+  const { workspaceRoot, projectId, onProgress, onDraft, signal } = opts;
+  const probe = f => service.ffmpeg.probeVideo(f);
+  const summarize = c => ({ scopeSurvived: c.scopeSurvived, centralQuestionActiveThroughout: c.centralQuestionActiveThroughout,
+    endingIsConsequence: c.endingIsConsequence, finalFootageUsable: c.finalFootageUsable, blockingIssues: (c.issues || []).filter(x => x.severity === 'blocking').length, mp4Duration: c.mp4Duration });
+  const criticFailed = async (critique, duration, repairPasses) => {
+    const audit = directorAudit(id, { needsUserReview: true, status: 'MEDIA_CRITIC_FAILED', failureType: 'MEDIA_CRITIC_FAILED' }, {
+      repairPasses, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
+      metrics: { mp4Duration: duration }, auditResult: critique });
+    await fs.writeFile(record, JSON.stringify(audit, null, 2));
+    const err = new Error(`MEDIA_CRITIC_FAILED: Scope critic failed after retry (${critique.summary})`);
+    err.code = 'MEDIA_CRITIC_FAILED'; err.audit = audit; throw err;
+  };
+
+  // The rendered MP4 was built from script-N.json, whose story_contract is the exact
+  // director spine that produced it. Critique (and repair) THAT spine so beat mapping
+  // can never drift from what was rendered.
+  if (Director.isDirectorSpine(script?.story_contract) && Array.isArray(script.story_contract.beats)) {
+    const { title: _t, spine: _s, openLoops: _o, ...rendered } = script.story_contract;
+    spine = { ...rendered, openLoops: _o || rendered.openLoops || [] };
+  }
+  onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (initial render)...` });
+  let { critique, duration } = await critiqueDirectorRender(ai, spine, currentMp4, probe, script);
+  await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
+  await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
+  if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
+  if (critique.isCompliant) {
+    const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
+    await fs.writeFile(record, JSON.stringify(audit, null, 2));
+    return audit;
+  }
+
+  let current = spine;
+  const passFailure = async (pass, err) => {
+    // Budget exhaustion / an unrepairable director or compile failure is a reviewable
+    // outcome for this script, not a crash that drops the other scripts' audits.
+    const budget = /yêu cầu AI|call limit|budget/i.test(err.message || '');
+    if (!budget && !err.kind) throw err;
+    const audit = directorAudit(id, { needsUserReview: true, status: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind, failureType: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind }, {
+      repairPasses: pass - 1, finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: `Repair pass ${pass} could not complete: ${err.message}` }] }, metrics: summarize(critique) });
+    await fs.writeFile(record, JSON.stringify(audit, null, 2));
+    return audit;
+  };
+  for (let pass = 1; pass <= 2; pass++) {
+    signal?.throwIfAborted();
+    try {
+    const emitProgress = (st, msg, pct) => onProgress?.({ stage: st, message: msg, percent: pct });
+    const repaired = await Director.repairEdl(engine, { model, spine: current, critique, weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id });
+    await fs.writeFile(path.join(root, `repair-${pass}-request-${id}.json`), JSON.stringify({
+      storyScopeId: repaired.request.scope?.storyScopeId, weakRegions: repaired.request.weakRegions,
+      criticSummary: critique.summary, reelRanges: repaired.request.reel.ranges, evidenceFiles: repaired.request.evidenceFiles.map(f => path.basename(f || ''))
+    }, null, 2));
+    current = { ...repaired.spine, scriptId: id };
+    await fs.writeFile(path.join(root, `repair-${pass}-story-spine-${id}.json`), JSON.stringify(current, null, 2));
+
+    const story = { ...current, scriptId: id, title: current.hookPromise || `Story ${id}`,
+      spine: { centralViewerQuestion: current.centralViewerQuestion, hookPromise: current.hookPromise, informationBudget: current.informationBudget },
+      openLoops: current.openLoops || [] };
+    const outcome = await buildDirectorScript({ engine, service, opts, model, root, emit: emitProgress, scriptId: id }, story);
+    if (outcome.repairedSpine) current = { ...outcome.repairedSpine, scriptId: id };
+    const rebuilt = outcome.built;
+    const scriptPath = path.join(root, `script-${id}.json`);
+    const highlight = highlightV3(rebuilt.script, outcome.story, rebuilt.evidence);
+    await fs.writeFile(scriptPath, JSON.stringify(highlight, null, 2));
+    const importedProject = await service.dubbing.importReviewedScriptProject({ workspaceRoot, projectId, settings: service.settings, jsonPath: scriptPath });
+    const variant = importedProject.analysis?.highlightVariants?.find(v => Number(v.scriptId) === id) || importedProject.analysis?.highlightVariants?.[0];
+    const rendered = await service.dubbing.renderHighlightFastDraft({ workspaceRoot, projectId, settings: service.settings,
+      project: { ...importedProject, analysis: { ...importedProject.analysis, activeVariantId: variant.id, segments: variant.segments } }, onProgress });
+    currentMp4 = rendered.outputPath || rendered.internalOutputPath || variant.artifacts?.fastDraftVideoPath;
+    onDraft?.(await service.store.getProject(workspaceRoot, projectId));
+
+    await fs.writeFile(path.join(root, `last-rendered-story-spine-${id}.json`), JSON.stringify(current, null, 2));
+    onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (repair pass ${pass})...` });
+    ({ critique, duration } = await critiqueDirectorRender(ai, current, currentMp4, probe, highlight));
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      return passFailure(pass, err);
+    }
+    await fs.writeFile(path.join(root, `repair-${pass}-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
+    if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass);
+    if (critique.isCompliant) {
+      try { await persistAcceptedSpine(root, id, current); }
+      catch (err) {
+        const audit = directorAudit(id, { needsUserReview: true, status: 'PERSIST_ACCEPTED_EDL_FAILED', failureType: 'PERSIST_ACCEPTED_EDL_FAILED' }, {
+          repairPasses: pass, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `PERSIST_ACCEPTED_EDL_FAILED: ${err.message}` }] }, metrics: summarize(critique) });
+        await fs.writeFile(record, JSON.stringify(audit, null, 2)).catch(() => {});
+        const e = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`); e.code = 'PERSIST_ACCEPTED_EDL_FAILED'; e.audit = audit; throw e;
+      }
+      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
+      await fs.writeFile(record, JSON.stringify(audit, null, 2));
+      return audit;
+    }
+  }
+  const audit = directorAudit(id, { needsUserReview: true }, { repairPasses: 2,
+    finalCheck: { complete: true, verdict: 'FAIL', issues: (critique.weakRegions || []).map(r => ({ reason: `${r.type}: ${r.reason}`, outputStartSec: r.outputStartSec, outputEndSec: r.outputEndSec, beatIds: r.beatIds })) },
+    metrics: summarize(critique) });
+  await fs.writeFile(record, JSON.stringify(audit, null, 2));
+  return audit;
+}
 
 async function auditDrafts(service, opts) {
   const { workspaceRoot, projectId, signal, onProgress, onDraft } = opts;
@@ -728,9 +971,16 @@ async function auditDrafts(service, opts) {
     throw new Error(`Failed to load canonical Source Story Model from ${sourceCachePath}`);
   }
 
+  let auditCues = [];
+  try {
+    if (project.subtitleSourcePath && service.dubbing?.readSubtitleSegments) {
+      auditCues = Dubbing.normalizeRollingSubtitleCues(await service.dubbing.readSubtitleSegments(project.subtitleSourcePath));
+    }
+  } catch (_) { auditCues = []; }
   const engine = new Engine(service, {
     project,
     root,
+    cues: auditCues,
     cache: sourceCachePath,
     config: project.autoStoryEditorialConfig || project.autoStoryConfig || {},
     signal,
@@ -769,6 +1019,13 @@ async function auditDrafts(service, opts) {
     };
 
     let currentSpine = spine;
+
+    // Director-owned EDLs: scope-aware critic identifies problems, the Editorial
+    // Director repairs them (scope + EDL + weak regions + the same scope reel).
+    if (Director.isDirectorSpine(currentSpine)) {
+      audits.push(await auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine: currentSpine, script, ai }));
+      continue;
+    }
 
     // 1. Initial render audit
     const meta = await service.ffmpeg.probeVideo(currentMp4);
@@ -1037,5 +1294,5 @@ async function auditDrafts(service, opts) {
 
   return { project: await service.store.getProject(workspaceRoot, projectId), audits };
 }
-module.exports = { run, auditDrafts, assignAudioRoles, buildScript, enforceSafeWords, demoteOverflow, safeWordsFor, isOverflow,
+module.exports = { run, auditDrafts, auditDirectorDraft, directStories, buildDirectorScript, editorialArchitecture, SCOPE_MEDIA_DIRECTOR, assignAudioRoles, buildScript, enforceSafeWords, demoteOverflow, safeWordsFor, isOverflow,
   assertStoryModelInput, validateStoryDesign, validateNarration, buildStoryDesign, chooseSpines, completeSpines };

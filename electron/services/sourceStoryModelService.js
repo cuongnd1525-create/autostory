@@ -57,6 +57,11 @@ const CHUNK_MIN_WINDOW_SEC = 60;          // never plan an initial window smalle
 // loops, not a guess: Story Design (1) + per script [narration(1) + safeWords repairs(<=2)
 // + gate repairs(<=2)] = 5.
 const STORY_DESIGN_CALLS = 1;
+// First-pass calls of the scope-media-director path (repairs draw on the shared remaining
+// budget, like Story Design repairs did). Kept minimal so a long cache-MISS source still
+// gets enough chunk-first windows under the default 16-call cap.
+const SCOPE_SELECTION_CALLS = 1;
+const DIRECTOR_CALLS_PER_SCRIPT = 1;
 const NARRATION_CALLS_PER_SCRIPT = 5;
 const SOURCE_MODEL_MIN_CALLS = 4;         // floor so a large outputCount can't starve extraction to 0
 // Recursive-subdivision guards for a chunk that STILL hits MAX_TOKENS: keep
@@ -334,6 +339,11 @@ function callLimit(service) {
 // pipeline's own bounded loops (not a guess).
 function downstreamReserve(config) {
   const outputCount = Math.max(1, Number(config?.outputCount) || 1);
+  // Scope-media-director path: one Story Scope selection, then per script one director
+  // EDL call (replacing Story Design) plus the narration calls.
+  if (config?.editorialArchitecture === 'scope_media_director') {
+    return SCOPE_SELECTION_CALLS + outputCount * (DIRECTOR_CALLS_PER_SCRIPT + NARRATION_CALLS_PER_SCRIPT);
+  }
   return STORY_DESIGN_CALLS + outputCount * NARRATION_CALLS_PER_SCRIPT;
 }
 // The request budget split for this run.

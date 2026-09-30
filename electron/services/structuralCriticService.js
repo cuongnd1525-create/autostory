@@ -245,8 +245,8 @@ For EVERY window listed above, output a JSON object in 'windows' array with thes
   * stakesChange: boolean (did danger, charges, or consequence severity change?)
   * futureConsequenceChange: boolean (is a consequence now imminent?)
 - visualState: object containing:
-  * primarySubject: string (who is the primary visual focus on screen? e.g. "officer", "mother", "boyfriend_witness", "daughter", "suspect", "multiple", "environment", "darkness")
-  * locationState: string (where is this visually taking place? e.g. "police_cruiser", "doorway_porch", "stairway_hallway", "bedroom", "lawn_driveway", "curbside", "obscured_black")
+  * primarySubject: string (who is the primary visual focus on screen? e.g. "officer", "suspect", "victim", "witness", "family_member", "multiple", "environment", "darkness")
+  * locationState: string (where is this visually taking place? e.g. "police_cruiser", "building_entrance", "interior_hallway", "interior_room", "exterior_yard", "roadside", "obscured_black")
   * activityState: string (what activity is physically occurring? e.g. "conversational_interview", "conversational_argument", "physical_restraint", "walking_search", "inspecting_evidence", "standing_talking")
   * shotState: string (camera shot type, e.g. "bodycam_wide", "bodycam_medium", "dashcam", "blocked_lens", "blackout")
 - viewerStateChanged: boolean
@@ -266,7 +266,7 @@ For EVERY window listed above, output a JSON object in 'windows' array with thes
 
 CRITICAL INSTRUCTIONS:
 1. SEPARATE SEMANTIC DIALOGUE PROGRESS FROM VIEWER-STATE PROGRESS:
-Different words from a talking subject in the same doorway or lawn do NOT constitute a viewer state change. If the scene is someone standing and talking about what happened earlier, viewerStateChanged = false.
+Different words from a talking subject in the same spot do NOT constitute a viewer state change. If the scene is someone standing and talking about what happened earlier, viewerStateChanged = false.
 2. ENDING OBSERVABILITY:
 Look closely at the final window. If the video ends on a black screen, blocked lens, or visually unobservable footage, visualObservability MUST be 'mostly_obscured' or 'black_or_unusable'.
 3. CAUSAL CONTINUITY:

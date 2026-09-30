@@ -36,11 +36,9 @@ function planRetentionArc(story, model, config = {}, options = {}) {
 
   // 1. Identify key structural milestones in the source
   // In true-crime / bodycam, check whether this is a serialized episode (Part 1) or full digest
+  // Serialized mode is a configuration decision, never inferred from story wording.
   const isSerialized = options.storyMode === 'serialized_part' ||
-                       options.preferCliffhanger !== false ||
-                       Boolean(story.centralViewerQuestion?.toLowerCase().includes('what happened') ||
-                               story.hookPromise?.toLowerCase().includes('nightmare') ||
-                               story.hookPromise?.toLowerCase().includes('georgia'));
+                       options.preferCliffhanger !== false;
 
   // Detect final resolution / arrest events to enforce the Anti-Spoiler rule
   const resolutionEventIds = new Set(
@@ -166,7 +164,7 @@ function planRetentionArc(story, model, config = {}, options = {}) {
     if (role === 'cold_open_hook') {
       informationWithheld = 'The background history of the family, whether anyone has a weapon, and who gets arrested.';
     } else if (role === 'crisis_context') {
-      informationWithheld = 'What the officer will find behind the door / inside the bathroom.';
+      informationWithheld = 'What the responding officer is about to find.';
     } else if (role === 'cliffhanger') {
       informationWithheld = 'The final verdict, court outcome, and exact sentencing.';
     } else {
