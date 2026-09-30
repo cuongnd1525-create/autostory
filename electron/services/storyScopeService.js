@@ -23,6 +23,33 @@ const DEFAULT_MAX_SCOPE_REEL_SEC = 360;   // cost budget for the director's medi
 const DEFAULT_REEL_PADDING_SEC = 2;       // context around each declared window
 const TIME_EPS = 0.5;
 
+// ONE source of truth for every Story Scope count limit. The same object renders
+// into the Gemini instruction, drives the deterministic validator (with explicit
+// "contains N; maximum M" messages) and the repair prompt. Array sizes are NOT
+// enforced by the JSON schema: the provider transport strips maxItems, so a
+// schema-level check could only ever produce an opaque "array size outside
+// contract" error that Gemini cannot act on.
+//
+// scopeWindows.max = 10 is an engineering bound, not an editorial one: every
+// unique (non-adjacent) window becomes its own reel proxy file, and the Editorial
+// Director receives all reel files in ONE multimodal request; Gemini video models
+// accept at most 10 video files per prompt. Cost is bounded separately by
+// maxScopeReelSec. Windows are UNIQUE source ranges: a range that is both core
+// and hook/ending material is one window with several purposes, never two.
+const SCOPE_LIMITS = Object.freeze({
+  candidates: { min: 1, max: 4 },
+  scopeWindows: { min: 1, max: 10 },
+  causalSpine: { min: 2, max: 16 },
+  candidateEndingEvents: { min: 1, max: 6 },
+  hookCandidates: { min: 0, max: 4 },
+  primaryEntities: { min: 0, max: 8 },
+  mustResolve: { min: 0, max: 8 },
+  mustWithhold: { min: 0, max: 8 },
+  allowedSupportingContext: { min: 0, max: 8 },
+  outOfScopeBranches: { min: 0, max: 12 }
+});
+const PURPOSE_PRIORITY = ['core', 'hook_material', 'ending_material', 'supporting_context'];
+
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
 const round2 = n => Math.round(n * 100) / 100;
 
@@ -32,14 +59,16 @@ const flexible = (required, optional = {}) => ({ type: 'object', required: Objec
 const text = { type: 'string' };
 const number = { type: 'number' };
 const boolean = { type: 'boolean' };
-const list = (items, maxItems = 20) => ({ type: 'array', items, maxItems });
+// Unbounded at the schema level on purpose — see SCOPE_LIMITS.
+const list = items => ({ type: 'array', items });
 const choice = (...values) => ({ type: 'string', enum: values });
 
 const END_TARGETS = ['payoff', 'partial_payoff', 'forward_cliffhanger'];
 const WINDOW_PURPOSES = ['core', 'hook_material', 'ending_material', 'supporting_context'];
 
 const spineNode = flexible({ eventId: text, sourceStartSec: number, sourceEndSec: number }, { role: text, whyInScope: text });
-const scopeWindow = flexible({ startSec: number, endSec: number, purpose: choice(...WINDOW_PURPOSES) }, { why: text });
+const scopeWindow = flexible({ startSec: number, endSec: number }, { windowId: text, purposes: { type: 'array', items: choice(...WINDOW_PURPOSES) }, purpose: choice(...WINDOW_PURPOSES), why: text });
+const hookCandidate = flexible({ windowId: text, sourceStartSec: number, sourceEndSec: number }, { why: text });
 const supportingContext = flexible({ description: text, sourceStartSec: number, sourceEndSec: number, treatment: choice('narration_only', 'footage') });
 const branch = flexible({ description: text, sourceStartSec: number, sourceEndSec: number }, { whyExcluded: text });
 const ending = flexible({ sourceStartSec: number, sourceEndSec: number, endingType: choice(...END_TARGETS) }, { eventId: text, whyItIsAConsequence: text });
@@ -51,22 +80,22 @@ const storyScope = flexible({
   scopeStartState: text,
   scopeEndTarget: choice(...END_TARGETS),
   whyThisIsOneStory: text,
-  primaryEntities: list(text, 8),
-  causalSpine: list(spineNode, 16),
-  scopeWindows: list(scopeWindow, 8),
-  mustResolve: list(text, 8),
-  mustWithhold: list(text, 8),
-  allowedSupportingContext: list(supportingContext, 8),
+  primaryEntities: list(text),
+  causalSpine: list(spineNode),
+  scopeWindows: list(scopeWindow),
+  mustResolve: list(text),
+  mustWithhold: list(text),
+  allowedSupportingContext: list(supportingContext),
   explicitScopeBoundary: flexible({ startSec: number, endSec: number }, { rationale: text }),
-  outOfScopeBranches: list(branch, 12),
+  outOfScopeBranches: list(branch),
   targetDurationSec: number,
-  candidateEndingEvents: list(ending, 6),
+  candidateEndingEvents: list(ending),
   footageAvailability: text
-});
+}, { hookCandidates: list(hookCandidate) });
 
 const storyScopeSelection = flexible({
   accessGranted: boolean,
-  candidates: list(storyScope, 4),
+  candidates: list(storyScope),
   chosenStoryScopeId: text
 }, { selectionRationale: text });
 
@@ -94,12 +123,17 @@ PRINCIPLES
 OUTPUT
 - Propose 2-4 candidate scopes (different mini-stories the source could support). For each, fill every field with absolute source seconds.
 - Choose ONE (chosenStoryScopeId) and explain why in selectionRationale. Judge by: clear conflict, causal completeness, footage and dialogue strength, physical/event progression, support for the requested duration, a strong in-scope ending, and minimal dependency on unrelated branches.
-- scopeWindows purposes: core | hook_material | ending_material | supporting_context. supporting_context windows are only for allowedSupportingContext items with treatment='footage'.
+- scopeWindows are UNIQUE, NON-OVERLAPPING source ranges, each listed ONCE with a windowId and a purposes array (core | hook_material | ending_material | supporting_context). If one range is both core and hook or ending material, it is ONE window with purposes ['core','hook_material'] — never repeat a range for a second role. Reference hook material in hookCandidates (windowId + exact sub-range) and endings in candidateEndingEvents. supporting_context windows are only for allowedSupportingContext items with treatment='footage'.
+- COUNT LIMITS (hard; "candidates" is per selection, all others per candidate): ${limitsText()}.
 - explicitScopeBoundary.startSec/endSec must contain every core, hook_material and ending_material window.
 - Never invent events. Reference real event ids and real source seconds from the model. Set accessGranted=true after reading the model.`;
 
-const repairInstruction = violations => `REPAIR — the previous Story Scope failed structural validation. Keep the same story if it is sound. Fix ONLY what these violations require and return the COMPLETE selection again:
-${violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}`;
+function limitsText() {
+  return Object.entries(SCOPE_LIMITS).map(([k, l]) => `${k} ${l.min ? `${l.min}-` : '<= '}${l.max}`).join('; ');
+}
+const repairInstruction = (violations, failing = null) => `REPAIR — your previous Story Scope selection (input.previousSelection) failed validation${failing ? ` in candidate '${failing}'` : ''}. Keep the same story if it is sound. Fix ONLY what these violations require and return the COMPLETE selection again. Returning the same object unchanged will fail again.
+${violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}
+Count limits (per candidate): ${limitsText()}. scopeWindows must be unique non-overlapping ranges (one window per range, several purposes allowed).`;
 
 // ---------------------------------------------------------------- pure helpers
 function mergeRanges(ranges) {
@@ -120,6 +154,46 @@ function mergeRanges(ranges) {
 const totalSec = ranges => ranges.reduce((n, r) => n + (r.endSec - r.startSec), 0);
 const overlaps = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
 
+const windowPurposes = w => [...new Set([...(Array.isArray(w?.purposes) ? w.purposes : []), ...(w?.purpose ? [w.purpose] : [])])];
+const primaryPurpose = purposes => PURPOSE_PRIORITY.find(p => purposes.includes(p)) || null;
+
+// Lossless normalization of scopeWindows into UNIQUE source ranges. Overlapping
+// declarations of the same footage (e.g. a range listed once as core and again as
+// hook_material) become ONE window carrying every purpose; each original
+// sub-range is kept in purposeRanges so no role or boundary information is lost.
+// Nothing is dropped or truncated: the union of footage is unchanged (and the reel
+// would merge these ranges anyway). Every merge is reported in `notes`.
+function normalizeScopeWindows(windows = []) {
+  const valid = [], notes = [];
+  (Array.isArray(windows) ? windows : []).forEach((w, i) => {
+    const s = num(w?.startSec), e = num(w?.endSec);
+    if (!(Number.isFinite(s) && Number.isFinite(e) && e > s)) return;
+    const id = String(w.windowId || `w${i + 1}`);
+    const purposes = windowPurposes(w);
+    valid.push({ id, s, e, purposes, why: w.why || '', index: i });
+  });
+  valid.sort((a, b) => a.s - b.s || a.e - b.e);
+  const out = [];
+  for (const w of valid) {
+    const last = out[out.length - 1];
+    const pr = w.purposes.map(p => ({ purpose: p, startSec: w.s, endSec: w.e, sourceWindowId: w.id }));
+    if (last && overlaps(last.startSec, last.endSec, w.s, w.e) > 0.01) {
+      last.endSec = Math.max(last.endSec, w.e);
+      for (const p of w.purposes) if (!last.purposes.includes(p)) last.purposes.push(p);
+      last.purposeRanges.push(...pr);
+      last.mergedFrom.push(w.id);
+      if (w.why && !last.why.includes(w.why)) last.why = last.why ? `${last.why} | ${w.why}` : w.why;
+    } else {
+      out.push({ windowId: w.id, startSec: w.s, endSec: w.e, purposes: [...w.purposes], purposeRanges: pr, mergedFrom: [w.id], why: w.why });
+    }
+  }
+  const normalized = out.map(w => {
+    if (w.mergedFrom.length > 1) notes.push({ merged: w.mergedFrom, into: w.windowId, startSec: w.startSec, endSec: w.endSec, purposes: w.purposes });
+    return { windowId: w.windowId, startSec: w.startSec, endSec: w.endSec, purposes: w.purposes, purpose: primaryPurpose(w.purposes), purposeRanges: w.purposeRanges, why: w.why, ...(w.mergedFrom.length > 1 ? { mergedFrom: w.mergedFrom } : {}) };
+  });
+  return { windows: normalized, notes, declaredCount: Array.isArray(windows) ? windows.length : 0 };
+}
+
 function chosenScope(selection) {
   const candidates = Array.isArray(selection?.candidates) ? selection.candidates : [];
   return candidates.find(c => c && c.storyScopeId === selection.chosenStoryScopeId) || null;
@@ -132,7 +206,7 @@ function planScopeReel(scope, { durationSec, paddingSec = DEFAULT_REEL_PADDING_S
   const windows = (scope?.scopeWindows || []).map(w => ({
     startSec: Math.max(0, num(w.startSec) - paddingSec),
     endSec: Math.min(dur, num(w.endSec) + paddingSec),
-    purpose: w.purpose
+    purposes: windowPurposes(w)
   }));
   const ranges = mergeRanges(windows).map((r, i) => ({
     reelId: `reel_${String(i + 1).padStart(2, '0')}`,
@@ -169,18 +243,43 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   const b0 = num(b.startSec), b1 = num(b.endSec);
   if (!inSource(b0, b1)) add('SCOPE_BOUNDARY_INVALID', `explicitScopeBoundary ${b.startSec}-${b.endSec}s must be a valid range inside the source (0-${round2(dur)}s).`);
 
-  const windows = Array.isArray(scope.scopeWindows) ? scope.scopeWindows : [];
+  // Count limits (single source of truth: SCOPE_LIMITS) with explicit, actionable messages.
+  for (const field of Object.keys(SCOPE_LIMITS)) {
+    if (field === 'candidates' || field === 'scopeWindows') continue;
+    const arr = scope[field];
+    if (arr === undefined && SCOPE_LIMITS[field].min === 0) continue;
+    const n = Array.isArray(arr) ? arr.length : 0;
+    if (n > SCOPE_LIMITS[field].max) add('SCOPE_COUNT_OVER_LIMIT', `${field} contains ${n} items; maximum allowed is ${SCOPE_LIMITS[field].max}.`, { field, count: n, max: SCOPE_LIMITS[field].max });
+  }
+
+  const declaredWindows = Array.isArray(scope.scopeWindows) ? scope.scopeWindows : [];
+  declaredWindows.forEach((w, i) => {
+    const s = num(w?.startSec), e = num(w?.endSec);
+    if (!inSource(s, e)) add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}] ${w?.startSec}-${w?.endSec}s is not a valid source range.`, { index: i });
+    const ps = windowPurposes(w);
+    if (!ps.length || ps.some(p => !WINDOW_PURPOSES.includes(p))) add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}].purposes must be a non-empty subset of ${WINDOW_PURPOSES.join('|')}.`, { index: i });
+  });
+  const normalization = normalizeScopeWindows(declaredWindows);
+  const windows = normalization.windows;
   if (!windows.length) add('SCOPE_WINDOWS_EMPTY', 'scopeWindows must list the in-scope source windows the editor will watch.');
+  if (windows.length > SCOPE_LIMITS.scopeWindows.max) {
+    add('SCOPE_COUNT_OVER_LIMIT', `scopeWindows contains ${windows.length} unique windows${normalization.declaredCount !== windows.length ? ` (${normalization.declaredCount} declared; overlapping duplicates already merged)` : ''}; maximum allowed is ${SCOPE_LIMITS.scopeWindows.max}. Keep only the windows the central conflict needs, or join adjacent moments into one window.`, { field: 'scopeWindows', count: windows.length, declared: normalization.declaredCount, max: SCOPE_LIMITS.scopeWindows.max });
+  }
+  const inScope = w => w.purposes.some(p => p !== 'supporting_context');
   const supportingFootage = (scope.allowedSupportingContext || []).filter(c => c && c.treatment === 'footage');
-  windows.forEach((w, i) => {
-    const s = num(w.startSec), e = num(w.endSec);
-    if (!inSource(s, e)) { add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}] ${w.startSec}-${w.endSec}s is not a valid source range.`, { index: i }); return; }
-    if (!WINDOW_PURPOSES.includes(w.purpose)) add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}].purpose must be one of ${WINDOW_PURPOSES.join('|')}.`, { index: i });
-    if (w.purpose === 'supporting_context') {
+  windows.forEach(w => {
+    const s = w.startSec, e = w.endSec;
+    if (!inScope(w)) {
       const declared = supportingFootage.some(c => overlaps(s, e, num(c.sourceStartSec), num(c.sourceEndSec)) > 0);
-      if (!declared) add('SCOPE_SUPPORT_UNDECLARED', `scopeWindows[${i}] is supporting_context but no allowedSupportingContext item with treatment='footage' covers ${s}-${e}s.`, { index: i });
+      if (!declared) add('SCOPE_SUPPORT_UNDECLARED', `scopeWindow '${w.windowId}' is supporting_context but no allowedSupportingContext item with treatment='footage' covers ${s}-${e}s.`, { windowId: w.windowId });
     } else if (Number.isFinite(b0) && Number.isFinite(b1) && (s < b0 - TIME_EPS || e > b1 + TIME_EPS)) {
-      add('SCOPE_WINDOW_OUTSIDE_BOUNDARY', `scopeWindows[${i}] (${w.purpose}) ${s}-${e}s lies outside explicitScopeBoundary ${b0}-${b1}s.`, { index: i });
+      add('SCOPE_WINDOW_OUTSIDE_BOUNDARY', `scopeWindow '${w.windowId}' (${w.purposes.join('+')}) ${s}-${e}s lies outside explicitScopeBoundary ${b0}-${b1}s.`, { windowId: w.windowId });
+    }
+  });
+  (Array.isArray(scope.hookCandidates) ? scope.hookCandidates : []).forEach((h, i) => {
+    const s = num(h.sourceStartSec), e = num(h.sourceEndSec);
+    if (!inSource(s, e) || !windows.some(w => inScope(w) && s >= w.startSec - TIME_EPS && e <= w.endSec + TIME_EPS)) {
+      add('SCOPE_HOOK_OUTSIDE_SCOPE', `hookCandidates[${i}] ${h.sourceStartSec}-${h.sourceEndSec}s must lie inside one in-scope window.`, { index: i });
     }
   });
 
@@ -199,20 +298,21 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   endings.forEach((en, i) => {
     const s = num(en.sourceStartSec), e = num(en.sourceEndSec);
     if (!inSource(s, e)) add('SCOPE_ENDING_INVALID', `candidateEndingEvents[${i}] ${en.sourceStartSec}-${en.sourceEndSec}s is not a valid source range.`, { index: i });
-    else if (!windows.some(w => w.purpose !== 'supporting_context' && overlaps(s, e, num(w.startSec), num(w.endSec)) > 0)) {
+    else if (!windows.some(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0)) {
       add('SCOPE_ENDING_OUTSIDE_SCOPE', `candidateEndingEvents[${i}] ${s}-${e}s is not inside an in-scope window.`, { index: i });
     }
   });
 
-  const reel = planScopeReel(scope, { durationSec, paddingSec });
-  const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: num(w.startSec), endSec: num(w.endSec) }))));
+  const normalizedScope = { ...scope, scopeWindows: windows };
+  const reel = planScopeReel(normalizedScope, { durationSec, paddingSec });
+  const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
   if (windows.length && watchable < targetDurationMinSec) {
     add('SCOPE_FOOTAGE_INSUFFICIENT', `In-scope windows hold only ${round2(watchable)}s of footage; the requested minimum duration is ${targetDurationMinSec}s. Widen the windows inside the same conflict (or choose a scope whose conflict has enough footage).`);
   }
   if (reel.totalSec > maxScopeReelSec + TIME_EPS) {
     add('SCOPE_REEL_OVER_BUDGET', `The scope media reel would be ${reel.totalSec}s (windows + ${paddingSec}s padding); the budget is ${maxScopeReelSec}s. Tighten the windows to the causal spine of ONE conflict.`);
   }
-  return { valid: violations.length === 0, violations, reel };
+  return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: windows.length, merges: normalization.notes } };
 }
 
 function validateSelectionShape(v) {
@@ -252,16 +352,16 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
     storyMode: cfg.storyMode || 'serialized_part'
   };
   const attempts = [];
-  let violations = null, previous = null;
+  let violations = null, previous = null, failingId = null;
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const repair = attempt > 0;
     let selection = null, schemaError = null;
     try {
       selection = await engine.ask(
         `v5-story-scope${repair ? `_repair${attempt}` : ''}`,
-        repair ? { ...input, previousSelection: previous, violations } : input,
+        repair ? { ...input, previousSelection: previous, failingStoryScopeId: failingId, violations } : input,
         schemas.storyScopeSelection,
-        repair ? `${instruction}\n\n${repairInstruction(violations)}` : instruction,
+        repair ? `${instruction}\n\n${repairInstruction(violations, failingId)}` : instruction,
         [],
         validateSelectionShape,
         'auto_story_edit',
@@ -272,20 +372,29 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
       selection = e.invalidArtifact || null; schemaError = e.message;
     }
     const scope = schemaError ? null : chosenScope(selection);
-    const report = schemaError
-      ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the Story Scope contract: ${schemaError}` }], reel: null }
+    const nCandidates = Array.isArray(selection?.candidates) ? selection.candidates.length : 0;
+    let report = schemaError
+      ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the Story Scope contract: ${schemaError}. Count limits: ${limitsText()}.` }], reel: null }
       : validateStoryScope(scope, opts);
-    attempts.push({ attempt, chosenStoryScopeId: selection?.chosenStoryScopeId || null, valid: report.valid, violations: report.violations });
+    if (!schemaError && nCandidates > SCOPE_LIMITS.candidates.max) {
+      report = { ...report, valid: false, violations: [...report.violations, { code: 'SCOPE_COUNT_OVER_LIMIT', message: `candidates contains ${nCandidates} items; maximum allowed is ${SCOPE_LIMITS.candidates.max}.`, field: 'candidates', count: nCandidates, max: SCOPE_LIMITS.candidates.max }] };
+    }
+    attempts.push({ attempt, chosenStoryScopeId: selection?.chosenStoryScopeId || null, valid: report.valid, violations: report.violations,
+      scopeWindowsDeclared: report.normalization?.declaredCount ?? null, scopeWindowsUnique: report.normalization?.uniqueCount ?? null,
+      selectionFingerprint: selection ? require('crypto').createHash('sha256').update(JSON.stringify(selection)).digest('hex').slice(0, 16) : null });
     if (write && root) {
       await write(require('path').join(root, `story-scope-selection${repair ? `-repair-${attempt}` : ''}.json`), { selection, validation: report });
     }
     if (report.valid) {
-      const finalScope = { ...scope, contract: SCOPE_CONTRACT_VERSION, targetDurationMinSec: input.targetDurationMinSec, targetDurationMaxSec: input.targetDurationMaxSec };
+      // The NORMALIZED scope (unique windows) is what the reel, director and critic use.
+      const finalScope = { ...report.normalizedScope, contract: SCOPE_CONTRACT_VERSION, targetDurationMinSec: input.targetDurationMinSec, targetDurationMaxSec: input.targetDurationMaxSec,
+        windowNormalization: report.normalization };
       emit('design', `[Scope] Story Scope selected: ${finalScope.storyScopeId} — ${finalScope.centralViewerQuestion}`);
       return { scope: finalScope, selection, reel: report.reel, attempts };
     }
     emit('design', `[Scope] Story Scope needs repair #${attempt + 1}: ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
     violations = report.violations; previous = selection || previous;
+    failingId = scope?.storyScopeId || selection?.chosenStoryScopeId || failingId;
   }
   throw new StoryError('STORY_SCOPE_INVALID', `Story Scope failed structural validation after ${maxRepairs} repair pass(es): ${violations.map(v => v.code).join(', ')}`, { violations, attempts });
 }
@@ -294,11 +403,13 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
 function alternateScopes(selection, chosenId, opts) {
   return (selection?.candidates || [])
     .filter(c => c && c.storyScopeId !== chosenId)
-    .filter(c => validateStoryScope(c, opts).valid);
+    .map(c => validateStoryScope(c, opts))
+    .filter(r => r.valid)
+    .map(r => ({ ...r.normalizedScope, windowNormalization: r.normalization }));
 }
 
 module.exports = {
-  SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC,
+  SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC, SCOPE_LIMITS, normalizeScopeWindows, limitsText,
   schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
   chosenScope, alternateScopes, modelForScope
 };

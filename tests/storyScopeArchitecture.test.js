@@ -28,6 +28,7 @@ const sourceModel = require(svc('sourceStoryModelService.js'));
 const { compileV3 } = require(svc('autoStoryV3Compile.js'));
 const { augmentCoverage } = require(svc('beatCoverageService.js'));
 const durationFit = require(svc('autoStoryDurationFit.js'));
+const SchemaBoundary = require(svc('autoStorySchemaBoundary.js'));
 
 let passed = 0;
 const ok = async (name, fn) => { await fn(); passed++; console.log('  ok -', name); };
@@ -178,7 +179,11 @@ function fakeEngine(asks) {
       this.lastAsks = (this.lastAsks || []).concat([{ key, input, instruction, evidence }]);
       if (!r) throw new Error(`unexpected ask ${key}`);
       const value = typeof r === 'function' ? r(input) : r;
-      await validate(value); return value;
+      // Mirror Engine.ask + Service.stage: local JSON-schema check, then the pass
+      // validator; a failure surfaces the invalid artifact (sourceContract path).
+      try { SchemaBoundary.validate(value, schema); await validate(value); }
+      catch (e) { e.invalidArtifact = value; throw e; }
+      return value;
     }
   };
 }
@@ -236,6 +241,88 @@ function fakeEngine(asks) {
     assert.strictEqual(out.attempts.length, 2);
     assert.ok(engine.lastAsks[1].input.violations.some(v => v.code === 'SCOPE_REEL_OVER_BUDGET'), 'repair request carries the violations');
     assert.ok(engine.lastAsks[1].key.includes('repair'));
+  });
+
+  // ---------------------------------------------------------------- Story Scope contract (count limits / normalization / repair)
+  const MAXW = Scope.SCOPE_LIMITS.scopeWindows.max;
+  const nWindows = n => Array.from({ length: n }, (_, i) => ({ windowId: `w${i + 1}`, startSec: 2 + i * 10, endSec: 2 + i * 10 + 8, purposes: ['core'], why: 'x' }));
+  // A generic scope whose windows are spread over a long boundary (valid apart from the count under test).
+  const wideScope = (n, extra = {}) => scopeCandidate({
+    scopeWindows: nWindows(n), explicitScopeBoundary: { startSec: 0, endSec: 2 + n * 10 + 10, rationale: 'x' },
+    causalSpine: [{ eventId: 'e1', sourceStartSec: 2, sourceEndSec: 10 }, { eventId: 'e2', sourceStartSec: 12, sourceEndSec: 20 }],
+    candidateEndingEvents: [{ eventId: 'eN', sourceStartSec: 2 + (n - 1) * 10, sourceEndSec: 2 + (n - 1) * 10 + 8, endingType: 'forward_cliffhanger' }], ...extra });
+
+  await ok('Scope contract: one source of truth — limit is in the instruction, NOT a schema maxItems, and the validator reports "contains N; maximum M"', async () => {
+    assert.ok(Scope.instruction.includes(`scopeWindows 1-${MAXW}`), 'instruction states the scopeWindows limit');
+    const winSchema = Scope.schemas.storyScope.properties.scopeWindows;
+    assert.strictEqual(winSchema.maxItems, undefined, 'no opaque schema-level array bound');
+    const over = wideScope(MAXW + 1);
+    SchemaBoundary.validate(selection([over]), Scope.schemas.storyScopeSelection); // schema accepts; the validator decides
+    const r = Scope.validateStoryScope(over, { durationSec: SOURCE_SEC, targetDurationMinSec: 65 });
+    const v = r.violations.find(x => x.code === 'SCOPE_COUNT_OVER_LIMIT' && x.field === 'scopeWindows');
+    assert.ok(v, JSON.stringify(r.violations));
+    assert.match(v.message, new RegExp(`scopeWindows contains ${MAXW + 1} unique windows; maximum allowed is ${MAXW}`));
+    assert.strictEqual(r.normalizedScope.scopeWindows.length, MAXW + 1, 'nothing truncated in JS');
+  });
+
+  await ok('Scope contract: a range with several roles is ONE window (lossless normalization, counted once)', async () => {
+    const dupRoles = scopeCandidate({ scopeWindows: [
+      { windowId: 'a', startSec: 2, endSec: 84, purpose: 'core' },
+      { windowId: 'b', startSec: 60, endSec: 66, purpose: 'hook_material' },
+      { windowId: 'c', startSec: 84, endSec: 110, purposes: ['core'] },
+      { windowId: 'd', startSec: 84, endSec: 110, purposes: ['ending_material'] }
+    ] });
+    const r = Scope.validateStoryScope(dupRoles, { durationSec: SOURCE_SEC, targetDurationMinSec: 65 });
+    assert.ok(r.valid, JSON.stringify(r.violations));
+    assert.strictEqual(r.normalization.declaredCount, 4); assert.strictEqual(r.normalization.uniqueCount, 2);
+    const [w1, w2] = r.normalizedScope.scopeWindows;
+    assert.deepStrictEqual([w1.startSec, w1.endSec, w1.purposes], [2, 84, ['core', 'hook_material']]);
+    assert.ok(w1.purposeRanges.some(p => p.purpose === 'hook_material' && p.startSec === 60 && p.endSec === 66), 'hook sub-range preserved');
+    assert.deepStrictEqual(w2.purposes, ['core', 'ending_material']);
+    assert.strictEqual(w1.purpose, 'core', 'primary purpose kept for downstream readers');
+    // Media is identical before/after normalization.
+    assert.deepStrictEqual(Scope.planScopeReel(r.normalizedScope, { durationSec: SOURCE_SEC }).ranges.map(x => [x.sourceStartSec, x.sourceEndSec]),
+      Scope.planScopeReel(dupRoles, { durationSec: SOURCE_SEC }).ranges.map(x => [x.sourceStartSec, x.sourceEndSec]));
+  });
+
+  await ok('Scope repair: initial over-limit windows -> repair with explicit count + failing candidate -> valid repair is returned', async () => {
+    const bad = wideScope(MAXW + 1, { storyScopeId: 'scope_over' });
+    const good = wideScope(MAXW, { storyScopeId: 'scope_over' });
+    const engine = fakeEngine([selection([bad]), selection([good])]);
+    const out = await Scope.selectStoryScope(engine, MODEL);
+    assert.strictEqual(out.attempts.length, 2);
+    assert.strictEqual(out.attempts[0].valid, false); assert.strictEqual(out.attempts[1].valid, true);
+    const repairAsk = engine.lastAsks[1];
+    assert.strictEqual(repairAsk.input.failingStoryScopeId, 'scope_over');
+    assert.strictEqual(repairAsk.input.previousSelection.candidates[0].scopeWindows.length, MAXW + 1, 'repair receives the failing candidate');
+    assert.ok(repairAsk.input.violations.some(v => v.field === 'scopeWindows' && v.count === MAXW + 1 && v.max === MAXW));
+    assert.match(repairAsk.instruction, new RegExp(`scopeWindows contains ${MAXW + 1} unique windows; maximum allowed is ${MAXW}`));
+    assert.match(repairAsk.instruction, /Returning the same object unchanged will fail again/);
+    assert.strictEqual(out.scope.scopeWindows.length, MAXW, 'the repaired selection replaced the invalid one');
+    assert.notStrictEqual(out.attempts[0].selectionFingerprint, out.attempts[1].selectionFingerprint);
+  });
+
+  await ok('Scope repair: repair #1 still invalid, repair #2 valid -> the SECOND repaired selection is returned', async () => {
+    const bad = wideScope(MAXW + 2, { storyScopeId: 's' });
+    const stillBad = wideScope(MAXW + 1, { storyScopeId: 's' });
+    const good = wideScope(MAXW, { storyScopeId: 's', centralViewerQuestion: 'second repair question' });
+    const engine = fakeEngine([selection([bad]), selection([stillBad]), selection([good])]);
+    const out = await Scope.selectStoryScope(engine, MODEL);
+    assert.deepStrictEqual(out.attempts.map(a => a.valid), [false, false, true]);
+    assert.strictEqual(out.scope.centralViewerQuestion, 'second repair question');
+    assert.strictEqual(out.scope.scopeWindows.length, MAXW);
+    assert.strictEqual(engine.lastAsks[2].input.previousSelection.candidates[0].scopeWindows.length, MAXW + 1, 'repair #2 is given repair #1 output');
+    assert.match(engine.lastAsks[2].instruction, new RegExp(`contains ${MAXW + 1} unique windows`));
+    // Exhausted: identical invalid output three times -> STORY_SCOPE_INVALID with the explicit violation.
+    const stuck = fakeEngine([selection([bad]), selection([bad]), selection([bad])]);
+    await assert.rejects(Scope.selectStoryScope(stuck, MODEL), e => e.kind === 'STORY_SCOPE_INVALID' && e.details.violations.some(v => /maximum allowed is/.test(v.message)));
+  });
+
+  await ok('Scope contract: an unchosen oversized candidate does not block a valid chosen scope', async () => {
+    const engine = fakeEngine([selection([scopeCandidate(), wideScope(MAXW + 3, { storyScopeId: 'alt' })], 'scope_stop_to_detention')]);
+    const out = await Scope.selectStoryScope(engine, MODEL);
+    assert.strictEqual(out.scope.storyScopeId, 'scope_stop_to_detention');
+    assert.deepStrictEqual(Scope.alternateScopes(out.selection, 'scope_stop_to_detention', { durationSec: SOURCE_SEC, targetDurationMinSec: 65 }), [], 'invalid alternate is not used');
   });
 
   // ---------------------------------------------------------------- D
