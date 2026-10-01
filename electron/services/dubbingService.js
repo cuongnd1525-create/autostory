@@ -6594,12 +6594,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const rawVoicePath = path.join(paths.audioDir, `${tag}${draftVoiceExt}`);
     const fittedVoicePath = path.join(paths.audioDir, `${tag}.m4a`);
     const blockVideoPath = path.join(paths.clipsDir, `${tag}-video.mp4`);
+    const timedBlockVideoPath = path.join(paths.clipsDir, `${tag}-video-timed.mp4`);
     const voicedClipPath = path.join(paths.clipsDir, `${tag}-voiced.mp4`);
+    const durationFixedClipPath = path.join(paths.clipsDir, `${tag}-voiced-timed.mp4`);
 
     let cache = null;
     if (autoStorySourceStat) {
       const key = crypto.createHash("sha256").update(JSON.stringify({
-        version: 1, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+        version: 2, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
         pieces: pieces.map((p) => [p.sourceStartSec, p.sourceDurationSec, p.durationSec]), treatment, ambientVolume, duck, voiceVolume, maxStretchRatio,
         voice: getVoiceCacheInfo({ settings, project, text, outputPath: rawVoicePath, voiceRenderOptions }).spec,
         normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true
@@ -6625,10 +6627,18 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         sourcePath: project.sourceVideoPath, outputPath: rawClipPath, startSec: p.sourceStartSec, sourceDurationSec: p.sourceDurationSec,
         targetDurationSec: p.durationSec, width: 540, preset: "ultrafast", crf: 32, includeAudio: treatment === "voiceover_with_ambient"
       });
-      await ffmpeg.normalizeVideoKeepAudio({ inputPath: rawClipPath, outputPath: normalizedClipPath, targetDuration: p.durationSec });
+      // Narrated-block pieces must carry a full-length ambient bed. The older
+      // keep-audio helper stream-copies audio and can become shorter than the
+      // visual range on Windows/AAC packet boundaries. normalizeMediaDuration
+      // pads/trims BOTH streams to the exact EDL piece duration.
+      await ffmpeg.normalizeMediaDuration({ inputPath: rawClipPath, outputPath: normalizedClipPath, targetDuration: p.durationSec });
       piecePaths.push(normalizedClipPath);
     }
     await ffmpeg.concatSegmentsByFilter(piecePaths, blockVideoPath);
+    // Concat/mux rounding can still leave the ambient stream a few packets
+    // shorter, especially for a one-piece narrated block. Re-normalize the
+    // complete block BEFORE mixing so -shortest can never amputate narration.
+    await ffmpeg.normalizeMediaDuration({ inputPath: blockVideoPath, outputPath: timedBlockVideoPath, targetDuration: blockTimelineSec });
 
     // 5-6. Synthesize the WHOLE passage once; measure it.
     await this.synthesizeFastDraftVoice({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions });
@@ -6649,17 +6659,30 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       allowTrim: false, allowSlowDown: false, allowSpeedUp: true
     });
     // 8-9. Mix ONCE; the sidechain duck runs continuously across the internal cuts.
-    await ffmpeg.mixVideoAudioWithVoice({ videoPath: blockVideoPath, voicePath: fittedVoicePath, outputPath: voicedClipPath,
+    await ffmpeg.mixVideoAudioWithVoice({ videoPath: timedBlockVideoPath, voicePath: fittedVoicePath, outputPath: voicedClipPath,
       sourceVolume: ambientVolume, voiceVolume, limiter: true, duck, separateAmbientInput: true });
-    // The voiced block must keep the planned EDL duration (a drift here accumulates
-    // across every block of a production video). Allow one 30fps frame + container rounding.
+    // The voiced block must keep the planned EDL duration. We first prevent the
+    // known truncation at its source by timing the ambient block above. If the
+    // final mux still drifts beyond one 30fps frame, perform ONE deterministic
+    // media-duration correction (pad/trim streams, no EDL change), then re-probe.
     const voicedMeta = await ffmpeg.probeVideo(voicedClipPath).catch(() => null);
-    const voicedSec = Number(voicedMeta?.duration);
+    const preCorrectionVoicedSec = Number(voicedMeta?.duration);
+    let finalClipPath = voicedClipPath;
+    let voicedSec = preCorrectionVoicedSec;
+    let durationCorrectionApplied = false;
     if (Number.isFinite(voicedSec) && Math.abs(voicedSec - blockTimelineSec) > BLOCK_DURATION_TOLERANCE_SEC) {
-      const error = new Error(`BLOCK_DURATION_DRIFT: narrated block ${lead.deliveryBlockId} rendered ${voicedSec.toFixed(3)}s for a planned ${blockTimelineSec.toFixed(3)}s.`);
-      error.code = "BLOCK_DURATION_DRIFT";
-      error.details = { blockId: lead.deliveryBlockId, voicedSec, blockTimelineSec };
-      throw error;
+      await ffmpeg.normalizeMediaDuration({ inputPath: voicedClipPath, outputPath: durationFixedClipPath, targetDuration: blockTimelineSec });
+      const correctedMeta = await ffmpeg.probeVideo(durationFixedClipPath).catch(() => null);
+      const correctedSec = Number(correctedMeta?.duration);
+      if (!Number.isFinite(correctedSec) || Math.abs(correctedSec - blockTimelineSec) > BLOCK_DURATION_TOLERANCE_SEC) {
+        const error = new Error(`BLOCK_DURATION_DRIFT: narrated block ${lead.deliveryBlockId} rendered ${Number.isFinite(preCorrectionVoicedSec) ? preCorrectionVoicedSec.toFixed(3) : "unknown"}s and duration normalization could not reach planned ${blockTimelineSec.toFixed(3)}s.`);
+        error.code = "BLOCK_DURATION_DRIFT";
+        error.details = { blockId: lead.deliveryBlockId, voicedSec: preCorrectionVoicedSec, correctedSec, blockTimelineSec };
+        throw error;
+      }
+      finalClipPath = durationFixedClipPath;
+      voicedSec = correctedSec;
+      durationCorrectionApplied = true;
     }
     await this.recordVoiceProfileSample({ workspaceRoot, settings, project, text, measuredDurationSec: rawVoiceSec,
       segmentDurationSec: blockTimelineSec, source: "highlight_fast_draft_block", providerOverride: draftVoiceProvider }).catch(() => null);
@@ -6669,16 +6692,18 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       blockTimelineSec: Number(blockTimelineSec.toFixed(3)), rawTtsSec: Number(rawVoiceSec.toFixed(3)),
       fittedTtsSec: Number(Number(fit?.outputDuration || rawVoiceSec).toFixed(3)), fitRatio: Number(fitRatio.toFixed(3)),
       voicedClipSec: Number.isFinite(voicedSec) ? Number(voicedSec.toFixed(3)) : null,
+      preCorrectionVoicedClipSec: Number.isFinite(preCorrectionVoicedSec) ? Number(preCorrectionVoicedSec.toFixed(3)) : null,
+      durationCorrectionApplied,
       voiceFitStrategy: fit?.fitStrategy || "", sourceAudioTreatment: treatment, sourceAmbientVolume: ambientVolume, duck,
       internalCutOffsetsSec: pieces.slice(0, -1).reduce((acc, p) => [...acc, Number(((acc.at(-1) || 0) + p.durationSec).toFixed(3))], []),
       storyFunction: lead.blockStoryFunction || "", narratorFunction: lead.blockNarratorFunction || "", narrationIntent: lead.blockNarrationIntent || "",
-      handoffTargetBeatId: lead.blockHandoffTargetBeatId || "", fittedVoicePath, blockVideoPath
+      handoffTargetBeatId: lead.blockHandoffTargetBeatId || "", fittedVoicePath, blockVideoPath: timedBlockVideoPath
     };
     if (cache) {
-      await fs.copyFile(voicedClipPath, cache.clip);
+      await fs.copyFile(finalClipPath, cache.clip);
       await fs.writeFile(cache.report, JSON.stringify(report));
     }
-    return { clipPath: voicedClipPath, report, memberReports: memberReportsFor(pieces, report) };
+    return { clipPath: finalClipPath, report, memberReports: memberReportsFor(pieces, report) };
   }
 
   async renderAllHighlightFastDraftVariants({ workspaceRoot, projectId, settings, onProgress, onVariantReady, reuseCompleted = false }) {
