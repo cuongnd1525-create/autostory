@@ -22,7 +22,7 @@ const narrationGate = require('./narrationGate');
 // Same ceiling the renderer's voice fit may absorb with atempo (fitDubbingClusterAudio
 // maxStretchRatio 0.08, never trimming words).
 const BLOCK_MAX_SPEEDUP = 0.08;
-const MAX_TEXT_REWRITES = 2;
+const MAX_TEXT_REWRITES = 3;
 
 const text = { type: 'string' };
 const list = (items, maxItems = 20) => ({ type: 'array', items, maxItems });
@@ -190,8 +190,13 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
         const maxFitSec = b.durationSec * (1 + BLOCK_MAX_SPEEDUP);
         // Convert the measured overrun into a conservative rewrite target. This
         // is guidance for Gemini only; acceptance is still based on measured TTS.
-        const suggestedMaxWords = Math.max(1, Math.min(currentWords - 1,
-          Math.floor(currentWords * (maxFitSec / Math.max(0.01, m.rawBlockVoiceSec)) * 0.97)));
+        const measuredWps = currentWords / Math.max(0.01, m.rawBlockVoiceSec);
+        const measuredTarget = Math.floor(measuredWps * maxFitSec * 0.85);
+        const suggestedMaxWords = Math.max(1, Math.min(
+          currentWords - 1,
+          payload?.safeWords > 0 ? payload.safeWords : currentWords - 1,
+          measuredTarget
+        ));
         out.set(b.blockId, { code: 'BLOCK_VOICE_OVERFLOW', reason: `the passage measures ${m.rawBlockVoiceSec.toFixed(2)}s of speech for a ${b.durationSec}s block (fit ratio ${fitRatio.toFixed(3)}; at most ${(1 + BLOCK_MAX_SPEEDUP).toFixed(2)} can be absorbed without trimming words). Rewrite to about ${suggestedMaxWords} words or fewer, while preserving the narrationIntent.`,
           rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio, currentWords, safeWords: payload?.safeWords ?? 0, suggestedMaxWords });
       }
@@ -213,7 +218,12 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   }
   if (problems.size) {
     const [blockId, p] = problems.entries().next().value;
-    throw repairRequest(blockId, p.code === 'BLOCK_VOICE_OVERFLOW' ? 'NARRATED_BLOCK_VOICE_OVERFLOW' : 'NARRATED_BLOCK_UNFIT', p.reason, { rawBlockVoiceSec: p.rawBlockVoiceSec, fitRatio: p.fitRatio });
+    throw repairRequest(blockId, p.code === 'BLOCK_VOICE_OVERFLOW' ? 'NARRATED_BLOCK_VOICE_OVERFLOW' : 'NARRATED_BLOCK_UNFIT', p.reason, {
+      rawBlockVoiceSec: p.rawBlockVoiceSec,
+      fitRatio: p.fitRatio,
+      suggestedMaxWords: p.suggestedMaxWords,
+      currentWords: p.currentWords
+    });
   }
 
   const out = timeline.map(b => {

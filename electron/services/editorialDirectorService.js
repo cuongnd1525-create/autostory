@@ -116,7 +116,16 @@ const directorEdl = {
     repairOutcome: flexible({ status: choice('repaired', 'scope_infeasible'), reason: text }) }
 };
 
-const schemas = { directorEdl, directorBeat, directorSpine };
+const deliveryRepairResult = {
+  type: 'object', required: ['reason', 'deliveryBlocks', 'transitionChecks'], additionalProperties: false,
+  properties: {
+    reason: text,
+    deliveryBlocks: list(Delivery.deliveryBlockSchema, 40),
+    transitionChecks: list(Delivery.transitionCheckSchema, 40)
+  }
+};
+
+const schemas = { directorEdl, directorBeat, directorSpine, deliveryRepairResult };
 
 // ---------------------------------------------------------------- instruction
 const instruction = `PASS 1B — MEDIA-GROUNDED EDITORIAL DIRECTOR. You own the exact EDL.
@@ -921,6 +930,68 @@ async function repairEdl(engine, { model, spine, critique, weakRegions = [], roo
   return { spine: repaired, evidence, reel, report: out.report, request: { scope, currentEdl, weakRegions, reel, evidenceFiles: evidence.map(e => e.file) } };
 }
 
+const DELIVERY_ONLY_REPAIR_INSTRUCTION = `DELIVERY-ONLY TECHNICAL REPAIR.
+The EDL is LOCKED. input.currentEdl.beats are already media-grounded and MUST remain byte-for-byte equivalent in identity, order and source ranges. Do NOT output beats and do NOT select new footage.
+Repair ONLY input.currentEdl.deliveryBlocks and transitionChecks to resolve input.violations.
+Preserve every unaffected block exactly when possible. Every existing beat must belong to exactly one block; block membership is consecutive in EDL order; blocks follow EDL order.
+
+For a NARRATED_BLOCK_VOICE_OVERFLOW / NARRATED_BLOCK_UNFIT failure, the block writer has already attempted focused text rewrites and measured the real TTS. Do not trigger a whole-story rewrite.
+Choose the smallest delivery-layer fix that preserves the story:
+- shorten the failing narrated block's narrationIntent to only the indispensable context;
+- OR, if adjacent existing beat(s) can legitimately share narration ownership without talking over essential proof/emotion, regroup those EXISTING beats into the narrated block to give the passage more time;
+- OR convert the failing block to raw_evidence when the raw moment itself conveys the needed context clearly.
+Never change beat timing, count, narrativeRole, chronologyMode, opening strategy, ending, or Story Scope.
+Do not add filler and do not create a narrator quota.
+Return only reason, deliveryBlocks and transitionChecks.`;
+
+async function repairDeliveryTechnical(engine, { model, spine, violations, root = null, write = null, emit = () => {}, scriptId = 1 }) {
+  if (!isDirectorSpine(spine)) throw new StoryError('INPUT_MISSING', 'repairDeliveryTechnical requires a director-owned spine.');
+  const scope = spine.storyScope;
+  const reel = spine.scopeReel || (await prepareReel(engine, scope, model)).reel;
+  const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
+  const targets = durationTargets(scope, engine.config || {});
+  const valOpts = {
+    durationSec: engine.duration,
+    targetDurationMinSec: targets.hardMinSec,
+    targetDurationMaxSec: targets.hardMaxSec,
+    reel,
+    narrationEnabled: engine.config?.narration?.enabled !== false,
+    preferredDurationSec: targets.targetDurationSec,
+    targetBandMinSec: targets.targetBandMinSec,
+    targetBandMaxSec: targets.targetBandMaxSec,
+    requireDeliveryBlocks: true
+  };
+  let accepted = null, validation = null;
+  const key = `v5-editorial-director-delivery-fix-${scriptId}`;
+  const input = {
+    currentEdl,
+    violations,
+    narrationWordsPerSecond: engine.config?.narration?.measuredWordsPerSecond || null
+  };
+  const result = await engine.ask(key, input, schemas.deliveryRepairResult, DELIVERY_ONLY_REPAIR_INSTRUCTION, [], v => {
+    const candidate = { ...currentEdl, deliveryBlocks: v.deliveryBlocks, transitionChecks: v.transitionChecks };
+    assertEdlIntact(spine.beats, candidate.beats, engine.duration);
+    const report = validateDirectorEdl(candidate, scope, valOpts);
+    if (!report.valid) throw new StoryError('INVALID_RESPONSE',
+      `Delivery-only repair is invalid: ${report.violations.map(x => x.code).join(', ')}`,
+      { violations: report.violations });
+    accepted = candidate;
+    validation = report;
+  }, 'auto_story_repair', { ...DIRECTOR_GENERATION });
+  if (!accepted) throw new StoryError('INVALID_RESPONSE', 'Delivery-only repair returned no accepted candidate.');
+  if (write && root) await write(path.join(root, `${key}.json`), { mode: 'delivery_only', input: { violations }, result, validation });
+  emit('design', `[Director] Delivery-only repair accepted; EDL remains locked at ${timelineSec(spine.beats)}s.`);
+  return {
+    spine: stampSpine(accepted, scope, reel, {
+      ...(spine.directorMeta || {}),
+      downstreamDeliveryRepair: true,
+      deliveryRepairReason: result.reason
+    }),
+    reel,
+    report: validation
+  };
+}
+
 // Repair for a deterministic downstream finding (e.g. duration check in buildScript).
 // Same owner, same scope, same reel; JS only reports the violation.
 async function repairTechnical(engine, { model, spine, violations, root = null, write = null, emit = () => {}, scriptId = 1 }) {
@@ -955,8 +1026,8 @@ function assertEdlIntact(directorBeats, finalBeats, durationSec = Infinity) {
 module.exports = {
   DIRECTOR_CONTRACT, SCOPE_MEMBERSHIP, schemas, instruction, repairInstruction,
   validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
-  directEdl, repairEdl, repairTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
+  directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
-  deliveryBeats, openingViolations, OPENING_STRATEGIES, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
+  deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };

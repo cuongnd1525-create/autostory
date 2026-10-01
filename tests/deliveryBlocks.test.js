@@ -308,10 +308,11 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     assert.match(engine.asks[1].instruction, /rewriteTargetWords/);
     assert.deepStrictEqual(engine.asks[1].evidence || [], []);
     assert.strictEqual(out.blocks.find(b => b.blockId === 'story_setup').narrationText, shorter);
-    const stuck = narrEngine([line(PASSAGE), line(PASSAGE), line(PASSAGE)]);
+    const stuck = narrEngine([line(PASSAGE), line(PASSAGE), line(PASSAGE), line(PASSAGE)]);
     await assert.rejects(BlockNarration.narrateBlocks({ engine: stuck, service: { measuredVoice: async () => ({ meta: { duration: 19 } }) }, story: { scriptId: 1 }, model: MODEL, beats: withModes(), blocks: BLOCKS(), evidence: [] }),
-      e => e.kind === 'DIRECTOR_REPAIR_REQUIRED' && e.details.violations[0].code === 'NARRATED_BLOCK_VOICE_OVERFLOW' && e.details.violations[0].blockId === 'story_setup');
-    assert.strictEqual(stuck.asks.length, 3, 'initial + 2 text rewrites, then report');
+      e => e.kind === 'DIRECTOR_REPAIR_REQUIRED' && e.details.violations[0].code === 'NARRATED_BLOCK_VOICE_OVERFLOW' && e.details.violations[0].blockId === 'story_setup'
+        && Number.isFinite(e.details.violations[0].suggestedMaxWords));
+    assert.strictEqual(stuck.asks.length, 4, 'initial + 3 text rewrites, then delivery repair request');
   });
 
   await ok('Writer gate: narrated block may compress its OWN source dialogue; redundancy is checked against the NEXT raw handoff', async () => {

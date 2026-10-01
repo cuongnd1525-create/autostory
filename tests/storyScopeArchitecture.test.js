@@ -661,6 +661,42 @@ function fakeEngine(asks) {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
+  await ok('F/delivery-only: narration fit failures never reopen or retime the accepted EDL', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'scope-delivery-fix-'));
+    const scope = scopeCandidate();
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    const base = Director.stampSpine(directorEdl().spine, scope, reel);
+    const originalRanges = base.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]);
+    const seen = { builds: 0, deliveryRepairs: 0, fullRepairs: 0 };
+    const err = () => Object.assign(new Error('voice overflow'), {
+      kind: 'DIRECTOR_REPAIR_REQUIRED',
+      details: { violations: [{ code: 'NARRATED_BLOCK_VOICE_OVERFLOW', blockId: 'blk2', rawBlockVoiceSec: 8, fitRatio: 1.3 }] }
+    });
+    const out = await Pipeline.buildDirectorScript(
+      { engine: fakeEngine([]), service: {}, opts: {}, model: MODEL, root: dir, emit: () => {}, scriptId: 1 },
+      { ...base, scriptId: 1 },
+      {
+        build: async (_e, _s, _o, story) => {
+          seen.builds++;
+          assert.deepStrictEqual(story.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]), originalRanges, 'delivery repair may not retime EDL');
+          if (seen.builds <= 2) throw err();
+          return { script: 'ok' };
+        },
+        repair: async () => { seen.fullRepairs++; throw new Error('full EDL repair must not run for narration fit'); },
+        deliveryRepair: async (_e, args) => {
+          seen.deliveryRepairs++;
+          assert.deepStrictEqual(args.spine.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]), originalRanges);
+          return { spine: args.spine };
+        }
+      }
+    );
+    assert.strictEqual(seen.deliveryRepairs, 2);
+    assert.strictEqual(seen.fullRepairs, 0);
+    assert.strictEqual(seen.builds, 3);
+    assert.deepStrictEqual(out.story.beats.map(b => [b.beatId, b.sourceStartSec, b.sourceEndSec]), originalRanges);
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
   await ok('F/budget: realistic narrated run fits the DEFAULT 16-call budget; director voiceover choice is honoured', async () => {
     const p = await makeProject();
     await p.store.updateProject(p.dir, p.projectId, { autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, audioBalance: 'balanced' } });
