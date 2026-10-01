@@ -171,8 +171,23 @@ function compileDeliveryBlocks(blocks, segments, config) {
     const narrationText = String(b.narrationText || '').trim();
     if (!config.narration?.enabled || !narrationText) throw new StoryError('LOCAL_EDITORIAL', `Narrated block '${b.blockId}' has no narration passage or narration is disabled.`, { blockId: b.blockId });
     const safeWords = Delivery.blockSafeWords(durationSec, config.narration.measuredWordsPerSecond);
-    if (safeWords > 0 && compiler.words(narrationText) > safeWords) {
-      throw new StoryError('VOICE_BUDGET', `Narrated block '${b.blockId}' exceeds its whole-block safe word ceiling.`, { blockId: b.blockId, safeWords });
+    const wordCount = compiler.words(narrationText);
+    const reportedFitRatio = Number(b.fitRatio);
+    const reportedRawVoiceSec = Number(b.rawBlockVoiceSec);
+    const measuredFitRatio = Number.isFinite(reportedFitRatio) && reportedFitRatio > 0
+      ? reportedFitRatio
+      : (Number.isFinite(reportedRawVoiceSec) && reportedRawVoiceSec > 0 && durationSec > 0 ? reportedRawVoiceSec / durationSec : NaN);
+    // For block narration, measured TTS fit is authoritative. safeWords remains
+    // the conservative planning target. Old/manual block artifacts with no measured
+    // voice metadata still use the word budget as a compatibility guard.
+    if (Number.isFinite(measuredFitRatio)) {
+      if (measuredFitRatio > 1.08 + 1e-6) {
+        throw new StoryError('VOICE_BUDGET', `Narrated block '${b.blockId}' measured voice does not fit its whole block.`,
+          { blockId: b.blockId, safeWords, words: wordCount, fitRatio: measuredFitRatio, rawBlockVoiceSec: reportedRawVoiceSec });
+      }
+    } else if (safeWords > 0 && wordCount > safeWords) {
+      throw new StoryError('VOICE_BUDGET', `Narrated block '${b.blockId}' exceeds its whole-block advisory word target and has no measured voice-fit metadata.`,
+        { blockId: b.blockId, safeWords, words: wordCount });
     }
     // Technical treatment: a member whose source carries another narrator forces voiceover_only.
     const treatment = members.some(s => s.audioMode === 'voiceover_only') || Delivery.audioModeFor(b) === 'voiceover_only' ? 'voiceover_only' : 'voiceover_with_ambient';
@@ -184,7 +199,8 @@ function compileDeliveryBlocks(blocks, segments, config) {
       blockHandoffTargetBeatId: b.handoffTargetBeatId || '', blockNarrationHash: fingerprint });
     return { ...base, narratorFunction: b.narratorFunction || '', narrationIntent: b.narrationIntent || '', handoffTargetBeatId: b.handoffTargetBeatId || null,
       sourceAudioTreatment: treatment, narrationText, previewVi: b.previewVi || '', newInformation: b.newInformation || [], newInformationRefs: b.newInformationRefs || [],
-      safeWords, words: compiler.words(narrationText), rawBlockVoiceSec: b.rawBlockVoiceSec ?? null, fitRatio: b.fitRatio ?? null, fingerprint };
+      safeWords, words: wordCount, advisorySafeWordsExceeded: safeWords > 0 && wordCount > safeWords,
+      rawBlockVoiceSec: b.rawBlockVoiceSec ?? null, fitRatio: b.fitRatio ?? null, fingerprint };
   });
 }
 
