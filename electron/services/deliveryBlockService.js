@@ -183,9 +183,10 @@ function blockTimeline(beats = [], blocks = []) {
   });
 }
 
-// Safe word CEILING for ONE passage over the WHOLE block's visual duration.
-// Reuses the compiler's measured-rate budget (its 0.92 margin covers TTS
-// variance and the Kokoro head/tail silence). A ceiling, never a quota.
+// Advisory safe-word target for ONE passage over the WHOLE block's visual duration.
+// Reuses the compiler's measured-rate budget (its 0.92 margin is intentionally
+// conservative). Actual synthesized voice duration is the authoritative fit test;
+// this number is writing guidance, never a quota or a hard rejection by itself.
 function blockSafeWords(blockDurationSec, wordsPerSecond) {
   return require('./autoStoryTimelineCompiler').budget(Math.max(0, blockDurationSec), wordsPerSecond);
 }
