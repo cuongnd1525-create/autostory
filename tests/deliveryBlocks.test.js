@@ -199,16 +199,18 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
   });
 
   // ---------------------------------------------------------------- renderer primitive (mocked ffmpeg/TTS)
-  const fakeRender = (voiceSec, voicedSec = 16) => {
+  const fakeRender = (voiceSec, voicedSec = 16, correctedSec = 16) => {
     const calls = { extract: [], normalize: [], concat: [], synth: [], fit: [], mix: [] };
+    let probeCount = 0;
     const ffmpeg = {
       extractVoiceDrivenClipWithAudio: async a => { calls.extract.push(a); },
-      normalizeVideoKeepAudio: async a => { calls.normalize.push(a); },
+      normalizeVideoKeepAudio: async a => { calls.normalize.push({ kind: 'legacy_keep', ...a }); },
+      normalizeMediaDuration: async a => { calls.normalize.push({ kind: 'exact_media', ...a }); },
       concatSegmentsByFilter: async (paths, out) => { calls.concat.push({ paths, out }); },
       probeAudio: async () => ({ duration: voiceSec }),
       fitDubbingClusterAudio: async a => { calls.fit.push(a); return { outputDuration: a.targetDuration, fitStrategy: 'pad_silence' }; },
       mixVideoAudioWithVoice: async a => { calls.mix.push(a); },
-      probeVideo: async () => ({ duration: voicedSec })
+      probeVideo: async () => ({ duration: probeCount++ === 0 ? voicedSec : correctedSec })
     };
     const svc = Object.create(DubbingService.prototype);
     svc.synthesizeFastDraftVoice = async a => { calls.synth.push(a); };
@@ -227,6 +229,7 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     assert.strictEqual(calls.synth[0].text, PASSAGE);
     assert.deepStrictEqual(calls.extract.map(a => [a.startSec, a.sourceDurationSec, a.targetDurationSec]), [[8.5, 5, 5], [13.5, 5.5, 5.5], [19, 5.5, 5.5]]);
     assert.strictEqual(calls.concat.length, 1); assert.strictEqual(calls.concat[0].paths.length, 3);
+    assert.strictEqual(calls.normalize.filter(x => x.kind === 'exact_media').length, 4, '3 exact pieces + 1 exact whole block before mix');
     assert.strictEqual(calls.fit.length, 1); assert.strictEqual(calls.fit[0].targetDuration, 16);
     assert.ok(calls.fit[0].allowTrim === false && calls.fit[0].allowSlowDown === false);
     assert.strictEqual(calls.mix.length, 1); assert.strictEqual(calls.mix[0].duck, true); assert.strictEqual(calls.mix[0].sourceVolume, 0.28);
@@ -237,11 +240,28 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     assert.ok(out.memberReports.every(r => r.mode === 'narrated_block_member' && !r.fittedVoicePath && !r.renderedText));
   });
 
-  await ok('Render primitive: a voiced block shorter than its EDL duration fails loudly (BLOCK_DURATION_DRIFT), one-frame tolerance', async () => {
-    const drift = fakeRender(14.2, 15.786);
-    await assert.rejects(drift.svc.renderNarratedDeliveryBlock(renderArgs(drift.ffmpeg)), e => e.code === 'BLOCK_DURATION_DRIFT' && e.details.blockTimelineSec === 16);
+  await ok('Render primitive: mux drift gets one deterministic duration correction; only unrecoverable drift fails', async () => {
+    const drift = fakeRender(14.2, 15.786, 16);
+    const fixed = await drift.svc.renderNarratedDeliveryBlock(renderArgs(drift.ffmpeg));
+    assert.strictEqual(fixed.report.preCorrectionVoicedClipSec, 15.786);
+    assert.strictEqual(fixed.report.voicedClipSec, 16);
+    assert.strictEqual(fixed.report.durationCorrectionApplied, true);
+    assert.strictEqual(drift.calls.normalize.filter(x => x.kind === 'exact_media').length, 5, '3 pieces + block + final drift correction');
+
+    const liveFiveSecondCase = fakeRender(5.025, 4.767, 5);
+    const oneMemberArgs = { ...renderArgs(liveFiveSecondCase.ffmpeg), members: [blockMembers()[0]] };
+    const liveFixed = await liveFiveSecondCase.svc.renderNarratedDeliveryBlock(oneMemberArgs);
+    assert.strictEqual(liveFixed.report.preCorrectionVoicedClipSec, 4.767);
+    assert.strictEqual(liveFixed.report.voicedClipSec, 5);
+    assert.strictEqual(liveFixed.report.durationCorrectionApplied, true);
+
+    const bad = fakeRender(14.2, 15.786, 15.8);
+    await assert.rejects(bad.svc.renderNarratedDeliveryBlock(renderArgs(bad.ffmpeg)),
+      e => e.code === 'BLOCK_DURATION_DRIFT' && e.details.blockTimelineSec === 16 && e.details.correctedSec === 15.8);
+
     const oneFrame = fakeRender(14.2, 15.967);
-    await assert.doesNotReject(oneFrame.svc.renderNarratedDeliveryBlock(renderArgs(oneFrame.ffmpeg)));
+    const tolerated = await oneFrame.svc.renderNarratedDeliveryBlock(renderArgs(oneFrame.ffmpeg));
+    assert.strictEqual(tolerated.report.durationCorrectionApplied, false);
   });
 
   await ok('Render primitive: a passage that cannot fit is reported (BLOCK_VOICE_OVERFLOW), never trimmed or dropped', async () => {
