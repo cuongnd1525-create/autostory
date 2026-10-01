@@ -665,15 +665,47 @@ async function directStories(engine, model, root, emit, config) {
 // Downstream technical findings on a director EDL go back to the director (never
 // JS story edits). Compile-level StoryErrors are routed the same way.
 const DIRECTOR_ROUTABLE_KINDS = new Set(['DIRECTOR_REPAIR_REQUIRED', 'EVIDENCE_REQUIRED', 'LOCAL_EDITORIAL', 'VOICE_BUDGET', 'STRUCTURAL_STORY', 'EDITORIAL_UNDERCAST', 'REGIONAL_EDITORIAL', 'BAD_CANDIDATE']);
-async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical } = {}) {
+const DELIVERY_ONLY_VIOLATION_CODES = new Set([
+  'NARRATED_BLOCK_VOICE_OVERFLOW',
+  'NARRATED_BLOCK_UNFIT',
+  'NARRATION_DISABLED'
+]);
+const deliveryOnlyViolationSet = violations =>
+  Array.isArray(violations) && violations.length > 0 && violations.every(v => DELIVERY_ONLY_VIOLATION_CODES.has(v.code));
+
+async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical, deliveryRepair = Director.repairDeliveryTechnical } = {}) {
   const { engine, service, opts, model, root, emit, scriptId } = ctx;
   try {
     return { built: await build(engine, service, opts, story, model, root, emit), story };
   } catch (e) {
     if (!Director.isDirectorSpine(story) || !DIRECTOR_ROUTABLE_KINDS.has(e.kind)) throw e;
+    const firstViolations = e.details?.violations || [{ code: e.kind, message: e.message, details: e.details || null }];
+
+    // Narration timing/ownership failures are DELIVERY-layer failures, not EDL
+    // failures. Never hand them to the full Director repair path: that previously
+    // turned a valid 67.6s EDL into 160.6s, then bounced through over/under duration
+    // repair. Keep beats locked and allow at most two delivery-only replans.
+    if (deliveryOnlyViolationSet(firstViolations)) {
+      let currentStory = story, violations = firstViolations, lastError = e, lastRepair = null;
+      for (let pass = 1; pass <= 2; pass++) {
+        emit('design', `[Director] Script ${scriptId}: delivery-only repair #${pass} (${lastError.message}); EDL stays locked.`, 'WARNING');
+        const fixed = await deliveryRepair(engine, { model, spine: currentStory, violations, root, write, emit, scriptId });
+        currentStory = { ...currentStory, ...fixed.spine };
+        lastRepair = fixed.spine;
+        try {
+          return { built: await build(engine, service, opts, currentStory, model, root, emit), story: currentStory, repairedSpine: lastRepair };
+        } catch (next) {
+          const nextViolations = next.details?.violations || [{ code: next.kind, message: next.message, details: next.details || null }];
+          if (!DIRECTOR_ROUTABLE_KINDS.has(next.kind) || !deliveryOnlyViolationSet(nextViolations)) throw next;
+          lastError = next;
+          violations = nextViolations;
+        }
+      }
+      throw lastError;
+    }
+
     emit('design', `[Director] Script ${scriptId}: ${e.kind} (${e.message}) — returning EDL to the director.`, 'WARNING');
-    const violations = e.details?.violations || [{ code: e.kind, message: e.message, details: e.details || null }];
-    const fixed = await repair(engine, { model, spine: story, violations, root, write, emit, scriptId });
+    const fixed = await repair(engine, { model, spine: story, violations: firstViolations, root, write, emit, scriptId });
     const repairedStory = { ...story, ...fixed.spine };
     return { built: await build(engine, service, opts, repairedStory, model, root, emit), story: repairedStory, repairedSpine: fixed.spine };
   }
