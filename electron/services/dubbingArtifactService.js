@@ -69,6 +69,10 @@ function buildVideoTitleOverlaySvg({
   height = 1920,
   fontSize = 52,
   yPercent = 8,
+  titleStyle = "default",
+  titleBackgroundColor = null,
+  titleTextColor = null,
+  cameraLabel = null,
   partLabel = null
 } = {}) {
   const canvasWidth = Math.max(180, Math.round(Number(width) || 1080));
@@ -83,12 +87,15 @@ function buildVideoTitleOverlaySvg({
   const top = Math.round(canvasHeight * Math.max(3, Math.min(75, Number(yPercent) || 8)) / 100);
   const radius = Math.max(4, Math.round(scaledFontSize * 0.46));
   const firstBaseline = top + paddingY + Math.round(scaledFontSize * 0.84);
+  const isViralGreen = titleStyle === "viral_green" || partLabel?.style === "viral_green";
+  const resolvedTitleBg = safeHexColor(titleBackgroundColor, isViralGreen ? "#00A63E" : "#ffffff");
+  const resolvedTitleText = safeHexColor(titleTextColor, isViralGreen ? "#ffffff" : "#0b0d11");
   const textSpans = lines.map((line, index) => (
     `<tspan x="${canvasWidth / 2}" y="${firstBaseline + index * lineHeight}">${escapeSvgText(line)}</tspan>`
   )).join("");
   const titleMarkup = lines.length ? `
-  <rect x="${inset}" y="${top}" width="${boxWidth}" height="${boxHeight}" rx="${radius}" ry="${radius}" fill="#ffffff" fill-opacity="0.96" filter="url(#shadow)"/>
-  <text x="${canvasWidth / 2}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="${scaledFontSize}" font-weight="800" fill="#0b0d11">${textSpans}</text>` : "";
+  <rect x="${inset}" y="${top}" width="${boxWidth}" height="${boxHeight}" rx="${radius}" ry="${radius}" fill="${resolvedTitleBg}" fill-opacity="0.96" filter="url(#shadow)"/>
+  <text x="${canvasWidth / 2}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="${scaledFontSize}" font-weight="800" fill="${resolvedTitleText}">${textSpans}</text>` : "";
   const rawPartText = safeText(partLabel?.text || "").slice(0, 48);
   const partText = partLabel?.uppercase === false ? rawPartText : rawPartText.toUpperCase();
   const partFontSize = Math.max(12, Math.round((Number(partLabel?.fontSize) || 38) * (canvasWidth / 1080)));
@@ -101,8 +108,9 @@ function buildVideoTitleOverlaySvg({
   const partCenterY = canvasHeight * Math.max(3, Math.min(97, Number(partLabel?.yPercent) || 8)) / 100;
   const partLeft = Math.max(0, Math.min(canvasWidth - partBoxWidth, partCenterX - partBoxWidth / 2));
   const partTop = Math.max(0, Math.min(canvasHeight - partBoxHeight, partCenterY - partBoxHeight / 2));
+  const isPartViralGreen = partLabel?.style === "viral_green";
   const partTextColor = safeHexColor(partLabel?.textColor, "#ffffff");
-  const partBackgroundColor = safeHexColor(partLabel?.backgroundColor, "#0b0d11");
+  const partBackgroundColor = safeHexColor(partLabel?.backgroundColor, isPartViralGreen ? "#00A63E" : "#0b0d11");
   const partOpacity = Math.max(0, Math.min(1, Number(partLabel?.backgroundOpacity ?? 0.82)));
   const partStyle = safeText(partLabel?.style || "compact");
   const partAlignment = ["left", "right"].includes(partLabel?.alignment) ? partLabel.alignment : "center";
@@ -118,10 +126,24 @@ function buildVideoTitleOverlaySvg({
   const partMarkup = partText ? `
   ${partBackground}
   <text x="${partTextX}" y="${partTop + partPaddingY + Math.round(partFontSize * 0.82)}" text-anchor="${textAnchor}" font-family="Segoe UI, Arial, sans-serif" font-size="${partFontSize}" font-weight="800" fill="${partTextColor}">${escapeSvgText(partText)}</text>` : "";
-  if (!titleMarkup && !partMarkup) return "";
+
+  const rawCamText = safeText(cameraLabel?.text || "").slice(0, 24);
+  let cameraMarkup = "";
+  if (rawCamText) {
+    const camFontSize = Math.max(16, Math.round((Number(cameraLabel?.fontSize) || 36) * (canvasWidth / 1080)));
+    const camColor = safeHexColor(cameraLabel?.textColor, "#ff2222");
+    const camXPercent = Number(cameraLabel?.xPercent ?? 12);
+    const camYPercent = Number(cameraLabel?.yPercent ?? 28);
+    const camX = Math.round(canvasWidth * Math.max(2, Math.min(95, camXPercent)) / 100);
+    const camY = Math.round(canvasHeight * Math.max(2, Math.min(95, camYPercent)) / 100);
+    cameraMarkup = `
+  <text x="${camX}" y="${camY}" font-family="Segoe UI, Arial, sans-serif" font-size="${camFontSize}" font-weight="900" fill="${camColor}" stroke="#000000" stroke-width="${Math.max(2, Math.round(camFontSize * 0.12))}" stroke-linejoin="round" paint-order="stroke fill">${escapeSvgText(rawCamText)}</text>`;
+  }
+
+  if (!titleMarkup && !partMarkup && !cameraMarkup) return "";
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${canvasWidth}" height="${canvasHeight}" viewBox="0 0 ${canvasWidth} ${canvasHeight}">
   <defs><filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="${Math.max(2, Math.round(scaledFontSize * 0.12))}" stdDeviation="${Math.max(2, Math.round(scaledFontSize * 0.16))}" flood-color="#000000" flood-opacity="0.22"/></filter></defs>
-  ${titleMarkup}${partMarkup}
+  ${titleMarkup}${partMarkup}${cameraMarkup}
 </svg>`;
 }
 

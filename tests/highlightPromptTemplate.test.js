@@ -24,6 +24,34 @@ assert.ok(source.includes("SEMANTIC HOOK TOURNAMENT - MUST RUN BEFORE STORY SELE
 assert.ok(source.includes("VIRAL MOMENT INVENTORY - MUST PRECEDE THE TIMELINE"));
 assert.ok(source.includes("rage_irony"));
 assert.ok(source.includes("voiceover_with_ambient"));
-assert.ok(source.includes("first 3 seconds contain only driving"));
+assert.ok(source.includes("function buildViralTikTokCrimePart1PromptTemplate"));
+assert.ok(source.includes("viral_tiktok_crime_part1"));
+assert.ok(source.includes("8-BEAT ALTERNATING SANDWICH"));
+assert.ok(source.includes("suggestedTitle"));
+assert.ok(source.includes("viral_green"));
+assert.ok(source.includes("tiktok_karaoke"));
+assert.ok(source.includes("CAM 1"));
+assert.ok(source.includes("TikTok Viral Bodycam (Part 1 - 8 nhịp xen kẽ · 110-125s)"));
+
+assert.ok(source.includes("const maximumFiles = getRequestedIndependentScriptIds().length;"));
+assert.ok(source.includes("const requestedIndependentCount = getRequestedIndependentScriptIds().length;"));
+
+const { isStorySpineScript } = require("../electron/services/storySpineCompilerService");
+const { detectGeminiArtifact } = require("../electron/services/geminiJsonArtifactService");
+
+const hybridScript = {
+  artifactType: "highlight_cut_script",
+  narrativeBeats: [
+    { beatId: 1, role: "hook", durationSec: 13.5 }
+  ],
+  segments: [
+    { segmentId: 1, sourceStartSec: 10, sourceEndSec: 20, startSec: 0, endSec: 10 }
+  ]
+};
+
+assert.strictEqual(isStorySpineScript(hybridScript), false, "Script with segments must not be treated as Story Spine script");
+const detected = detectGeminiArtifact(hybridScript);
+assert.strictEqual(detected.type, "story_recut_script");
+assert.strictEqual(detected.segmentCount, 1);
 
 console.log("highlight prompt template tests passed");

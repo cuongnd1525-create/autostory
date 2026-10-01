@@ -1276,8 +1276,10 @@ class GeminiDraftReviewService {
     }
 
     const revision = Math.max(1, safeNumber(variant.revisionNumber, 1));
+    const projectPaths = this.projectStore.getProjectPaths(workspaceRoot, projectId);
+    const analysisDir = projectPaths.analysisDir;
     const packageRoot = project.manualGeminiPackPath
-      || path.join(this.projectStore.getProjectPaths(workspaceRoot, projectId).rootDir, "gemini-draft-review");
+      || path.join(projectPaths.rootDir, "gemini-draft-review");
     const reviewDir = path.join(
       packageRoot,
       "02-DRAFT-REVIEW",
@@ -1302,16 +1304,27 @@ class GeminiDraftReviewService {
     const sourceProxy = selectedProxyChunks.length ? "" : await existingFile([
       pass1Dir && path.join(pass1Dir, "analysis-proxy.mp4"),
       manualPack && path.join(manualPack, "analysis-proxy.mp4"),
-      manualPackageInfo?.proxyPath
+      manualPackageInfo?.proxyPath,
+      project.analysis?.artifacts?.sourceProxyPath,
+      project.artifacts?.sourceProxyPath,
+      path.join(analysisDir, "auto-story", "overview-v1.mp4"),
+      path.join(analysisDir, "analysis-proxy.mp4")
     ]);
     const manifestPath = await existingFile([
       pass1Dir && path.join(pass1Dir, "scene-manifest.json"),
       manualPack && path.join(manualPack, "scene-manifest.json"),
-      project.analysis?.artifacts?.sceneManifestPath
+      project.analysis?.artifacts?.sceneManifestPath,
+      project.artifacts?.sceneManifestPath,
+      path.join(analysisDir, "scene-manifest.json"),
+      path.join(analysisDir, "auto-story", "scene-manifest.json")
     ]);
     const transcriptPath = await existingFile([
       pass1Dir && path.join(pass1Dir, "source-transcript.srt"),
-      manualPack && path.join(manualPack, "source-transcript.srt")
+      manualPack && path.join(manualPack, "source-transcript.srt"),
+      project.analysis?.artifacts?.sourceTranscriptPath,
+      project.artifacts?.sourceTranscriptPath,
+      path.join(analysisDir, "source-transcript.srt"),
+      path.join(analysisDir, "auto-story", "source-transcript.srt")
     ]);
     const voiceReportPath = await existingFile([
       variant.artifacts?.fastDraftVoiceWarningReportPath,

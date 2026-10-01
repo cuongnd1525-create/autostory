@@ -80,6 +80,15 @@ const MODE_PRESENTATION = Object.freeze({
     badges: ["Whisper", "Dịch ngữ cảnh", "Voice AI"],
     nextHint: "Bước tiếp theo: cấu hình giọng đọc.",
     configurable: false
+  },
+  recap: {
+    category: "story",
+    categoryLabel: "STORY & RECAP",
+    title: "AI Video Recap (Đồng bộ thị giác cao cấp)",
+    description: "Tự động hiểu cốt truyện, phân rã Visual Events và lồng tiếng Anh chuẩn khớp từng hành động thị giác.",
+    badges: ["AI Recap", "Grounded Sync", "Editor-Grade", "Auto & Review"],
+    nextHint: "Bước tiếp theo: chọn giọng thuyết minh và cấu hình thời lượng recap.",
+    configurable: true
   }
 });
 const MODE_CATEGORY_DEFAULTS = Object.freeze({
@@ -277,6 +286,7 @@ function $(id) {
 
 function queryElements() {
     Object.assign(el, {
+    runAutoReviewCurrent: $("run-auto-review-current"),
     runAutoReviewAll: $("run-auto-review-all"),
     setupView: $("setup-view"),
     studioView: $("studio-view"),
@@ -432,6 +442,10 @@ function queryElements() {
     reviewAiProvider: $("review-ai-provider"),
     reviewDuration: $("review-duration"),
     reviewVoiceSpeed: $("review-voice-speed"),
+    recapTargetDuration: $("target-duration"),
+    recapWorkflowMode: $("recap-workflow-mode"),
+    recapVisualLead: $("recap-visual-lead"),
+    recapAllowReuse: $("recap-allow-reuse"),
     manualPromptCustomization: $("manual-prompt-customization"),
     manualPromptProfile: $("manual-prompt-profile"),
     manualSeriesNarratorStyleLabel: $("manual-series-narrator-style-label"),
@@ -614,6 +628,8 @@ function queryElements() {
     rightInspectorTab: $("right-inspector-tab"),
     studioActivityFeed: $("studio-activity-feed"),
     studioSystemLog: $("studio-system-log"),
+    tabStudioActivity: $("tab-studio-activity"),
+    tabStudioRawLog: $("tab-studio-raw-log"),
     toggleStudioRawLog: $("toggle-studio-raw-log"),
     copyStudioLog: $("copy-studio-log"),
     studioVariantHub: $("studio-variant-hub"),
@@ -693,11 +709,14 @@ function queryElements() {
     blurBackgroundStrengthValue: $("blur-background-strength-value"),
     topCaptionEnabled: $("top-caption-enabled"),
     topCaptionText: $("top-caption-text"),
+    topCaptionStyle: $("top-caption-style"),
     topCaptionSource: $("top-caption-source"),
     topCaptionFontSize: $("top-caption-font-size"),
     topCaptionFontSizeValue: $("top-caption-font-size-value"),
     topCaptionY: $("top-caption-y"),
     topCaptionYValue: $("top-caption-y-value"),
+    cameraLabelEnabled: $("camera-label-enabled"),
+    cameraLabelText: $("camera-label-text"),
     partLabelEnabled: $("part-label-enabled"),
     partLabelAuto: $("part-label-auto"),
     partLabelText: $("part-label-text"),
@@ -1296,9 +1315,12 @@ function getCurrentProjectSettings() {
       blurStrength: Number(el.blurBackgroundStrength?.value || 24),
       topCaptionEnabled: Boolean(el.topCaptionEnabled?.checked),
       topCaptionText: String(el.topCaptionText?.value || "").trim(),
+      topCaptionStyle: el.topCaptionStyle?.value || "classic",
       topCaptionAutoFromScript: el.topCaptionText?.dataset.autoFromScript === "true",
       topCaptionFontSize: Number(el.topCaptionFontSize?.value || 52),
       topCaptionYPercent: Number(el.topCaptionY?.value || 8),
+      cameraLabelEnabled: Boolean(el.cameraLabelEnabled?.checked),
+      cameraLabelText: String(el.cameraLabelText?.value || "CAM 1").trim(),
       partLabelEnabled: Boolean(el.partLabelEnabled?.checked),
       partLabelAutoFromPart: el.partLabelAuto?.checked !== false,
       partLabelText: String(el.partLabelText?.value || "").trim(),
@@ -1347,10 +1369,10 @@ function syncProjectSettingsControls(project = state.currentProject) {
   if (el.bgmVolume) el.bgmVolume.value = String(mixer.bgmVolume ?? 40);
   if (el.ducking) el.ducking.value = String(mixer.ducking ?? 70);
   if ($("bgm-path")) $("bgm-path").value = mixer.bgmPath || "";
-  if (el.voiceVolValue) el.voiceVolValue.textContent = `${el.voiceVolume.value}%`;
-  if (el.sourceVolValue) el.sourceVolValue.textContent = `${el.sourceVolume.value}%`;
-  if (el.bgmVolValue) el.bgmVolValue.textContent = `${el.bgmVolume.value}%`;
-  if (el.duckingValue) el.duckingValue.textContent = `${el.ducking.value}%`;
+  if (el.voiceVolValue && el.voiceVolume) el.voiceVolValue.textContent = `${el.voiceVolume.value}%`;
+  if (el.sourceVolValue && el.sourceVolume) el.sourceVolValue.textContent = `${el.sourceVolume.value}%`;
+  if (el.bgmVolValue && el.bgmVolume) el.bgmVolValue.textContent = `${el.bgmVolume.value}%`;
+  if (el.duckingValue && el.ducking) el.duckingValue.textContent = `${el.ducking.value}%`;
   if ($("subtitle-style")) $("subtitle-style").value = project.subtitleStyle || "white_black_outline";
   if ($("transition-style")) $("transition-style").value = project.transitionStyle || "hard_cut";
   if (el.showSubtitles) el.showSubtitles.checked = project.showSubtitles === true;
@@ -1366,6 +1388,7 @@ function syncProjectSettingsControls(project = state.currentProject) {
   if (el.blurBackgroundStrengthValue) el.blurBackgroundStrengthValue.textContent = String(el.blurBackgroundStrength?.value || 24);
   if (el.topCaptionEnabled) el.topCaptionEnabled.checked = Boolean(videoDecoration.topCaptionEnabled);
   if (el.topCaptionText) el.topCaptionText.value = videoDecoration.topCaptionText || "";
+  if (el.topCaptionStyle) el.topCaptionStyle.value = videoDecoration.topCaptionStyle || "classic";
   if (el.topCaptionText) {
     const autoFromScript = videoDecoration.topCaptionAutoFromScript === true
       || (videoDecoration.topCaptionEnabled === true && !String(videoDecoration.topCaptionText || "").trim());
@@ -1378,6 +1401,8 @@ function syncProjectSettingsControls(project = state.currentProject) {
   if (el.topCaptionFontSizeValue) el.topCaptionFontSizeValue.textContent = String(el.topCaptionFontSize?.value || 52);
   if (el.topCaptionY) el.topCaptionY.value = String(videoDecoration.topCaptionYPercent ?? 8);
   if (el.topCaptionYValue) el.topCaptionYValue.textContent = `${el.topCaptionY?.value || 8}%`;
+  if (el.cameraLabelEnabled) el.cameraLabelEnabled.checked = Boolean(videoDecoration.cameraLabelEnabled);
+  if (el.cameraLabelText) el.cameraLabelText.value = videoDecoration.cameraLabelText || "CAM 1";
   if (el.partLabelEnabled) el.partLabelEnabled.checked = Boolean(videoDecoration.partLabelEnabled);
   if (el.partLabelAuto) el.partLabelAuto.checked = videoDecoration.partLabelAutoFromPart !== false;
   if (el.partLabelText) el.partLabelText.value = videoDecoration.partLabelText || "";
@@ -1822,6 +1847,8 @@ function updateVideoDecorationPreview() {
     );
     el.videoTitleOverlay.textContent = wrappedCaption;
     el.videoTitleOverlay.classList.toggle("hidden", !(captionEnabled && captionText));
+    const isViralGreenTitle = (el.topCaptionStyle?.value || state.currentProject?.videoDecoration?.topCaptionStyle) === "viral_green";
+    el.videoTitleOverlay.classList.toggle("viral-green", isViralGreenTitle);
     el.videoTitleOverlay.style.fontSize = `${Math.max(11, Number(el.topCaptionFontSize?.value || 52) * (previewWidth / canvas.width))}px`;
     el.videoTitleOverlay.style.top = `${Number(el.topCaptionY?.value || 8)}%`;
   }
@@ -1844,6 +1871,7 @@ function updateVideoDecorationPreview() {
     el.videoPartLabelOverlay.textContent = partText;
     el.videoPartLabelOverlay.classList.toggle("hidden", !partText);
     el.videoPartLabelOverlay.classList.toggle("bold", style === "bold");
+    el.videoPartLabelOverlay.classList.toggle("viral-green", style === "viral_green");
     el.videoPartLabelOverlay.classList.toggle("no-background", style === "no_background");
     el.videoPartLabelOverlay.style.left = `${canvasLeft * scale}px`;
     el.videoPartLabelOverlay.style.top = `${canvasTop * scale}px`;
@@ -2155,6 +2183,10 @@ function syncConfiguredAiWorkflowUi() {
 function addLog(message, level = "INFO") {
   window.previewLog?.append(message, level);
   const line = `[${level}] ${message}`;
+  const lastLine = state.logLines[state.logLines.length - 1];
+  if (lastLine === line) {
+    return;
+  }
   state.logLines.push(line);
   state.logLines = state.logLines.slice(-260);
   const logContent = state.logLines.join("\n");
@@ -2177,6 +2209,10 @@ function activityIcon(level) {
 
 function addActivity(message, level = "INFO") {
   const normalized = String(message || "").replace(/^\w+:\s*/, "");
+  const lastItem = state.activities[state.activities.length - 1];
+  if (lastItem && lastItem.message === normalized && lastItem.level === level) {
+    return;
+  }
   const item = {
     id: Date.now() + Math.random(),
     level,
@@ -2243,7 +2279,7 @@ function readSetupDraft() {
 }
 
 function writeSetupDraft() {
-  const persistedMode = ["recap", "script_rewrite"].includes(state.selectedMode) ? "dubbing" : state.selectedMode;
+  const persistedMode = state.selectedMode === "script_rewrite" ? "dubbing" : state.selectedMode;
   const draft = {
     projectTitle: el.projectTitle?.value || "",
     selectedMode: persistedMode,
@@ -2341,26 +2377,26 @@ function writeSetupDraft() {
 
 function applySetupDraft(draft = readSetupDraft()) {
   if (!draft || !Object.keys(draft).length) return;
-  if (draft.projectTitle) el.projectTitle.value = draft.projectTitle;
+  if (draft.projectTitle && el.projectTitle) el.projectTitle.value = draft.projectTitle;
   if (draft.selectedMode) {
-    state.selectedMode = ["recap", "script_rewrite"].includes(draft.selectedMode) ? "dubbing" : draft.selectedMode;
+    state.selectedMode = draft.selectedMode === "script_rewrite" ? "dubbing" : draft.selectedMode;
     document.querySelectorAll("[data-mode]").forEach((node) => node.classList.toggle("active", node.dataset.mode === state.selectedMode));
   }
-  if (draft.targetDuration) el.targetDuration.value = draft.targetDuration;
-  if (draft.voiceSpeed) el.voiceSpeed.value = draft.voiceSpeed;
-  if (typeof draft.viralOptimization === "boolean") el.viralOptimization.checked = draft.viralOptimization;
-  if (draft.viralPlatform) el.viralPlatform.value = draft.viralPlatform;
-  if (draft.viralAngleSetting) el.viralAngleSetting.value = draft.viralAngleSetting;
-  if (draft.retentionAggressiveness) el.retentionAggressiveness.value = draft.retentionAggressiveness;
-  if (draft.spoilerControl) el.spoilerControl.value = draft.spoilerControl;
-  if (typeof draft.loopEnding === "boolean") el.loopEnding.checked = draft.loopEnding;
+  if (draft.targetDuration && el.targetDuration) el.targetDuration.value = draft.targetDuration;
+  if (draft.voiceSpeed && el.voiceSpeed) el.voiceSpeed.value = draft.voiceSpeed;
+  if (typeof draft.viralOptimization === "boolean" && el.viralOptimization) el.viralOptimization.checked = draft.viralOptimization;
+  if (draft.viralPlatform && el.viralPlatform) el.viralPlatform.value = draft.viralPlatform;
+  if (draft.viralAngleSetting && el.viralAngleSetting) el.viralAngleSetting.value = draft.viralAngleSetting;
+  if (draft.retentionAggressiveness && el.retentionAggressiveness) el.retentionAggressiveness.value = draft.retentionAggressiveness;
+  if (draft.spoilerControl && el.spoilerControl) el.spoilerControl.value = draft.spoilerControl;
+  if (typeof draft.loopEnding === "boolean" && el.loopEnding) el.loopEnding.checked = draft.loopEnding;
   if (el.autoStoryTargetMin) el.autoStoryTargetMin.value = String(Math.max(65, Number(draft.autoStoryTargetMin || 65)));
   if (el.autoStoryTargetMax) el.autoStoryTargetMax.value = String(Math.max(Number(el.autoStoryTargetMin?.value || 65), Number(draft.autoStoryTargetMax || 90)));
   if (el.autoStoryOutputCount) el.autoStoryOutputCount.value = draft.autoStoryOutputCount || "2";
   if (el.autoStoryNarrationStyle) el.autoStoryNarrationStyle.value = draft.autoStoryNarrationStyle || "investigative";
   if (el.autoStoryAudioBalance) el.autoStoryAudioBalance.value = draft.autoStoryAudioBalance || "balanced";
   if (el.autoStoryEngineVersion) { el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || "2"; updateAutoStoryEngineHint(); }
-  if (draft.sourceVideoPath) el.sourceVideoPath.value = draft.sourceVideoPath;
+  if (draft.sourceVideoPath && el.sourceVideoPath) el.sourceVideoPath.value = draft.sourceVideoPath;
   if (draft.sourceDownloadUrl && el.sourceDownloadUrl) el.sourceDownloadUrl.value = draft.sourceDownloadUrl;
   if (el.sourceVideoPath) {
     const restoredSourceKind = draft.sourceKind
@@ -2370,7 +2406,7 @@ function applySetupDraft(draft = readSetupDraft()) {
       || (restoredSourceKind === "url" ? draft.sourceDownloadUrl || "" : "");
   }
   setSourceMethod(draft.sourceMethod || draft.sourceKind || "local", { persist: false });
-  if (Object.prototype.hasOwnProperty.call(draft, "subtitlePath")) el.subtitlePath.value = draft.subtitlePath || "";
+  if (Object.prototype.hasOwnProperty.call(draft, "subtitlePath") && el.subtitlePath) el.subtitlePath.value = draft.subtitlePath || "";
   updateSourceSelectionUi();
   if (draft.storyScriptPath && el.storyScriptPath) el.storyScriptPath.value = draft.storyScriptPath;
   if (Array.isArray(draft.storyScriptPaths) && draft.storyScriptPaths.length && el.storyScriptPath) {
@@ -2622,6 +2658,8 @@ function setBusy(isBusy) {
     el.renderHighlightVariants,
     el.previewDraft,
     el.renderFastDraft,
+    el.runAutoReviewCurrent,
+    el.runAutoReviewAll,
     $("resume-auto-story"),
     el.renderAllFastDrafts,
     el.createGeminiDraftReview,
@@ -3239,7 +3277,7 @@ function readIndependentPromptOptions() {
 function readManualGeminiPromptOptions() {
   const requestedProfile = String(el.manualPromptProfile?.value || "independent");
   const profile = state.selectedMode === "manual_gemini_pro"
-    && ["independent", "serialized_interleaved", "serialized_genz", "viral_police_blotter"].includes(requestedProfile)
+    && ["independent", "serialized_interleaved", "serialized_genz", "viral_police_blotter", "viral_tiktok_crime_part1"].includes(requestedProfile)
     ? requestedProfile
     : "independent";
   const minDuration = Math.max(60.5, Math.min(300, Number(el.manualSeriesDurationMin?.value || 75)));
@@ -3263,6 +3301,9 @@ function readManualGeminiPromptOptions() {
 }
 
 function getManualPromptProfileLabel(options = readManualGeminiPromptOptions()) {
+  if (options.profile === "viral_tiktok_crime_part1") {
+    return "TikTok Viral Bodycam (Part 1 - 8 nhịp xen kẽ · 110-125s)";
+  }
   if (options.profile === "serialized_interleaved") {
     return `Series Part 1-3 · ${options.minDuration}-${options.maxDuration}s`;
   }
@@ -3584,6 +3625,10 @@ ${rootRule ? `- ${rootRule}` : ""}`.trim();
 }
 
 function getRequestedIndependentScriptIds(options = readIndependentPromptOptions()) {
+  const profile = readManualGeminiPromptOptions().profile;
+  if (["serialized_interleaved", "serialized_genz", "viral_police_blotter", "viral_tiktok_crime_part1"].includes(profile)) {
+    return [1, 3, 4];
+  }
   return [1, 3, 4, 2, 5].slice(0, Math.max(1, Math.min(5, Number(options.scriptCount || 2))));
 }
 
@@ -3597,6 +3642,88 @@ ${ids.map((id, index) => `- Block ${index + 1} is one complete root object with 
 - Every block must begin with ${GEMINI_JSON_CODE_FENCE}json, end with ${GEMINI_JSON_CODE_FENCE}, and parse independently with JSON.parse.
 - Never combine the scripts into an array or wrap them in data, result, output, scripts, review, or a shared outer object.
 - Do not output prose, headings, filename labels, explanations, tables, or text before, between, or after the JSON blocks.`;
+}
+
+function buildViralTikTokCrimePart1PromptTemplate(options = readManualGeminiPromptOptions()) {
+  const voiceBlock = getCurrentVoiceCalibrationPromptBlock();
+  return `USER TASK INSTRUCTION - BUILD TIKTOK VIRAL BODYCAM (PART 1 - 8-BEAT ALTERNATING SANDWICH)
+
+You are an elite short-form true-crime video editor specializing in viral TikTok/Reels/Shorts bodycam recap videos that consistently hit 5M+ views. You master the "Alternating Sandwich" rhythm: alternating raw, high-adrenaline on-scene video with punchy, suspenseful narration.
+
+Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, and action-candidates.json thoroughly before selecting footage.
+
+### SELECTED PROMPT PROFILE
+- prompt_profile: viral_tiktok_crime_part1
+- Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
+- Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
+- Every script must follow the exact 8-beat formula and use 9:16 vertical framing with viral green badges.
+
+### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
+Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio beats + 4 Narration beats):
+
+1. BEAT 1 (00:00 - ~00:15, ~12-15s) - COLD OPEN HOOK
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: The single most shocking, loud, or chaotic raw moment from the entire source footage (e.g. screaming at the door, physical struggle, forced breach, frantic yelling).
+   - Rule: Grips the viewer in the first 0-3 seconds with zero narration. Pure authentic raw audio.
+
+2. BEAT 2 (~00:15 - ~00:34, ~16-20s) - INCIDENT SETUP & DISPATCH
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Grounding narration over footage of police arrival / driving. State the date, location, the 911 dispatch premise, what officers were responding to, and the high stakes.
+   - Pacing: Active, present-tense, documentary tension.
+
+3. BEAT 3 (~00:34 - ~00:46, ~10-14s) - SCENE ENTRY & RAW REALITY
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: Officer steps inside the house/scene, encounters the first suspect or family member at the door/stairs, capturing natural ambient dialogue and escalating tension.
+
+4. BEAT 4 (~00:46 - ~01:03, ~15-18s) - ESCALATION & DISCOVERY
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Narration builds intense suspense as officer rushes upstairs/inward and discovers the core crisis (e.g. suspect physically pinning the victim).
+   - Visual matching: Narration directs viewer attention directly to what is about to be seen.
+
+5. BEAT 5 (~01:03 - ~01:16, ~12-15s) - CLIMACTIC TAKEDOWN / CONFRONTATION
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: Peak physical and vocal confrontation! Commands shouted by police ("Get off her! Let go of her! Stand up!"), restraint applied, separating suspect from victim. 100% authentic raw audio.
+
+6. BEAT 6 (~01:16 - ~01:35, ~17-20s) - CONFLICT BREAKDOWN & MORAL CONTRAST
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Identifies key suspects and victims by name. Contrasts the suspect's absurd excuse or fake medical claim ("she was having a mental episode") against the victim's clear explanation ("I just wanted to leave").
+
+7. BEAT 7 (~01:35 - ~01:44, ~7-10s) - RAW DIALOGUE EVIDENCE
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: Suspect stammers an incriminating excuse or victim gives emotional response to the officer.
+
+8. BEAT 8 (~01:44 - ~01:58, ~14-17s) - CLIFFHANGER & PART 2 OPEN LOOP
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Questioning begins; suspect eagerly starts trying to justify their actions, unaware they are digging their own grave. Narration delivers a compelling hook urging the audience to watch Part 2 for the full interrogation and arrest.
+
+### REQUIRED ROOT METADATA
+Every generated JSON script must include:
+\`\`\`json
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 1,
+  "suggestedTitle": "ABUSIVE MOM'S WORST NIGHTMARE CAME TRUE",
+  "title": "ABUSIVE MOM'S WORST NIGHTMARE CAME TRUE",
+  "partBadge": "PART 1",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "viral_green",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "segments": [ ...8 segments... ]
+}
+\`\`\`
+For Script 3, set partBadge to "PART 2". For Script 4, set partBadge to "PART 3".
+
+### NON-NEGOTIABLE EDITORIAL RULES
+1. ZERO THIRD-PARTY SOURCE NARRATORS: Completely mute or eliminate any YouTube host, television reporter, or narrator from original_audio. Only involved officers, suspects, victims, 911 dispatchers, or raw ambient sounds may be heard.
+2. STRICT EVIDENCE GROUNDING: Every claim in narration must be strictly supported by what is visible in the video frames or audible in the source transcript. Do not hallucinate charges, deaths, convictions, or motives.
+3. MATHEMATICAL TIMELINE: Output timestamps startSec and endSec must begin at 0.000, be contiguous without gaps, and satisfy: (sourceEndSec - sourceStartSec) / playbackSpeed = endSec - startSec.
+4. Total duration of the 8 segments must sum to between 110.0 and 125.0 seconds.
+
+${voiceBlock}
+
+${buildGeminiThreeJsonCodeBlockContract([1, 3, 4])}`;
 }
 
 function buildPoliceBlotterHighlightGeminiPromptTemplate() {
@@ -4136,6 +4263,10 @@ function buildHighlightGeminiPromptTemplate() {
     return withUiGeminiInputAccessGate(prompt);
   }
   const promptOptions = readManualGeminiPromptOptions();
+  if (promptOptions.profile === "viral_tiktok_crime_part1") {
+    prompt = buildViralTikTokCrimePart1PromptTemplate(promptOptions);
+    return withUiGeminiInputAccessGate(prompt);
+  }
   if (["serialized_interleaved", "serialized_genz"].includes(promptOptions.profile)) {
     prompt = buildSerializedHighlightGeminiPromptTemplate(promptOptions);
     return withUiGeminiInputAccessGate(prompt);
@@ -5017,6 +5148,36 @@ async function applyAntigravityVariantSelection(filePaths = []) {
     ? `Đã chọn ${sortedPaths.length} file JSON`
     : sortedPaths[0];
   addLog(`AI đã tạo và chọn ${sortedPaths.length} JSON variant hợp lệ.`);
+  const firstScript = inspectedFiles[0];
+  if (firstScript) {
+    const isViralMode = readManualGeminiPromptOptions().profile === "viral_tiktok_crime_part1"
+      || firstScript.titleStyle === "viral_green";
+    if (isViralMode) {
+      if (el.videoCanvasAspect) el.videoCanvasAspect.value = "9:16";
+      if (el.blurBackgroundEnabled) el.blurBackgroundEnabled.checked = true;
+      if (el.topCaptionEnabled) el.topCaptionEnabled.checked = true;
+      if (el.topCaptionStyle) el.topCaptionStyle.value = "viral_green";
+      if (firstScript.suggestedTitle && el.topCaptionText) {
+        el.topCaptionText.value = firstScript.suggestedTitle;
+      }
+      if (el.partLabelEnabled) el.partLabelEnabled.checked = true;
+      if (el.partLabelStyle) el.partLabelStyle.value = "viral_green";
+      if (firstScript.partBadge && el.partLabelText) {
+        el.partLabelText.value = firstScript.partBadge;
+      }
+      if (el.cameraLabelEnabled) el.cameraLabelEnabled.checked = true;
+      if (el.cameraLabelText) el.cameraLabelText.value = firstScript.cameraLabel || "CAM 1";
+      if (el.showSubtitles) el.showSubtitles.checked = true;
+      const subtitleSelect = $("subtitle-style");
+      if (subtitleSelect) subtitleSelect.value = "tiktok_karaoke";
+      activateVideoEditLivePreview();
+      updateVideoDecorationPreview();
+      persistVideoEditSettingsSoon();
+    } else if (firstScript.suggestedTitle && el.topCaptionText && !el.topCaptionText.value.trim()) {
+      el.topCaptionText.value = firstScript.suggestedTitle;
+      if (el.topCaptionEnabled) el.topCaptionEnabled.checked = true;
+    }
+  }
   updateReview();
   writeSetupDraft();
   return sortedPaths;
@@ -6099,7 +6260,7 @@ function syncModeUi() {
       : "Gemini chỉ lập xương sống câu chuyện từ evidence đã khóa, chưa dựng timeline variant.";
   }
   if (el.manualVariantStageTitle) el.manualVariantStageTitle.textContent = isDiyStoryRemix ? "Tạo Voice-Locked Script" : "Tạo từng variant độc lập";
-  const requestedIndependentCount = readIndependentPromptOptions().scriptCount;
+  const requestedIndependentCount = getRequestedIndependentScriptIds().length;
   if (el.manualVariantStageDescription) {
     el.manualVariantStageDescription.textContent = isDiyStoryRemix
       ? "Gemini viết một kịch bản liền mạch theo voice budget đã đo; tool dùng chính audio TTS thật để fit từng thao tác khi render nháp."
@@ -6178,8 +6339,8 @@ function updateReview() {
     el.reviewAutoStory.textContent = `${engineLabel} · ${Number(el.autoStoryOutputCount?.value || 2)} video · ${min}-${max}s · ${el.autoStoryNarrationStyle?.options[el.autoStoryNarrationStyle.selectedIndex]?.textContent || "Điều tra"}`;
   }
   if (isRecap) {
-    el.reviewDuration.textContent = `${Number(el.targetDuration.value || 60)}s`;
-    el.reviewVoiceSpeed.textContent = `${Number(el.voiceSpeed.value || 1).toFixed(2)}x`;
+    el.reviewDuration.textContent = `${Number(el.recapTargetDuration?.value || el.targetDuration?.value || 60)}s (${el.recapWorkflowMode?.value === "review" ? "Review Before Final" : "Full Auto"})`;
+    el.reviewVoiceSpeed.textContent = `Lead: ${el.recapVisualLead?.value || "0.25"}s · ${el.recapAllowReuse?.checked ? "Cho phép lặp" : "Không lặp cảnh"}`;
   }
   el.translateButton.textContent = `Dịch ngữ cảnh với ${getAiProviderLabel()}`;
   renderHighlightPromptTemplate();
@@ -6249,9 +6410,11 @@ function fillSettings(settings) {
   el.vertexAnalysisModel.value = settings.vertexAnalysisModel || "gemini-2.5-flash";
   el.vertexQualityModel.value = settings.vertexQualityModel || "gemini-2.5-pro";
   for (const name of ["Plan", "Edit", "Review", "Repair", "Final"]) {
-    $("vertex-auto-story-" + name.toLowerCase() + "-model").value = settings["vertexAutoStory" + name + "Model"] || "";
+    const node = $("vertex-auto-story-" + name.toLowerCase() + "-model");
+    if (node) node.value = settings["vertexAutoStory" + name + "Model"] || "";
   }
-  $("vertex-auto-story-max-calls").value = settings.vertexAutoStoryMaxCalls || 16;
+  const maxCallsNode = $("vertex-auto-story-max-calls");
+  if (maxCallsNode) maxCallsNode.value = settings.vertexAutoStoryMaxCalls || 16;
   el.vertexBudgetUsd.value = settings.vertexBudgetUsd ?? 240;
   el.vertexDailyLimitUsd.value = settings.vertexDailyLimitUsd ?? 5;
   el.vertexTimeoutMs.value = settings.vertexTimeoutMs || 900000;
@@ -6396,7 +6559,7 @@ function updateAutoStoryEngineHint() {
 
 function readProjectPayload() {
   const setupMode = state.selectedMode;
-  const selectedMode = ["recap", "script_rewrite"].includes(setupMode)
+  const selectedMode = setupMode === "script_rewrite"
     ? "dubbing"
     : isAutoStoryMode(setupMode)
     ? "highlight_cut"
@@ -6484,15 +6647,19 @@ function readProjectPayload() {
     framePreset: "original",
     visualRemixEnabled: el.visualRemix.checked,
     ollamaVisionAssist: Boolean(el.ollamaVisionAssist.checked),
-    ollamaVisionModel: el.ollamaVisionModel.value || "gemma4",
-    targetDuration: isRecap ? Number(el.targetDuration.value || 60) : null,
-    voiceSpeed: isRecap ? Number(el.voiceSpeed.value || 1) : 1,
-    viralOptimization: isRecap ? Boolean(el.viralOptimization.checked) : false,
-    viralPlatform: isRecap ? el.viralPlatform.value : "tiktok",
-    viralAngleSetting: isRecap ? el.viralAngleSetting.value : "auto",
-    retentionAggressiveness: isRecap ? el.retentionAggressiveness.value : "balanced",
-    spoilerControl: isRecap ? el.spoilerControl.value : "balanced",
-    loopEnding: isRecap ? Boolean(el.loopEnding.checked) : false,
+    ollamaVisionModel: el.ollamaVisionModel?.value || "gemma4",
+    targetDuration: isRecap ? Number(el.recapTargetDuration?.value || el.targetDuration?.value || 60) : null,
+    targetDurationSec: isRecap ? Number(el.recapTargetDuration?.value || el.targetDuration?.value || 60) : 60,
+    recapWorkflow: el.recapWorkflowMode?.value || "full_auto",
+    allowShotReuse: Boolean(el.recapAllowReuse?.checked),
+    visualLeadSec: Number(el.recapVisualLead?.value || 0.25),
+    voiceSpeed: isRecap ? Number(el.voiceSpeed?.value || 1) : 1,
+    viralOptimization: isRecap ? Boolean(el.viralOptimization?.checked) : false,
+    viralPlatform: isRecap ? el.viralPlatform?.value : "tiktok",
+    viralAngleSetting: isRecap ? el.viralAngleSetting?.value : "auto",
+    retentionAggressiveness: isRecap ? el.retentionAggressiveness?.value : "balanced",
+    spoilerControl: isRecap ? el.spoilerControl?.value : "balanced",
+    loopEnding: isRecap ? Boolean(el.loopEnding?.checked) : false,
     narrationEnabled: !(isStoryRecutMode(setupMode) || isPodcastViralMode(setupMode))
       && (!isAutoStoryMode(setupMode) || el.autoStoryAudioBalance?.value !== "original_only"),
     voiceProvider: selectedVoice.voiceProvider,
@@ -6554,10 +6721,7 @@ function validateCurrentStep() {
       return false;
     }
     const selectedScripts = JSON.parse(el.storyScriptPath?.dataset.paths || "[]");
-    const requestedCount = Math.max(1, Math.min(5, Number(el.manualIndependentScriptCount?.value || 2)));
-    const maximumFiles = ["serialized_interleaved", "serialized_genz"].includes(el.manualPromptProfile?.value)
-      ? 3
-      : requestedCount;
+    const maximumFiles = getRequestedIndependentScriptIds().length;
     if (selectedScripts.length < 1 || selectedScripts.length > maximumFiles) {
       showToast(`Hãy chọn từ 1 đến ${maximumFiles} file JSON kịch bản.`);
       return false;
@@ -6593,6 +6757,95 @@ function validateCurrentStep() {
   return true;
 }
 
+function initStudioSplitters() {
+  const studio = $("studio-view");
+  if (!studio) return;
+
+  const leftSplitter = studio.querySelector('.splitter-v[data-target="left"]');
+  const rightSplitter = studio.querySelector('.splitter-v[data-target="inspector"]');
+  const horizontalSplitter = studio.querySelector('.splitter-h[data-target="timeline"]');
+
+  try {
+    const savedLeft = localStorage.getItem("cineviral_col_left");
+    const savedRight = localStorage.getItem("cineviral_col_inspector");
+    const savedTimeline = localStorage.getItem("cineviral_row_timeline");
+
+    if (savedLeft) studio.style.setProperty("--col-left", savedLeft);
+    if (savedRight) studio.style.setProperty("--col-inspector", savedRight);
+    if (savedTimeline) studio.style.setProperty("--row-timeline", savedTimeline);
+  } catch (_e) {}
+
+  function startDrag(e, type, splitterEl) {
+    e.preventDefault();
+    document.body.classList.add("is-dragging-splitter");
+    splitterEl?.classList.add("active");
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const rect = studio.getBoundingClientRect();
+
+    const computed = getComputedStyle(studio);
+    const initialLeftWidth = parseFloat(computed.getPropertyValue("--col-left")) || 380;
+    const initialRightWidth = parseFloat(computed.getPropertyValue("--col-inspector")) || 320;
+    const initialTimelineHeight = parseFloat(computed.getPropertyValue("--row-timeline")) || 360;
+
+    let resizeThrottle = null;
+
+    function onMouseMove(moveEvent) {
+      if (type === "left") {
+        const deltaX = moveEvent.clientX - startX;
+        const newWidth = Math.max(260, Math.min(rect.width * 0.48, initialLeftWidth + deltaX));
+        studio.style.setProperty("--col-left", `${Math.round(newWidth)}px`);
+      } else if (type === "inspector") {
+        const deltaX = startX - moveEvent.clientX;
+        const newWidth = Math.max(220, Math.min(rect.width * 0.48, initialRightWidth + deltaX));
+        studio.style.setProperty("--col-inspector", `${Math.round(newWidth)}px`);
+      } else if (type === "timeline") {
+        const deltaY = startY - moveEvent.clientY;
+        const newHeight = Math.max(160, Math.min(rect.height * 0.70, initialTimelineHeight + deltaY));
+        studio.style.setProperty("--row-timeline", `${Math.round(newHeight)}px`);
+      }
+
+      if (!resizeThrottle) {
+        resizeThrottle = requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("resize"));
+          resizeThrottle = null;
+        });
+      }
+    }
+
+    function onMouseUp() {
+      document.body.classList.remove("is-dragging-splitter");
+      splitterEl?.classList.remove("active");
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+
+      try {
+        localStorage.setItem("cineviral_col_left", studio.style.getPropertyValue("--col-left"));
+        localStorage.setItem("cineviral_col_inspector", studio.style.getPropertyValue("--col-inspector"));
+        localStorage.setItem("cineviral_row_timeline", studio.style.getPropertyValue("--row-timeline"));
+      } catch (_e) {}
+
+      window.dispatchEvent(new Event("resize"));
+    }
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }
+
+  if (leftSplitter && !leftSplitter.dataset.bound) {
+    leftSplitter.dataset.bound = "true";
+    leftSplitter.addEventListener("mousedown", (e) => startDrag(e, "left", leftSplitter));
+  }
+  if (rightSplitter && !rightSplitter.dataset.bound) {
+    rightSplitter.dataset.bound = "true";
+    rightSplitter.addEventListener("mousedown", (e) => startDrag(e, "inspector", rightSplitter));
+  }
+  if (horizontalSplitter && !horizontalSplitter.dataset.bound) {
+    horizontalSplitter.dataset.bound = "true";
+    horizontalSplitter.addEventListener("mousedown", (e) => startDrag(e, "timeline", horizontalSplitter));
+  }
+}
+
 function showStudio(project) {
   state.currentProject = project;
   syncProjectSettingsControls(project);
@@ -6600,7 +6853,9 @@ function showStudio(project) {
   el.studioView.classList.remove("hidden");
   el.backToSetup.classList.remove("hidden");
   el.renderVideo.classList.remove("hidden");
+  initStudioSplitters();
   renderStudio();
+  setTimeout(() => window.dispatchEvent(new Event("resize")), 60);
 }
 
 function showSetup() {
@@ -6861,61 +7116,9 @@ function updateStudioPipelineTracker(options = {}) {
 }
 
 function renderHighlightVariantBar(project = state.currentProject) {
-  const variants = getHighlightVariants(project);
   if (!el.highlightVariantBar) return;
-  const shouldShow = project?.mode === "highlight_cut" && variants.length > 0;
-  el.highlightVariantBar.classList.toggle("hidden", !shouldShow);
-  if (!shouldShow) {
-    el.highlightVariantBar.innerHTML = "";
-    return;
-  }
-  const activeId = project.analysis?.activeVariantId || variants[0]?.id || "";
-  const persistedBatches = [project.analysis?.variantExportBatch, project.analysis?.variantDraftBatch]
-    .filter((batch) => Array.isArray(batch?.items));
-  const latestPersistedBatch = persistedBatches.sort((left, right) => (
-    new Date(right.completedAt || 0) - new Date(left.completedAt || 0)
-  ))[0];
-  const persistedQueue = latestPersistedBatch?.items || [];
-  const visibleQueue = state.variantExportQueue?.length ? state.variantExportQueue : persistedQueue;
-  const queueById = new Map(visibleQueue.map((item) => [item.id, item]));
-  el.highlightVariantBar.innerHTML = variants.map((variant, index) => {
-    const duration = (variant.segments || []).reduce((sum, segment) => sum + getSegmentTimelineDuration(segment), 0);
-    const label = variant.label || `Variant ${index + 1}`;
-    const rendered = Boolean(variant.artifacts?.finalVideoPath);
-    const queueItem = queueById.get(variant.id);
-    const status = queueItem?.status || (rendered ? "done" : "draft");
-    const statusLabel = queueItem ? getVariantExportStatusLabel(status) : (rendered ? "Đã xuất" : "Nháp");
-    const viralScore = Number(variant.viralPreflight?.score);
-    const viralGrade = String(variant.viralPreflight?.grade || "").toLowerCase();
-    const viralLabel = Number.isFinite(viralScore)
-      ? `Viral ${viralScore}/100 · Hạng ${variant.viralRank || "-"}`
-      : "";
-    const draftReviewScore = Number(variant.draftReviewReadiness?.score);
-    const reviewLabel = Number.isFinite(draftReviewScore)
-      ? `Draft Review ${draftReviewScore}/100 (${variant.draftReviewReadiness.grade || "-"})`
-      : variant.draftReview
-      ? `Gemini dự kiến ${Number(variant.draftReview.scoreAfterEstimated || 0)}/100 · chờ render V${Number(variant.revisionNumber || 1)}`
-      : "";
-    const storyCompilerLabel = variant.storyCompiler?.coherencePassed
-      ? `Story Spine · ${Number(variant.storyCompiler.logicalBeatCount || (variant.segments || []).length)} beat`
-      : "";
-    return `
-      <button type="button" class="variant-button ${variant.id === activeId ? "active" : ""}" data-highlight-variant="${escapeHtml(variant.id)}" title="${escapeHtml(label)}">
-        <span class="variant-index">#${index + 1}</span>
-        <span class="variant-main">
-          <strong>${escapeHtml(label)}</strong>
-          <small>
-            <span>${(variant.segments || []).length} cảnh</span>
-            <span>${fmt(duration, 1)}s</span>
-            ${viralLabel ? `<span class="variant-viral-score grade-${escapeHtml(viralGrade)}">${escapeHtml(viralLabel)}</span>` : ""}
-            ${reviewLabel ? `<span class="variant-viral-score grade-${escapeHtml(String(variant.draftReviewReadiness?.grade || "pending").toLowerCase())}">${escapeHtml(reviewLabel)}</span>` : ""}
-            ${storyCompilerLabel ? `<span class="variant-viral-score grade-a">${escapeHtml(storyCompilerLabel)}</span>` : ""}
-          </small>
-        </span>
-        <span class="variant-state ${escapeHtml(status)}">${escapeHtml(statusLabel)}</span>
-      </button>
-    `;
-  }).join("");
+  el.highlightVariantBar.classList.add("hidden");
+  el.highlightVariantBar.innerHTML = "";
 }
 
 function renderHighlightRevisionBar(project = state.currentProject) {
@@ -7339,11 +7542,15 @@ function renderViralDiagnostics(project = state.currentProject) {
   const passed = Boolean(preflight.passed);
   const technicalReadiness = preflight.scoreBreakdown?.technicalReadiness;
   const editorialReadiness = preflight.scoreBreakdown?.editorialReadiness;
-  el.viralDiagnosticsTitle.textContent = `${variant.label || variant.title || "Variant"} · ${passed ? "Đạt" : "Cần sửa"}`;
-  el.viralDiagnosticsGrade.textContent = technicalReadiness && editorialReadiness
-    ? `Tổng ${preflight.score}/100 · Kỹ thuật ${technicalReadiness.score}/100 · Biên tập ${editorialReadiness.score}/100`
-    : `${preflight.score}/100 · ${preflight.grade}`;
-  el.viralDiagnosticsGrade.className = `viral-grade grade-${String(preflight.grade || "d").toLowerCase()}`;
+  if (el.viralDiagnosticsTitle) {
+    el.viralDiagnosticsTitle.textContent = `${variant.label || variant.title || "Variant"} · ${passed ? "Đạt" : "Cần sửa"}`;
+  }
+  if (el.viralDiagnosticsGrade) {
+    el.viralDiagnosticsGrade.textContent = technicalReadiness && editorialReadiness
+      ? `Tổng ${preflight.score}/100 · Kỹ thuật ${technicalReadiness.score}/100 · Biên tập ${editorialReadiness.score}/100`
+      : `${preflight.score}/100 · ${preflight.grade}`;
+    el.viralDiagnosticsGrade.className = `viral-grade grade-${String(preflight.grade || "d").toLowerCase()}`;
+  }
   const readinessItems = technicalReadiness && editorialReadiness ? [
     ["Kỹ thuật", `${technicalReadiness.score}/100`, technicalReadiness.passed ? "pass" : "fail"],
     ["Biên tập", `${editorialReadiness.score}/100`, editorialReadiness.passed ? "pass" : "fail"]
@@ -7370,12 +7577,14 @@ function renderViralDiagnostics(project = state.currentProject) {
     ["Chữ burn", `${metrics.burnedTextConflictCount || 0} xung đột`, metrics.burnedTextConflictCount ? "fail" : "pass"],
     ["Blueprint", metrics.hasStoryBlueprint ? "Có" : "Thiếu", metrics.hasStoryBlueprint ? "pass" : "fail"]
   ])];
-  el.viralDiagnosticsMetrics.innerHTML = metricItems.map(([label, value, status]) => `
-    <div class="viral-metric ${status}">
-      <span>${escapeHtml(label)}</span>
-      <strong>${escapeHtml(value)}</strong>
-    </div>
-  `).join("");
+  if (el.viralDiagnosticsMetrics) {
+    el.viralDiagnosticsMetrics.innerHTML = metricItems.map(([label, value, status]) => `
+      <div class="viral-metric ${status}">
+        <span>${escapeHtml(label)}</span>
+        <strong>${escapeHtml(value)}</strong>
+      </div>
+    `).join("");
+  }
   const issues = preflight.issues || [];
   const repairTargets = buildViralRepairTargets(preflight, profile);
   const details = [
@@ -7396,15 +7605,19 @@ function renderViralDiagnostics(project = state.currentProject) {
     ))
   ];
   const displayedIssues = [...issues, ...details.filter((detail) => !issues.includes(detail))];
-  el.viralDiagnosticsIssues.innerHTML = displayedIssues.length
-    ? displayedIssues.map((issue, index) => `
-      <article class="viral-issue">
-        <span>${index + 1}</span>
-        <p>${escapeHtml(issue)}</p>
-      </article>
-    `).join("")
-    : `<div class="viral-pass-message">Không còn lỗi Viral Preflight.</div>`;
-  el.copyViralRepairPrompt.disabled = !displayedIssues.length;
+  if (el.viralDiagnosticsIssues) {
+    el.viralDiagnosticsIssues.innerHTML = displayedIssues.length
+      ? displayedIssues.map((issue, index) => `
+        <article class="viral-issue">
+          <span>${index + 1}</span>
+          <p>${escapeHtml(issue)}</p>
+        </article>
+      `).join("")
+      : `<div class="viral-pass-message">Không còn lỗi Viral Preflight.</div>`;
+  }
+  if (el.copyViralRepairPrompt) {
+    el.copyViralRepairPrompt.disabled = !displayedIssues.length;
+  }
 }
 
 async function copyViralRepairPrompt() {
@@ -7621,36 +7834,46 @@ function renderStudio() {
   const isScriptRewrite = project.mode === "script_rewrite";
   const isSatisfyingStorytime = project.mode === "satisfying_storytime";
   const isHighlightCut = project.mode === "highlight_cut";
-  el.translateButton.classList.toggle("hidden", isRecap || isScriptRewrite || isSatisfyingStorytime || isHighlightCut);
-  el.diarizeButton.classList.toggle("hidden", isRecap || isScriptRewrite || isSatisfyingStorytime || isHighlightCut);
-  el.previewDraft.classList.toggle("hidden", !isRecap);
+  el.translateButton?.classList.toggle("hidden", isRecap || isScriptRewrite || isSatisfyingStorytime || isHighlightCut);
+  el.diarizeButton?.classList.toggle("hidden", isRecap || isScriptRewrite || isSatisfyingStorytime || isHighlightCut);
+  el.previewDraft?.classList.toggle("hidden", !isRecap);
   el.renderFastDraft?.classList.toggle("hidden", !(isSatisfyingStorytime || isHighlightCut));
   el.renderAllFastDrafts?.classList.toggle("hidden", !(isHighlightCut && getHighlightVariants(project).length > 1));
   const draftReviewArtifacts = getDraftReviewArtifacts(project);
   const supportsDraftReview = isSatisfyingStorytime || isHighlightCut;
-  const isGeminiDraftReviewWorkflow = ["manual_gemini_draft_review", "manual_gemini_diy_story_remix"]
-    .includes(project.analysisWorkflow);
+  const isDraftReviewWorkflow = supportsDraftReview
+    && (
+      isHighlightCut
+      || ["manual_gemini_draft_review", "manual_gemini_diy_story_remix", "vertex_auto_story", "manual_antigravity_stage1", "manual_gemini_pro", "manual_gemini_pro_two_pass"].includes(project.analysisWorkflow)
+    );
+  const variants = getHighlightVariants(project);
   const hasRenderedDraft = Boolean(draftReviewArtifacts.videoPath);
-  el.draftReviewActions?.classList.toggle("hidden", !isGeminiDraftReviewWorkflow);
-  el.createGeminiDraftReview?.classList.toggle("hidden", !(isGeminiDraftReviewWorkflow && hasRenderedDraft));
-  el.openGeminiDraftReview?.classList.toggle("hidden", !(isGeminiDraftReviewWorkflow && draftReviewArtifacts.reviewPackagePath));
-  el.openDraftReviewPrompt?.classList.toggle("hidden", isGeminiDraftReviewWorkflow || !(supportsDraftReview && draftReviewArtifacts.promptPath));
-  el.openDraftReviewReport?.classList.toggle("hidden", isGeminiDraftReviewWorkflow || !(supportsDraftReview && draftReviewArtifacts.reportPath));
+  el.draftReviewActions?.classList.toggle("hidden", !isDraftReviewWorkflow);
+  if (el.runAutoReviewCurrent) {
+    el.runAutoReviewCurrent.classList.toggle("hidden", !isDraftReviewWorkflow || variants.length === 0);
+  }
+  if (el.runAutoReviewAll) {
+    el.runAutoReviewAll.classList.toggle("hidden", !isDraftReviewWorkflow || variants.length <= 1);
+  }
+  el.createGeminiDraftReview?.classList.toggle("hidden", !(isDraftReviewWorkflow && hasRenderedDraft));
+  el.openGeminiDraftReview?.classList.toggle("hidden", !(isDraftReviewWorkflow && draftReviewArtifacts.reviewPackagePath));
+  el.openDraftReviewPrompt?.classList.toggle("hidden", isDraftReviewWorkflow || !(supportsDraftReview && draftReviewArtifacts.promptPath));
+  el.openDraftReviewReport?.classList.toggle("hidden", isDraftReviewWorkflow || !(supportsDraftReview && draftReviewArtifacts.reportPath));
   el.importReviewedScript?.classList.toggle(
     "hidden",
     !supportsDraftReview || project.analysisWorkflow === "manual_gemini_podcast_cut"
   );
-  el.runConfiguredDraftReview?.classList.toggle("hidden", !(isGeminiDraftReviewWorkflow && hasRenderedDraft));
+  el.runConfiguredDraftReview?.classList.toggle("hidden", !(isDraftReviewWorkflow && hasRenderedDraft));
   el.openConfiguredDraftReviewResult?.classList.toggle("hidden", !draftReviewArtifacts.aiResultDir);
   el.importConfiguredDraftReview?.classList.toggle("hidden", !draftReviewArtifacts.aiResultPath);
-  if (el.draftReviewStatus && isGeminiDraftReviewWorkflow) {
+  if (el.draftReviewStatus && isDraftReviewWorkflow) {
     el.draftReviewStatus.textContent = draftReviewArtifacts.aiResultPath
       ? `Đã review bằng ${getAiProviderLabel(draftReviewArtifacts.aiProvider)} · ${draftReviewArtifacts.aiModel || "model mặc định"}. Có thể kiểm tra và import V2.`
       : draftReviewArtifacts.reviewPackagePath
       ? "Gói review đã sẵn sàng. Có thể review ngay bằng AI hoặc mở gói để gửi thủ công."
       : hasRenderedDraft
-      ? "Draft đã sẵn sàng. Tạo gói và review bằng AI đã chọn trong Cài đặt."
-      : "Render draft để bắt đầu review hình ảnh, âm thanh và nhịp dựng.";
+      ? "Draft đã sẵn sàng. Bấm 'Auto Review & Render' để AI xem và tự động sửa V2."
+      : "Sẵn sàng review. Bạn có thể bấm 'Auto Review & Render' (sẽ tự render draft trước nếu chưa có).";
   }
   renderPreviewWorkflowStatus(project);
   el.renderHighlightVariants?.classList.toggle("hidden", !(isHighlightCut && getHighlightVariants(project).length > 1));
@@ -8328,8 +8551,8 @@ function renderSegments(segments) {
       event.stopPropagation();
       state.selectedSegmentIndex = Number(button.dataset.editSegment);
       renderStudio();
-      el.inspectText.focus();
-      el.inspectText.select();
+      el.inspectText?.focus();
+      el.inspectText?.select();
     });
   });
   document.querySelectorAll("[data-copy-segment]").forEach((button) => {
@@ -8578,6 +8801,7 @@ function renderInspector() {
 }
 
 function renderSpeakers() {
+  if (!el.speakerList) return;
   const analysis = state.currentProject?.analysis || {};
   const speakers = analysis.speakers?.length
     ? analysis.speakers
@@ -8712,11 +8936,11 @@ function renderMirrorMeta(meta = null) {
 
 async function selectMirrorVideo() {
   const selected = await window.cineviral.pickVideo();
-  if (!selected) return;
+  if (!selected || !el.mirrorVideoPath) return;
   el.mirrorVideoPath.value = selected;
-  el.mirrorResult.classList.add("hidden");
-  el.mirrorPreview.classList.add("hidden");
-  el.mirrorPreview.removeAttribute("src");
+  el.mirrorResult?.classList.add("hidden");
+  el.mirrorPreview?.classList.add("hidden");
+  el.mirrorPreview?.removeAttribute("src");
   addLog(`Đã chọn video cho tool lật gương: ${selected}`);
   try {
     const meta = await window.cineviral.probeVideo(selected);
@@ -8728,8 +8952,9 @@ async function selectMirrorVideo() {
 }
 
 async function runMirrorTool() {
+  if (!el.mirrorVideoPath) return;
   const inputPath = el.mirrorVideoPath.value.trim();
-  const intervalSec = Number(el.mirrorInterval.value || 3);
+  const intervalSec = Number(el.mirrorInterval?.value || 3);
   if (!inputPath) {
     showToast("Hãy chọn video trước.");
     return;
@@ -9149,6 +9374,94 @@ async function openConfiguredDraftReviewResult() {
   await window.cineviral.openFile(resultDir);
 }
 
+async function runAutoReviewAndRenderCurrent() {
+  if (!state.currentProject || state.currentProject.mode !== "highlight_cut") return;
+  const activeVariant = getActiveHighlightVariant(state.currentProject);
+  if (!activeVariant) {
+    showToast("Chưa chọn variant để review.");
+    return;
+  }
+  const aiInfo = getConfiguredAiUiInfo();
+  if (!aiInfo.supported) {
+    showToast(aiInfo.reason);
+    return;
+  }
+  const variantTitle = activeVariant.title || activeVariant.label || activeVariant.id;
+  const confirmed = await showConfirmAction({
+    title: `Auto Review & Render: ${variantTitle}`,
+    message: `Hệ thống sẽ tự động thực hiện: AI Review (${aiInfo.label}) ➔ Tự import kịch bản V2 ➔ Tự render lại bản nháp V2. Bạn có muốn tiếp tục?`,
+    confirmText: "Bắt đầu"
+  });
+  if (!confirmed) return;
+
+  switchRightTab("log");
+  updateStudioPipelineTracker({
+    visible: true,
+    label: `Bắt đầu Auto Review cho ${variantTitle}...`,
+    percent: 10,
+    activeStep: "draft"
+  });
+
+  try {
+    const draftArtifacts = getDraftReviewArtifacts(state.currentProject);
+    if (!draftArtifacts.videoPath) {
+      addLog(`[Auto Review] Chưa có video nháp V1 cho ${variantTitle}. Đang tự động render nháp trước...`);
+      updateStudioPipelineTracker({
+        visible: true,
+        label: `Đang render nháp V1 cho ${variantTitle}...`,
+        percent: 25,
+        activeStep: "draft"
+      });
+      await renderFastDraftVideo();
+    }
+
+    updateStudioPipelineTracker({
+      visible: true,
+      label: `AI (${aiInfo.label}) đang phân tích video thật & đánh giá kịch bản...`,
+      percent: 50,
+      activeStep: "review"
+    });
+    addLog(`[Auto Review] Đang khởi chạy AI Review với ${aiInfo.label} (${aiInfo.model})...`);
+    const reviewResult = await runConfiguredDraftReview();
+    if (!reviewResult || !reviewResult.resultPath) {
+      throw new Error("Không nhận được kết quả review hợp lệ từ AI.");
+    }
+
+    updateStudioPipelineTracker({
+      visible: true,
+      label: `Đang áp dụng kịch bản sửa V2...`,
+      percent: 75,
+      activeStep: "package"
+    });
+    addLog(`[Auto Review] Đang import kết quả review V2: ${reviewResult.resultPath}...`);
+    await importReviewedScriptPath(reviewResult.resultPath, { autoRouted: true });
+
+    updateStudioPipelineTracker({
+      visible: true,
+      label: `Đang kết xuất video nháp V2...`,
+      percent: 90,
+      activeStep: "v2"
+    });
+    addLog(`[Auto Review] Đang render lại bản nháp V2 cho ${variantTitle}...`);
+    await renderFastDraftVideo();
+
+    updateStudioPipelineTracker({
+      visible: true,
+      label: `Hoàn tất Review & Render V2 cho ${variantTitle}!`,
+      percent: 100,
+      activeStep: "v2"
+    });
+    showToast(`Đã hoàn tất Review & Render V2 cho ${variantTitle}!`);
+    addLog(`[Auto Review] THÀNH CÔNG: Đã tạo và render bản nháp V2 cho ${variantTitle}.`, "SUCCESS");
+    renderStudioVariantHub();
+  } catch (error) {
+    addLog(`[Auto Review] Lỗi khi xử lý ${variantTitle}: ${error.message}`, "ERROR");
+    showToast(error.message);
+  } finally {
+    setTimeout(() => updateStudioPipelineTracker({ visible: false }), 8000);
+  }
+}
+
 async function runAutoReviewAndRenderAll() {
   if (!state.currentProject || state.currentProject.mode !== "highlight_cut") return;
   const variants = getHighlightVariants();
@@ -9179,10 +9492,23 @@ async function runAutoReviewAndRenderAll() {
       const vProgressBase = (index / variants.length) * 100;
       const vProgressSpan = 100 / variants.length;
 
+      const currentDraftVideo = variant.artifacts?.fastDraftVideoPath
+        || (state.currentProject.analysis?.activeVariantId === variant.id && state.currentProject.artifacts?.fastDraftVideoPath);
+      if (!currentDraftVideo) {
+        addLog(`[Auto Pipeline] Variant ${index + 1} chưa có video nháp V1. Đang render nháp trước khi review...`);
+        updateStudioPipelineTracker({
+          visible: true,
+          label: `Variant ${index + 1}/${variants.length}: Render nháp V1 trước...`,
+          percent: vProgressBase + vProgressSpan * 0.15,
+          activeStep: "draft"
+        });
+        await renderFastDraftVideo();
+      }
+
       updateStudioPipelineTracker({
         visible: true,
         label: `Variant ${index + 1}/${variants.length}: Chuẩn bị gói review...`,
-        percent: vProgressBase + vProgressSpan * 0.25,
+        percent: vProgressBase + vProgressSpan * 0.35,
         activeStep: "package"
       });
 
@@ -9190,7 +9516,7 @@ async function runAutoReviewAndRenderAll() {
       updateStudioPipelineTracker({
         visible: true,
         label: `Variant ${index + 1}/${variants.length}: AI đang xem video và đánh giá...`,
-        percent: vProgressBase + vProgressSpan * 0.5,
+        percent: vProgressBase + vProgressSpan * 0.55,
         activeStep: "review"
       });
 
@@ -9361,6 +9687,21 @@ async function createAndIngestProject() {
       state.currentProject = await window.cineviral.ingestDubbingProject(created.project.id);
       addLog("AI dang viet lai kich ban, giu nguyen cot truyen goc...");
       state.currentProject = await window.cineviral.rewriteScriptProject(created.project.id);
+    } else if (payload.mode === "recap") {
+      addLog("Đang khởi chạy luồng AI Video Recap (Story -> Scene -> Shot -> Visual Event -> Narration)...");
+      const result = await window.cineviral.runRecap(created.project.id, {
+        targetDurationSec: payload.targetDurationSec,
+        allowShotReuse: payload.allowShotReuse,
+        recapWorkflow: payload.recapWorkflow,
+        visualLeadSec: payload.visualLeadSec
+      });
+      state.currentProject = await window.cineviral.getProject(created.project.id);
+      if (result && result.status === "review_ready") {
+        addLog("Bản Draft đã sẵn sàng để Review trước khi xuất Master!", "SUCCESS");
+        showToast("Bản Draft đã sẵn sàng. Hãy kiểm tra các đoạn khớp hình trước khi xuất.");
+      } else {
+        addLog(`Đã hoàn tất Video Recap Master: ${result?.finalVideoPath || ""}`, "SUCCESS");
+      }
     } else {
       addLog(`Đang lập kế hoạch tóm tắt phim bằng Gemini: ${payload.targetDuration}s, giọng ${payload.voiceSpeed}x...`);
       state.currentProject = await window.cineviral.planProject(created.project.id);
@@ -9644,6 +9985,7 @@ async function downloadSourceFromUrl() {
 }
 
 function bindEvents() {
+  if (el.runAutoReviewCurrent) el.runAutoReviewCurrent.addEventListener("click", runAutoReviewAndRenderCurrent);
   if (el.runAutoReviewAll) el.runAutoReviewAll.addEventListener("click", runAutoReviewAndRenderAll);
   window.cineviral.onSourceDownloadProgress?.(updateSourceDownloadProgress);
   el.cancelConfirmAction?.addEventListener("click", () => closeConfirmAction(false));
@@ -10180,7 +10522,7 @@ function bindEvents() {
     });
   });
 
-  [el.projectTitle, el.subtitlePath, el.framePreset, el.autoWhisper, el.targetLanguage, el.targetDuration, el.voiceSpeed, el.viralOptimization, el.viralPlatform, el.viralAngleSetting, el.retentionAggressiveness, el.spoilerControl, el.loopEnding, el.draftVoiceMode, el.draftVoiceProvider, el.draftVoiceList, el.draftVoiceId].forEach((node) => {
+  [el.projectTitle, el.subtitlePath, el.framePreset, el.autoWhisper, el.targetLanguage, el.targetDuration, el.voiceSpeed, el.viralOptimization, el.viralPlatform, el.viralAngleSetting, el.retentionAggressiveness, el.spoilerControl, el.loopEnding, el.draftVoiceMode, el.draftVoiceProvider, el.draftVoiceList, el.draftVoiceId].filter(Boolean).forEach((node) => {
     node.addEventListener("input", () => {
       updateReview();
       writeSetupDraft();
@@ -10199,28 +10541,31 @@ function bindEvents() {
     el.sourceSubtitleMaskWidth
     , el.videoCanvasEnabled, el.videoCanvasAspect, el.videoCanvasWidth, el.videoCanvasHeight,
     el.blurBackgroundEnabled, el.blurBackgroundStrength, el.topCaptionEnabled,
-    el.topCaptionText, el.topCaptionFontSize, el.topCaptionY,
+    el.topCaptionText, el.topCaptionStyle, el.topCaptionFontSize, el.topCaptionY,
+    el.cameraLabelEnabled, el.cameraLabelText,
     el.partLabelEnabled, el.partLabelAuto, el.partLabelText, el.partLabelStyle,
     el.partLabelAlignment, el.partLabelUppercase, el.partLabelTextColor,
     el.partLabelBackgroundColor, el.partLabelFontSize, el.partLabelOpacity,
     el.partLabelX, el.partLabelY
-  ].forEach((node) => {
-    node?.addEventListener("input", writeSetupDraft);
-    node?.addEventListener("change", writeSetupDraft);
+  ].filter(Boolean).forEach((node) => {
+    node.addEventListener("input", writeSetupDraft);
+    node.addEventListener("change", writeSetupDraft);
   });
 
   [
     el.voiceGenderAge, el.voicePitch, el.voiceAccent, el.voiceTrait, el.voicePrompt,
     el.voiceSamplePath, el.presetVoiceProvider, el.presetVoiceList
-  ].forEach((node) => {
-    node?.addEventListener("input", rememberVoiceSetupSoon);
-    node?.addEventListener("change", rememberVoiceSetupSoon);
+  ].filter(Boolean).forEach((node) => {
+    node.addEventListener("input", rememberVoiceSetupSoon);
+    node.addEventListener("change", rememberVoiceSetupSoon);
   });
 
-  [el.voiceGenderAge, el.voicePitch, el.voiceTrait].forEach((node) => {
+  [el.voiceGenderAge, el.voicePitch, el.voiceTrait].filter(Boolean).forEach((node) => {
     node.addEventListener("change", () => {
-      el.voicePrompt.value = `${el.voiceGenderAge.value}, ${el.voicePitch.value} pitch, ${el.voiceTrait.value}`;
-      rememberVoiceSetupSoon();
+      if (el.voicePrompt && el.voiceGenderAge && el.voicePitch && el.voiceTrait) {
+        el.voicePrompt.value = `${el.voiceGenderAge.value}, ${el.voicePitch.value} pitch, ${el.voiceTrait.value}`;
+        rememberVoiceSetupSoon();
+      }
     });
   });
 
@@ -10240,8 +10585,8 @@ function bindEvents() {
     , [el.partLabelX, el.partLabelXValue]
     , [el.partLabelY, el.partLabelYValue]
     , [el.foregroundScale, el.foregroundScaleValue]
-  ].forEach(([input, label]) => {
-    input?.addEventListener("input", () => {
+  ].filter(([input, label]) => Boolean(input && label)).forEach(([input, label]) => {
+    input.addEventListener("input", () => {
       activateVideoEditLivePreview();
       const plainValue = input === el.sourceSubtitleMaskStrength
         || input === el.blurBackgroundStrength
@@ -10255,17 +10600,18 @@ function bindEvents() {
 
   [
     el.videoCanvasEnabled, el.videoCanvasAspect, el.videoCanvasWidth, el.videoCanvasHeight,
-    el.blurBackgroundEnabled, el.topCaptionEnabled, el.topCaptionText
+    el.blurBackgroundEnabled, el.topCaptionEnabled, el.topCaptionText, el.topCaptionStyle,
+    el.cameraLabelEnabled, el.cameraLabelText
     , el.foregroundScale, el.partLabelEnabled, el.partLabelAuto, el.partLabelText,
     el.partLabelStyle, el.partLabelAlignment, el.partLabelUppercase,
     el.partLabelTextColor, el.partLabelBackgroundColor
-  ].forEach((input) => {
-    input?.addEventListener("input", () => {
+  ].filter(Boolean).forEach((input) => {
+    input.addEventListener("input", () => {
       activateVideoEditLivePreview();
       updateVideoDecorationPreview();
       persistVideoEditSettingsSoon();
     });
-    input?.addEventListener("change", () => {
+    input.addEventListener("change", () => {
       activateVideoEditLivePreview();
       updateVideoDecorationPreview();
       persistVideoEditSettingsSoon(0);
@@ -10466,13 +10812,13 @@ function bindEvents() {
       return;
     }
     setBusy(true);
-    const originalText = el.reviewAllScenes.textContent;
+    const originalText = el.reviewAllScenes?.textContent || "";
     try {
       await saveCurrentSegments();
       addLog(`AI bắt đầu đánh giá toàn bộ ${totalSegments} cảnh trong kịch bản...`);
       for (let index = 0; index < totalSegments; index += 1) {
         state.selectedSegmentIndex = index;
-        el.reviewAllScenes.textContent = `Đang đánh giá ${index + 1}/${totalSegments}`;
+        if (el.reviewAllScenes) el.reviewAllScenes.textContent = `Đang đánh giá ${index + 1}/${totalSegments}`;
         addLog(`AI đang đánh giá cảnh ${index + 1}/${totalSegments}...`);
         state.currentProject = await window.cineviral.reviewSceneScript(state.currentProject.id, index);
         renderStudio();
@@ -10483,7 +10829,7 @@ function bindEvents() {
       addLog(error.message, "ERROR");
       showToast(error.message);
     } finally {
-      el.reviewAllScenes.textContent = originalText || "Đánh giá toàn bộ";
+      if (el.reviewAllScenes) el.reviewAllScenes.textContent = originalText || "Đánh giá toàn bộ";
       setBusy(false);
       renderStudio();
     }
@@ -10495,7 +10841,7 @@ function bindEvents() {
     if (!rewrite?.narrationLine) {
       return;
     }
-    el.inspectText.value = rewrite.narrationLine;
+    if (el.inspectText) el.inspectText.value = rewrite.narrationLine;
     showToast("Câu viết lại đã được đưa vào ô kịch bản. Bấm Lưu đoạn để giữ thay đổi.");
   });
 
@@ -10858,15 +11204,24 @@ function bindEvents() {
 
   el.copyStudioLog?.addEventListener("click", () => {
     navigator.clipboard.writeText(state.logLines.join("\n"));
+    showToast("Đã sao chép toàn bộ nhật ký.");
   });
-  el.toggleStudioRawLog?.addEventListener("click", () => {
-    state.studioRawLogVisible = !state.studioRawLogVisible;
-    el.studioSystemLog?.classList.toggle("hidden", !state.studioRawLogVisible);
-    el.studioActivityFeed?.classList.toggle("hidden", state.studioRawLogVisible);
+  function switchStudioLogTab(isRaw) {
+    state.studioRawLogVisible = isRaw;
+    el.tabStudioActivity?.classList.toggle("active", !isRaw);
+    el.tabStudioRawLog?.classList.toggle("active", isRaw);
+    el.studioActivityFeed?.classList.toggle("hidden", isRaw);
+    el.studioSystemLog?.classList.toggle("hidden", !isRaw);
     if (el.toggleStudioRawLog) {
-      el.toggleStudioRawLog.textContent = state.studioRawLogVisible ? "Hiện hoạt động" : "Hiện log thô";
+      el.toggleStudioRawLog.textContent = isRaw ? "Hiện hoạt động" : "Hiện log thô";
     }
-  });
+    if (isRaw && el.studioSystemLog) {
+      el.studioSystemLog.scrollTop = el.studioSystemLog.scrollHeight;
+    }
+  }
+  el.tabStudioActivity?.addEventListener("click", () => switchStudioLogTab(false));
+  el.tabStudioRawLog?.addEventListener("click", () => switchStudioLogTab(true));
+  el.toggleStudioRawLog?.addEventListener("click", () => switchStudioLogTab(!state.studioRawLogVisible));
 }
 
 async function bootstrap() {
@@ -10879,8 +11234,9 @@ async function bootstrap() {
   applySetupDraft();
   renderProjectPicker();
   bindEvents();
+  initStudioSplitters();
   renderActivity();
-  if (el.ollamaVisionAssist.checked) {
+  if (el.ollamaVisionAssist?.checked) {
     loadOllamaModels({ silent: true });
   }
   if (document.querySelector(".voice-tab.active")?.dataset.voiceTab === "preset") {
@@ -10932,8 +11288,11 @@ async function bootstrap() {
         setExportProgress(payload.percent, (payload.message || "Antigravity đang phân tích...").trim());
       }
     } else if (payload.step === "configured_ai_draft_review" && el.draftReviewStatus) {
-      el.draftReviewStatus.textContent = `${Math.round(Number(payload.percent || 0))}% - ${payload.message || "AI đang review draft..."}`;
-      if (typeof payload.percent === "number") setExportProgress(payload.percent, (payload.message || payload.step || state.activeOperation || "Đang xử lý").trim());
+      const pct = Math.round(Number(payload.percent || 0));
+      el.draftReviewStatus.textContent = `${pct}% - ${payload.message || "AI đang review draft..."}`;
+      if (typeof payload.percent === "number") {
+        setExportProgress(payload.percent, `Review AI: ${pct}%`);
+      }
     } else {
       if (typeof payload.percent === "number") {
         const step = payload.stage || payload.step;

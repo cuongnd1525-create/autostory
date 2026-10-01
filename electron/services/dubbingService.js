@@ -58,6 +58,10 @@ const {
 } = require("./geminiJsonArtifactService");
 const { validateDiyFinalScript } = require("./diyStoryRemixService");
 const { compileStorySpineScript, isStorySpineScript } = require("./storySpineCompilerService");
+const {
+  buildTikTokKaraokeAssContent,
+  buildWordTimestampsFromSegments
+} = require("./karaokeSubtitleService");
 const { getCancelToken, throwIfCancelled } = require("./cancelToken");
 
 function runCommand(command, args, timeoutMs = 600000) {
@@ -1907,6 +1911,9 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     seriesId: safeText(parsed.series_id || parsed.seriesId || ""),
     partNumber: safeNumber(parsed.part_number ?? parsed.partNumber, 0),
     partBadge: safeText(parsed.part_badge || parsed.partBadge || ""),
+    cameraLabel: safeText(parsed.camera_label || parsed.cameraLabel || ""),
+    titleStyle: safeText(parsed.title_style || parsed.titleStyle || ""),
+    subtitleStyle: safeText(parsed.subtitle_style || parsed.subtitleStyle || ""),
     sharedTopBannerText: safeText(parsed.shared_top_banner_text || parsed.sharedTopBannerText || ""),
     topHeader: safeText(parsed.top_banner_text || parsed.top_header || parsed.topHeader || ""),
     onScreenElements: Array.isArray(parsed.on_screen_elements || parsed.onScreenElements)
@@ -3311,7 +3318,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const titleTextPath = path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.txt`);
     const titleSvgPath = path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.svg`);
     let titleOverlayPath = "";
-    if ((topCaptionEnabled && title) || partLabelEnabled) {
+    const cameraLabelEnabled = Boolean(decoration.cameraLabelEnabled && decoration.cameraLabelText);
+    if ((topCaptionEnabled && title) || partLabelEnabled || cameraLabelEnabled) {
       await this.projectStore.writeText(titleTextPath, title);
       const titleSvg = buildVideoTitleOverlaySvg({
         title: topCaptionEnabled ? title : "",
@@ -3319,13 +3327,23 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         height: canvas.height,
         fontSize: topCaptionFontSize,
         yPercent: decoration.topCaptionYPercent ?? 8,
+        titleStyle: decoration.topCaptionStyle || decoration.titleStyle || "default",
+        titleBackgroundColor: decoration.topCaptionBackgroundColor || decoration.titleBackgroundColor || null,
+        titleTextColor: decoration.topCaptionTextColor || decoration.titleTextColor || null,
+        cameraLabel: cameraLabelEnabled ? {
+          text: decoration.cameraLabelText || "CAM 1",
+          textColor: decoration.cameraLabelTextColor || "#ff3333",
+          xPercent: decoration.cameraLabelXPercent ?? 12,
+          yPercent: decoration.cameraLabelYPercent ?? 28,
+          fontSize: decoration.cameraLabelFontSize ?? 36
+        } : null,
         partLabel: partLabelEnabled ? {
           text: partLabelText,
           xPercent: decoration.partLabelXPercent ?? 12,
           yPercent: decoration.partLabelYPercent ?? 8,
           fontSize: decoration.partLabelFontSize ?? 38,
           textColor: decoration.partLabelTextColor || "#ffffff",
-          backgroundColor: decoration.partLabelBackgroundColor || "#0b0d11",
+          backgroundColor: decoration.partLabelBackgroundColor || (decoration.partLabelStyle === "viral_green" ? "#00A63E" : "#0b0d11"),
           backgroundOpacity: decoration.partLabelBackgroundOpacity ?? 0.82,
           uppercase: decoration.partLabelUppercase !== false,
           alignment: decoration.partLabelAlignment || "center",
@@ -4145,6 +4163,22 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           ...scriptInput,
           prompt_profile: "viral_police_blotter"
         };
+      } else if (configuredPromptOptions.profile === "viral_tiktok_crime_part1") {
+        const explicitProfile = safeText(scriptInput.prompt_profile || scriptInput.promptProfile || "");
+        if (explicitProfile && explicitProfile !== "viral_tiktok_crime_part1") {
+          throw new Error(
+            `File ${path.basename(jsonPath)} dùng prompt_profile="${explicitProfile}" nhưng project đang chọn TikTok Viral Bodycam. Hãy tạo lại JSON từ đúng prompt hiện tại.`
+          );
+        }
+        const scriptId = safeNumber(scriptInput.scriptId ?? scriptInput.script_id, [1, 3, 4][variantIndex] || 1);
+        const partNumber = new Map([[1, 1], [3, 2], [4, 3]]).get(scriptId) || (variantIndex + 1);
+        scriptInput = {
+          ...scriptInput,
+          prompt_profile: "viral_tiktok_crime_part1",
+          part_number: partNumber,
+          part_badge: safeText(scriptInput.partBadge || scriptInput.part_badge || `PART ${partNumber}`),
+          camera_label: safeText(scriptInput.cameraLabel || scriptInput.camera_label || "CAM 1")
+        };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
       if (configuredPromptOptions.profile === "independent") {
@@ -4239,6 +4273,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         seriesId: script.seriesId,
         partNumber: script.partNumber,
         partBadge: script.partBadge,
+        cameraLabel: script.cameraLabel,
+        titleStyle: script.titleStyle,
+        subtitleStyle: script.subtitleStyle,
         sharedTopBannerText: script.sharedTopBannerText,
         topHeader: script.topHeader,
         onScreenElements: script.onScreenElements,
@@ -6353,11 +6390,38 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         }]
     ));
     await this.projectStore.writeText(subtitlePath, buildSrt(previewSubtitleCues, "translatedText"));
+    const isTikTokKaraoke = project.videoDecoration?.subtitleStyle === "tiktok_karaoke";
+    let effectiveSubtitlePath = subtitlePath;
+    if (isTikTokKaraoke) {
+      const assPath = subtitlePath.replace(/\.srt$/, ".ass");
+      const karaokeCues = previewSubtitleSegments.flatMap((segment) => (
+        segment.previewSubtitleCues?.length
+          ? segment.previewSubtitleCues.map((cue) => ({
+            ...cue,
+            voiceover_text: cue.text || cue.translatedText || segment.voiceover_text || ""
+          }))
+          : [{
+            ...segment,
+            voiceover_text: segment.text || segment.voiceover_text || segment.caption || ""
+          }]
+      ));
+      const words = buildWordTimestampsFromSegments(karaokeCues);
+      const assContent = buildTikTokKaraokeAssContent(words);
+      await this.projectStore.writeText(assPath, assContent);
+      effectiveSubtitlePath = assPath;
+    }
     const hasPreviewSubtitles = previewSubtitleCues.some((cue) => safeText(cue.translatedText));
-    const embedPreviewSubtitles = hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story";
+    const embedPreviewSubtitles = (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
     if (embedPreviewSubtitles) {
-      onProgress?.({ projectId, step: "draft", percent: 96, message: "Đang nhúng phụ đề tiếng Việt vào bản nháp" });
-      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath, outputPath });
+      onProgress?.({
+        projectId,
+        step: "draft",
+        percent: 96,
+        message: isTikTokKaraoke
+          ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
+          : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
+      });
+      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
     } else {
       await ffmpeg.copyMedia({ inputPath: decoratedOutputPath, outputPath });
     }
@@ -8498,7 +8562,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await ffmpeg.copyMedia({ inputPath: voicedPath, outputPath: undecoratedOutputPath });
     } else {
       await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "rendering", percent: 86, message: "Đang chèn phụ đề đã căn theo cụm" });
-      await ffmpeg.burnSubtitles({ videoPath: voicedPath, subtitlePath, outputPath: undecoratedOutputPath });
+      let effectiveSubtitlePath = subtitlePath;
+      if (project.videoDecoration?.subtitleStyle === "tiktok_karaoke") {
+        const assPath = subtitlePath.replace(/\.srt$/, ".ass");
+        const assContent = buildTikTokKaraokeAssContent(buildWordTimestampsFromSegments(subtitleSegments));
+        await this.projectStore.writeText(assPath, assContent);
+        effectiveSubtitlePath = assPath;
+      }
+      await ffmpeg.burnSubtitles({ videoPath: voicedPath, subtitlePath: effectiveSubtitlePath, outputPath: undecoratedOutputPath });
     }
     await this.applyProjectVideoDecoration({
       ffmpeg,
@@ -8704,9 +8775,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await ffmpeg.copyMedia({ inputPath: videoForSubtitles, outputPath: undecoratedOutputPath });
     } else {
       await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "rendering", percent: 84, message: "Đang chèn phụ đề vào video" });
+      let effectiveSubtitlePath = subtitlePath;
+      if (project.videoDecoration?.subtitleStyle === "tiktok_karaoke") {
+        const assPath = subtitlePath.replace(/\.srt$/, ".ass");
+        const assContent = buildTikTokKaraokeAssContent(buildWordTimestampsFromSegments(exportSegments));
+        await this.projectStore.writeText(assPath, assContent);
+        effectiveSubtitlePath = assPath;
+      }
       await ffmpeg.burnSubtitles({
         videoPath: videoForSubtitles,
-        subtitlePath,
+        subtitlePath: effectiveSubtitlePath,
         outputPath: undecoratedOutputPath
       });
     }

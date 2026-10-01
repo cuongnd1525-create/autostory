@@ -129,6 +129,23 @@ function detectGeminiArtifact(payload) {
     };
   }
   const script = unwrapStoryScript(payload);
+  if (Array.isArray(script?.segments) && script.segments.length > 0) {
+    return {
+      type: "story_recut_script",
+      importRoute: "initial_variant",
+      artifactType: String(script.artifactType || "highlight_cut_script"),
+      workflow: String(script.workflow || ""),
+      scriptId: Number(script.scriptId || script.script_id || 0),
+      segmentCount: script.segments.length,
+      evidenceCount: 0,
+      suggestedTitle: script.suggestedTitle || script.title || script.shared_top_banner_text || "",
+      partBadge: script.partBadge || script.part_badge || "",
+      cameraLabel: script.cameraLabel || script.camera_label || "",
+      titleStyle: script.titleStyle || script.title_style || "",
+      subtitleStyle: script.subtitleStyle || script.subtitle_style || "",
+      topLevelKeys: Object.keys(script)
+    };
+  }
   const narrativeBeats = script?.narrativeBeats || script?.narrative_beats;
   if (Array.isArray(narrativeBeats)) {
     return {
@@ -139,18 +156,11 @@ function detectGeminiArtifact(payload) {
       scriptId: Number(script.scriptId || script.script_id || 0),
       segmentCount: narrativeBeats.length,
       evidenceCount: 0,
-      topLevelKeys: Object.keys(script)
-    };
-  }
-  if (Array.isArray(script?.segments)) {
-    return {
-      type: "story_recut_script",
-      importRoute: "initial_variant",
-      artifactType: String(script.artifactType || ""),
-      workflow: String(script.workflow || ""),
-      scriptId: Number(script.scriptId || script.script_id || 0),
-      segmentCount: script.segments.length,
-      evidenceCount: 0,
+      suggestedTitle: script.suggestedTitle || script.title || script.shared_top_banner_text || "",
+      partBadge: script.partBadge || script.part_badge || "",
+      cameraLabel: script.cameraLabel || script.camera_label || "",
+      titleStyle: script.titleStyle || script.title_style || "",
+      subtitleStyle: script.subtitleStyle || script.subtitle_style || "",
       topLevelKeys: Object.keys(script)
     };
   }

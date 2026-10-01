@@ -14,8 +14,12 @@ function list(value) {
 
 function isStorySpineScript(payload = {}) {
   const nested = payload?.revisedScript || payload?.revised_script || payload;
-  return Array.isArray(nested?.narrativeBeats || nested?.narrative_beats)
-    && (nested.narrativeBeats || nested.narrative_beats).length > 0;
+  const beats = nested?.narrativeBeats || nested?.narrative_beats;
+  if (!Array.isArray(beats) || beats.length === 0) return false;
+  if (Array.isArray(nested?.segments) && nested.segments.length > 0) {
+    return false;
+  }
+  return beats.some((beat) => beat && (beat.sourceStartSec !== undefined || beat.source_start_sec !== undefined));
 }
 
 function normalizeContract(script = {}) {

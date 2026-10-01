@@ -93,11 +93,11 @@
                     <span id="mode-category-count" class="mode-category-count">1 chế độ</span>
                   </div>
                   <div class="mode-grid">
-              <button class="mode-card hidden" data-mode="recap" data-mode-group="legacy" type="button">
-                <span>CHẾ ĐỘ TÓM TẮT PHIM</span>
-                <strong>Tóm tắt phim (AI)</strong>
-                <p>Tự động hiểu cốt truyện, chọn cảnh và viết recap ngắn.</p>
-                <em>Gemini chọn các cảnh hay nhất theo thời lượng và tốc độ giọng đọc.</em>
+              <button class="mode-card recap-mode-card mode-category-hidden" data-mode="recap" data-mode-group="story" type="button">
+                <span>AI VIDEO RECAP <b>Đồng bộ thị giác</b></span>
+                <strong>Tóm tắt video / phim (Editor-Grade)</strong>
+                <p>Tự động phân tích cốt truyện, gắn chặt lời bình vào hành động thị giác, đồng bộ A/V chuẩn editor chuyên nghiệp.</p>
+                <em>Hỗ trợ Full Auto và Review trước khi xuất bản master pristine.</em>
               </button>
               <button class="mode-card mode-category-hidden hidden" data-mode="script_rewrite" data-mode-group="legacy" type="button">
                 <span>CHẾ ĐỘ VIẾT LẠI KỊCH BẢN</span>
@@ -237,7 +237,8 @@
               </div>
               <label>Kiểu kịch bản</label>
               <select id="manual-prompt-profile">
-                <option value="independent" selected>Kịch bản độc lập (1-5 bản)</option>
+                <option value="viral_tiktok_crime_part1" selected>TikTok Viral Bodycam (Part 1 - 8 nhịp xen kẽ)</option>
+                <option value="independent">Kịch bản độc lập (1-5 bản)</option>
                 <option value="serialized_interleaved">Series Part 1-3 xen kẽ Voice / Âm gốc</option>
                 <option value="serialized_genz">Series Part 1-3 - Gen Z đời thường</option>
                 <option value="viral_police_blotter">Viral Police Blotter (Hook + 4 khối narrator)</option>
@@ -452,6 +453,29 @@
                 </select>
                 <small>Tốc độ càng nhanh thì kịch bản có thể chứa nhiều từ hơn trong cùng thời lượng.</small>
               </div>
+            </div>
+            <div class="two-column recap-options recap-only">
+              <div class="field-card">
+                <label>Chế độ quy trình (Workflow)</label>
+                <select id="recap-workflow-mode">
+                  <option value="full_auto" selected>Full Auto (Tự động xuất Master)</option>
+                  <option value="review">Review Before Final Render (Kiểm tra Draft trước)</option>
+                </select>
+                <small>Review mode cho phép xem trước draft proxy và kiểm tra semantic sync trước khi render bản nét.</small>
+              </div>
+              <div class="field-card">
+                <label>Độ trễ hình ảnh dẫn trước (Visual Lead)</label>
+                <select id="recap-visual-lead">
+                  <option value="0.25" selected>250ms (Tiêu chuẩn Editor - Khuyên dùng)</option>
+                  <option value="0.15">150ms (Nhịp nhanh)</option>
+                  <option value="0.35">350ms (Dẫn dắt dài)</option>
+                </select>
+                <small>Hình ảnh luôn đi trước lời đọc 0-500ms để khán giả thấy chi tiết trước khi nghe nói đến.</small>
+              </div>
+            </div>
+            <div class="field-card recap-only">
+              <label class="check-row"><input id="recap-allow-reuse" type="checkbox" /> Cho phép lặp lại cảnh (Mặc định: không lặp lại)</label>
+              <small>Tắt: Mỗi đoạn phim chỉ dùng đúng 1 lần trong recap, bảo đảm tính tự nhiên và liền mạch.</small>
             </div>
             <div class="field-card recap-only">
               <label class="check-row"><input id="viral-optimization" type="checkbox" checked /> Tối ưu viral & retention TikTok</label>
@@ -1042,7 +1066,6 @@
                 <button id="diarize-button" class="secondary-button">Phân vai AI</button>
               </div>
             </div>
-            <div id="highlight-variant-bar" class="variant-bar hidden"></div>
             <div id="highlight-revision-bar" class="revision-bar hidden"></div>
             <div id="segment-list" class="segment-list"></div>
           </div>
@@ -1064,159 +1087,473 @@
             </div>
 
             <details class="mixer-card video-edit-group video-canvas-card" open>
-              <summary><span>Khung hình & nền</span><small id="video-canvas-ratio-label">9:16</small></summary>
+              <summary>
+                <div class="summary-left">
+                  <span class="group-icon">📐</span>
+                  <span class="group-title">Khung hình & Nền</span>
+                </div>
+                <div class="summary-right">
+                  <span class="group-pill" id="video-canvas-ratio-label">9:16</span>
+                  <span class="chevron-icon">⌄</span>
+                </div>
+              </summary>
               <div class="video-edit-group-body">
-              <label class="check-row"><input id="video-canvas-enabled" type="checkbox" /> Áp dụng khung hình khi xuất</label>
-              <label for="video-canvas-aspect">Tỷ lệ khung hình</label>
-              <select id="video-canvas-aspect">
-                <option value="9:16">Dọc 9:16</option>
-                <option value="3:4">Dọc 3:4</option>
-                <option value="4:3">Ngang 4:3</option>
-                <option value="custom">Tự do</option>
-              </select>
-              <div id="video-canvas-custom-size" class="canvas-size-grid hidden">
-                <label>Chiều rộng
-                  <input id="video-canvas-width" type="number" min="320" max="3840" step="2" value="1080" />
-                </label>
-                <label>Chiều cao
-                  <input id="video-canvas-height" type="number" min="320" max="3840" step="2" value="1920" />
-                </label>
-              </div>
-              <label class="check-row"><input id="blur-background-enabled" type="checkbox" /> Thêm nền video phóng to và làm mờ</label>
-              <label>Độ mờ nền <b id="blur-background-strength-value">24</b></label>
-              <input id="blur-background-strength" type="range" min="6" max="40" value="24" />
-              <div class="editor-inline-grid">
-                <label>Kích thước video <b id="foreground-scale-value">100%</b>
-                  <input id="foreground-scale" type="range" min="50" max="160" value="100" />
-                </label>
-                <button id="reset-foreground-layout" class="secondary-button" type="button">Đặt lại vị trí</button>
-              </div>
-              <input id="foreground-x" type="hidden" value="50" />
-              <input id="foreground-y" type="hidden" value="50" />
+                <div class="master-toggle-row">
+                  <div class="master-toggle-info">
+                    <strong>Áp dụng khung hình khi xuất</strong>
+                    <small>Tự động resize video theo tỷ lệ canvas</small>
+                  </div>
+                  <label class="switch-control">
+                    <input id="video-canvas-enabled" type="checkbox" />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+
+                <div class="group-options">
+                  <div class="form-row">
+                    <label for="video-canvas-aspect" class="field-label">Tỷ lệ khung hình</label>
+                    <select id="video-canvas-aspect" class="sleek-select">
+                      <option value="9:16">Dọc 9:16 (TikTok / Reels / Shorts)</option>
+                      <option value="3:4">Dọc 3:4 (Facebook / Instagram)</option>
+                      <option value="4:3">Ngang 4:3</option>
+                      <option value="custom">Tự do</option>
+                    </select>
+                  </div>
+
+                  <div id="video-canvas-custom-size" class="canvas-size-grid hidden">
+                    <label class="field-label">Chiều rộng
+                      <input id="video-canvas-width" type="number" min="320" max="3840" step="2" value="1080" />
+                    </label>
+                    <label class="field-label">Chiều cao
+                      <input id="video-canvas-height" type="number" min="320" max="3840" step="2" value="1920" />
+                    </label>
+                  </div>
+
+                  <div class="sub-toggle-row">
+                    <label class="switch-control switch-sm">
+                      <input id="blur-background-enabled" type="checkbox" />
+                      <span class="switch-slider"></span>
+                    </label>
+                    <span class="sub-toggle-title">Thêm nền video phóng to và làm mờ</span>
+                  </div>
+
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Độ mờ nền</span>
+                      <b id="blur-background-strength-value" class="value-badge">24</b>
+                    </div>
+                    <input id="blur-background-strength" type="range" min="6" max="40" value="24" class="sleek-slider" />
+                  </div>
+
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Kích thước video</span>
+                      <div class="slider-actions">
+                        <b id="foreground-scale-value" class="value-badge">100%</b>
+                        <button id="reset-foreground-layout" class="btn-ghost-xs" type="button" title="Đặt lại kích thước và vị trí">↺ Đặt lại vị trí</button>
+                      </div>
+                    </div>
+                    <input id="foreground-scale" type="range" min="50" max="160" value="100" class="sleek-slider" />
+                  </div>
+                  <input id="foreground-x" type="hidden" value="50" />
+                  <input id="foreground-y" type="hidden" value="50" />
+                </div>
               </div>
             </details>
+
             <details class="mixer-card video-edit-group" open>
-              <summary><span>Tiêu đề chung</span><small>Mọi variant</small></summary>
+              <summary>
+                <div class="summary-left">
+                  <span class="group-icon">🏷️</span>
+                  <span class="group-title">Tiêu đề chung</span>
+                </div>
+                <div class="summary-right">
+                  <span class="group-pill">Mọi variant</span>
+                  <span class="chevron-icon">⌄</span>
+                </div>
+              </summary>
               <div class="video-edit-group-body">
-              <label class="check-row"><input id="top-caption-enabled" type="checkbox" /> Hiển thị tiêu đề phía trên video</label>
-              <label for="top-caption-text">Nội dung tiêu đề</label>
-              <textarea id="top-caption-text" rows="3" maxlength="180" placeholder="Nhập tiêu đề hiển thị trên video..."></textarea>
-              <small id="top-caption-source">Khi bật, tool dùng một tiêu đề chung cho toàn bộ variant. Bạn vẫn có thể sửa lại.</small>
-              <label>Cỡ chữ tiêu đề <b id="top-caption-font-size-value">52</b></label>
-              <input id="top-caption-font-size" type="range" min="32" max="72" value="52" />
-              <label>Vị trí tiêu đề <b id="top-caption-y-value">8%</b></label>
-              <input id="top-caption-y" type="range" min="3" max="75" value="8" />
-              <small>Khi bật chế độ chỉnh sửa, có thể kéo tiêu đề trực tiếp trên preview.</small>
+                <div class="master-toggle-row">
+                  <div class="master-toggle-info">
+                    <strong>Hiển thị tiêu đề phía trên video</strong>
+                    <small id="top-caption-source">Dùng một tiêu đề chung cho toàn bộ variant.</small>
+                  </div>
+                  <label class="switch-control">
+                    <input id="top-caption-enabled" type="checkbox" />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+
+                <div class="group-options">
+                  <div class="form-row">
+                    <label for="top-caption-text" class="field-label">Nội dung tiêu đề</label>
+                    <textarea id="top-caption-text" rows="2" maxlength="180" placeholder="Nhập tiêu đề hiển thị trên video..." class="sleek-textarea"></textarea>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="top-caption-style" class="field-label">Kiểu tiêu đề</label>
+                    <select id="top-caption-style" class="sleek-select">
+                      <option value="classic">Hộp trắng chữ đen cổ điển</option>
+                      <option value="viral_green">TikTok Green Badge (Xanh lá chữ trắng)</option>
+                    </select>
+                  </div>
+
+                  <div class="dual-slider-grid">
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Cỡ chữ</span>
+                        <b id="top-caption-font-size-value" class="value-badge">52</b>
+                      </div>
+                      <input id="top-caption-font-size" type="range" min="32" max="72" value="52" class="sleek-slider" />
+                    </div>
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Vị trí dọc</span>
+                        <b id="top-caption-y-value" class="value-badge">8%</b>
+                      </div>
+                      <input id="top-caption-y" type="range" min="3" max="75" value="8" class="sleek-slider" />
+                    </div>
+                  </div>
+                  <small class="hint-text">💡 Có thể kéo thả tiêu đề trực tiếp ngay trên khung preview.</small>
+                </div>
               </div>
             </details>
+
             <details class="mixer-card video-edit-group" open>
-              <summary><span>Nhãn video</span><small>Part / tập</small></summary>
+              <summary>
+                <div class="summary-left">
+                  <span class="group-icon">🔖</span>
+                  <span class="group-title">Nhãn Part / Tập</span>
+                </div>
+                <div class="summary-right">
+                  <span class="group-pill">Part</span>
+                  <span class="chevron-icon">⌄</span>
+                </div>
+              </summary>
               <div class="video-edit-group-body">
-              <label class="check-row"><input id="part-label-enabled" type="checkbox" /> Hiển thị nhãn trên video</label>
-              <label class="check-row"><input id="part-label-auto" type="checkbox" checked /> Tự động theo Part của variant</label>
-              <label for="part-label-text">Nội dung thủ công</label>
-              <input id="part-label-text" type="text" maxlength="48" placeholder="Ví dụ: PART 1" />
-              <div class="editor-inline-grid">
-                <label>Kiểu nhãn
-                  <select id="part-label-style">
-                    <option value="compact">Tối giản</option>
-                    <option value="bold">Nổi bật</option>
-                    <option value="no_background">Không nền</option>
-                  </select>
-                </label>
-                <label>Căn chữ
-                  <select id="part-label-alignment">
-                    <option value="center">Giữa</option>
-                    <option value="left">Trái</option>
-                    <option value="right">Phải</option>
-                  </select>
-                </label>
-              </div>
-              <label class="check-row"><input id="part-label-uppercase" type="checkbox" checked /> Viết hoa</label>
-              <div class="editor-inline-grid part-label-colors">
-                <label>Màu chữ <input id="part-label-text-color" type="color" value="#ffffff" /></label>
-                <label>Màu nền <input id="part-label-background-color" type="color" value="#0b0d11" /></label>
-              </div>
-              <label>Cỡ chữ nhãn <b id="part-label-font-size-value">38</b></label>
-              <input id="part-label-font-size" type="range" min="20" max="72" value="38" />
-              <label>Độ trong suốt nền <b id="part-label-opacity-value">82%</b></label>
-              <input id="part-label-opacity" type="range" min="0" max="100" value="82" />
-              <label>Vị trí ngang <b id="part-label-x-value">12%</b></label>
-              <input id="part-label-x" type="range" min="5" max="95" value="12" />
-              <label>Vị trí dọc <b id="part-label-y-value">8%</b></label>
-              <input id="part-label-y" type="range" min="3" max="97" value="8" />
-              <small>Có thể kéo nhãn trực tiếp trên preview. Khi bật tự động, mỗi variant sẽ nhận PART 1, PART 2, PART 3 tương ứng.</small>
+                <div class="master-toggle-row">
+                  <div class="master-toggle-info">
+                    <strong>Hiển thị nhãn trên video</strong>
+                    <small>Gắn nhãn PART 1, PART 2... hoặc nhãn tùy chỉnh</small>
+                  </div>
+                  <label class="switch-control">
+                    <input id="part-label-enabled" type="checkbox" />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+
+                <div class="group-options">
+                  <div class="sub-toggle-row">
+                    <label class="switch-control switch-sm">
+                      <input id="part-label-auto" type="checkbox" checked />
+                      <span class="switch-slider"></span>
+                    </label>
+                    <span class="sub-toggle-title">Tự động theo Part của variant</span>
+                  </div>
+
+                  <div class="form-row">
+                    <label for="part-label-text" class="field-label">Nội dung thủ công</label>
+                    <input id="part-label-text" type="text" maxlength="48" placeholder="Ví dụ: PART 1" class="sleek-input" />
+                  </div>
+
+                  <div class="dual-field-grid">
+                    <div class="form-row">
+                      <label for="part-label-style" class="field-label">Kiểu nhãn</label>
+                      <select id="part-label-style" class="sleek-select">
+                        <option value="compact">Tối giản</option>
+                        <option value="bold">Nổi bật</option>
+                        <option value="viral_green">TikTok Green Badge</option>
+                        <option value="no_background">Không nền</option>
+                      </select>
+                    </div>
+                    <div class="form-row">
+                      <label for="part-label-alignment" class="field-label">Căn chữ</label>
+                      <select id="part-label-alignment" class="sleek-select">
+                        <option value="center">Giữa</option>
+                        <option value="left">Trái</option>
+                        <option value="right">Phải</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div class="dual-field-grid">
+                    <div class="sub-toggle-row">
+                      <label class="switch-control switch-sm">
+                        <input id="part-label-uppercase" type="checkbox" checked />
+                        <span class="switch-slider"></span>
+                      </label>
+                      <span class="sub-toggle-title">Viết hoa</span>
+                    </div>
+                    <div class="color-picker-pair">
+                      <label class="color-item" title="Màu chữ">
+                        <span>Chữ</span>
+                        <input id="part-label-text-color" type="color" value="#ffffff" />
+                      </label>
+                      <label class="color-item" title="Màu nền">
+                        <span>Nền</span>
+                        <input id="part-label-background-color" type="color" value="#0b0d11" />
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="dual-slider-grid">
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Cỡ chữ</span>
+                        <b id="part-label-font-size-value" class="value-badge">38</b>
+                      </div>
+                      <input id="part-label-font-size" type="range" min="20" max="72" value="38" class="sleek-slider" />
+                    </div>
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Độ trong suốt nền</span>
+                        <b id="part-label-opacity-value" class="value-badge">82%</b>
+                      </div>
+                      <input id="part-label-opacity" type="range" min="0" max="100" value="82" class="sleek-slider" />
+                    </div>
+                  </div>
+
+                  <div class="dual-slider-grid">
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Vị trí ngang</span>
+                        <b id="part-label-x-value" class="value-badge">12%</b>
+                      </div>
+                      <input id="part-label-x" type="range" min="5" max="95" value="12" class="sleek-slider" />
+                    </div>
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Vị trí dọc</span>
+                        <b id="part-label-y-value" class="value-badge">8%</b>
+                      </div>
+                      <input id="part-label-y" type="range" min="3" max="97" value="8" class="sleek-slider" />
+                    </div>
+                  </div>
+                  <small class="hint-text">💡 Có thể kéo thả nhãn trực tiếp ngay trên khung preview.</small>
+                </div>
               </div>
             </details>
+
+            <details class="mixer-card video-edit-group" open>
+              <summary>
+                <div class="summary-left">
+                  <span class="group-icon">📹</span>
+                  <span class="group-title">Nhãn Camera</span>
+                </div>
+                <div class="summary-right">
+                  <span class="group-pill">CAM 1</span>
+                  <span class="chevron-icon">⌄</span>
+                </div>
+              </summary>
+              <div class="video-edit-group-body">
+                <div class="master-toggle-row">
+                  <div class="master-toggle-info">
+                    <strong>Hiển thị nhãn Camera</strong>
+                    <small>CAM 1 chữ đỏ viền đen góc trên</small>
+                  </div>
+                  <label class="switch-control">
+                    <input id="camera-label-enabled" type="checkbox" />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+
+                <div class="group-options">
+                  <div class="form-row">
+                    <label for="camera-label-text" class="field-label">Nội dung nhãn Camera</label>
+                    <input id="camera-label-text" type="text" maxlength="24" value="CAM 1" placeholder="Ví dụ: CAM 1" class="sleek-input" />
+                  </div>
+                </div>
+              </div>
+            </details>
+
             <details class="mixer-card video-edit-group">
-              <summary><span>Âm thanh & xuất</span><small>Mixer</small></summary>
+              <summary>
+                <div class="summary-left">
+                  <span class="group-icon">🎛️</span>
+                  <span class="group-title">Âm thanh & Xuất</span>
+                </div>
+                <div class="summary-right">
+                  <span class="group-pill">Mixer</span>
+                  <span class="chevron-icon">⌄</span>
+                </div>
+              </summary>
               <div class="video-edit-group-body">
-              <label>Nhạc nền (BGM)</label>
-              <div class="inline-field">
-                <input id="bgm-path" type="text" placeholder="Chọn nhạc nền (.wav, .mp3)..." />
-                <button class="secondary-button">Chọn file</button>
-              </div>
-              <label>Thuyết minh (Giọng) <b id="voice-vol-value">100%</b></label>
-              <input id="voice-volume" type="range" min="0" max="150" value="100" />
-              <label>Video gốc dưới thuyết minh <b id="source-vol-value">20%</b></label>
-              <input id="source-volume" type="range" min="0" max="100" value="20" />
-              <small>Mặc định 20%: giữ lại một chút âm nền để video không bị tắt tiếng đột ngột khi có thuyết minh.</small>
-              <label>Nhạc nền BGM <b id="bgm-vol-value">40%</b></label>
-              <input id="bgm-volume" type="range" min="0" max="100" value="40" />
-              <label>Giảm nền khi có thuyết minh <b id="ducking-value">70%</b></label>
-              <input id="ducking" type="range" min="0" max="100" value="70" />
-              <label>Kiểu phụ đề khi xuất video</label>
-              <select id="subtitle-style">
-                <option value="white_black_outline">Trắng viền đen (mặc định)</option>
-                <option value="yellow_black_outline">Vàng viền đen</option>
-              </select>
-              <label class="check-row"><input id="show-subtitles" type="checkbox" /> Hiển thị phụ đề khi xuất video</label>
-              <label class="check-row"><input id="storytime-continuous-voice" type="checkbox" checked /> Storytime: thuyết minh phủ kín từng cảnh</label>
-              <label>OmniVoice khi nhiều cảnh</label>
-              <select id="omnivoice-render-mode">
-                <option value="segment">Từng cảnh - khớp chính xác, không tải lại model</option>
-                <option value="batch">Theo cụm tối đa 45s - nhanh nhất</option>
-              </select>
-              <label>Chuyển cảnh giữa các clip</label>
-              <select id="transition-style">
-                <option value="hard_cut">Cắt thẳng (mặc định)</option>
-                <option value="crossfade">Hòa tan ngắn</option>
-              </select>
-              <label class="check-row"><input id="mixer-visual-remix" type="checkbox" /> Biến tấu hình ảnh (Visual Remix)</label>
-              <label class="check-row"><input id="auto-fit-voice" type="checkbox" checked /> Tự động ép tốc độ đọc (Auto-Fit)</label>
+                <div class="form-row">
+                  <label class="field-label">Nhạc nền (BGM)</label>
+                  <div class="inline-field">
+                    <input id="bgm-path" type="text" placeholder="Chọn nhạc nền (.wav, .mp3)..." class="sleek-input" />
+                    <button class="secondary-button" type="button">Chọn file</button>
+                  </div>
+                </div>
+
+                <div class="dual-slider-grid">
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Thuyết minh</span>
+                      <b id="voice-vol-value" class="value-badge">100%</b>
+                    </div>
+                    <input id="voice-volume" type="range" min="0" max="150" value="100" class="sleek-slider" />
+                  </div>
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Nhạc nền BGM</span>
+                      <b id="bgm-vol-value" class="value-badge">40%</b>
+                    </div>
+                    <input id="bgm-volume" type="range" min="0" max="100" value="40" class="sleek-slider" />
+                  </div>
+                </div>
+
+                <div class="dual-slider-grid">
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Video gốc</span>
+                      <b id="source-vol-value" class="value-badge">20%</b>
+                    </div>
+                    <input id="source-volume" type="range" min="0" max="100" value="20" class="sleek-slider" />
+                  </div>
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Giảm nền khi nói</span>
+                      <b id="ducking-value" class="value-badge">70%</b>
+                    </div>
+                    <input id="ducking" type="range" min="0" max="100" value="70" class="sleek-slider" />
+                  </div>
+                </div>
+
+                <div class="form-row">
+                  <label for="subtitle-style" class="field-label">Kiểu phụ đề khi xuất video</label>
+                  <select id="subtitle-style" class="sleek-select">
+                    <option value="white_black_outline">Trắng viền đen (mặc định)</option>
+                    <option value="tiktok_karaoke">TikTok Kinetic Karaoke (Cyan Active Word)</option>
+                    <option value="yellow_black_outline">Vàng viền đen</option>
+                  </select>
+                </div>
+
+                <div class="dual-field-grid">
+                  <div class="form-row">
+                    <label for="omnivoice-render-mode" class="field-label">OmniVoice khi nhiều cảnh</label>
+                    <select id="omnivoice-render-mode" class="sleek-select">
+                      <option value="segment">Từng cảnh - khớp chính xác</option>
+                      <option value="batch">Theo cụm tối đa 45s - nhanh nhất</option>
+                    </select>
+                  </div>
+                  <div class="form-row">
+                    <label for="transition-style" class="field-label">Chuyển cảnh giữa các clip</label>
+                    <select id="transition-style" class="sleek-select">
+                      <option value="hard_cut">Cắt thẳng (mặc định)</option>
+                      <option value="crossfade">Hòa tan ngắn</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="toggle-list">
+                  <label class="check-row"><input id="show-subtitles" type="checkbox" /> Hiển thị phụ đề khi xuất video</label>
+                  <label class="check-row"><input id="storytime-continuous-voice" type="checkbox" checked /> Storytime: thuyết minh phủ kín từng cảnh</label>
+                  <label class="check-row"><input id="mixer-visual-remix" type="checkbox" /> Biến tấu hình ảnh (Visual Remix)</label>
+                  <label class="check-row"><input id="auto-fit-voice" type="checkbox" checked /> Tự động ép tốc độ đọc (Auto-Fit)</label>
+                </div>
               </div>
             </details>
+
             <details class="mixer-card video-edit-group" open>
-              <summary><span>Xử lý video gốc</span><small>Che phụ đề</small></summary>
+              <summary>
+                <div class="summary-left">
+                  <span class="group-icon">🛡️</span>
+                  <span class="group-title">Xử lý video gốc</span>
+                </div>
+                <div class="summary-right">
+                  <span class="group-pill">Che phụ đề</span>
+                  <span class="chevron-icon">⌄</span>
+                </div>
+              </summary>
               <div class="video-edit-group-body">
-              <label class="check-row"><input id="source-subtitle-mask-enabled" type="checkbox" /> Che/xóa phụ đề gốc trong video</label>
-              <div class="subtitle-mask-actions">
-                <button id="edit-source-subtitle-mask" class="secondary-button" type="button" disabled>Chỉnh vùng trên preview</button>
-                <button id="reset-source-subtitle-mask" class="icon-button" type="button" title="Đặt lại vùng che toàn chiều rộng" aria-label="Đặt lại vùng che">↺</button>
-              </div>
-              <small id="source-subtitle-mask-geometry" class="subtitle-mask-geometry">X 0% · Y 78% · Rộng 100% · Cao 16%</small>
-              <input id="source-subtitle-mask-x" type="hidden" value="0" />
-              <input id="source-subtitle-mask-width" type="hidden" value="100" />
-              <label>Kiểu che phụ đề gốc</label>
-              <select id="source-subtitle-mask-mode">
-                <option value="blur">Làm mờ vùng phụ đề</option>
-                <option value="dark">Che bằng nền tối</option>
-              </select>
-              <label>Chiều cao vùng che <b id="source-subtitle-mask-height-value">16%</b></label>
-              <input id="source-subtitle-mask-height" type="range" min="4" max="45" value="16" />
-              <label>Cách đáy video <b id="source-subtitle-mask-bottom-value">6%</b></label>
-              <input id="source-subtitle-mask-bottom" type="range" min="0" max="96" value="6" />
-              <label>Độ mờ/độ tối <b id="source-subtitle-mask-strength-value">18</b></label>
-              <input id="source-subtitle-mask-strength" type="range" min="2" max="40" value="18" />
+                <div class="master-toggle-row">
+                  <div class="master-toggle-info">
+                    <strong>Che/xóa phụ đề gốc trong video</strong>
+                    <small>Tạo vùng làm mờ hoặc nền tối che subtitle gốc</small>
+                  </div>
+                  <label class="switch-control">
+                    <input id="source-subtitle-mask-enabled" type="checkbox" />
+                    <span class="switch-slider"></span>
+                  </label>
+                </div>
+
+                <div class="group-options">
+                  <div class="mask-control-bar">
+                    <button id="edit-source-subtitle-mask" class="secondary-button mask-edit-btn" type="button" disabled>
+                      <span class="btn-icon">🎯</span> Chỉnh vùng trên preview
+                    </button>
+                    <button id="reset-source-subtitle-mask" class="icon-button" type="button" title="Đặt lại vùng che toàn chiều rộng" aria-label="Đặt lại vùng che">↺</button>
+                    <span id="source-subtitle-mask-geometry" class="subtitle-mask-geometry">X 0% · Y 78% · Rộng 100% · Cao 16%</span>
+                  </div>
+
+                  <input id="source-subtitle-mask-x" type="hidden" value="0" />
+                  <input id="source-subtitle-mask-width" type="hidden" value="100" />
+
+                  <div class="form-row">
+                    <label for="source-subtitle-mask-mode" class="field-label">Kiểu che phụ đề gốc</label>
+                    <select id="source-subtitle-mask-mode" class="sleek-select">
+                      <option value="blur">Làm mờ vùng phụ đề (Blur)</option>
+                      <option value="dark">Che bằng nền tối (Solid/Dark)</option>
+                    </select>
+                  </div>
+
+                  <div class="dual-slider-grid">
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Chiều cao vùng che</span>
+                        <b id="source-subtitle-mask-height-value" class="value-badge">16%</b>
+                      </div>
+                      <input id="source-subtitle-mask-height" type="range" min="4" max="45" value="16" class="sleek-slider" />
+                    </div>
+                    <div class="slider-group">
+                      <div class="slider-header">
+                        <span class="field-label">Cách đáy video</span>
+                        <b id="source-subtitle-mask-bottom-value" class="value-badge">6%</b>
+                      </div>
+                      <input id="source-subtitle-mask-bottom" type="range" min="0" max="96" value="6" class="sleek-slider" />
+                    </div>
+                  </div>
+
+                  <div class="slider-group">
+                    <div class="slider-header">
+                      <span class="field-label">Độ mờ / Độ tối</span>
+                      <b id="source-subtitle-mask-strength-value" class="value-badge">18</b>
+                    </div>
+                    <input id="source-subtitle-mask-strength" type="range" min="2" max="40" value="18" class="sleek-slider" />
+                  </div>
+                </div>
               </div>
             </details>
           </div>
 
           <div class="hidden" style="display: none;">
+            <div id="highlight-variant-bar" class="variant-bar hidden"></div>
             <div id="auto-story-status" class="preview-workflow-status hidden" aria-live="polite"></div>
             <section id="viral-diagnostics" class="viral-diagnostics hidden">
-              <button id="copy-viral-repair-prompt" type="button">Copy prompt sửa kịch bản</button>
+              <div class="viral-diagnostics-header">
+                <div>
+                  <span class="section-kicker">Viral preflight</span>
+                  <h3 id="viral-diagnostics-title">Chưa có dữ liệu đánh giá</h3>
+                </div>
+                <span id="viral-diagnostics-grade" class="viral-grade">--</span>
+              </div>
+              <div id="viral-diagnostics-metrics" class="viral-metrics"></div>
+              <div class="viral-diagnostics-section">
+                <h4>Cần sửa</h4>
+                <div id="viral-diagnostics-issues" class="viral-issue-list"></div>
+              </div>
+              <div class="viral-repair-actions">
+                <p>Copy prompt và dán vào đúng cuộc trò chuyện Gemini đã tạo variant này.</p>
+                <button id="copy-viral-repair-prompt" class="primary-button" type="button">
+                  Copy prompt sửa kịch bản
+                </button>
+              </div>
             </section>
+            <div id="voice-inspector" class="inspector-section hidden">
+              <h3>Hồ sơ giọng nhân vật</h3>
+              <div id="speaker-list" class="speaker-list"></div>
+            </div>
           </div>
         </section>
 
@@ -1250,15 +1587,17 @@
         </section>
 
         <aside class="inspector-panel log-panel" aria-label="Nhật ký xử lý">
-          <div class="log-title">
-            <span>Hoạt động</span>
+          <div class="log-panel-header">
+            <div class="log-tabs">
+              <button id="tab-studio-activity" class="log-tab-btn active" type="button">Hoạt động</button>
+              <button id="tab-studio-raw-log" class="log-tab-btn" type="button">Log thô</button>
+            </div>
             <div class="log-actions">
-              <button id="toggle-studio-raw-log" class="ghost-button" type="button">Hiện log thô</button>
-              <button id="copy-studio-log" class="ghost-button" type="button">Sao chép</button>
+              <button id="copy-studio-log" class="icon-button" type="button" title="Sao chép toàn bộ log">📋</button>
             </div>
           </div>
           <div id="studio-activity-feed" class="activity-feed"></div>
-          <pre id="studio-system-log" class="hidden"></pre>
+          <pre id="studio-system-log" class="system-log-terminal hidden"></pre>
         </aside>
 
         <section class="timeline-panel">
@@ -1309,7 +1648,8 @@
             </div>
             <span id="draft-review-ai-badge" class="manual-workflow-badge">AI theo Cài đặt</span>
             <div class="draft-review-buttons">
-              <button id="run-auto-review-all" class="primary-button" style="background: var(--accent); color: white;">Auto Review & Render Tất Cả</button>
+              <button id="run-auto-review-current" class="primary-button" style="background: var(--accent); color: white;">⚡ Auto Review & Render Bản Này</button>
+              <button id="run-auto-review-all" class="secondary-button" style="border-color: var(--accent); color: var(--text-color, #e0e0e0);">Auto Review & Render Tất Cả</button>
               <button id="run-configured-draft-review" class="secondary-button">Tạo gói & review bằng AI</button>
               <button id="cancel-configured-draft-review" class="secondary-button hidden" style="border-color: var(--danger); color: var(--danger);">Dừng</button>
               <button id="import-configured-draft-review" class="secondary-button hidden">Kiểm tra & import V2</button>

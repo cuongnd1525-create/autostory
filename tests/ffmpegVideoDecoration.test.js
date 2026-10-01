@@ -52,6 +52,24 @@ const {
         style: "compact"
       }
     });
+    const viralGreenSvg = buildVideoTitleOverlaySvg({
+      title: "Abusive Mom's Worst Nightmare Came True",
+      width: 1080,
+      height: 1920,
+      fontSize: 52,
+      yPercent: 8,
+      titleStyle: "viral_green",
+      cameraLabel: { text: "CAM 1", textColor: "#ff3333" },
+      partLabel: {
+        text: "Part 1",
+        style: "viral_green"
+      }
+    });
+    assert.ok(viralGreenSvg.includes('fill="#00A63E"'), "Title or part box must have green fill");
+    assert.ok(viralGreenSvg.includes('fill="#ffffff"'), "Title text must have white fill");
+    assert.ok(viralGreenSvg.includes(">CAM 1</text>"), "Camera label text must be present");
+    assert.ok(viralGreenSvg.includes('fill="#ff3333"'), "Camera label must be red");
+
     assert.ok(partOnlySvg.includes(">PART 2</text>"));
     assert.ok(partOnlySvg.includes('fill="#0b0d11"'));
     assert.ok(partOnlySvg.includes('fill-opacity="0.82"'));
