@@ -254,7 +254,7 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
 
   // ---------------------------------------------------------------- block narration writer + voice fit
   const narrEngine = (responses, config = CONFIG) => ({ config, project: {}, cache: '/tmp', asks: [],
-    async ask(key, input, schema, instruction, evidence, validate) { const r = responses.shift(); this.asks.push({ key, input, instruction }); if (!r) throw new Error(`unexpected ask ${key}`); return validate(typeof r === 'function' ? r(input) : r) || r; } });
+    async ask(key, input, schema, instruction, evidence, validate) { const r = responses.shift(); this.asks.push({ key, input, instruction, evidence }); if (!r) throw new Error(`unexpected ask ${key}`); return validate(typeof r === 'function' ? r(input) : r) || r; } });
   const line = (text, extra = {}) => ({ accessGranted: true, narrations: [{ blockId: 'story_setup', narrationText: text, previewVi: 'vi', narratorFunction: 'CONTEXT', newInformation: ['call'], newInformationRefs: ['e1'], emotionTag: 'NEUTRAL', ...extra }] });
   const MODEL = { events: [{ id: 'e1', startSec: 8, endSec: 25, summary: 'the call', isReveal: false }], quotes: [] };
   const withModes = () => Delivery.applyDeliveryBlocks(BEATS, BLOCKS());
