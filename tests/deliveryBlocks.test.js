@@ -328,6 +328,22 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     const ownGate = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), BLOCKS()), ownSummary, localModel);
     assert.ok(!ownGate.issues.some(i => i.code === 'dialogue_redundancy'), JSON.stringify(ownGate.issues));
 
+    const reportModel = {
+      ...localModel,
+      quotes: [
+        { id: 'q-report', startSec: 9, endSec: 12.5, text: 'My girlfriend is inside being attacked by her parents.', epistemic: 'witness_statement' },
+        localModel.quotes[1]
+      ]
+    };
+    const reported = new Map([['story_setup', { narrationText: 'A man reported his girlfriend was being attacked by her parents.', narratorFunction: 'CONTEXT',
+      newInformation: ['dispatch claim'], newInformationRefs: ['q-report'] }]]);
+    const reportedGate = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), BLOCKS()), reported, reportModel);
+    assert.ok(!reportedGate.issues.some(i => i.code === 'epistemic'), JSON.stringify(reportedGate.issues));
+    const unhedged = new Map([['story_setup', { narrationText: 'His girlfriend was being attacked by her parents.', narratorFunction: 'CONTEXT',
+      newInformation: ['dispatch claim'], newInformationRefs: ['q-report'] }]]);
+    const unhedgedGate = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), BLOCKS()), unhedged, reportModel);
+    assert.ok(unhedgedGate.issues.some(i => i.code === 'epistemic'), JSON.stringify(unhedgedGate.issues));
+
     const nextRepeat = new Map([['story_setup', { narrationText: 'Please just get her out safely.', narratorFunction: 'CONTEXT',
       newInformation: ['handoff'], newInformationRefs: ['e1'] }]]);
     const nextGate = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), BLOCKS()), nextRepeat, localModel);
