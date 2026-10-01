@@ -35,10 +35,10 @@ const CONFIG = { targetDurationMinSec: 30, targetDurationMaxSec: 90, narration: 
 const EVIDENCE = [{ id: 'clip', sourceStart: 0, duration: 300 }];
 const codes = v => v.map(x => x.code);
 
-function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
+function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {}) {
   const withModes = Delivery.applyDeliveryBlocks(BEATS, blocks).map(b => ({ ...b,
     audioStrategy: b.audioMode === 'original_audio' ? 'original' : 'narrator_over', speaks: b.audioMode !== 'original_audio', narratorText: '' }));
-  const narrated = Delivery.blockTimeline(withModes, blocks).map(b => (b.mode === 'narrated_story' ? { ...b, narrationText: passage, previewVi: 'vi' } : b));
+  const narrated = Delivery.blockTimeline(withModes, blocks).map(b => (b.mode === 'narrated_story' ? { ...b, narrationText: passage, previewVi: 'vi', ...narratedMeta } : b));
   const script = compileV3(withModes, { story: { scriptId: 1, title: 't' }, evidence: EVIDENCE, config: CONFIG, sourceDuration: 300, deliveryBlocks: narrated });
   return { script, highlight: highlightV3(script, { scriptId: 1 }, EVIDENCE) };
 }
@@ -99,7 +99,7 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
     assert.throws(() => DubbingService.normalizeHighlightCutScript(bad, 300), /exactly one block_narration_text/);
   });
 
-  await ok('5. safe word ceiling is based on the WHOLE block duration (a ceiling, not a quota)', async () => {
+  await ok('5. safe word target is based on the WHOLE block; measured TTS fit is authoritative', async () => {
     const timeline = Delivery.blockTimeline(BEATS, BLOCKS());
     const k = timeline.findIndex(b => b.blockId === 'story_setup');
     const payload = BlockNarration.blockPayload(timeline, k, { events: [], quotes: [] }, 3.0);
@@ -111,8 +111,14 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
     // ...but fits the block and compiles.
     assert.ok(compiler.words(PASSAGE) <= payload.safeWords);
     assert.doesNotThrow(() => compiledScript());
-    // Over the whole-block ceiling -> VOICE_BUDGET (never silently trimmed).
+    // Old/manual artifacts with NO measured voice-fit metadata still use the
+    // conservative word target as a compatibility guard.
     assert.throws(() => compiledScript(BLOCKS(), `${PASSAGE} ${PASSAGE}`), e => e.kind === 'VOICE_BUDGET');
+    // But a measured block may be slightly over the advisory word target when
+    // the actual synthesized voice safely fits the renderer's <=1.08 ratio.
+    const slightlyOver = Array(payload.safeWords + 1).fill('word').join(' ');
+    assert.doesNotThrow(() => compiledScript(BLOCKS(), slightlyOver, { rawBlockVoiceSec: 16.8, fitRatio: 1.05 }));
+    assert.throws(() => compiledScript(BLOCKS(), slightlyOver, { rawBlockVoiceSec: 17.6, fitRatio: 1.10 }), e => e.kind === 'VOICE_BUDGET');
     // Context for the writer: whole block, neighbours, handoff.
     assert.strictEqual(payload.beats.length, 3);
     assert.strictEqual(payload.precedingRawBlock.blockId, 'raw_hook');
@@ -269,6 +275,26 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
     assert.strictEqual(out.blocks.filter(b => b.mode === 'raw_evidence').length, 3);
   });
 
+  await ok('Writer: advisory word target never blocks a passage whose measured TTS fits', async () => {
+    const text14 = 'Police answered an assault call as a man begged them to save his girlfriend.';
+    const shortBlocks = [
+      { blockId: 'raw_hook', mode: 'raw_evidence', beatIds: ['h'], storyFunction: 'hook', evidenceFunction: 'hook' },
+      { blockId: 'story_setup', mode: 'narrated_story', beatIds: ['n1'], storyFunction: 'rewind', narratorFunction: 'CONTEXT',
+        narrationIntent: 'explain the assault call', sourceAudioTreatment: 'voiceover_with_ambient', handoffTargetBeatId: 'n2' },
+      { blockId: 'raw_rest', mode: 'raw_evidence', beatIds: ['n2', 'n3', 'r1', 'r2', 'end'], storyFunction: 'evidence', evidenceFunction: 'rest' }
+    ];
+    const shortConfig = { ...CONFIG, narration: { ...CONFIG.narration, measuredWordsPerSecond: 2.7 } };
+    const engine = narrEngine([line(text14)], shortConfig);
+    const out = await BlockNarration.narrateBlocks({ engine, service: { measuredVoice: async () => ({ meta: { duration: 5.25 } }) },
+      story: { scriptId: 1 }, model: MODEL, beats: Delivery.applyDeliveryBlocks(BEATS, shortBlocks), blocks: shortBlocks, evidence: [] });
+    const blk = out.blocks.find(b => b.blockId === 'story_setup');
+    assert.strictEqual(blk.safeWords, 12);
+    assert.strictEqual(blk.words, 14);
+    assert.strictEqual(blk.fitRatio, 1.05);
+    assert.strictEqual(out.audit.rewrites.length, 0);
+    assert.strictEqual(out.audit.blocks[0].advisorySafeWordsExceeded, true);
+  });
+
   await ok('Writer: voice that cannot fit -> text-only rewrite FIRST; still unfit -> director repair request (never dropped/trimmed)', async () => {
     const shorter = 'Officers raced to a reported assault. The caller said his girlfriend was being attacked inside. The officer had no idea what waited.';
     const engine = narrEngine([line(PASSAGE), line(shorter)]);
@@ -278,6 +304,9 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE) {
     assert.strictEqual(engine.asks.length, 2);
     assert.match(engine.asks[1].key, /_rewrite1-/);
     assert.match(engine.asks[1].input.blocks[0].rewriteReason, /18\.40s of speech for a 16s block/);
+    assert.ok(Number.isFinite(engine.asks[1].input.blocks[0].rewriteTargetWords));
+    assert.match(engine.asks[1].instruction, /rewriteTargetWords/);
+    assert.deepStrictEqual(engine.asks[1].evidence || [], []);
     assert.strictEqual(out.blocks.find(b => b.blockId === 'story_setup').narrationText, shorter);
     const stuck = narrEngine([line(PASSAGE), line(PASSAGE), line(PASSAGE)]);
     await assert.rejects(BlockNarration.narrateBlocks({ engine: stuck, service: { measuredVoice: async () => ({ meta: { duration: 19 } }) }, story: { scriptId: 1 }, model: MODEL, beats: withModes(), blocks: BLOCKS(), evidence: [] }),
