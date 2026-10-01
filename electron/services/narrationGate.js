@@ -20,7 +20,7 @@
 const { NARRATOR_FUNCTIONS, NON_FACT_EPISTEMIC } = require('./autoStoryV3Taxonomy');
 
 const DIALOGUE_OVERLAP_LIMIT = 0.5;   // Jaccard token overlap with original dialogue
-const HEDGE = /\b(claim|claims|claimed|allege|alleged|allegedly|reportedly|says|said|according to|police say|appears|seems|would later|investigators|suspected|accused)\b/i;
+const HEDGE = /\b(claim|claims|claimed|allege|alleged|allegedly|report|reports|reported|reporting|reportedly|says|said|told|according to|police say|appears|seems|would later|investigators|suspected|accused)\b/i;
 const STOP = new Set(['the', 'a', 'an', 'to', 'of', 'and', 'or', 'but', 'in', 'on', 'at', 'is', 'are', 'was', 'were', 'be', 'he', 'she', 'they', 'it', 'his', 'her', 'their', 'this', 'that', 'with', 'for', 'as', 'i', 'you', 'we', 'not', 'no']);
 
 function tokens(text) {
