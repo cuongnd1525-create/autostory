@@ -314,6 +314,25 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     assert.strictEqual(stuck.asks.length, 3, 'initial + 2 text rewrites, then report');
   });
 
+  await ok('Writer gate: narrated block may compress its OWN source dialogue; redundancy is checked against the NEXT raw handoff', async () => {
+    const localModel = {
+      events: [{ id: 'e1', startSec: 8.5, endSec: 13.5, summary: 'dispatch context', isReveal: false }],
+      quotes: [
+        { id: 'q-own', startSec: 9, endSec: 12.5, text: 'My girlfriend is inside being attacked by her parents.', epistemic: 'claim' },
+        { id: 'q-next', startSec: 30, endSec: 35, text: 'Please just get her out safely.', epistemic: 'claim' }
+      ]
+    };
+    const ownSummary = new Map([['story_setup', { narrationText: 'A caller said his girlfriend was being attacked by her parents.', narratorFunction: 'CONTEXT',
+      newInformation: ['dispatch context'], newInformationRefs: ['e1'] }]]);
+    const ownGate = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), BLOCKS()), ownSummary, localModel);
+    assert.ok(!ownGate.issues.some(i => i.code === 'dialogue_redundancy'), JSON.stringify(ownGate.issues));
+
+    const nextRepeat = new Map([['story_setup', { narrationText: 'Please just get her out safely.', narratorFunction: 'CONTEXT',
+      newInformation: ['handoff'], newInformationRefs: ['e1'] }]]);
+    const nextGate = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), BLOCKS()), nextRepeat, localModel);
+    assert.ok(nextGate.issues.some(i => i.code === 'dialogue_redundancy'), JSON.stringify(nextGate.issues));
+  });
+
   await ok('Writer: the existing narration gates run on the block passage (e.g. ungrounded claim -> rewrite)', async () => {
     const engine = narrEngine([line(PASSAGE, { newInformationRefs: ['nope'] }), line(PASSAGE)]);
     const out = await BlockNarration.narrateBlocks({ engine, service: { measuredVoice: async () => ({ meta: { duration: 13 } }) }, story: { scriptId: 1 }, model: MODEL, beats: withModes(), blocks: BLOCKS(), evidence: [] });

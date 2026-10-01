@@ -109,17 +109,31 @@ async function askBlockNarration(engine, story, payloads, evidence, repair = nul
 function gateBlocks(beats, timeline, texts, model) {
   const rows = [];
   const narratedAfter = new Map();
+  const blockIndex = new Map(timeline.map((b, i) => [b.blockId, i]));
   timeline.filter(b => b.mode === 'narrated_story').forEach(b => narratedAfter.set(b.beatIds[b.beatIds.length - 1], b));
   for (const beat of beats) {
     rows.push({ ...beat, speaks: false, narratorText: '' });
     const blk = narratedAfter.get(beat.beatId);
     if (!blk) continue;
     const line = texts.get(blk.blockId) || {};
-    const ranges = blk.beats.map(x => [num(x.sourceStartSec), num(x.sourceEndSec)]);
+
+    // A narrated_story block OWNS the foreground audio of its own source span.
+    // Dialogue inside that same span is source material the narrator is allowed
+    // to compress/orient, so treating it as "original dialogue being repeated"
+    // makes legitimate rewind/context narration impossible. The redundancy gate
+    // instead protects the NEXT raw-evidence handoff: narration must not pre-say
+    // the strong dialogue the viewer is about to hear for real.
+    const k = blockIndex.get(blk.blockId);
+    const nextRaw = Number.isFinite(k) ? rawNeighbour(timeline, k, +1) : null;
+    const audibleRanges = (nextRaw?.beats || []).map(x => [num(x.sourceStartSec), num(x.sourceEndSec)]);
+    const handoffQuoteIds = (model?.quotes || [])
+      .filter(q => audibleRanges.some(([a, z]) => overlaps(num(q.startSec), num(q.endSec), a, z)))
+      .map(q => q.id);
+
     rows.push({ beatId: blk.blockId, isBlock: true, speaks: true, narratorText: line.narrationText || '',
       narratorFunction: line.narratorFunction || blk.narratorFunction, newInformation: line.newInformation || [],
       newInformationRefs: line.newInformationRefs || [],
-      originalQuoteIds: (model?.quotes || []).filter(q => ranges.some(([a, z]) => overlaps(num(q.startSec), num(q.endSec), a, z))).map(q => q.id) });
+      originalQuoteIds: handoffQuoteIds });
   }
   rows.forEach((r, i) => { r.order = i; });
   const report = narrationGate.inspect(rows, model);
@@ -150,7 +164,6 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     for (const { b } of narrated) {
       const line = texts.get(b.blockId);
       const t = String(line?.narrationText || '').trim();
-      const p = payloads.get(b.blockId);
       if (!t) { out.set(b.blockId, { code: 'BLOCK_NARRATION_EMPTY', reason: 'no passage was returned for this block.' }); continue; }
       // Do NOT reject on estimated word count. safeWords is intentionally
       // conservative (0.92 margin) while the renderer can safely absorb up to
@@ -164,6 +177,7 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     for (const { b } of narrated) {
       if (out.has(b.blockId)) continue;
       const t = String(texts.get(b.blockId).narrationText).trim();
+      const payload = payloads.get(b.blockId);
       let m = measured.get(t);
       if (!m) {
         const { meta } = await service.measuredVoice(engine.project, t, engine.cache);
@@ -179,7 +193,7 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
         const suggestedMaxWords = Math.max(1, Math.min(currentWords - 1,
           Math.floor(currentWords * (maxFitSec / Math.max(0.01, m.rawBlockVoiceSec)) * 0.97)));
         out.set(b.blockId, { code: 'BLOCK_VOICE_OVERFLOW', reason: `the passage measures ${m.rawBlockVoiceSec.toFixed(2)}s of speech for a ${b.durationSec}s block (fit ratio ${fitRatio.toFixed(3)}; at most ${(1 + BLOCK_MAX_SPEEDUP).toFixed(2)} can be absorbed without trimming words). Rewrite to about ${suggestedMaxWords} words or fewer, while preserving the narrationIntent.`,
-          rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio, currentWords, safeWords: p.safeWords, suggestedMaxWords });
+          rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio, currentWords, safeWords: payload?.safeWords ?? 0, suggestedMaxWords });
       }
     }
     return out;
