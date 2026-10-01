@@ -5,11 +5,13 @@
 // sentences). The passage is later synthesized ONCE and rendered as one
 // continuous track across the block's visual cuts.
 //
-// JS only: builds the evidence payload, computes the safe-word CEILING from the
-// whole block duration, runs the existing deterministic narration gates, and
-// measures real TTS once per block. Anything that cannot be fixed by a
-// text-only rewrite becomes a typed repair request for the Editorial Director;
-// narration is never silently discarded, trimmed or reverted to raw.
+// JS only: builds the evidence payload, computes an advisory safe-word target
+// from the whole block duration, runs the existing deterministic narration gates,
+// and measures real TTS once per block. REAL measured voice duration is the
+// authoritative fit test; word count is only a first-pass writing target. Anything
+// that cannot be fixed by a text-only rewrite becomes a typed repair request for
+// the Editorial Director; narration is never silently discarded, trimmed or
+// reverted to raw.
 
 const { StoryError } = require('./autoStoryRepairRouter');
 const { NARRATOR_FUNCTIONS } = require('./autoStoryV3Taxonomy');
@@ -36,7 +38,7 @@ const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the r
 Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction and narrationIntent, and carries the viewer from viewerStateEntering to viewerStateLeaving.
 The narrator owns comprehension, compression, orientation, causal connection, anticipation and momentum. Hand the viewer to the real moment that follows (followingRawBlock / handoffTargetBeatId) without paraphrasing what that moment will say.
 Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their ids in newInformationRefs. A quote whose epistemic status is not known_fact is attributed or hedged ("he says", "according to her"), never stated as fact. Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
-safeWords is a CEILING for the whole block, never a quota: finish naturally before or near the end of the block and do not pad words to fill the picture.
+safeWords is an ADVISORY first-pass target for the whole block, never a quota. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
 Active voice, spoken English, grounded and specific. previewVi is a natural Vietnamese rendering of the passage.`;
 
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
@@ -88,12 +90,13 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
 
 async function askBlockNarration(engine, story, payloads, evidence, repair = null, attempt = 0) {
   const instruction = repair
-    ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks did not fit (input.blocks[].rewriteReason). Return a complete, SHORTER or corrected passage for that block that still serves its narrationIntent. Do not drop the block's purpose; do not cut mid-thought.`
+    ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks did not fit (input.blocks[].rewriteReason). Return a complete, SHORTER or corrected passage for that block that still serves its narrationIntent. If rewriteTargetWords is present, stay at or below that many words. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
     : INSTRUCTION;
+  const attachedEvidence = repair ? [] : evidence;
   const result = await engine.ask(`v5-block-narration${repair ? `_rewrite${attempt}` : ''}-${story.scriptId}`,
     { spine: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise },
       mustWithhold: story.storyScope?.mustWithhold || [], blocks: payloads },
-    schema, instruction, evidence, v => {
+    schema, instruction, attachedEvidence, v => {
       if (!v || !Array.isArray(v.narrations)) throw new StoryError('INVALID_RESPONSE', 'Missing block narrations.');
       return v;
     }, 'auto_story_edit');
@@ -149,8 +152,9 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
       const t = String(line?.narrationText || '').trim();
       const p = payloads.get(b.blockId);
       if (!t) { out.set(b.blockId, { code: 'BLOCK_NARRATION_EMPTY', reason: 'no passage was returned for this block.' }); continue; }
-      const words = compiler.words(t);
-      if (p.safeWords > 0 && words > p.safeWords) { out.set(b.blockId, { code: 'BLOCK_NARRATION_OVER_BUDGET', reason: `${words} words exceed the whole-block ceiling of ${p.safeWords} words for ${b.durationSec}s.` }); continue; }
+      // Do NOT reject on estimated word count. safeWords is intentionally
+      // conservative (0.92 margin) while the renderer can safely absorb up to
+      // BLOCK_MAX_SPEEDUP. The real synthesized voice below decides fit.
     }
     const gate = gateBlocks(beats, timeline, texts, model);
     for (const id of gate.repairBlockIds) {
@@ -168,8 +172,14 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
       }
       const fitRatio = b.durationSec > 0 ? m.rawBlockVoiceSec / b.durationSec : Infinity;
       if (fitRatio > 1 + BLOCK_MAX_SPEEDUP) {
-        out.set(b.blockId, { code: 'BLOCK_VOICE_OVERFLOW', reason: `the passage measures ${m.rawBlockVoiceSec.toFixed(2)}s of speech for a ${b.durationSec}s block (fit ratio ${fitRatio.toFixed(3)}; at most ${(1 + BLOCK_MAX_SPEEDUP).toFixed(2)} can be absorbed without trimming words).`,
-          rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio });
+        const currentWords = compiler.words(t);
+        const maxFitSec = b.durationSec * (1 + BLOCK_MAX_SPEEDUP);
+        // Convert the measured overrun into a conservative rewrite target. This
+        // is guidance for Gemini only; acceptance is still based on measured TTS.
+        const suggestedMaxWords = Math.max(1, Math.min(currentWords - 1,
+          Math.floor(currentWords * (maxFitSec / Math.max(0.01, m.rawBlockVoiceSec)) * 0.97)));
+        out.set(b.blockId, { code: 'BLOCK_VOICE_OVERFLOW', reason: `the passage measures ${m.rawBlockVoiceSec.toFixed(2)}s of speech for a ${b.durationSec}s block (fit ratio ${fitRatio.toFixed(3)}; at most ${(1 + BLOCK_MAX_SPEEDUP).toFixed(2)} can be absorbed without trimming words). Rewrite to about ${suggestedMaxWords} words or fewer, while preserving the narrationIntent.`,
+          rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio, currentWords, safeWords: p.safeWords, suggestedMaxWords });
       }
     }
     return out;
@@ -177,7 +187,11 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
 
   let problems = await problemsOf();
   for (let attempt = 1; attempt <= MAX_TEXT_REWRITES && problems.size; attempt++) {
-    const redo = [...problems.keys()].map(id => ({ ...payloads.get(id), previousNarrationText: texts.get(id)?.narrationText || '', rewriteReason: problems.get(id).reason }));
+    const redo = [...problems.keys()].map(id => {
+      const p = problems.get(id);
+      return { ...payloads.get(id), previousNarrationText: texts.get(id)?.narrationText || '', rewriteReason: p.reason,
+        ...(Number.isFinite(p.suggestedMaxWords) ? { rewriteTargetWords: p.suggestedMaxWords } : {}) };
+    });
     audit.rewrites.push({ attempt, blocks: [...problems.entries()].map(([blockId, p]) => ({ blockId, ...p })) });
     const again = await askBlockNarration(engine, story, redo, evidence, true, attempt);
     for (const [id, line] of again) if (problems.has(id)) texts.set(id, line);
@@ -200,6 +214,7 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
       fitRatio: m.rawBlockVoiceSec ? Math.round((m.rawBlockVoiceSec / b.durationSec) * 1000) / 1000 : null };
     blockOut.fingerprint = Delivery.blockFingerprint(blockOut, beats);
     audit.blocks.push({ blockId: b.blockId, beatIds: b.beatIds, durationSec: b.durationSec, safeWords: blockOut.safeWords, words: blockOut.words,
+      advisorySafeWordsExceeded: blockOut.safeWords > 0 && blockOut.words > blockOut.safeWords,
       rawBlockVoiceSec: blockOut.rawBlockVoiceSec, fitRatio: blockOut.fitRatio, narrationText: t });
     return blockOut;
   });
