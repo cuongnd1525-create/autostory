@@ -3311,9 +3311,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const automaticTitle = decoration.topCaptionAutoFromScript === true
       ? resolveSuggestedTopCaption(project)
       : "";
+    const rawTitleSource = automaticTitle || decoration.topCaptionText || project.title || "";
+    const isUppercaseTitle = (decoration.topCaptionStyle || decoration.titleStyle) === "viral_green"
+      || (rawTitleSource && rawTitleSource === rawTitleSource.toUpperCase());
     const title = wrapVideoTitle(
-      automaticTitle || decoration.topCaptionText || project.title || "",
-      calculateVideoTitleWrapChars(canvas.width, topCaptionFontSize)
+      rawTitleSource,
+      calculateVideoTitleWrapChars(canvas.width, topCaptionFontSize, isUppercaseTitle)
     );
     const titleTextPath = path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.txt`);
     const titleSvgPath = path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.svg`);

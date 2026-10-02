@@ -1582,32 +1582,37 @@ function migrateLegacyCanvasMaskToSource(project = {}, mask = {}) {
   };
 }
 
-function calculatePreviewTitleWrapChars(width = 1080, referenceFontSize = 52) {
+function calculatePreviewTitleWrapChars(width = 1080, referenceFontSize = 52, isUppercase = false) {
   const targetWidth = Math.max(320, Number(width) || 1080);
   const fontSize = Math.max(16, (Number(referenceFontSize) || 52) * (targetWidth / 1080));
   const boxWidth = targetWidth * 0.82;
   const horizontalPadding = fontSize * 0.65;
-  const estimatedGlyphWidth = fontSize * 0.5;
-  return Math.max(12, Math.min(42, Math.floor(
+  const estimatedGlyphWidth = fontSize * (isUppercase ? 0.68 : 0.5);
+  return Math.max(10, Math.min(42, Math.floor(
     (boxWidth - (horizontalPadding * 2)) / Math.max(1, estimatedGlyphWidth)
   )));
 }
 
 function wrapPreviewVideoTitle(value, maxChars = 36) {
-  const words = String(value || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
-  const lines = [];
-  let line = "";
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && candidate.length > maxChars) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
+  const rawText = String(value || "").trim();
+  if (!rawText) return "";
+  const rawLines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const finalLines = [];
+  for (const rawLine of rawLines) {
+    const words = rawLine.split(/\s+/).filter(Boolean);
+    let current = "";
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (current && candidate.length > maxChars) {
+        finalLines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
     }
+    if (current) finalLines.push(current);
   }
-  if (line) lines.push(line);
-  return lines.slice(0, 3).join("\n");
+  return finalLines.slice(0, 3).join("\n");
 }
 
 function clampSubtitleMaskValue(value, min, max) {
@@ -1876,13 +1881,14 @@ function updateVideoDecorationPreview() {
   el.videoCanvasCustomSize?.classList.toggle("hidden", el.videoCanvasAspect?.value !== "custom");
   if (el.videoCanvasRatioLabel) el.videoCanvasRatioLabel.textContent = canvas.label;
   if (el.videoTitleOverlay) {
+    const isViralGreenTitle = (el.topCaptionStyle?.value || state.currentProject?.videoDecoration?.topCaptionStyle) === "viral_green";
+    const isUpper = isViralGreenTitle || (captionText && captionText === captionText.toUpperCase());
     const wrappedCaption = wrapPreviewVideoTitle(
       captionText,
-      calculatePreviewTitleWrapChars(canvas.width, el.topCaptionFontSize?.value || 52)
+      calculatePreviewTitleWrapChars(canvas.width, el.topCaptionFontSize?.value || 52, isUpper)
     );
     el.videoTitleOverlay.textContent = wrappedCaption;
     el.videoTitleOverlay.classList.toggle("hidden", !(captionEnabled && captionText));
-    const isViralGreenTitle = (el.topCaptionStyle?.value || state.currentProject?.videoDecoration?.topCaptionStyle) === "viral_green";
     el.videoTitleOverlay.classList.toggle("viral-green", isViralGreenTitle);
     el.videoTitleOverlay.style.fontSize = `${Math.max(11, Number(el.topCaptionFontSize?.value || 52) * (previewWidth / canvas.width))}px`;
     el.videoTitleOverlay.style.top = `${Number(el.topCaptionY?.value || 8)}%`;

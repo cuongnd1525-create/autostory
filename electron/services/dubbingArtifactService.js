@@ -14,20 +14,25 @@ function sanitizeFilePart(value = "") {
 }
 
 function wrapVideoTitle(value, maxChars = 36) {
-  const words = safeText(value).split(" ").filter(Boolean);
-  const lines = [];
-  let line = "";
-  for (const word of words) {
-    const candidate = line ? `${line} ${word}` : word;
-    if (line && candidate.length > maxChars) {
-      lines.push(line);
-      line = word;
-    } else {
-      line = candidate;
+  const rawText = String(value || "").trim();
+  if (!rawText) return "";
+  const rawLines = rawText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const finalLines = [];
+  for (const rawLine of rawLines) {
+    const words = rawLine.split(/\s+/).filter(Boolean);
+    let current = "";
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (current && candidate.length > maxChars) {
+        finalLines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
     }
+    if (current) finalLines.push(current);
   }
-  if (line) lines.push(line);
-  return lines.slice(0, 3).join("\n");
+  return finalLines.slice(0, 3).join("\n");
 }
 
 function escapeSvgText(value = "") {
@@ -77,17 +82,25 @@ function buildVideoTitleOverlaySvg({
 } = {}) {
   const canvasWidth = Math.max(180, Math.round(Number(width) || 1080));
   const canvasHeight = Math.max(180, Math.round(Number(height) || 1920));
-  const scaledFontSize = Math.max(16, Math.round((Number(fontSize) || 52) * (canvasWidth / 1080)));
-  const lines = String(title || "").split(/\r?\n/).filter(Boolean).slice(0, 3);
+  const baseScaledFontSize = Math.max(16, Math.round((Number(fontSize) || 52) * (canvasWidth / 1080)));
+  const lines = String(title || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 3);
   const inset = Math.max(8, Math.round(canvasWidth * 0.09));
   const boxWidth = canvasWidth - inset * 2;
+  const isViralGreen = titleStyle === "viral_green" || partLabel?.style === "viral_green";
+  const isUppercase = isViralGreen || (lines.length > 0 && lines.every((l) => l === l.toUpperCase()));
+  const glyphFactor = isUppercase ? 0.70 : 0.54;
+  const maxAvailableTextWidth = boxWidth - 36;
+  const maxLineWidthChars = Math.max(...lines.map((l) => l.length), 0);
+  let scaledFontSize = baseScaledFontSize;
+  if (maxLineWidthChars > 0 && maxLineWidthChars * baseScaledFontSize * glyphFactor > maxAvailableTextWidth) {
+    scaledFontSize = Math.max(16, Math.floor(maxAvailableTextWidth / (maxLineWidthChars * glyphFactor)));
+  }
   const paddingY = Math.max(6, Math.round(scaledFontSize * 0.55));
   const lineHeight = Math.round(scaledFontSize * 1.12);
   const boxHeight = lines.length * lineHeight + paddingY * 2;
   const top = Math.round(canvasHeight * Math.max(3, Math.min(75, Number(yPercent) || 8)) / 100);
   const radius = Math.max(4, Math.round(scaledFontSize * 0.46));
   const firstBaseline = top + paddingY + Math.round(scaledFontSize * 0.84);
-  const isViralGreen = titleStyle === "viral_green" || partLabel?.style === "viral_green";
   const resolvedTitleBg = safeHexColor(titleBackgroundColor, isViralGreen ? "#00A63E" : "#ffffff");
   const resolvedTitleText = safeHexColor(titleTextColor, isViralGreen ? "#ffffff" : "#0b0d11");
   const textSpans = lines.map((line, index) => (
@@ -147,13 +160,13 @@ function buildVideoTitleOverlaySvg({
 </svg>`;
 }
 
-function calculateVideoTitleWrapChars(width = 1080, referenceFontSize = 52) {
+function calculateVideoTitleWrapChars(width = 1080, referenceFontSize = 52, isUppercase = false) {
   const targetWidth = Math.max(320, Number(width) || 1080);
   const fontSize = Math.max(16, (Number(referenceFontSize) || 52) * (targetWidth / 1080));
   const boxWidth = targetWidth * 0.82;
   const horizontalPadding = fontSize * 0.65;
-  const estimatedGlyphWidth = fontSize * 0.5;
-  return Math.max(12, Math.min(42, Math.floor(
+  const estimatedGlyphWidth = fontSize * (isUppercase ? 0.68 : 0.5);
+  return Math.max(10, Math.min(42, Math.floor(
     (boxWidth - (horizontalPadding * 2)) / Math.max(1, estimatedGlyphWidth)
   )));
 }
