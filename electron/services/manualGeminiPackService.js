@@ -98,7 +98,7 @@ function buildIndependentHookFallbackRules(options = normalizeIndependentPromptO
   return `HOOK PRIORITY FALLBACK - USER LOCKED:
 - Evaluate categories in this exact order: ${options.hookPriority.map((item, index) => `${index + 1}) ${labels[item]}`).join("; ")}.
 - A category qualifies only when a candidate passes cold-viewer comprehension in the first 3 seconds, verified evidence/timestamps, intelligible core action or words, zero audible external source narrator, and a complete high-value beat within ${options.hookMaxSec} seconds.
-- high_action fails qualification when the first 3 seconds show only driving, a moving patrol car, camera shake, walking, sirens without a visible event, or an establishing shot. Motion and audio-energy scores are discovery radar, never editorial ranking.
+- high_action fails qualification when the first 3 seconds show only driving, a moving patrol car, camera shake, casual walking, routine vehicle approach, or an establishing shot. HIGH-FRICTION ACTIONS QUALIFY: repeatedly rattling a locked door handle, banging on a barricaded entrance, physical standoff, or forced-entry attempts are valid high_action. Motion and audio-energy scores are discovery radar, never editorial ranking.
 - If no candidate in one category passes every gate, fall through to the next category. Never force a weak candidate from a higher category.
 - Multi-scene Hooks are allowed across consecutive source ranges. Preserve the decisive payoff and immediate reaction with one actionSequenceId and storyFunction="hook".
 - Populate hook_selection_audit with requestedPriority, selectedType, fallbackLevel, selectedEvidenceIds, reason, and rejectedHigherPriorityCandidates.`;
@@ -1845,7 +1845,14 @@ LOCKED-EVIDENCE RULES:
 53. HOOK TRANSITION GATE: Populate hook_transition_test after evaluating the complete Hook plus the first 15 output seconds that follow it. If the Hook resets to an earlier time or the next block introduces different actorIds, bridgeText must explicitly identify the verified people/relationship and explain the chronology. Generic narration fails this gate. Prefer a linear Hook when the reset would create identity confusion.
 54. ORIGINAL AUDIO VALUE GATE: Copy originalAudioValueScore/Reason/Protected from locked evidence into every segment. If originalAudioProtected=true and sourceNarratorPresent=false, audio_mode must be original_audio and voiceover_text must be empty. Put narration before or after the protected range; never replace the authentic quote, command, reaction, impact, radio call, or confrontation.
 55. VIRAL PACING & JCS EDITORIAL GATE:
-   - HOOK: Select the opening beat strictly from the 4 Viral Hook Archetypes: The Absurd Contradiction, In Medias Res, Instant Karma, or Unbelievable Stakes. Never open with police greetings, asking for ID, or casual approach footage.
+   - HOOK: Select the opening beat strictly from the 5 Viral Hook Archetypes:
+     1) The Physical Friction & Barricade Suspense: Active struggle against a locked barrier, violent door rattling, window pounding, or physical standoff before entry (creates massive curiosity gap; never open with casual door opening or routine approach).
+     2) The Absurd Contradiction: Defiant denial or bizarre claim directly contradicted by obvious physical reality.
+     3) In Medias Res: Drop directly into peak physical struggle, shouted commands, or sudden escalation with zero lead-in.
+     4) Instant Karma / The Fatal Mistake: Arrogant provocation immediately meeting an instant counter-attack or takedown.
+     5) Unbelievable Stakes: An outrageous or bizarre trigger revealing the absurd premise of the altercation.
+     STRICT CASUAL vs FRICTION RULE: Casual walking, routine vehicle approach, polite greetings, or opening an ordinary door is BANNED filler. But violent door rattling, barricade pounding, or forced-entry attempts are Tier-S hooks.
+     SPOILER BAN ON HOOKS: Never open with the empty aftermath or already-handcuffed suspect if it spoils the central mystery. Hook the tension/question, not the final answer.
    - VOICEOVER: Limit sentences to <= 25 words. Use fast-paced, high-energy present tense. Adopt a conversational, sensational TikTok true-crime tone (e.g., "Watch what happens when..."). Ruthlessly contrast suspect lies with camera facts to trigger outrage. Ban academic language.
    - PACING: Enter late, exit early. Eliminate dead-air/silence > 1.5s between dialogue exchanges.
    - OUTRO: End video within 2-3s of the final verified payoff/aftermath. Zero lingering paperwork or idle outro footage.
@@ -1968,7 +1975,7 @@ DIRECT HIGHLIGHT CONTENT RULES:
 - Do not create scene-evidence.json or story-blueprint.json. Reason internally, then write the final edit scripts directly from the video.
 - For independent scripts, complete the Semantic Hook Tournament and Viral Moment Inventory required by the editorial prompt before choosing Narrative Beats. Local action-candidate order is never a Hook ranking.
 - VIRAL EDITORIAL RULES (JCS / EWU STYLE):
-  * HOOK: Must hit within the first second with one of 4 Archetypes: Absurd Contradiction, In Medias Res, Instant Karma, or Unbelievable Stakes. Never open with police greetings, ID requests, or walking.
+  * HOOK: Must hit within the first second with one of 5 Archetypes: Physical Friction & Barricade Suspense, Absurd Contradiction, In Medias Res, Instant Karma, or Unbelievable Stakes. Distinguish routine approach/casual door opening (BANNED) from violent door rattling/barricade pounding/standoff (TIER-S HOOK). SPOILER BAN: Hook the tension/friction, never spoil the aftermath/resolution at second 0.
   * VOICEOVER: Sentence limit <= 25 words. Fast-paced, high-energy present tense. Sensational TikTok true-crime tone. Ruthlessly contrast suspect lies with camera facts to trigger outrage. Ban academic language.
   * PACING: Enter late, exit early. Eliminate dead-air/silence > 1.5s between dialogue exchanges.
   * OUTRO: End video within 2-3s of the final verified payoff/aftermath. Zero lingering paperwork or idle outro footage.

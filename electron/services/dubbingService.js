@@ -3804,13 +3804,33 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const project = await this.projectStore.getProject(workspaceRoot, projectId);
     const paths = this.projectStore.getProjectPaths(workspaceRoot, projectId);
     const ffmpeg = new FfmpegService(settings);
-    if (!project.storyScriptPath) {
-      throw new Error("Chưa chọn file kịch bản Storytime JSON.");
-    }
-
-    await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 12, message: "Đang đọc video và kịch bản JSON" });
     const media = await ffmpeg.probeVideo(project.sourceVideoPath);
-    const raw = await fs.readFile(project.storyScriptPath, "utf8");
+    let raw;
+    if (project.storyScriptPath) {
+      await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 12, message: "Đang đọc video và kịch bản JSON" });
+      raw = await fs.readFile(project.storyScriptPath, "utf8");
+    } else {
+      await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 15, message: "AI đang tự tạo kịch bản Modular Story Matrix..." });
+      const StorytimeScriptService = require("./storytime/storytimeScriptService");
+      const scriptService = new StorytimeScriptService(settings);
+      const generated = await scriptService.generateStory({
+        videoPath: project.sourceVideoPath,
+        targetDurationSec: media.duration,
+        persona: project.storytimePersona || settings.storytimePersona || "contractor",
+        conflict: project.storytimeConflict || settings.storytimeConflict || "contract_dispute",
+        controversyLevel: project.storytimeControversyLevel || settings.storytimeControversyLevel || 2,
+        customIdea: project.storytimeCustomIdea || settings.storytimeCustomIdea || "",
+        sourceText: project.storytimeSourceText || settings.storytimeSourceText || "",
+        onProgress: (p) => this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 20, message: p.message })
+      });
+      raw = JSON.stringify(generated);
+      const generatedScriptPath = path.join(paths.analysisDir, "storytime-generated-script.json");
+      await fs.writeFile(generatedScriptPath, raw, "utf8");
+      await this.projectStore.updateProject(workspaceRoot, projectId, {
+        storyScriptPath: generatedScriptPath,
+        headerCard: generated.headerCard
+      });
+    }
     const script = normalizeStorytimeScript(raw, media.duration);
     let transcriptResult = { provider: "none", segments: [] };
     let sourceTranscriptSegments = [];

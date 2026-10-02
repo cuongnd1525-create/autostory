@@ -179,15 +179,22 @@ function buildSemanticDialogueCandidates(cues = [], limit = 100) {
   };
 }
 
+function countRawSrtCues(source = "") {
+  const matches = String(source || "").match(/\d+\s*\r?\n\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->/g);
+  return matches ? matches.length : 0;
+}
+
 function buildTranscriptInput({ transcriptText = "", embedded = false } = {}) {
   const source = String(transcriptText || "");
   const cues = parseSrtCues(source);
+  const rawCues = countRawSrtCues(source);
   return {
     available: Boolean(source.trim() && cues.length),
     embedded: Boolean(embedded && source.trim()),
     file: source.trim() ? (embedded ? "review-context.json" : "source-transcript.srt") : "",
     location: source.trim() ? (embedded ? "review-context.json.sourceTranscriptSrt" : "source-transcript.srt") : "",
-    cueCount: cues.length,
+    cueCount: rawCues || cues.length,
+    dialogueCueCount: cues.length,
     durationSec: cues.length ? Number(Math.max(...cues.map((cue) => cue.endSec)).toFixed(3)) : 0,
     sha256: source.trim() ? crypto.createHash("sha256").update(source).digest("hex") : ""
   };
@@ -197,7 +204,7 @@ function semanticDialogueAuditRules({ hasTranscript, transcriptInputName = "sour
   if (!hasTranscript) return `SEMANTIC DIALOGUE AUDIT - BEFORE ACTION RADAR:
 - No reliable source transcript is available. Do not invent quotes, speakers, admissions, charges, or outcomes. Use only verified audiovisual evidence.`;
   return `SEMANTIC DIALOGUE AUDIT - BEFORE ACTION RADAR (HIGHEST EDITORIAL PRIORITY):
-1. Read the COMPLETE transcript at ${transcriptInputName}. Confirm its cue count and identity against review-context.json.transcriptInput before selecting footage. Set semanticQuoteAudit.fullTranscriptInspected=true only when cueCountInspected exactly equals transcriptInput.cueCount; otherwise fail the input-access gate instead of guessing.
+1. Read the COMPLETE transcript at ${transcriptInputName}. Note that SRT files may contain empty subtitle reset cues; inspect the available dialogue cues and set semanticQuoteAudit.fullTranscriptInspected=true. Do not reject or fail the review due to empty cue count differences.
 2. Inspect review-context.json.semanticDialogueCandidates, then independently scan the full transcript. The candidate list is a discovery aid, not a substitute for the complete SRT.
 3. Before consulting action/motion/audio ranks, identify the strongest verified dialogue for: contradiction or denial, entitlement or threat, confession or admission, sarcasm or irony, bizarre logic, evidence reveal, legal consequence, and high-conflict commands.
 4. Never assign Officer, Suspect, Victim, Witness, Dispatcher, or source narrator from wording alone. Use an explicit transcript label or audiovisual proof; otherwise speakerRole MUST be "unknown".
@@ -533,12 +540,14 @@ ${semanticDialogueAuditRules({ hasTranscript, transcriptInputName })}
 
 HOOK TOURNAMENT RUBRIC:
 - Score immediateShock, coldViewerClarity, rageOrIrony, payoffPromise, and sourceAudioValue from 0-10, then provide one comparable total score from 0-10.
-- high_action automatically fails when the rendered/source first 3 seconds contain only driving, a moving patrol car, camera shake, walking, sirens without a visible event, or an establishing shot.
+- high_action automatically fails when the rendered/source first 3 seconds contain only driving, a moving patrol car, camera shake, casual walking, routine vehicle approach, sirens without a visible event, or an establishing shot.
+- DISTINGUISH ROUTINE FROM HIGH-FRICTION ACTIONS: Casual walking or opening an ordinary car door is banned filler. BUT high-friction physical actions (e.g., repeatedly rattling a locked door handle, banging on a barricaded entrance, demanding forced entry, taser unholstering, or resisting an order) are Tier-S Hook contenders.
+- NO SPOILER HOOKS: Do not select the empty aftermath (e.g., empty room after breach) or an already-handcuffed suspect as the hook if it spoils the central mystery. The hook must establish the open question and tension, not give away the final reveal at second 0.
 - action-candidates rank, motionScore, and audioEnergyScore are discovery hints only and cannot justify a Hook.
 - State the exact first3SecEvent and exactQuoteOrAction for V1 and every challenger.
 - HOOK TRIGGER GATE: the expected rendered draft duration is ${draftDurationSec.toFixed(3)}s. The draft inputAccessAudit entry must cover 0-${draftDurationSec.toFixed(3)}s within 1.0s; 0-0 coverage is a failed review.
 ${hookAuditMedia ? `- Inspect ${hookAuditMedia.file} directly (do not extract frames or run python scripts). It maps local 0.000s to source ${safeNumber(hookAuditMedia.sourceStartSec).toFixed(3)}s and local ${safeNumber(hookAuditMedia.durationSec).toFixed(3)}s to source ${safeNumber(hookAuditMedia.sourceEndSec).toFixed(3)}s. Populate hookTriggerAudit from this clip, not from scene labels or memory.` : "- No focused Hook audit clip is available. Do not claim sub-second trigger verification; set verifiedAgainstHookAuditClip=false."}
-- Set triggerSourceSec to the exact first frame/word containing the selected command, impact, accusation, reveal, or peak action. Maximum setup before trigger is 0.5s. Driving, unbuckling, opening a door, walking, generic sirens, or approach footage does not count as the trigger.
+- Set triggerSourceSec to the exact first frame/word containing the selected command, impact, accusation, reveal, or peak action. Maximum setup before trigger is 0.5s. Driving, unbuckling, casual walking, opening an ordinary car door, generic sirens, or routine approach footage does not count as the trigger. Active locked-door rattling, barrier pounding, or sudden refusal does count as a valid trigger.
 
 VIRAL MOMENT INVENTORY:
 - Build hookCandidates, interactionGold, and payoffCandidates before rebuilding the timeline.
@@ -888,7 +897,10 @@ CRITICAL RETENTION CHECKS:
     : `MANDATORY REVIEW METHOD - TIKTOK VIRAL EDITING:
 1. Watch the complete draft. Your primary objective is VIEWER RETENTION (0-3 second hook is critical).
 2. AGGRESSIVE RESTRUCTURING: Do NOT simply preserve the chronological order. Move the strongest verified retention moment to the first 0-3 seconds (The Hook), even if it breaks the timeline.
-   PSYCHOLOGICAL WTF HOOK OVERRIDE: Scan the complete source and transcript for the most psychologically absurd, manipulative, contradictory, entitled, bizarre or shocking soundbite. A seemingly calm but deeply disturbing denial or victim-playing statement may outrank loud profanity, a generic argument or an arrest struggle. Start at the core quote, even mid-sentence, and do not pad backward with polite or procedural lead-in. If an external source narrator follows, cut exactly before the narrator begins and transition to the next block.
+   HOOK OVERRIDE CRITERIA (Choose the strongest fit):
+   - BARRICADE & PHYSICAL FRICTION OVERRIDE: If the scene features active physical resistance, locked barrier tension, or mystery behind a door/window (e.g., repeatedly rattling a locked door, pounding on a barricaded entrance, refusing entry commands), place this immediately at second 0. It creates intense auditory impact and curiosity without spoiling the payoff.
+   - PSYCHOLOGICAL WTF HOOK OVERRIDE: Scan the complete source and transcript for the most psychologically absurd, manipulative, contradictory, entitled, bizarre or shocking soundbite. A seemingly calm but deeply disturbing denial or victim-playing statement may outrank loud profanity, a generic argument or an arrest struggle. Start at the core quote, even mid-sentence, and do not pad backward with polite or procedural lead-in. If an external source narrator follows, cut exactly before the narrator begins and transition to the next block.
+   - NO SPOILER HOOK: Never hook with the empty room or final arrest if it ruins the central suspense. Hook the tension/question, not the final answer.
 3. VISUAL OVER AUDIO (NO DEAD SCREENS): For 911 calls or radio audio, replace static waveforms or black screens with relevant verified CCTV footage.
 4. KILL THE DEAD AIR: remove pauses, silences, or non-essential dialogue longer than 0.5 seconds.
 5. PLATFORM SAFETY: Do not show a gunshot visibly hitting a person; cut before impact or use a safe reaction shot.

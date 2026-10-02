@@ -48,11 +48,11 @@ const MODE_PRESENTATION = Object.freeze({
   satisfying_storytime: {
     category: "story",
     categoryLabel: "STORY & DIY",
-    title: "Video thỏa mãn + kể chuyện",
-    description: "Dùng kịch bản JSON để tạo voice khớp với từng nhịp hình ảnh.",
-    badges: ["Storytime", "Voice khớp cảnh", "JSON"],
-    nextHint: "Bước tiếp theo: chọn giọng kể chuyện.",
-    configurable: false
+    title: "Oddly Satisfying Storyteller",
+    description: "Tự động tạo kịch bản First-Person US Contractor từ B-roll thỏa mãn (hoặc từ Reddit/1 câu prompt), ghim Header Hook Card, phụ đề Kinetic và hòa âm Foley ASMR ducking.",
+    badges: ["Story Matrix", "Header Card", "Kinetic Subtitles", "Foley ASMR", "TikTok US"],
+    nextHint: "Bước tiếp theo: chọn giọng US Contractor hoặc Kokoro.",
+    configurable: true
   },
   diy_story_remix: {
     category: "story",
@@ -359,6 +359,14 @@ function queryElements() {
     stage1AiModelBadge: $("stage1-ai-model-badge"),
     storyRecutRightsConfirmed: $("story-recut-rights-confirmed"),
     diyStoryAngle: $("diy-story-angle"),
+    storytimePersona: $("storytime-persona"),
+    storytimeConflict: $("storytime-conflict"),
+    storytimeControversyLevel: $("storytime-controversy-level"),
+    storytimeHighlightColor: $("storytime-highlight-color"),
+    storytimeHeaderCardToggle: $("storytime-header-card-toggle"),
+    storytimeFoleyToggle: $("storytime-foley-toggle"),
+    storytimeCustomIdea: $("storytime-custom-idea"),
+    storytimeSourceText: $("storytime-source-text"),
     podcastYoutubeUrl: $("podcast-youtube-url"),
     podcastWorkflowMode: $("podcast-workflow-mode"),
     podcastOutputCount: $("podcast-output-count"),
@@ -6284,9 +6292,14 @@ function syncModeUi() {
   document.querySelectorAll(".auto-story-only").forEach((node) => {
     node.classList.toggle("hidden", !isAutoStory);
   });
+  document.querySelectorAll(".storytime-only").forEach((node) => {
+    node.classList.toggle("hidden", !isSatisfyingStorytime);
+  });
   if (el.startIngest) {
     el.startIngest.textContent = isAutoStory
       ? "Phân tích, tạo timeline và render draft"
+      : isSatisfyingStorytime
+      ? "Tạo kịch bản Story Matrix & Render Video"
       : "Tiếp tục chỉnh sửa (phân tích cục bộ)";
   }
   document.querySelectorAll(".story-recut-hide").forEach((node) => {
@@ -6725,6 +6738,14 @@ function readProjectPayload() {
     subtitleSourcePath: el.subtitlePath.value.trim(),
     storyScriptPath: storyScriptPaths[0] || el.storyScriptPath?.value.trim() || "",
     storyScriptPaths,
+    storytimePersona: el.storytimePersona?.value || "contractor",
+    storytimeConflict: el.storytimeConflict?.value || "contract_dispute",
+    storytimeControversyLevel: Number(el.storytimeControversyLevel?.value || 2),
+    storytimeHighlightColor: el.storytimeHighlightColor?.value || "cyan",
+    storytimeEnableHeaderCard: el.storytimeHeaderCardToggle?.value !== "false",
+    storytimeEnableFoley: el.storytimeFoleyToggle?.value !== "false",
+    storytimeCustomIdea: el.storytimeCustomIdea?.value?.trim() || "",
+    storytimeSourceText: el.storytimeSourceText?.value?.trim() || "",
     autoWhisper: el.autoWhisper.checked,
     sourceLanguage,
     targetLanguage,

@@ -137,10 +137,10 @@
                 <em>Không viết lại lời, không narrator, không TTS. Tạo từ 1 đến 5 video khác nhau trong một lượt.</em>
               </button>
               <button class="mode-card mode-category-hidden" data-mode="satisfying_storytime" data-mode-group="story" type="button">
-                <span>ODDLY SATISFYING <b>Voice khớp cảnh</b></span>
-                <strong>Video thỏa mãn + kể chuyện</strong>
-                <p>Nhận kịch bản JSON từ Gemini rồi tạo voice khớp từng mốc hình.</p>
-                <em>Phù hợp video cắt, nặn, rót, xếp hình, làm sạch, loop thị giác.</em>
+                <span>ODDLY SATISFYING <b>Contract Storyteller</b></span>
+                <strong>Oddly Satisfying Storyteller</strong>
+                <p>Modular Story Matrix (Thầu xây dựng, thợ lặn, máy xúc, dọn rạp) + Thẻ Header Hook + Phụ đề Kinetic + Foley ASMR Ducking.</p>
+                <em>Tự động viết kịch bản gây bão comment TikTok US hoặc nhập từ Reddit/1 câu prompt.</em>
               </button>
               <button class="mode-card diy-story-remix-mode-card mode-category-hidden" data-mode="diy_story_remix" data-mode-group="story" type="button">
                 <span>DIY STORY REMIX <b>Story mới</b></span>
@@ -437,6 +437,78 @@
                 </div>
               </div>
               <small>Gemini chỉ chọn dialogueUnitId/cutOptionId. Tool tự tính timestamp và không cho Gemini sửa câu thoại.</small>
+            </div>
+            <div id="storytime-matrix-options" class="field-card storytime-only prompt-options-card hidden">
+              <div class="prompt-options-heading">
+                <div>
+                  <span class="section-kicker">ODDLY SATISFYING STORYTELLER</span>
+                  <strong>Modular Story Matrix & Foley ASMR</strong>
+                  <small>Kết hợp video B-roll thỏa mãn với kịch bản First-Person US Contractor, Header Hook Card và Foley ASMR Ducking.</small>
+                </div>
+                <span class="prompt-profile-badge">Viral TikTok US</span>
+              </div>
+              <div class="prompt-options-grid">
+                <div>
+                  <label>Narrator Persona (Nhân vật)</label>
+                  <select id="storytime-persona">
+                    <option value="contractor" selected>Thầu xây dựng (Veteran Contractor)</option>
+                    <option value="cinema_cleaner">Nhân viên dọn rạp phim (Cinema Cleaner)</option>
+                    <option value="deep_sea_diver">Thợ lặn cạo hà đáy tàu (Hull Diver)</option>
+                    <option value="excavator_operator">Thợ lái máy xúc nạo mương (Excavator)</option>
+                    <option value="pressure_washer">Thợ xịt rửa áp lực cao (Pressure Washer)</option>
+                    <option value="carpet_restorer">Chuyên gia phục chế thảm bẩn (Carpet Restorer)</option>
+                    <option value="custom">Tự nhập Persona khác...</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Drama / Xung đột chính</label>
+                  <select id="storytime-conflict">
+                    <option value="contract_dispute" selected>Tranh chấp hợp đồng & tiền nong ($3k vs $5k, $12k)</option>
+                    <option value="disgusting_karen">Khách hàng hách dịch / Karen bẩn thỉu</option>
+                    <option value="unsettling_discovery">Phát hiện rùng mình / kỳ lạ dưới bùn rỉ</option>
+                    <option value="impossible_deadline">Thời hạn khẩn cấp / Hư hỏng đắt giá</option>
+                    <option value="custom">Tự nhập Xung đột khác...</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Mức độ tranh cãi (Comment Magnet)</label>
+                  <select id="storytime-controversy-level">
+                    <option value="1">Level 1: Kể chuyện lôi cuốn, thù lao & kỹ năng</option>
+                    <option value="2" selected>Level 2: Tranh cãi giá cả công bằng (Fair Price Debate)</option>
+                    <option value="3">Level 3: Xung đột đạo đức cực căng (AITA / Outrage)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Màu Highlight phụ đề Kinetic</label>
+                  <select id="storytime-highlight-color">
+                    <option value="cyan" selected>Xanh Cyan Neon (Avatar cleaner style)</option>
+                    <option value="yellow">Vàng Neon (Contractor / Hull diver style)</option>
+                    <option value="neon_green">Xanh lá Dollar ($ Payout style)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Thẻ ghim Header Card trên đỉnh</label>
+                  <select id="storytime-header-card-toggle">
+                    <option value="true" selected>Bật thẻ Header 3 dòng (Khuyên dùng)</option>
+                    <option value="false">Tắt (Chỉ dùng video + phụ đề)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Hòa âm Foley ASMR Video gốc</label>
+                  <select id="storytime-foley-toggle">
+                    <option value="true" selected>Bật Auto-Ducking (-16dB dưới voice)</option>
+                    <option value="false">Tắt tiếng gốc (Chỉ giữ Voice TTS)</option>
+                  </select>
+                </div>
+              </div>
+              <div style="margin-top: 12px;">
+                <label>Ý tưởng mở rộng / 1 câu prompt (Tùy chọn):</label>
+                <input id="storytime-custom-idea" type="text" placeholder="Ví dụ: Khách bảo dọn bãi rác $500 nhưng phát hiện két sắt khóa dưới đống rác..." />
+              </div>
+              <div style="margin-top: 10px;">
+                <label>Dán bài viết Reddit / ghi chú nguồn (Tùy chọn):</label>
+                <textarea id="storytime-source-text" rows="2" placeholder="Dán văn bản bài đăng Reddit / r/TalesFromRetail / r/Contractor nếu muốn AI chuyển hóa thành kịch bản..."></textarea>
+              </div>
             </div>
             <div class="two-column recap-options recap-only">
               <div class="field-card">

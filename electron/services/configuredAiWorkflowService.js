@@ -438,16 +438,25 @@ class ConfiguredAiWorkflowService {
             });
       review = findObject(raw, (value) => value.artifactType === "gemini_draft_review");
       if (!review) {
-        try {
-          review = await readJson(path.join(inputDir, "gemini-draft-review.json"), "gemini-draft-review.json");
-        } catch (_) {
+        for (const candidatePath of [path.join(inputDir, "gemini-draft-review.json"), path.join(resultDir, "gemini-draft-review.json")]) {
           try {
-            review = await readJson(path.join(resultDir, "gemini-draft-review.json"), "gemini-draft-review.json");
-          } catch (__) {}
+            const candidate = await readJson(candidatePath, "gemini-draft-review.json");
+            if (candidate?.artifactType === "gemini_draft_review") {
+              review = candidate;
+              break;
+            } else if (candidate?.artifactType === "gemini_input_access_failure") {
+              const detail = candidate.mismatchDetails || candidate.recommendedAction || "Lỗi kiểm tra đầu vào.";
+              throw new Error(`AI từ chối review: ${detail}`);
+            }
+          } catch (candidateErr) {
+            if (candidateErr.message.includes("AI từ chối review")) throw candidateErr;
+          }
         }
       }
     }
-    if (!review) throw new Error(`${descriptor.label} không trả về gemini_draft_review JSON hợp lệ.`);
+    if (!review || review.artifactType !== "gemini_draft_review") {
+      throw new Error(`${descriptor.label} không trả về gemini_draft_review JSON hợp lệ.`);
+    }
     const actualBinding = review.reviewTarget?.reviewBindingId || review.review_target?.reviewBindingId;
     if (expectedBinding && actualBinding !== expectedBinding) {
       throw new Error("AI trả về reviewBindingId không khớp Draft V1 hiện tại.");

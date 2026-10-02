@@ -201,6 +201,13 @@ class EdgeTtsService {
     }
   }
 
+  async synthesize(options = {}) {
+    return this.synthesizeSpeech({
+      ...options,
+      voiceName: options.voiceName || options.voice
+    });
+  }
+
   async synthesizeSpeech({ text, voiceName, outputPath, language = "auto", genreMode = "thriller", rate, pitch, volume, emotionTag, retries = 3, timeoutMs = 45000 }) {
     await fs.promises.mkdir(path.dirname(outputPath), { recursive: true });
     const preferredVoice = await this.resolveVoice(voiceName, language);

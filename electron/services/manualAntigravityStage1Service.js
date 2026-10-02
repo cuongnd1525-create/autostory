@@ -1,4 +1,5 @@
 const fs = require("fs/promises");
+const fsSync = require("fs");
 const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
@@ -182,6 +183,11 @@ function findArtifactEnvelope(value, seen = new Set()) {
 
 function normalizeArtifact(artifact) {
   const script = artifact?.script || artifact?.content || artifact?.json || artifact?.data || artifact;
+  if (script?.artifactType === "gemini_input_access_failure") {
+    const missing = Array.isArray(script.missingInputs) ? script.missingInputs.join(", ") : "";
+    const detail = script.mismatchDetails || script.recommendedAction || "Một số file đầu vào không tìm thấy";
+    throw new Error(`AI dừng phân tích do thiếu file đầu vào (${missing || "không xác định"}): ${detail}`);
+  }
   const scriptId = Number(script?.scriptId || script?.script_id || 0);
   if (!REQUIRED_SCRIPT_IDS.includes(scriptId)) {
     throw new Error(`Antigravity trả scriptId=${scriptId || "trống"}; chỉ chấp nhận 1, 3 hoặc 4.`);
@@ -482,17 +488,25 @@ function buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds = [1, 3, 
 
   // Build explicit list of context files so the model never runs directory searches
   const contextFiles = [];
-  if (promptPath) {
+  if (promptPath && fsSync.existsSync(promptPath)) {
     contextFiles.push({ label: "Editorial Prompt Instructions", path: promptPath });
   }
   const manifestCandidate = packageInfo?.proxyChunksManifestPath || path.join(pass1Dir, "proxy-chunks-manifest.json");
-  contextFiles.push({ label: "Proxy Chunks Manifest", path: manifestCandidate });
+  if (fsSync.existsSync(manifestCandidate)) {
+    contextFiles.push({ label: "Proxy Chunks Manifest", path: manifestCandidate });
+  }
   const sceneManifestCandidate = packageInfo?.manifestPath || path.join(pass1Dir, "scene-manifest.json");
-  contextFiles.push({ label: "Scene Manifest", path: sceneManifestCandidate });
+  if (fsSync.existsSync(sceneManifestCandidate)) {
+    contextFiles.push({ label: "Scene Manifest", path: sceneManifestCandidate });
+  }
   const transcriptCandidate = packageInfo?.transcriptPath || path.join(pass1Dir, "source-transcript.srt");
-  contextFiles.push({ label: "Source Transcript (Whisper)", path: transcriptCandidate });
+  if (fsSync.existsSync(transcriptCandidate)) {
+    contextFiles.push({ label: "Source Transcript (Whisper)", path: transcriptCandidate });
+  }
   const actionCandidate = packageInfo?.actionCandidatesPath || path.join(pass1Dir, "action-candidates.json");
-  contextFiles.push({ label: "Action Candidates", path: actionCandidate });
+  if (fsSync.existsSync(actionCandidate)) {
+    contextFiles.push({ label: "Action Candidates", path: actionCandidate });
+  }
 
   promptLines.push(
     "================================================================================",
@@ -920,22 +934,38 @@ class ManualAntigravityStage1Service {
     }
 
     let cliResult;
-    try {
-      cliResult = await this.runCli({
-        ...commandConfig,
-        prompt,
-        cwd: resultDir,
-        onProgress,
-        progressStep: "antigravity_stage1",
-        expectedProxyList,
-        viewedProxySet
-      });
-    } catch (error) {
-      await Promise.all([
-        fs.writeFile(path.join(resultDir, "antigravity-output.log"), error.stdout || "", "utf8"),
-        fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), error.stderr || error.message || "", "utf8")
-      ]);
-      throw error;
+    const maxServerRetries = 2;
+    for (let serverAttempt = 0; serverAttempt <= maxServerRetries; serverAttempt += 1) {
+      try {
+        cliResult = await this.runCli({
+          ...commandConfig,
+          prompt,
+          cwd: resultDir,
+          onProgress,
+          progressStep: "antigravity_stage1",
+          expectedProxyList,
+          viewedProxySet
+        });
+        break;
+      } catch (error) {
+        const errorText = `${error.message || ""} ${error.stderr || ""} ${error.stdout || ""}`;
+        const isServerUnavailable = /503|UNAVAILABLE|No capacity available|high traffic/i.test(errorText);
+        if (isServerUnavailable && serverAttempt < maxServerRetries && !this.cancelled) {
+          const delaySec = (serverAttempt + 1) * 8;
+          onProgress?.({
+            step: "antigravity_stage1",
+            percent: 15,
+            message: `Máy chủ AI tạm bận (503/High Traffic). Đang tự động thử lại sau ${delaySec}s (${serverAttempt + 1}/${maxServerRetries})...`
+          });
+          await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+          continue;
+        }
+        await Promise.all([
+          fs.writeFile(path.join(resultDir, "antigravity-output.log"), error.stdout || "", "utf8"),
+          fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), error.stderr || error.message || "", "utf8")
+        ]);
+        throw error;
+      }
     }
 
     let conversationId = cliResult.conversationId;

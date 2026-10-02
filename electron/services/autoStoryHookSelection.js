@@ -8,14 +8,16 @@ score MUST be a number from 0 to 10, never a percentage or 0-100 score. audio.co
 The hook MUST be a concise opening beat between 3 and 20 seconds (No fixed 3-5 second limit, but keep it punchy). Never return the entire candidate window as the hook.
 
 VIRAL HOOK ARCHETYPES (Pick the strongest that fits the footage):
-1. The Absurd Contradiction: Defiant denial or bizarre claim directly contradicted by obvious physical reality (e.g., suspect on floor insists "I never passed out").
-2. In Medias Res: Drop directly into the peak moment of physical struggle, shouting, flying objects, or decisive confrontation. Zero introductory lead-in.
-3. Instant Karma / The Fatal Mistake: The exact moment of arrogant provocation or aggression immediately meeting an instant counter-attack or takedown.
-4. Unbelievable Stakes: An outrageous or bizarre trigger that reveals the absurd premise of the altercation (e.g., throwing food over sauce).
+1. The Physical Friction & Barricade Suspense: Active struggle against a locked barrier, violent door rattling, window pounding, or physical standoff before entry (creates massive curiosity gap; never open with casual door opening or routine approach).
+2. The Absurd Contradiction: Defiant denial or bizarre claim directly contradicted by obvious physical reality (e.g., suspect on floor insists "I never passed out").
+3. In Medias Res: Drop directly into the peak moment of physical struggle, shouting, flying objects, or decisive confrontation. Zero introductory lead-in.
+4. Instant Karma / The Fatal Mistake: The exact moment of arrogant provocation or aggression immediately meeting an instant counter-attack or takedown.
+5. Unbelievable Stakes: An outrageous or bizarre trigger that reveals the absurd premise of the altercation (e.g., throwing food over sauce).
 
 NEGATIVE DIRECTIVES (STRICTLY FORBIDDEN FOR HOOKS):
-- NEVER open with polite greetings, casual chatter, asking for ID, routine traffic questions, or officers walking slowly.
-- NEVER start with silent or low-energy lead-ins. Start on the first punchy word, impact, or scream.
+- NEVER open with polite greetings, casual chatter, asking for ID, routine traffic questions, casual door opening, or officers walking slowly.
+- NEVER start with silent or low-energy lead-ins. Start on the first punchy word, metallic rattle, barrier thud, impact, or scream.
+- NEVER spoiler-hook with the final aftermath or empty scene that answers the mystery before the story even begins. Hook the friction/question, not the outcome.
 
 completeBeat means a LOCAL, intelligible quote/action and its necessary immediate response, NOT the resolution of the whole story. A bite and the officer's reaction can be complete while charges are unknown. Taking a patrol car and driving away can be complete while the chase remains unresolved. Never mark a hook incomplete merely because the later investigation, pursuit, punishment or final consequences are absent. Preserve curiosity. Mark false for a genuinely cut-off sentence/action or an unintelligible setup.
 Listen to the EXACT returned range, not the entire candidate window. external_narrator means the source channel's added host/commentary. mixed means that host/commentary is audible together with on-scene speech/sound. Several officers/suspects speaking, radio, sirens or engine sounds are NOT by themselves external narration or mixed. Use uncertain when speaker provenance cannot be verified.

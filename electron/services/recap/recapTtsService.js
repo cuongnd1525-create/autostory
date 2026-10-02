@@ -107,16 +107,26 @@ class RecapTtsService {
   }
 
   resolveVoiceId(provider, project = {}) {
+    const isMale = project.voiceGender === "male" || this.settings.defaultVoiceGender === "male";
     if (provider === "elevenlabs") {
-      return project.voiceId || this.settings.defaultVoiceId || "21m00Tcm4TlvDq8ikWAM"; // Rachel default
+      if (project.voiceId || this.settings.defaultVoiceId) {
+        return project.voiceId || this.settings.defaultVoiceId;
+      }
+      return isMale ? "pNInz6obpgDQGcFmaJgB" : "21m00Tcm4TlvDq8ikWAM"; // Adam (male narrator) or Rachel (female) default
     }
     if (provider === "kokoro") {
-      return project.voiceId || "af_heart";
+      if (project.voiceId || this.settings.defaultVoiceId) {
+        return project.voiceId || this.settings.defaultVoiceId;
+      }
+      return isMale ? "am_adam" : "af_heart";
     }
     if (provider === "windows_local") {
       return project.voiceId || this.settings.defaultWindowsVoice || "";
     }
-    return project.voiceId || "en-US-JennyNeural";
+    if (project.voiceId || this.settings.defaultVoiceId) {
+      return project.voiceId || this.settings.defaultVoiceId;
+    }
+    return isMale ? "en-US-ChristopherNeural" : "en-US-JennyNeural";
   }
 
   /**
@@ -261,6 +271,40 @@ class RecapTtsService {
       language: "en",
       style: "recap"
     });
+  }
+
+  /**
+   * Synthesize all SpeechUnits for a project in batch.
+   */
+  async synthesizeAll({ speechUnits = [], outputDir, workspaceRoot, project, signal, onProgress }) {
+    await fs.mkdir(outputDir, { recursive: true });
+    const audioTracks = {};
+    const total = speechUnits.length;
+    for (let i = 0; i < total; i++) {
+      if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+      const unit = speechUnits[i];
+      onProgress?.({
+        stage: "tts_synthesis",
+        percent: Math.round(((i + 1) / Math.max(1, total)) * 100),
+        message: `Synthesizing narration ${i + 1} of ${total}...`
+      });
+      const result = await this.processSpeechUnit({
+        speechUnit: unit,
+        outputDir,
+        workspaceRoot,
+        project,
+        signal,
+        onProgress
+      });
+      audioTracks[unit.id] = {
+        audioPath: result.audio_path,
+        rawPath: result.raw_path,
+        durationSec: result.duration,
+        text: result.text,
+        isCached: result.isCached
+      };
+    }
+    return audioTracks;
   }
 }
 

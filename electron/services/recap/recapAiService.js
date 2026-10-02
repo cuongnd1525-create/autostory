@@ -65,10 +65,22 @@ class RecapAiService {
   /**
    * 1. Analyze a video chunk to identify scenes, shots, and fine-grained VisualEvents.
    */
-  async analyzeVideoChunk({ chunkPath, chunkInfo, signal, onProgress }) {
-    const chunkStart = Number(chunkInfo.sourceStartSec || 0);
-    const chunkEnd = Number(chunkInfo.sourceEndSec || 0);
-    const chunkDuration = Number(chunkInfo.durationSec || (chunkEnd - chunkStart));
+  async analyzeVideoChunk({
+    chunkPath,
+    chunkVideoPath,
+    chunkInfo,
+    chunkMetadata,
+    signal,
+    cancelToken,
+    onProgress
+  }) {
+    const activeChunkPath = chunkPath || chunkVideoPath;
+    const info = chunkInfo || chunkMetadata || {};
+    const activeSignal = signal || cancelToken;
+    const chunkStart = Number(info.sourceStartSec || 0);
+    const chunkEnd = Number(info.sourceEndSec || 0);
+    const chunkDuration = Number(info.durationSec || (chunkEnd > chunkStart ? chunkEnd - chunkStart : 0));
+    const chunkIndex = info.chunkIndex ?? 1;
 
     const prompt = [
       "You are an expert film analyst and video editor.",
@@ -144,11 +156,11 @@ class RecapAiService {
     };
 
     const raw = await this.runVertexCall({
-      filePaths: [chunkPath],
+      filePaths: [activeChunkPath],
       prompt,
       responseSchema: schema,
       modelOverride: this.getAnalysisModel(),
-      signal,
+      signal: activeSignal,
       onProgress
     });
 
@@ -162,14 +174,14 @@ class RecapAiService {
       }
       return validateVisualEvent({
         ...ev,
-        id: ev.id || `chunk_${chunkInfo.chunkIndex}_ev_${idx + 1}`,
+        id: ev.id || `chunk_${chunkIndex}_ev_${idx + 1}`,
         source_start: Math.max(chunkStart, Math.min(chunkEnd, sStart)),
         source_end: Math.max(sStart + 0.3, Math.min(chunkEnd, sEnd))
       }, idx);
     });
 
     return {
-      chunkIndex: chunkInfo.chunkIndex,
+      chunkIndex,
       summary: safeText(raw.summary || ""),
       characters: safeArray(raw.characters),
       events
@@ -177,26 +189,54 @@ class RecapAiService {
   }
 
   /**
-   * 2. Synthesize a Global Story Model (Story Bible) from chunk summaries.
+   * 2. Synthesize a Global Story Model (Story Bible) from chunk summaries or visual events.
    */
-  async buildStoryModel({ chunkSummaries, metadata, signal, onProgress }) {
-    const prompt = [
-      "You are a master storyteller and dramaturg.",
-      "Below are the sequential summaries and key visual events extracted from a long video.",
-      "Synthesize a compact, coherent GLOBAL STORY MODEL understanding characters, conflict, turning points, causal relationships, and resolution.",
-      "",
-      `Total Source Duration: ${metadata.duration}s`,
-      "Chunk Data:",
-      JSON.stringify(chunkSummaries.map((c) => ({
+  async buildStoryModel({ chunkSummaries, events, metadata, videoMetadata, signal, cancelToken, onProgress }) {
+    const activeSignal = signal || cancelToken;
+    const meta = metadata || videoMetadata || {};
+    const totalDuration = Number(meta.duration || 0);
+
+    let eventDigest = [];
+    if (Array.isArray(chunkSummaries) && chunkSummaries.length) {
+      eventDigest = chunkSummaries.map((c) => ({
         chunk: c.chunkIndex,
         summary: c.summary,
-        keyEvents: c.events.filter((e) => e.importance >= 0.7).map((e) => ({ id: e.id, desc: e.description, range: [e.source_start, e.source_end] }))
-      })), null, 2),
+        keyEvents: (c.events || []).filter((e) => (e.importance ?? 0.5) >= 0.6).map((e) => ({
+          id: e.id,
+          desc: e.description,
+          range: [e.source_start, e.source_end]
+        }))
+      }));
+    } else if (Array.isArray(events) && events.length) {
+      const step = Math.max(4, Math.ceil(events.length / 8));
+      for (let i = 0; i < events.length; i += step) {
+        const slice = events.slice(i, i + step);
+        eventDigest.push({
+          chunk: Math.floor(i / step) + 1,
+          summary: slice.map((e) => e.description).slice(0, 3).join("; "),
+          keyEvents: slice.filter((e) => (e.importance ?? 0.5) >= 0.5).map((e) => ({
+            id: e.id,
+            desc: e.description,
+            range: [e.source_start, e.source_end]
+          }))
+        });
+      }
+    }
+
+    const prompt = [
+      "You are a master storyteller and dramaturg creating a cinematic documentary recap.",
+      "Below are the sequential summaries and key visual events extracted from a video.",
+      "Synthesize a compact, coherent, and emotionally resonant GLOBAL STORY MODEL.",
+      "Identify the core dramatic question, the protagonist's dilemma, escalating stakes, turning points, climax, and emotional resonance.",
+      "",
+      `Total Source Duration: ${totalDuration.toFixed(2)}s`,
+      "Visual Event Digest:",
+      JSON.stringify(eventDigest, null, 2),
       "",
       "CRITICAL RULES:",
-      "- Do NOT invent events or characters unsupported by the chunk data.",
-      "- Identify the main conflict, character motivations, revelations, climax, and ending.",
-      "- Output must be structured and compact.",
+      "- Do NOT invent events or characters unsupported by the visual data.",
+      "- Identify the central conflict, emotional stakes, character motivations, revelations, climax, and ending.",
+      "- The output will serve as the master narrative spine for writing continuous, unbroken voiceover.",
       "",
       "Return JSON conforming to this schema:",
       "{",
@@ -281,7 +321,7 @@ class RecapAiService {
       prompt,
       responseSchema: schema,
       modelOverride: this.getQualityModel(),
-      signal,
+      signal: activeSignal,
       onProgress
     });
 
@@ -291,14 +331,16 @@ class RecapAiService {
   /**
    * 3. Plan Recap Edit: Select visual events that fulfill target duration and narrative clarity.
    */
-  async planRecap({ storyModel, visualEvents, targetDurationSec = 90, allowShotReuse = false, signal, onProgress }) {
-    const compactEvents = visualEvents.map((e) => ({
+  async planRecap({ storyModel, visualEvents, events, targetDurationSec = 90, allowShotReuse = false, signal, cancelToken, onProgress }) {
+    const activeSignal = signal || cancelToken;
+    const eventList = Array.isArray(visualEvents) ? visualEvents : (Array.isArray(events) ? events : []);
+    const compactEvents = eventList.map((e) => ({
       id: e.id,
       range: [e.source_start, e.source_end],
-      duration: e.duration,
+      duration: e.duration || Number(((e.source_end || 0) - (e.source_start || 0)).toFixed(2)),
       desc: e.description,
-      subjects: e.subjects,
-      actions: e.actions,
+      subjects: e.subjects || [],
+      actions: e.actions || [],
       importance: e.importance,
       motion: e.motion_level,
       lip_sync: e.lip_sync_risk
@@ -380,37 +422,88 @@ class RecapAiService {
 
   /**
    * 4. Generate Visual-Grounded Narration broken down into SpeechUnits and Clauses.
+   * Weaves an unbroken, continuous cinematic story grounded in visual events.
    */
-  async generateNarration({ recapPlan, visualEventsMap, storyModel, voiceProfile, signal, onProgress }) {
-    const wps = Math.max(1.5, Math.min(3.5, Number(voiceProfile?.wordsPerSecond || 2.35)));
+  async generateNarration({
+    recapPlan,
+    visualEventsMap,
+    events,
+    storyModel,
+    voiceProfile,
+    wordsPerSecond,
+    scriptStyle = "cinematic",
+    densityMultiplier = 1.0,
+    signal,
+    cancelToken,
+    onProgress
+  }) {
+    const activeSignal = signal || cancelToken;
+    const resolvedEventsMap = visualEventsMap || (Array.isArray(events) ? Object.fromEntries(events.map((e) => [e.id, e])) : {});
+    const baseWps = Number(wordsPerSecond || voiceProfile?.wordsPerSecond || 2.6);
+    const density = Math.max(0.8, Math.min(1.4, Number(densityMultiplier || 1.0)));
+    const wps = Math.max(1.5, Math.min(3.5, baseWps * density));
 
     // Calculate duration budget per beat
-    const beatsWithBudgets = recapPlan.beats.map((beat) => {
-      const events = beat.visual_event_ids.map((id) => visualEventsMap[id]).filter(Boolean);
-      const totalVisualSec = events.reduce((sum, e) => sum + (e.duration || 0), 0);
-      const targetWordCount = Math.max(3, Math.round(totalVisualSec * wps * 0.90));
+    const beatsWithBudgets = (recapPlan?.beats || []).map((beat) => {
+      const beatEvents = (beat.visual_event_ids || []).map((id) => resolvedEventsMap[id]).filter(Boolean);
+      const totalVisualSec = beatEvents.reduce((sum, e) => sum + (e.duration || ((e.source_end || 0) - (e.source_start || 0)) || 0), 0);
+      const targetWordCount = Math.max(3, Math.round(totalVisualSec * wps * 0.92));
+      const maxWordCount = Math.max(targetWordCount + 1, Math.round(totalVisualSec * wps * 1.08));
+      const maxChars = Math.max(20, Math.round(totalVisualSec * 15 * density));
       return {
         ...beat,
         totalVisualSec: Number(totalVisualSec.toFixed(2)),
         targetWordCount,
-        maxWordCount: Math.round(totalVisualSec * wps * 1.05),
-        events: events.map((e) => ({ id: e.id, desc: e.description, duration: e.duration }))
+        maxWordCount,
+        maxChars,
+        events: beatEvents.map((e) => ({
+          id: e.id,
+          desc: e.description,
+          duration: e.duration || Number(((e.source_end || 0) - (e.source_start || 0)).toFixed(2)),
+          subjects: e.subjects || [],
+          actions: e.actions || []
+        }))
       };
     });
 
+    const storySpineText = storyModel ? [
+      "GLOBAL STORY SPINE (Maintain this unbroken through-line across the entire narrative):",
+      `Title: ${storyModel.title || "Recap Story"}`,
+      storyModel.logline ? `Core Premise / Logline: ${storyModel.logline}` : "",
+      storyModel.conflict ? `Central Conflict / Mystery: ${storyModel.conflict}` : "",
+      storyModel.characters?.length ? `Key Characters: ${storyModel.characters.map((c) => `${c.name} (${c.role}): ${c.description}`).join("; ")}` : "",
+      storyModel.climax ? `Dramatic Climax: ${storyModel.climax}` : "",
+      storyModel.ending?.description ? `Resolution / Ending: ${storyModel.ending.description}` : "",
+      ""
+    ].filter(Boolean).join("\n") : "";
+
     const prompt = [
-      "You are a skilled documentary / cinema recap narrator.",
-      "Write captivating English narration for the selected visual events.",
+      "You are a master cinematic documentary storyteller and film essay narrator.",
+      "Write an unbroken, emotionally gripping English voiceover script covering the selected visual beats as ONE CONTINUOUS MASTER STORY.",
       "",
-      "CRITICAL EDITOR RULES:",
-      "1. VISUAL GROUNDING: Narration must describe what the viewer is seeing at that moment.",
-      "2. VISUAL LEAD: The visual appears 0-500ms before or as the narrator mentions it. Never name a reveal seconds before it appears.",
-      "3. CLAUSE-LEVEL ALIGNMENT: Break narration into natural SpeechUnits and sub-clauses, mapping each clause to its supporting visual_event_id.",
-      "4. DURATION BUDGETING: Do NOT exceed the target word count for each beat. Stay close to the target.",
-      "5. PROSODY: Write natural, flowing sentences. Avoid choppy fragments or excessive commas.",
+      storySpineText,
+      "CRITICAL NARRATIVE & SYNCHRONIZATION RULES:",
+      "1. CONTINUOUS THROUGH-LINE (NO FRAGMENTATION):",
+      "   - The entire script MUST read like a single, seamless cinematic film essay from start to finish.",
+      "   - NEVER write disconnected sentence fragments that merely describe isolated clips. Every sentence must flow causally into the next.",
+      "   - Use evocative transitions and connectors ('Yet as...', 'What he didn't realize...', 'Beneath the calm surface...', 'By the time...') to bridge beats naturally.",
+      "",
+      "2. INTERPRETIVE DEPTH & ATMOSPHERE (BEYOND LITERAL DESCRIPTION):",
+      "   - The viewer already sees the action on screen. Do not insult the audience by merely stating obvious visual facts.",
+      "   - Instead, illuminate the stakes, internal character motivations, historical/dramatic context, and visceral atmosphere.",
+      "   - Tone: Authoritative, atmospheric, cinematic, and profoundly engaging.",
+      "",
+      "3. CLAUSE-LEVEL VISUAL GROUNDING & VISUAL LEAD:",
+      "   - Break narration into clear SpeechUnits, each divided into distinct clauses.",
+      "   - Every clause MUST explicitly anchor to the specific 'visual_event_id' where that action, subject, or atmosphere appears.",
+      "   - Visual Lead: The visual event must appear on screen 200-400ms before or as the narrator mentions it. Never name a visual reveal before the viewer can see it.",
+      "",
+      "4. PRECISE DURATION BUDGETING:",
+      "   - Stay strictly within targetWordCount and maxWordCount for each beat so the spoken voice fits the video duration without awkward rushes or dead pauses.",
+      "   - Spoken word cadence: Write natural, flowing sentences. Use punctuation (commas, em-dashes, periods) to create natural breath pauses.",
       "",
       `Speaking Rate: ~${wps.toFixed(2)} words per second.`,
-      "Beats and Visual Events:",
+      "Beats and Grounded Visual Events:",
       JSON.stringify(beatsWithBudgets, null, 2),
       "",
       "Return JSON conforming to this schema:",
@@ -419,11 +512,11 @@ class RecapAiService {
       '    {',
       '      "id": "speech_0001",',
       '      "beat_id": "beat_1",',
-      '      "text": "John opens the heavy iron door and freezes as he spots his partner on the ground.",',
+      '      "text": "As the dawn mist hung over the village, a peasant took his first breath of what could be his final morning.",',
       '      "visual_event_ids": ["event_0001", "event_0002"],',
       '      "clauses": [',
-      '        {"clause_id": "speech_0001_c1", "text": "John opens the heavy iron door", "visual_event_ids": ["event_0001"]},',
-      '        {"clause_id": "speech_0001_c2", "text": "and freezes as he spots his partner on the ground.", "visual_event_ids": ["event_0002"]}',
+      '        {"clause_id": "speech_0001_c1", "text": "As the dawn mist hung over the village,", "visual_event_ids": ["event_0001"]},',
+      '        {"clause_id": "speech_0001_c2", "text": "a peasant took his first breath of what could be his final morning.", "visual_event_ids": ["event_0002"]}',
       '      ]',
       '    }',
       '  ]',
@@ -467,7 +560,7 @@ class RecapAiService {
       prompt,
       responseSchema: schema,
       modelOverride: this.getQualityModel(),
-      signal,
+      signal: activeSignal,
       onProgress
     });
 
@@ -476,22 +569,24 @@ class RecapAiService {
 
   /**
    * 5. Revise Narration: Shortens or lengthens narration to fit a specific speech duration budget.
+   * Preserves clause structure, visual grounding, and narrative continuity.
    */
-  async reviseNarration({ speechUnit, targetDurationSec, targetWordDelta, voiceProfile, reason = "timing mismatch", signal, onProgress }) {
-    const wps = Math.max(1.5, Math.min(3.5, Number(voiceProfile?.wordsPerSecond || 2.35)));
+  async reviseNarration({ speechUnit, targetDurationSec, targetWordDelta, voiceProfile, reason = "timing mismatch", signal, cancelToken, onProgress }) {
+    const activeSignal = signal || cancelToken;
+    const wps = Math.max(1.5, Math.min(3.5, Number(voiceProfile?.wordsPerSecond || 2.5)));
     const targetWords = Math.max(3, Math.round(targetDurationSec * wps * 0.95));
 
     const prompt = [
-      "You are a video editor rewriting a narration sentence to fit exact video timing.",
+      "You are a cinematic video editor rewriting a narration sentence to fit exact video timing.",
       `Current Text: "${speechUnit.text}"`,
       `Current Word Count: ${speechUnit.text.split(/\s+/).filter(Boolean).length}`,
       `Target Word Count: ~${targetWords} words (Target Audio Duration: ${targetDurationSec.toFixed(2)}s).`,
       `Reason: ${reason}.`,
       "",
       "EDITING RULES:",
-      "- PRESERVE: Main subject, action verb, and story consequence.",
-      "- REMOVE FIRST: Fluff adverbs, decorative adjectives, redundant filler.",
-      "- Maintain natural, professional narrative tone.",
+      "- PRESERVE: Main subject, dramatic consequence, and emotional tension.",
+      "- REMOVE FIRST: Fluff adverbs, redundant filler, and decorative adjectives.",
+      "- Maintain natural, authoritative narrative tone and flow.",
       "- Output must maintain the same clause structure and visual_event_ids mapping.",
       "",
       "Return JSON:",
@@ -528,7 +623,7 @@ class RecapAiService {
       prompt,
       responseSchema: schema,
       modelOverride: this.getAnalysisModel(),
-      signal,
+      signal: activeSignal,
       onProgress
     });
 
@@ -542,7 +637,10 @@ class RecapAiService {
   /**
    * 6. Multimodal Quality Review: Gemini reviews the actual rendered draft video.
    */
-  async reviewDraft({ draftVideoPath, timeline, storyModel, signal, onProgress }) {
+  async reviewDraft({ draftVideoPath, timeline, decisions, storyModel, signal, cancelToken, onProgress }) {
+    const activeSignal = signal || cancelToken;
+    const decisionList = Array.isArray(decisions) ? decisions : safeArray(timeline?.decisions);
+
     const prompt = [
       "You are a strict Executive Video Producer and Editor reviewing a newly rendered draft of an AI Video Recap.",
       "Watch the attached draft video and evaluate its storytelling and audio-visual synchronization.",
@@ -557,11 +655,11 @@ class RecapAiService {
       "7. HOOK QUALITY: Does the first 5 seconds grab attention without deceptive clickbait?",
       "",
       "Edit Timeline Context:",
-      JSON.stringify(timeline.decisions.map((d) => ({
+      JSON.stringify(decisionList.map((d) => ({
         speech_unit_id: d.speech_unit_id,
         text: d.text,
         audio_duration: d.audio_duration,
-        clips: d.clips.map((c) => ({ out_range: [c.output_start, c.output_end], speed: c.video_speed, event: c.event_id }))
+        clips: (d.clips || []).map((c) => ({ out_range: [c.output_start, c.output_end], speed: c.video_speed, event: c.event_id }))
       })), null, 2),
       "",
       "Return JSON conforming to this schema:",
@@ -612,7 +710,7 @@ class RecapAiService {
       prompt,
       responseSchema: schema,
       modelOverride: this.getQualityModel(),
-      signal,
+      signal: activeSignal,
       onProgress
     });
 

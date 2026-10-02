@@ -31,6 +31,8 @@ const { createCancelToken, clearCancelToken, cancelActiveOperation } = require("
 const { inspectGeminiJsonFiles } = require("./services/geminiJsonArtifactService");
 const RecapPipelineService = require("./services/recap/recapPipelineService");
 const RecapHardwareService = require("./services/recap/recapHardwareService");
+const SatisfyingStorytimePipeline = require("./services/storytime/satisfyingStorytimePipeline");
+const StorytimeScriptService = require("./services/storytime/storytimeScriptService");
 
 let mainWindow;
 let configStore;
@@ -44,6 +46,8 @@ let manualAntigravityStage1Service;
 let configuredAiWorkflowService;
 let recapPipelineService;
 let recapHardwareService;
+let storytimePipeline;
+let storytimeScriptService;
 let mainWindowRendererReady = false;
 let rendererRecoveryAttempts = [];
 let recoveredRenderJobs = [];
@@ -52,7 +56,7 @@ let productionQueue;
 let foregroundOperations = 0;
 function handleIpc(channel, listener) {
   ipcMain.handle(channel, async (event, ...args) => {
-    const readOnly = new Set(['project:list', 'project:get', 'project:openFolder', 'project:openOutput', 'project:audioPlan', 'project:getViralRepairContext', 'recap:getReviewState', 'recap:detectHardware']);
+    const readOnly = new Set(['project:list', 'project:get', 'project:openFolder', 'project:openOutput', 'project:audioPlan', 'project:getViralRepairContext', 'recap:getReviewState', 'recap:detectHardware', 'storytime:getMatrixOptions']);
     const mutating = (channel.startsWith('project:') && !readOnly.has(channel)) || channel === 'autoStory:run'
       || (channel.startsWith('analysis:') && channel !== 'analysis:inspectGeminiJsonFiles')
       || ['voice:test', 'voice:calibrate', 'video:mirrorFlip', 'source:downloadUrl', 'translation:prepareHyMt2'].includes(channel);
@@ -480,6 +484,8 @@ app.whenReady().then(async () => {
     projectStore,
     hardwareService: recapHardwareService
   });
+  storytimePipeline = new SatisfyingStorytimePipeline(configStore.getSettings());
+  storytimeScriptService = new StorytimeScriptService(configStore.getSettings());
   productionQueue = require('./services/productionQueueIpc').install({ ipcMain, dialog, app, BrowserWindow,
     store: projectStore, dubbing: dubbingService, getSettings: () => configStore.getSettings(), getWorkspaceRoot,
     isForegroundBusy: () => foregroundOperations > 0 });
@@ -1436,6 +1442,40 @@ app.whenReady().then(async () => {
         settings,
         onProgress,
         cancelToken: token
+      });
+    } finally {
+      clearCancelToken(token);
+    }
+  });
+
+  handleIpc("storytime:getMatrixOptions", async () => {
+    return {
+      personas: StorytimeScriptService.PERSONAS,
+      conflicts: StorytimeScriptService.CONFLICTS,
+      controversyLevels: StorytimeScriptService.CONTROVERSY_LEVELS
+    };
+  });
+
+  handleIpc("storytime:generateScript", async (event, options = {}) => {
+    const settings = { ...configStore.getSettings(), ...options };
+    const scriptService = new StorytimeScriptService(settings);
+    const onProgress = createPipelineProgressSender(event);
+    return scriptService.generateStory({
+      ...options,
+      onProgress
+    });
+  });
+
+  handleIpc("storytime:run", async (event, options = {}) => {
+    const settings = { ...configStore.getSettings(), ...options };
+    const pipeline = new SatisfyingStorytimePipeline(settings);
+    const token = createCancelToken("storytime:run");
+    const onProgress = createPipelineProgressSender(event);
+    try {
+      return await pipeline.run({
+        ...options,
+        signal: token?.signal,
+        onProgress
       });
     } finally {
       clearCancelToken(token);
