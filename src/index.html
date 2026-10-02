@@ -77,7 +77,8 @@
           <section class="wizard-panel hidden" data-step-panel="2">
             <div class="mode-step-shell">
               <nav class="mode-category-tabs" aria-label="Nhóm chế độ" role="tablist">
-                <button class="active" type="button" data-mode-category-tab="highlight" role="tab" aria-selected="true">Highlight & True Crime</button>
+                <button class="active" type="button" data-mode-category-tab="recap" role="tab" aria-selected="true">AI Video Recap</button>
+                <button type="button" data-mode-category-tab="highlight" role="tab" aria-selected="false">Highlight & True Crime</button>
                 <button type="button" data-mode-category-tab="story" role="tab" aria-selected="false">Story & DIY</button>
                 <button class="hidden" type="button" data-mode-category-tab="podcast" role="tab" aria-selected="false">Podcast</button>
                 <button type="button" data-mode-category-tab="dubbing" role="tab" aria-selected="false">Dịch video</button>
@@ -93,8 +94,8 @@
                     <span id="mode-category-count" class="mode-category-count">1 chế độ</span>
                   </div>
                   <div class="mode-grid">
-              <button class="mode-card recap-mode-card mode-category-hidden" data-mode="recap" data-mode-group="story" type="button">
-                <span>AI VIDEO RECAP <b>Đồng bộ thị giác</b></span>
+              <button class="mode-card recap-mode-card active" data-mode="recap" data-mode-group="recap" type="button">
+                <span>AI VIDEO RECAP <b>Đồng bộ thị giác cao cấp</b></span>
                 <strong>Tóm tắt video / phim (Editor-Grade)</strong>
                 <p>Tự động phân tích cốt truyện, gắn chặt lời bình vào hành động thị giác, đồng bộ A/V chuẩn editor chuyên nghiệp.</p>
                 <em>Hỗ trợ Full Auto và Review trước khi xuất bản master pristine.</em>
@@ -111,7 +112,7 @@
                 <p>Nhận JSON Gemini gồm các mốc start/end trong video gốc, cắt clip và xử lý audio theo từng đoạn.</p>
                 <em>Có voice: tắt âm gốc. Không có voice: giữ âm gốc.</em>
               </button>
-              <button class="mode-card auto-story-mode-card active" data-mode="vertex_auto_story" data-mode-group="highlight" type="button">
+              <button class="mode-card auto-story-mode-card mode-category-hidden" data-mode="vertex_auto_story" data-mode-group="highlight" type="button">
                 <span>VERTEX AUTO STORY <b>Tự động</b></span>
                 <strong>True Crime Auto Story</strong>
                 <p>Vertex xem toàn bộ nguồn, khóa câu chuyện, tạo timeline và render các draft để kiểm tra.</p>
@@ -534,37 +535,366 @@
             </div>
           </section>
 
+          <!-- STEP 3: GIỌNG (VOICE) -->
+          <section class="wizard-panel hidden" data-step-panel="3">
+            <div class="story-recut-only hidden field-card">
+              <strong>100% âm thanh nguyên bản</strong>
+              <small>Story Recut không tạo narrator hoặc TTS. Tool giữ nguyên voice narrator, hội thoại, tiếng hiện trường, hiệu ứng và nhạc có trong từng đoạn video nguồn. Một mạch truyện hay có thể được giữ liên tục 2–3 phút hoặc hơn.</small>
+            </div>
+            <div class="podcast-only hidden field-card">
+              <strong>100% hội thoại và âm thanh Podcast gốc</strong>
+              <small>Mode này bỏ qua cấu hình giọng. Gemini không được viết narrator, TTS hoặc câu thoại mới.</small>
+            </div>
+            <div class="voice-setup story-recut-hide">
+              <!-- HERO VOICE ACTIVE CARD -->
+              <div class="voice-hero-card">
+                <div class="voice-hero-left">
+                  <div class="voice-hero-icon-box">
+                    <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                      <line x1="12" y1="19" x2="12" y2="23"/>
+                      <line x1="8" y1="23" x2="16" y2="23"/>
+                    </svg>
+                  </div>
+                  <div class="voice-hero-info">
+                    <div class="voice-hero-header-line">
+                      <span class="voice-hero-kicker">GIỌNG ĐỌC ĐANG CHỌN</span>
+                      <span id="hero-voice-provider-badge" class="voice-hero-badge">Edge Neural</span>
+                    </div>
+                    <h3 id="hero-voice-name" class="voice-hero-title">Guy Neural (US English)</h3>
+                    <p id="hero-voice-detail" class="voice-hero-meta">Tiếng Anh Mỹ · Phong cách trầm ổn, tài liệu · Tốc độ: 1.0x</p>
+                  </div>
+                </div>
+                <div class="voice-hero-right">
+                  <button id="hero-preview-voice-btn" class="voice-hero-play-btn" type="button" title="Nghe thử giọng này">
+                    <svg class="play-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                      <polygon points="5 3 19 12 5 21 5 3"/>
+                    </svg>
+                    <span>Nghe thử</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- QUICK RECOMMENDED VOICE CHIPS -->
+              <div class="voice-recommendations-shell">
+                <div class="voice-recommendations-header">
+                  <span class="recommendations-title">⚡ Gợi ý giọng đọc hay nhất theo thể loại:</span>
+                </div>
+                <div class="voice-chips-grid">
+                  <div class="voice-chip-category">
+                    <span class="chip-cat-label">🕵️ True Crime / Cops / Bí ẩn</span>
+                    <div class="chip-row">
+                      <button type="button" class="btn-voice-chip active" data-quick-provider="edge_neural" data-quick-voice="en-US-GuyNeural" data-quick-name="Guy Neural (Trầm ổn, phim tài liệu)" data-quick-detail="Edge Neural · Tiếng Anh Mỹ · Giọng nam trầm, dẫn chuyện hình sự số 1">
+                        <b>Guy Neural</b> <small>(Edge - Trầm điều tra)</small>
+                      </button>
+                      <button type="button" class="btn-voice-chip" data-quick-provider="elevenlabs" data-quick-voice="Adam" data-quick-name="Adam (ElevenLabs - Kịch tính)" data-quick-detail="ElevenLabs · Tiếng Anh Mỹ · Giọng nam điện ảnh, kịch tính cao">
+                        <b>Adam</b> <small>(ElevenLabs - Cao cấp)</small>
+                      </button>
+                      <button type="button" class="btn-voice-chip" data-quick-provider="edge_neural" data-quick-voice="en-US-ChristopherNeural" data-quick-name="Christopher Neural (Kể chuyện lôi cuốn)" data-quick-detail="Edge Neural · Tiếng Anh Mỹ · Giọng nam trung, tự sự, hồi hộp">
+                        <b>Christopher</b> <small>(Edge - Kể chuyện)</small>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="voice-chip-category">
+                    <span class="chip-cat-label">🎬 Story / Recap / Cảm xúc</span>
+                    <div class="chip-row">
+                      <button type="button" class="btn-voice-chip" data-quick-provider="edge_neural" data-quick-voice="en-US-JennyNeural" data-quick-name="Jenny Neural (Nữ truyền cảm)" data-quick-detail="Edge Neural · Tiếng Anh Mỹ · Giọng nữ ấm áp, đa sắc thái cảm xúc">
+                        <b>Jenny Neural</b> <small>(Edge - Nữ tự nhiên)</small>
+                      </button>
+                      <button type="button" class="btn-voice-chip" data-quick-provider="kokoro" data-quick-voice="am_adam" data-quick-name="am_adam (Kokoro Local)" data-quick-detail="Kokoro TTS · Offline 100% · Giọng nam nhanh, tự nhiên, miễn phí">
+                        <b>am_adam</b> <small>(Kokoro Local - Nhanh)</small>
+                      </button>
+                      <button type="button" class="btn-voice-chip" data-quick-provider="edge_neural" data-quick-voice="en-US-AndrewNeural" data-quick-name="Andrew Neural (Nam ấm áp)" data-quick-detail="Edge Neural · Tiếng Anh Mỹ · Giọng nam đĩnh đạc, hiện đại">
+                        <b>Andrew</b> <small>(Edge - Ấm áp)</small>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- VOICE CONFIG TABS -->
+              <div class="voice-tabs-container">
+                <div class="voice-tabs" role="tablist">
+                  <button class="voice-tab active" data-voice-tab="preset" type="button" role="tab">Giọng mẫu sẵn có (Khuyên dùng)</button>
+                  <button class="voice-tab" data-voice-tab="designed" type="button" role="tab">Thiết kế giọng AI</button>
+                  <button class="voice-tab" data-voice-tab="clone" type="button" role="tab">Clone giọng nói</button>
+                </div>
+
+                <!-- TAB 1: PRESET VOICES -->
+                <div class="voice-tab-panel" data-voice-panel="preset">
+                  <div class="field-card voice-panel-card">
+                    <div class="voice-selection-grid">
+                      <div class="voice-field-item">
+                        <label for="preset-voice-provider">Nhà cung cấp giọng</label>
+                        <select id="preset-voice-provider">
+                          <option value="edge_neural" selected>Edge Neural (Miễn phí, chất lượng cao)</option>
+                          <option value="kokoro">Kokoro Local (Nhanh, Offline, miễn phí)</option>
+                          <option value="elevenlabs">ElevenLabs (Điện ảnh, cao cấp)</option>
+                          <option value="omnivoice">OmniVoice preset</option>
+                          <option value="windows_local">Windows Local (SAPI)</option>
+                        </select>
+                      </div>
+                      <div class="voice-field-item">
+                        <label for="preset-voice-list">Danh sách giọng</label>
+                        <div class="inline-field">
+                          <select id="preset-voice-list"></select>
+                          <button id="refresh-preset-voices" class="secondary-button" type="button" title="Tải lại danh sách giọng từ server">Tải giọng</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="button-row voice-action-row">
+                      <button id="preview-preset-voice" class="secondary-button" type="button">
+                        <span>▶</span> Nghe thử giọng
+                      </button>
+                      <button id="use-preset-voice" class="primary-button" type="button">
+                        <span>✓</span> Dùng giọng này
+                      </button>
+                    </div>
+                    <div id="preset-voice-info" class="model-info">Bấm tải giọng để lấy danh sách từ máy chủ/provider.</div>
+                  </div>
+                </div>
+
+                <!-- TAB 2: DESIGNED VOICE -->
+                <div class="voice-tab-panel hidden" data-voice-panel="designed">
+                  <div class="field-card voice-panel-card">
+                    <div class="voice-design-grid">
+                      <div>
+                        <label for="voice-gender-age">Giới tính & lứa tuổi</label>
+                        <select id="voice-gender-age">
+                          <option value="female">Nữ thanh niên (female)</option>
+                          <option value="male">Nam thanh niên (male)</option>
+                          <option value="neutral">Trung tính (neutral)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label for="voice-pitch">Tông giọng nói (Pitch)</label>
+                        <select id="voice-pitch">
+                          <option value="moderate">Trung bình (moderate pitch)</option>
+                          <option value="low">Trầm (low pitch)</option>
+                          <option value="high">Cao (high pitch)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label for="voice-accent">Giọng điệu (Accent)</label>
+                        <select id="voice-accent">
+                          <option value="none">Không (mặc định)</option>
+                          <option value="northern">Miền Bắc</option>
+                          <option value="southern">Miền Nam</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label for="voice-trait">Đặc tính</label>
+                        <select id="voice-trait">
+                          <option value="normal">Bình thường</option>
+                          <option value="dramatic">Dramatic</option>
+                          <option value="urgent">Gấp gáp</option>
+                          <option value="warm">Ấm áp</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="voice-field-full">
+                      <label for="voice-prompt">Lệnh thiết kế giọng (Generated Prompt)</label>
+                      <input id="voice-prompt" type="text" value="female, moderate pitch" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- TAB 3: CLONE VOICE -->
+                <div class="voice-tab-panel hidden" data-voice-panel="clone">
+                  <div class="field-card voice-panel-card">
+                    <small class="voice-clone-hint">Tải lên một file ghi âm giọng mẫu (.wav, .mp3). Khuyến nghị 10-30 giây, sạch nhiễu, chỉ một người nói.</small>
+                    <label for="voice-sample-path">File âm thanh mẫu</label>
+                    <div class="inline-field">
+                      <input id="voice-sample-path" type="text" readonly placeholder="Chọn file .wav/.mp3 để clone giọng..." />
+                      <button id="browse-voice-sample" class="secondary-button" type="button">Chọn file</button>
+                    </div>
+                    <div class="button-row two-actions">
+                      <button id="preview-voice-sample" class="secondary-button" type="button">Nghe thử file</button>
+                      <button id="use-cloned-voice" class="primary-button" type="button">Dùng giọng clone</button>
+                    </div>
+                    <div id="clone-voice-status" class="model-info">Chưa chọn file giọng mẫu.</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- TUNING CARD (RATE / PITCH SLIDERS) -->
+              <div id="local-voice-tuning-card" class="field-card voice-tuning-card">
+                <div class="tuning-header">
+                  <label id="local-voice-tuning-title">🎛️ Tinh chỉnh nhịp đọc & cao độ</label>
+                  <small>Áp dụng cho nghe thử, render nháp và xuất video chính thức.</small>
+                </div>
+                <div id="edge-voice-tuning-controls" class="voice-tuning-controls">
+                  <div class="tuning-preset-row">
+                    <label for="edge-voice-preset">Nhịp đọc mẫu:
+                      <select id="edge-voice-preset">
+                        <option value="natural">Tự nhiên</option>
+                        <option value="energetic">Năng lượng</option>
+                        <option value="urgent">Khẩn trương</option>
+                        <option value="documentary">Phim tài liệu</option>
+                        <option value="custom">Tùy chỉnh</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="tuning-sliders-grid">
+                    <label class="range-setting">Tốc độ đọc <b id="edge-voice-rate-value">+0%</b><input id="edge-voice-rate" type="range" min="-30" max="50" step="1" /></label>
+                    <label class="range-setting">Cao độ <b id="edge-voice-pitch-value">+0Hz</b><input id="edge-voice-pitch" type="range" min="-50" max="50" step="1" /></label>
+                    <label class="range-setting">Âm lượng <b id="edge-voice-volume-value">100%</b><input id="edge-voice-volume" type="range" min="50" max="150" step="1" /></label>
+                  </div>
+                </div>
+                <div id="kokoro-voice-tuning-controls" class="voice-tuning-controls hidden">
+                  <div class="tuning-preset-row">
+                    <label for="kokoro-voice-preset">Nhịp đọc mẫu:
+                      <select id="kokoro-voice-preset">
+                        <option value="natural">Tự nhiên</option>
+                        <option value="energetic">Năng lượng</option>
+                        <option value="urgent">Khẩn trương</option>
+                        <option value="documentary">Phim tài liệu</option>
+                        <option value="custom">Tùy chỉnh</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div class="tuning-sliders-grid single">
+                    <label class="range-setting">Tốc độ Kokoro <b id="kokoro-speed-value">1.00x</b><input id="kokoro-speed" type="range" min="0.5" max="2" step="0.05" /></label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ADVANCED COLLAPSED ACCORDION: DRAFT VOICE & CALIBRATION -->
+              <details id="voice-advanced-tuning" class="voice-advanced-details">
+                <summary class="voice-advanced-summary">
+                  <div class="summary-left">
+                    <span class="summary-icon">⚙️</span>
+                    <div>
+                      <strong>Cấu hình giọng nháp riêng & Đo tốc độ (Calibration)</strong>
+                      <small>Dành cho kiểm soát chi phí ElevenLabs hoặc đo voice budget chuyên sâu</small>
+                    </div>
+                  </div>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
+                </summary>
+                <div class="voice-advanced-body">
+                  <div class="field-card draft-voice-card">
+                    <div class="draft-voice-grid-header">
+                      <div>
+                        <label for="draft-voice-mode">Chế độ Voice render nháp</label>
+                        <select id="draft-voice-mode">
+                          <option value="edge_neural" selected>Edge Neural nhanh (Mặc định tiết kiệm)</option>
+                          <option value="final">Dùng voice xuất thật</option>
+                          <option value="custom">Chọn riêng cho bản nháp</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label for="draft-voice-provider">Nhà cung cấp voice nháp</label>
+                        <select id="draft-voice-provider">
+                          <option value="edge_neural" selected>Edge Neural / server voice</option>
+                          <option value="kokoro">Kokoro Local (nhanh, miễn phí)</option>
+                          <option value="omnivoice">OmniVoice preset</option>
+                          <option value="windows_local">Windows Local</option>
+                          <option value="elevenlabs">ElevenLabs</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="draft-voice-grid-inputs">
+                      <div>
+                        <label for="draft-voice-list">Danh sách giọng nháp</label>
+                        <div class="inline-field">
+                          <select id="draft-voice-list"></select>
+                          <button id="refresh-draft-voices" class="secondary-button" type="button">Tải giọng</button>
+                        </div>
+                      </div>
+                      <div>
+                        <label for="draft-voice-id">Voice ID nháp thủ công</label>
+                        <input id="draft-voice-id" type="text" placeholder="Tùy chọn khi provider không trả danh sách" />
+                      </div>
+                    </div>
+                    <div class="button-row two-actions">
+                      <button id="preview-draft-voice" class="secondary-button" type="button">Nghe thử giọng nháp</button>
+                      <button id="use-current-voice-for-draft" class="secondary-button" type="button">Đồng bộ với voice xuất thật</button>
+                    </div>
+                    <div id="draft-voice-info" class="model-info">Bấm tải giọng để lấy danh sách voice nháp.</div>
+                  </div>
+
+                  <div class="calibration-pair-grid">
+                    <div class="field-card voice-calibration-card">
+                      <label>Đo tốc độ voice xuất thật</label>
+                      <small>Render 3 câu test bằng voice đang chọn để lưu profile tốc độ đọc cho file xuất cuối.</small>
+                      <div class="button-row two-actions">
+                        <button id="calibrate-voice-speed" class="secondary-button" type="button">Đo voice xuất thật</button>
+                        <button id="copy-voice-budget-prompt" class="secondary-button" type="button" disabled>Copy prompt budget</button>
+                      </div>
+                      <div id="voice-calibration-status" class="model-info">Chưa đo tốc độ voice xuất thật.</div>
+                    </div>
+                    <div class="field-card voice-calibration-card">
+                      <label>Đo tốc độ voice nháp</label>
+                      <small>Đo riêng provider/voice nháp để bản draft timing khớp chuẩn xác với voice xem thử.</small>
+                      <div class="button-row two-actions">
+                        <button id="calibrate-draft-voice-speed" class="secondary-button" type="button">Đo voice nháp</button>
+                        <button id="copy-draft-voice-budget-prompt" class="secondary-button" type="button" disabled>Copy prompt draft</button>
+                      </div>
+                      <div id="draft-voice-calibration-status" class="model-info">Chưa đo tốc độ voice nháp.</div>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
+          </section>
+
+          <!-- STEP 4: NGUỒN (SOURCE) -->
           <section class="wizard-panel hidden" data-step-panel="4">
             <div class="field-card source-picker-card">
               <div class="source-picker-heading">
                 <div>
                   <strong>Nguồn video</strong>
-                  <small>Chọn một cách lấy nguồn. Tool luôn hiển thị file đang được dùng thực tế ở bên dưới.</small>
+                  <small>Chọn video từ máy hoặc tải trực tiếp từ link. Kéo thả file trực tiếp vào khung dưới.</small>
                 </div>
                 <span id="source-active-badge" class="source-active-badge empty">Chưa có nguồn</span>
               </div>
 
+              <!-- METHOD TABS -->
               <div class="source-method-tabs" role="tablist" aria-label="Cách lấy video nguồn">
-                <button class="source-method-tab active" type="button" data-source-method="local" role="tab" aria-selected="true">File trên máy</button>
-                <button class="source-method-tab" type="button" data-source-method="url" role="tab" aria-selected="false">YouTube / TikTok</button>
+                <button class="source-method-tab active" type="button" data-source-method="local" role="tab" aria-selected="true">
+                  <span>📁</span> File trên máy
+                </button>
+                <button class="source-method-tab" type="button" data-source-method="url" role="tab" aria-selected="false">
+                  <span>🔗</span> YouTube / TikTok
+                </button>
               </div>
 
+              <!-- PANEL: LOCAL FILE (WITH DRAG & DROP ZONE) -->
               <div class="source-method-panel" data-source-method-panel="local">
-                <label for="source-video-path">Chọn video từ thư mục</label>
-                <div class="inline-field">
-                  <input id="source-video-path" type="text" readonly placeholder="Chọn file .mp4/.mov/.mkv..." />
-                  <button id="browse-video" class="secondary-button">Chọn file</button>
+                <div id="source-dropzone" class="source-dropzone" tabindex="0" role="button" aria-label="Bấm hoặc kéo thả video vào đây">
+                  <div class="dropzone-inner">
+                    <div class="dropzone-icon">
+                      <svg viewBox="0 0 24 24" width="36" height="36" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                    </div>
+                    <div class="dropzone-text">
+                      <strong class="dropzone-primary-text">Kéo thả file video vào đây hoặc <span class="dropzone-browse-text">bấm để chọn</span></strong>
+                      <span class="dropzone-hint">Hỗ trợ các định dạng .mp4, .mov, .mkv, .avi, .webm</span>
+                    </div>
+                  </div>
                 </div>
-                <small>File được dùng trực tiếp, không tải hoặc sao chép lại.</small>
+                <div class="inline-field hidden-browse-row">
+                  <input id="source-video-path" type="text" readonly placeholder="Chọn file .mp4/.mov/.mkv..." />
+                  <button id="browse-video" class="secondary-button" type="button">Chọn file</button>
+                </div>
               </div>
 
+              <!-- PANEL: URL DOWNLOAD -->
               <div class="source-method-panel hidden" data-source-method-panel="url">
                 <div class="source-url-heading">
                   <div>
                     <label for="source-download-url">Liên kết YouTube hoặc TikTok</label>
-                    <small>Tool tải video chất lượng tốt nhất, tối đa 1080p, rồi dùng file đã tải làm nguồn.</small>
+                    <small>Tool tải video chất lượng tốt nhất, tối đa 1080p, rồi tự động dùng làm nguồn.</small>
                   </div>
-                  <span>Tối đa 1080p</span>
+                  <span class="url-quality-tag">Tối đa 1080p</span>
                 </div>
                 <div class="inline-field">
                   <input id="source-download-url" type="url" inputmode="url" autocomplete="off" placeholder="https://www.youtube.com/watch?v=... hoặc https://www.tiktok.com/..." />
@@ -580,14 +910,32 @@
                 </div>
               </div>
 
+              <!-- SELECTED SOURCE SUMMARY (CARD DISPLAY) -->
               <div id="source-selection-summary" class="source-selection-summary empty" aria-live="polite">
                 <span class="source-selection-mark" aria-hidden="true"></span>
-                <div>
-                  <strong id="source-selection-label">Chưa chọn video nguồn</strong>
+                <div class="source-selection-content">
+                  <div class="source-selection-row">
+                    <strong id="source-selection-label">Chưa chọn video nguồn</strong>
+                    <button id="change-source-video-btn" class="btn-change-source" type="button">Đổi video</button>
+                  </div>
                   <small id="source-selection-detail">Chọn file trên máy hoặc tải video từ một liên kết.</small>
                 </div>
               </div>
+
+              <!-- SUBTITLE ATTACHMENT CARD (INTEGRATED) -->
+              <div class="source-subtitle-attachment">
+                <div class="subtitle-attachment-header">
+                  <span class="attachment-icon">💬</span>
+                  <label for="subtitle-path">Tệp phụ đề SRT đính kèm <small>(Tùy chọn)</small></label>
+                </div>
+                <div class="inline-field">
+                  <input id="subtitle-path" type="text" readonly placeholder="Để trống nếu muốn tự động nhận diện bằng Whisper ASR" />
+                  <button id="browse-subtitle" class="secondary-button" type="button">Chọn file SRT</button>
+                  <button id="clear-subtitle" class="ghost-button" type="button">Xóa</button>
+                </div>
+              </div>
             </div>
+
             <div class="two-column hidden">
               <div class="field-card">
                 <label>Bỏ qua đầu phim (giây)</label>
@@ -602,142 +950,157 @@
               <label class="check-row"><input id="visual-remix" type="checkbox" /> Biến tấu hình ảnh (Visual Remix)</label>
               <small>Bật gương, zoom nhẹ, chỉnh màu và hạt phim khi xuất.</small>
             </div>
-            <div class="field-card">
-              <label>Tệp phụ đề SRT (tùy chọn)</label>
-              <div class="inline-field">
-                <input id="subtitle-path" type="text" readonly placeholder="Để trống nếu muốn thử Whisper CLI" />
-                <button id="browse-subtitle" class="secondary-button">Chọn file</button>
-                <button id="clear-subtitle" class="ghost-button" type="button">Xóa</button>
-              </div>
-            </div>
             <div class="field-card podcast-only hidden">
               <label>URL YouTube công khai của đúng video nguồn</label>
               <input id="podcast-youtube-url" type="url" placeholder="https://www.youtube.com/watch?v=..." />
               <small>Gemini dùng URL để xem toàn bộ video dài; tool dùng file local và transcript để khóa timestamp khi render.</small>
             </div>
+
+            <!-- PRIMARY AI ACTION BAR -->
             <div class="manual-gemini-only hidden manual-gemini-pack">
               <label class="check-row story-recut-only hidden">
                 <input id="story-recut-rights-confirmed" type="checkbox" />
                 Tôi xác nhận có quyền sử dụng video nguồn hoặc có cơ sở sử dụng hợp lệ.
               </label>
-              <div class="manual-gemini-pack-heading">
-                <div>
-                  <span>GIAI ĐOẠN 1</span>
-                  <strong id="manual-pack-stage-title">Tạo gói viết Highlight trực tiếp</strong>
-                  <small id="manual-pack-stage-description">Proxy chỉ phục vụ phân tích, có nhãn sceneId và timestamp nguồn. Video xuất cuối không có các nhãn này.</small>
+
+              <div class="source-ai-action-card manual-draft-review-only hidden">
+                <div class="ai-action-header">
+                  <div>
+                    <span class="ai-action-badge" id="stage1-ai-provider-badge">AI theo Cài đặt</span>
+                    <strong id="manual-pack-stage-title">Phân tích & Viết kịch bản tự động</strong>
+                    <small id="manual-pack-stage-description">Proxy chỉ phục vụ phân tích, có nhãn sceneId và timestamp nguồn.</small>
+                  </div>
+                  <div class="ai-auto-level-box">
+                    <label for="configured-ai-auto-level">Mức tự động:</label>
+                    <select id="configured-ai-auto-level">
+                      <option value="scripts">Tạo và kiểm tra kịch bản</option>
+                      <option value="draft">Tạo project và render draft tất cả variant</option>
+                      <option value="review" selected>Render draft và tạo bản review V2</option>
+                    </select>
+                  </div>
                 </div>
-                <span id="stage1-ai-provider-badge" class="manual-workflow-badge">AI theo Cài đặt</span>
-              </div>
-              <div class="manual-gemini-pack-actions">
-                <button id="create-and-run-stage1-ai" class="primary-button manual-draft-review-only hidden" type="button">Tạo gói và phân tích bằng AI</button>
-              </div>
-              <div id="vertex-auto-pipeline" class="vertex-auto-pipeline manual-draft-review-only hidden">
-                <label>Mức tự động hóa Vertex
-                  <select id="configured-ai-auto-level">
-                    <option value="scripts">Tạo và kiểm tra kịch bản</option>
-                    <option value="draft">Tạo project và render draft tất cả variant</option>
-                    <option value="review" selected>Render draft và tạo bản review V2</option>
-                  </select>
-                </label>
-                <small>Tool vẫn lưu toàn bộ gói và JSON để kiểm tra. Bản V2 chỉ được đề xuất, không tự ghi đè V1.</small>
+
+                <div class="manual-gemini-pack-actions">
+                  <button id="create-and-run-stage1-ai" class="primary-button hero-run-ai-btn" type="button">
+                    🚀 Tạo gói và phân tích bằng AI
+                  </button>
+                </div>
                 <div id="configured-ai-auto-status" class="manual-gemini-pack-status">Chọn video và bấm nút chính để chạy liên tục.</div>
               </div>
+
+              <!-- AI ANALYSIS TERMINAL -->
+              <div id="ai-analysis-terminal" class="ai-analysis-terminal hidden">
+                <div class="ai-terminal-header">
+                  <span class="ai-terminal-title">AI Analysis Terminal</span>
+                  <span class="ai-terminal-percentage" id="ai-terminal-percentage">0%</span>
+                </div>
+                <div class="ai-terminal-progress">
+                  <div id="ai-terminal-progress-bar" class="ai-terminal-progress-bar"></div>
+                </div>
+                <div id="ai-terminal-log" class="ai-terminal-log">Chờ lệnh phân tích...</div>
+              </div>
+
+              <!-- ADVANCED COLLAPSED ACCORDION FOR MANUAL PACK / LEGACY STAGES -->
               <details id="manual-workflow-advanced" class="manual-workflow-advanced">
-                <summary>Thao tác nâng cao / chạy thủ công</summary>
-                <div class="manual-gemini-pack-actions">
-                  <button id="create-manual-gemini-pack" class="secondary-button" type="button">Chỉ tạo gói</button>
-                  <button id="open-manual-gemini-pack" class="secondary-button" type="button" disabled>Mở thư mục GĐ1</button>
-                </div>
-              <label class="check-row manual-gemini-cache-option">
-                <input id="manual-gemini-force-rebuild" type="checkbox" />
-                Phân tích lại từ đầu, không dùng cache
-              </label>
-              <div id="manual-gemini-pack-status" class="manual-gemini-pack-status">
-                Chưa tạo gói. Tool sẽ dùng thư mục gói phân tích đã lưu trong Cài đặt.
-              </div>
-              <div class="manual-draft-review-only hidden antigravity-stage1-panel">
-                <div class="manual-gemini-pack-heading">
-                  <div>
-                    <span>GÓI GĐ1 ĐÃ SẴN SÀNG</span>
-                    <strong id="stage1-ai-action-title">Phân tích bằng AI đã cấu hình</strong>
-                    <small id="stage1-ai-action-description">Provider và model được lấy trực tiếp từ Cài đặt. Luồng gửi Gemini thủ công vẫn được giữ nguyên.</small>
+                <summary>
+                  <span>🛠️ Thao tác nâng cao / Chạy từng bước thủ công (GĐ1 ➔ GĐ4)</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
+                </summary>
+                <div class="manual-advanced-body">
+                  <div class="manual-gemini-pack-actions">
+                    <button id="create-manual-gemini-pack" class="secondary-button" type="button">Chỉ tạo gói</button>
+                    <button id="open-manual-gemini-pack" class="secondary-button" type="button" disabled>Mở thư mục GĐ1</button>
                   </div>
-                  <span id="stage1-ai-model-badge" class="manual-workflow-badge">Chưa xác định</span>
-                </div>
-                <div class="manual-gemini-pack-actions">
-                  <button id="run-manual-antigravity-stage1" class="primary-button" type="button" disabled>Phân tích GĐ1 bằng AI</button>
-                  <button id="cancel-manual-antigravity-stage1" class="secondary-button hidden" type="button">Dừng</button>
-                  <button id="open-manual-antigravity-result" class="secondary-button hidden" type="button" disabled>Mở kết quả AI</button>
-                </div>
-                <div id="ai-analysis-terminal" class="ai-analysis-terminal hidden">
-                  <div class="ai-terminal-header">
-                    <span class="ai-terminal-title">AI Analysis Terminal</span>
-                    <span class="ai-terminal-percentage" id="ai-terminal-percentage">0%</span>
+                  <label class="check-row manual-gemini-cache-option">
+                    <input id="manual-gemini-force-rebuild" type="checkbox" />
+                    Phân tích lại từ đầu, không dùng cache
+                  </label>
+                  <div id="manual-gemini-pack-status" class="manual-gemini-pack-status">
+                    Chưa tạo gói. Tool sẽ dùng thư mục gói phân tích đã lưu trong Cài đặt.
                   </div>
-                  <div class="ai-terminal-progress">
-                    <div id="ai-terminal-progress-bar" class="ai-terminal-progress-bar"></div>
+                  <div class="manual-draft-review-only hidden antigravity-stage1-panel">
+                    <div class="manual-gemini-pack-heading">
+                      <div>
+                        <span>GÓI GĐ1 ĐÃ SẴN SÀNG</span>
+                        <strong id="stage1-ai-action-title">Phân tích bằng AI đã cấu hình</strong>
+                        <small id="stage1-ai-action-description">Provider và model được lấy trực tiếp từ Cài đặt.</small>
+                      </div>
+                      <span id="stage1-ai-model-badge" class="manual-workflow-badge">Chưa xác định</span>
+                    </div>
+                    <div class="manual-gemini-pack-actions">
+                      <button id="run-manual-antigravity-stage1" class="primary-button" type="button" disabled>Phân tích GĐ1 bằng AI</button>
+                      <button id="cancel-manual-antigravity-stage1" class="secondary-button hidden" type="button">Dừng</button>
+                      <button id="open-manual-antigravity-result" class="secondary-button hidden" type="button" disabled>Mở kết quả AI</button>
+                    </div>
+                    <div id="manual-antigravity-stage1-status" class="manual-gemini-pack-status">
+                      Hãy tạo gói GĐ1 trước. Kết quả AI được lưu riêng và không sửa thư mục gửi Gemini.
+                    </div>
                   </div>
-                  <div id="ai-terminal-log" class="ai-terminal-log">Chờ lệnh phân tích...</div>
-                </div>
-                <div id="manual-antigravity-stage1-status" class="manual-gemini-pack-status">
-                  Hãy tạo gói GĐ1 trước. Kết quả AI được lưu riêng và không sửa thư mục gửi Gemini.
-                </div>
-              </div>
-              <input id="manual-gemini-pack-path" type="hidden" />
-              <div id="manual-gemini-evidence-stage" class="manual-gemini-evidence-stage legacy-manual-gemini-stage">
-                <div class="manual-gemini-pack-heading">
-                  <div>
-                    <span>GIAI ĐOẠN 2</span>
-                    <strong id="manual-evidence-stage-title">Evidence Quality Gate</strong>
-                    <small id="manual-evidence-stage-description">Tool kiểm tra timestamp, hook, complete beat, source run và đủ mạch truyện. Nếu fail, tool tạo prompt bổ sung evidence riêng.</small>
+                  <input id="manual-gemini-pack-path" type="hidden" />
+
+                  <div id="manual-gemini-evidence-stage" class="manual-gemini-evidence-stage legacy-manual-gemini-stage">
+                    <div class="manual-gemini-pack-heading">
+                      <div>
+                        <span>GIAI ĐOẠN 2</span>
+                        <strong id="manual-evidence-stage-title">Evidence Quality Gate</strong>
+                        <small id="manual-evidence-stage-description">Tool kiểm tra timestamp, hook, complete beat, source run và đủ mạch truyện.</small>
+                      </div>
+                      <span class="manual-workflow-badge">Quality gate</span>
+                    </div>
+                    <div class="manual-gemini-pack-actions">
+                      <button id="import-manual-gemini-evidence" class="primary-button" type="button" disabled>Nhập scene evidence</button>
+                      <button id="open-manual-gemini-evidence-folder" class="secondary-button" type="button" disabled>Mở thư mục GĐ2</button>
+                    </div>
+                    <div id="manual-gemini-evidence-status" class="manual-gemini-pack-status">
+                      Chưa có scene evidence đã được kiểm tra.
+                    </div>
+                    <input id="manual-gemini-evidence-path" type="hidden" />
                   </div>
-                  <span class="manual-workflow-badge">Quality gate</span>
-                </div>
-                <div class="manual-gemini-pack-actions">
-                  <button id="import-manual-gemini-evidence" class="primary-button" type="button" disabled>Nhập scene evidence</button>
-                  <button id="open-manual-gemini-evidence-folder" class="secondary-button" type="button" disabled>Mở thư mục GĐ2</button>
-                </div>
-                <div id="manual-gemini-evidence-status" class="manual-gemini-pack-status">
-                  Chưa có scene evidence đã được kiểm tra.
-                </div>
-                <input id="manual-gemini-evidence-path" type="hidden" />
-              </div>
-              <div class="manual-gemini-evidence-stage manual-gemini-blueprint-stage story-recut-hide legacy-manual-gemini-stage">
-                <div class="manual-gemini-pack-heading">
-                  <div>
-                    <span>GIAI ĐOẠN 3</span>
-                    <strong id="manual-blueprint-stage-title">Khóa Story Blueprint chung</strong>
-                    <small id="manual-blueprint-stage-description">Gemini chỉ lập xương sống câu chuyện từ evidence đã khóa, chưa dựng timeline variant.</small>
+
+                  <div class="manual-gemini-evidence-stage manual-gemini-blueprint-stage story-recut-hide legacy-manual-gemini-stage">
+                    <div class="manual-gemini-pack-heading">
+                      <div>
+                        <span>GIAI ĐOẠN 3</span>
+                        <strong id="manual-blueprint-stage-title">Khóa Story Blueprint chung</strong>
+                        <small id="manual-blueprint-stage-description">Gemini chỉ lập xương sống câu chuyện từ evidence đã khóa.</small>
+                      </div>
+                      <span class="manual-workflow-badge">Story first</span>
+                    </div>
+                    <div class="manual-gemini-pack-actions">
+                      <button id="import-manual-gemini-blueprint" class="primary-button" type="button" disabled>Nhập story blueprint</button>
+                      <button id="open-manual-gemini-blueprint-folder" class="secondary-button" type="button" disabled>Mở thư mục GĐ3</button>
+                    </div>
+                    <div id="manual-gemini-blueprint-status" class="manual-gemini-pack-status">
+                      Chưa có story blueprint đã được kiểm tra.
+                    </div>
+                    <input id="manual-gemini-blueprint-path" type="hidden" />
                   </div>
-                  <span class="manual-workflow-badge">Story first</span>
-                </div>
-                <div class="manual-gemini-pack-actions">
-                  <button id="import-manual-gemini-blueprint" class="primary-button" type="button" disabled>Nhập story blueprint</button>
-                  <button id="open-manual-gemini-blueprint-folder" class="secondary-button" type="button" disabled>Mở thư mục GĐ3</button>
-                </div>
-                <div id="manual-gemini-blueprint-status" class="manual-gemini-pack-status">
-                  Chưa có story blueprint đã được kiểm tra.
-                </div>
-                <input id="manual-gemini-blueprint-path" type="hidden" />
-              </div>
-              <div class="manual-gemini-evidence-stage manual-gemini-variant-stage story-recut-hide legacy-manual-gemini-stage">
-                <div class="manual-gemini-pack-heading">
-                  <div>
-                    <span>GIAI ĐOẠN 4</span>
-                    <strong id="manual-variant-stage-title">Tạo từng variant độc lập</strong>
-                    <small id="manual-variant-stage-description">Tool tạo prompt theo số kịch bản đã chọn. User có thể nhập từ 1 đến 5 JSON ở khung bên dưới.</small>
+
+                  <div class="manual-gemini-evidence-stage manual-gemini-variant-stage story-recut-hide legacy-manual-gemini-stage">
+                    <div class="manual-gemini-pack-heading">
+                      <div>
+                        <span>GIAI ĐOẠN 4</span>
+                        <strong id="manual-variant-stage-title">Tạo từng variant độc lập</strong>
+                        <small id="manual-variant-stage-description">Tool tạo prompt theo số kịch bản đã chọn.</small>
+                      </div>
+                      <span id="manual-variant-stage-badge" class="manual-workflow-badge">Prompt riêng</span>
+                    </div>
+                    <div class="manual-gemini-pack-actions">
+                      <button id="open-manual-gemini-variants" class="secondary-button" type="button" disabled>Mở thư mục GĐ4</button>
+                    </div>
+                    <div id="manual-gemini-variant-status" class="manual-gemini-pack-status">
+                      Chưa tạo prompt variant.
+                    </div>
                   </div>
-                  <span id="manual-variant-stage-badge" class="manual-workflow-badge">Prompt riêng</span>
                 </div>
-                <div class="manual-gemini-pack-actions">
-                  <button id="open-manual-gemini-variants" class="secondary-button" type="button" disabled>Mở thư mục GĐ4</button>
-                </div>
-                <div id="manual-gemini-variant-status" class="manual-gemini-pack-status">
-                  Chưa tạo prompt variant.
-                </div>
-              </div>
               </details>
             </div>
+
+            <!-- PROMPT TEMPLATE (BEFORE JSON PICKER AS REQUIRED BY TESTS) -->
             <details class="field-card highlight-only hidden prompt-template-card">
               <summary>
                 <span>
@@ -748,6 +1111,8 @@
               </summary>
               <textarea id="highlight-prompt-template" readonly spellcheck="false"></textarea>
             </details>
+
+            <!-- JSON PICKER (AFTER PROMPT TEMPLATE AS REQUIRED BY TESTS) -->
             <div class="field-card satisfying-only hidden">
               <label id="story-json-label">Kịch bản Storytime JSON từ Gemini</label>
               <div class="inline-field">
@@ -757,178 +1122,6 @@
               <small id="story-json-hint">Storytime dùng segments có startSec/endSec/text. Highlight dùng sourceStartSec/sourceEndSec, startSec/endSec, playbackSpeed, voiceover_text và preview_vi.</small>
             </div>
             <input id="frame-preset" type="hidden" value="original" />
-          </section>
-
-          <section class="wizard-panel hidden" data-step-panel="3">
-            <div class="story-recut-only hidden field-card">
-              <strong>100% âm thanh nguyên bản</strong>
-              <small>Story Recut không tạo narrator hoặc TTS. Tool giữ nguyên voice narrator, hội thoại, tiếng hiện trường, hiệu ứng và nhạc có trong từng đoạn video nguồn. Một mạch truyện hay có thể được giữ liên tục 2–3 phút hoặc hơn.</small>
-            </div>
-            <div class="podcast-only hidden field-card">
-              <strong>100% hội thoại và âm thanh Podcast gốc</strong>
-              <small>Mode này bỏ qua cấu hình giọng. Gemini không được viết narrator, TTS hoặc câu thoại mới.</small>
-            </div>
-            <div class="voice-setup story-recut-hide">
-              <div class="voice-tabs">
-                <button class="voice-tab active" data-voice-tab="designed" type="button">Thiết kế giọng AI</button>
-                <button class="voice-tab" data-voice-tab="clone" type="button">Clone giọng nói</button>
-                <button class="voice-tab" data-voice-tab="preset" type="button">Giọng mẫu sẵn có</button>
-              </div>
-              <div class="voice-tab-panel" data-voice-panel="designed">
-                <div class="field-card">
-                <label>Giới tính & lứa tuổi</label>
-                <select id="voice-gender-age">
-                  <option value="female">Nữ thanh niên (female)</option>
-                  <option value="male">Nam thanh niên (male)</option>
-                  <option value="neutral">Trung tính (neutral)</option>
-                </select>
-                </div>
-                <div class="field-card">
-                <label>Tông giọng nói (Pitch)</label>
-                <select id="voice-pitch">
-                  <option value="moderate">Trung bình (moderate pitch)</option>
-                  <option value="low">Trầm (low pitch)</option>
-                  <option value="high">Cao (high pitch)</option>
-                </select>
-                </div>
-                <div class="two-column">
-                <div class="field-card">
-                  <label>Giọng điệu (Accent)</label>
-                  <select id="voice-accent">
-                    <option value="none">Không (mặc định)</option>
-                    <option value="northern">Miền Bắc</option>
-                    <option value="southern">Miền Nam</option>
-                  </select>
-                </div>
-                <div class="field-card">
-                  <label>Đặc tính</label>
-                  <select id="voice-trait">
-                    <option value="normal">Bình thường</option>
-                    <option value="dramatic">Dramatic</option>
-                    <option value="urgent">Gấp gáp</option>
-                    <option value="warm">Ấm áp</option>
-                  </select>
-                </div>
-                </div>
-                <div class="field-card">
-                <label>Lệnh thiết kế giọng (Generated Prompt)</label>
-                <input id="voice-prompt" type="text" value="female, moderate pitch" />
-                </div>
-              </div>
-              <div class="voice-tab-panel hidden" data-voice-panel="clone">
-                <div class="field-card">
-                  <small>Tải lên một file ghi âm giọng mẫu (.wav, .mp3). Khuyến nghị 10-30 giây, sạch nhiễu, chỉ một người nói.</small>
-                  <label>File âm thanh mẫu</label>
-                  <div class="inline-field">
-                    <input id="voice-sample-path" type="text" readonly placeholder="Chọn file .wav/.mp3 để clone giọng..." />
-                    <button id="browse-voice-sample" class="secondary-button" type="button">Chọn file</button>
-                  </div>
-                  <div class="button-row two-actions">
-                    <button id="preview-voice-sample" class="secondary-button" type="button">Nghe thử file</button>
-                    <button id="use-cloned-voice" class="primary-button" type="button">Dùng giọng clone</button>
-                  </div>
-                  <div id="clone-voice-status" class="model-info">Chưa chọn file giọng mẫu.</div>
-                </div>
-              </div>
-              <div class="voice-tab-panel hidden" data-voice-panel="preset">
-                <div class="field-card">
-                  <label>Nhà cung cấp giọng mẫu</label>
-                  <select id="preset-voice-provider">
-                    <option value="edge_neural" selected>Edge Neural / server voice</option>
-                    <option value="kokoro">Kokoro Local (nhanh, miễn phí)</option>
-                    <option value="omnivoice">OmniVoice preset</option>
-                    <option value="windows_local">Windows Local</option>
-                    <option value="elevenlabs">ElevenLabs</option>
-                  </select>
-                  <label>Danh sách giọng đã tải / khả dụng</label>
-                  <div class="inline-field">
-                    <select id="preset-voice-list"></select>
-                    <button id="refresh-preset-voices" class="secondary-button" type="button">Tải giọng</button>
-                  </div>
-                  <div class="button-row two-actions">
-                    <button id="preview-preset-voice" class="secondary-button" type="button">Nghe thử giọng</button>
-                    <button id="use-preset-voice" class="primary-button" type="button">Dùng giọng này</button>
-                  </div>
-                  <div id="preset-voice-info" class="model-info">Bấm tải giọng để lấy danh sách từ máy chủ/provider.</div>
-                </div>
-              </div>
-              <div id="local-voice-tuning-card" class="field-card">
-                <label id="local-voice-tuning-title">Tinh chỉnh voice local</label>
-                <small>Cấu hình này áp dụng cho nghe thử, đo tốc độ, render nháp và xuất video.</small>
-                <div id="edge-voice-tuning-controls" class="voice-tuning-controls">
-                  <label>Nhịp đọc Edge Neural
-                    <select id="edge-voice-preset">
-                      <option value="natural">Tự nhiên</option>
-                      <option value="energetic">Năng lượng</option>
-                      <option value="urgent">Khẩn trương</option>
-                      <option value="documentary">Phim tài liệu</option>
-                      <option value="custom">Tùy chỉnh</option>
-                    </select>
-                  </label>
-                  <label class="range-setting">Tốc độ Edge <b id="edge-voice-rate-value">+0%</b><input id="edge-voice-rate" type="range" min="-30" max="50" step="1" /></label>
-                  <label class="range-setting">Cao độ Edge <b id="edge-voice-pitch-value">+0Hz</b><input id="edge-voice-pitch" type="range" min="-50" max="50" step="1" /></label>
-                  <label class="range-setting">Âm lượng Edge <b id="edge-voice-volume-value">100%</b><input id="edge-voice-volume" type="range" min="50" max="150" step="1" /></label>
-                </div>
-                <div id="kokoro-voice-tuning-controls" class="voice-tuning-controls hidden">
-                  <label>Nhịp đọc Kokoro
-                    <select id="kokoro-voice-preset">
-                      <option value="natural">Tự nhiên</option>
-                      <option value="energetic">Năng lượng</option>
-                      <option value="urgent">Khẩn trương</option>
-                      <option value="documentary">Phim tài liệu</option>
-                      <option value="custom">Tùy chỉnh</option>
-                    </select>
-                  </label>
-                  <label class="range-setting">Tốc độ Kokoro <b id="kokoro-speed-value">1.00x</b><input id="kokoro-speed" type="range" min="0.5" max="2" step="0.05" /></label>
-                </div>
-              </div>
-              <div class="field-card voice-calibration-card">
-                <label>Đo tốc độ voice xuất thật</label>
-                <small>Render 3 câu test bằng voice đang chọn để lưu profile tốc độ đọc cho file xuất cuối.</small>
-                <div class="button-row two-actions">
-                  <button id="calibrate-voice-speed" class="secondary-button" type="button">Đo voice xuất thật</button>
-                  <button id="copy-voice-budget-prompt" class="secondary-button" type="button" disabled>Copy prompt budget</button>
-                </div>
-                <div id="voice-calibration-status" class="model-info">Chưa đo tốc độ voice xuất thật.</div>
-              </div>
-              <div class="field-card draft-voice-card">
-                <label>Voice render nháp</label>
-                <select id="draft-voice-mode">
-                  <option value="edge_neural" selected>Edge Neural nhanh (mặc định)</option>
-                  <option value="final">Dùng voice xuất thật</option>
-                  <option value="custom">Chọn riêng cho bản nháp</option>
-                </select>
-                <label>Nhà cung cấp voice nháp</label>
-                <select id="draft-voice-provider">
-                  <option value="edge_neural" selected>Edge Neural / server voice</option>
-                  <option value="kokoro">Kokoro Local (nhanh, miễn phí)</option>
-                  <option value="omnivoice">OmniVoice preset</option>
-                  <option value="windows_local">Windows Local</option>
-                  <option value="elevenlabs">ElevenLabs</option>
-                </select>
-                <label>Danh sách giọng nháp</label>
-                <div class="inline-field">
-                  <select id="draft-voice-list"></select>
-                  <button id="refresh-draft-voices" class="secondary-button" type="button">Tải giọng</button>
-                </div>
-                <label>Voice ID nháp thủ công</label>
-                <input id="draft-voice-id" type="text" placeholder="Tùy chọn, dùng khi provider không trả danh sách" />
-                <div class="button-row two-actions">
-                  <button id="preview-draft-voice" class="secondary-button" type="button">Nghe thử giọng</button>
-                  <button id="use-current-voice-for-draft" class="secondary-button" type="button">Dùng voice xuất thật</button>
-                </div>
-                <div id="draft-voice-info" class="model-info">Bấm tải giọng để lấy danh sách voice nháp.</div>
-              </div>
-              <div class="field-card voice-calibration-card">
-                <label>Đo tốc độ voice nháp</label>
-                <small>Đo riêng provider/voice nháp để bản draft timing giống voice bạn dùng xem thử.</small>
-                <div class="button-row two-actions">
-                  <button id="calibrate-draft-voice-speed" class="secondary-button" type="button">Đo voice nháp</button>
-                  <button id="copy-draft-voice-budget-prompt" class="secondary-button" type="button" disabled>Copy prompt draft</button>
-                </div>
-                <div id="draft-voice-calibration-status" class="model-info">Chưa đo tốc độ voice nháp.</div>
-              </div>
-            </div>
           </section>
 
           <section class="wizard-panel hidden" data-step-panel="5">
@@ -1077,8 +1270,22 @@
                 <p>Thiết lập trực quan theo đúng khung hình xuất.</p>
               </div>
               <div id="video-edit-scope" class="segmented-control" role="group" aria-label="Phạm vi áp dụng">
-                <button type="button" class="active" data-video-edit-scope="global">Tất cả variant</button>
-                <button type="button" data-video-edit-scope="variant">Variant hiện tại</button>
+                <button type="button" class="active" data-video-edit-scope="global">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+                    <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+                    <line x1="6" y1="6" x2="6.01" y2="6"></line>
+                    <line x1="6" y1="18" x2="6.01" y2="18"></line>
+                  </svg>
+                  <span>Tất cả variant</span>
+                </button>
+                <button type="button" data-video-edit-scope="variant">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <circle cx="12" cy="12" r="3"></circle>
+                  </svg>
+                  <span>Variant hiện tại</span>
+                </button>
               </div>
             </div>
             <div id="video-edit-stale-warning" class="video-edit-status fresh">
@@ -1094,7 +1301,11 @@
                 </div>
                 <div class="summary-right">
                   <span class="group-pill" id="video-canvas-ratio-label">9:16</span>
-                  <span class="chevron-icon">⌄</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
                 </div>
               </summary>
               <div class="video-edit-group-body">
@@ -1169,7 +1380,11 @@
                 </div>
                 <div class="summary-right">
                   <span class="group-pill">Mọi variant</span>
-                  <span class="chevron-icon">⌄</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
                 </div>
               </summary>
               <div class="video-edit-group-body">
@@ -1227,7 +1442,11 @@
                 </div>
                 <div class="summary-right">
                   <span class="group-pill">Part</span>
-                  <span class="chevron-icon">⌄</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
                 </div>
               </summary>
               <div class="video-edit-group-body">
@@ -1342,7 +1561,11 @@
                 </div>
                 <div class="summary-right">
                   <span class="group-pill">CAM 1</span>
-                  <span class="chevron-icon">⌄</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
                 </div>
               </summary>
               <div class="video-edit-group-body">
@@ -1374,7 +1597,11 @@
                 </div>
                 <div class="summary-right">
                   <span class="group-pill">Mixer</span>
-                  <span class="chevron-icon">⌄</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
                 </div>
               </summary>
               <div class="video-edit-group-body">
@@ -1463,7 +1690,11 @@
                 </div>
                 <div class="summary-right">
                   <span class="group-pill">Che phụ đề</span>
-                  <span class="chevron-icon">⌄</span>
+                  <span class="chevron-icon-wrapper" aria-hidden="true">
+                    <svg class="chevron-svg" viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                  </span>
                 </div>
               </summary>
               <div class="video-edit-group-body">
@@ -1713,6 +1944,100 @@
         <div class="confirm-action-buttons">
           <button id="cancel-confirm-action" class="ghost-button" type="button">Hủy</button>
           <button id="submit-confirm-action" class="primary-button" type="button">Xác nhận</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="draft-review-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="draft-review-modal-title">
+      <div class="modal-panel draft-review-modal-panel">
+        <div class="modal-heading draft-review-modal-heading">
+          <div class="review-heading-left">
+            <span class="review-heading-badge" id="review-modal-variant-badge">#1 Variant 1</span>
+            <h2 id="draft-review-modal-title">Báo cáo Đánh giá AI & So sánh V1 ➔ V2</h2>
+          </div>
+          <div class="review-heading-right">
+            <div class="review-score-pill">
+              <span class="score-label">Điểm Draft:</span>
+              <span class="score-v1" id="review-modal-score-v1">--</span>
+              <span class="score-arrow">➔</span>
+              <span class="score-v2" id="review-modal-score-v2">--</span>
+              <span class="score-delta" id="review-modal-score-delta">+0</span>
+            </div>
+            <span class="review-decision-badge" id="review-modal-decision-badge">PATCH</span>
+            <button id="close-draft-review-modal" class="ghost-button icon-btn" type="button" title="Đóng">✕</button>
+          </div>
+        </div>
+
+        <div class="draft-review-shell">
+          <nav class="draft-review-tabs" role="tablist">
+            <button class="review-tab active" type="button" data-review-tab="overview">
+              <span>📋</span> Tổng quan & Đánh giá
+            </button>
+            <button class="review-tab" type="button" data-review-tab="issues">
+              <span>⚠️</span> Lỗi phát hiện <b id="review-modal-issues-badge" class="badge-count">0</b>
+            </button>
+            <button class="review-tab" type="button" data-review-tab="diff">
+              <span>🔄</span> So sánh thay đổi (V1 vs V2)
+            </button>
+          </nav>
+
+          <div class="draft-review-content">
+            <!-- TAB 1: OVERVIEW -->
+            <div id="review-tab-overview" class="review-tab-pane">
+              <div class="review-card-modern">
+                <h4 class="card-kicker">Nhận xét tổng quan của AI</h4>
+                <p id="review-modal-summary" class="review-summary-text">Đang tải nhận xét...</p>
+              </div>
+
+              <div class="review-grid-2col">
+                <div class="review-card-modern">
+                  <h4 class="card-kicker">🎯 Phân tích Hook (3 giây đầu)</h4>
+                  <div id="review-modal-hook-analysis" class="hook-analysis-box"></div>
+                </div>
+                <div class="review-card-modern">
+                  <h4 class="card-kicker">💡 Lời hứa cốt lõi & Cao trào (Payoff)</h4>
+                  <div id="review-modal-ideal-audit" class="ideal-audit-box"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- TAB 2: ISSUES -->
+            <div id="review-tab-issues" class="review-tab-pane hidden">
+              <div class="issues-summary-bar">
+                <span id="review-modal-issues-stats">Phát hiện 0 lỗi cần khắc phục</span>
+              </div>
+              <div id="review-modal-issues-list" class="review-issues-list"></div>
+            </div>
+
+            <!-- TAB 3: DIFF -->
+            <div id="review-tab-diff" class="review-tab-pane hidden">
+              <div class="diff-summary-bar">
+                <div class="diff-stat-item">
+                  <span class="diff-stat-label">Thời lượng V1:</span>
+                  <strong id="diff-v1-duration">--s</strong>
+                </div>
+                <span class="diff-stat-arrow">➔</span>
+                <div class="diff-stat-item">
+                  <span class="diff-stat-label">Thời lượng V2:</span>
+                  <strong id="diff-v2-duration">--s</strong>
+                </div>
+                <span id="diff-duration-delta" class="diff-delta-badge">0s</span>
+                <div class="diff-stat-item ml-auto">
+                  <span class="diff-stat-label">Số cảnh:</span>
+                  <strong id="diff-segment-count">-- ➔ --</strong>
+                </div>
+              </div>
+
+              <div id="review-modal-diff-list" class="review-diff-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer draft-review-modal-footer">
+          <button id="dismiss-draft-review-modal" class="ghost-button" type="button">Đóng</button>
+          <button id="apply-draft-review-modal-v2" class="primary-button" type="button">
+            🚀 Áp dụng bản sửa V2 (Import kịch bản mới)
+          </button>
         </div>
       </div>
     </div>

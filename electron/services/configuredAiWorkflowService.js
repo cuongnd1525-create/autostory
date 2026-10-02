@@ -172,14 +172,31 @@ function buildStage1TransportPrompt(promptText) {
   ].join("\n");
 }
 
-function buildDraftTransportPrompt(promptText, packageDir) {
+function buildDraftTransportPrompt(promptText, packageDir, options = {}) {
+  const resultDir = options.resultDir || "";
   return [
     promptText,
     "",
     "AUTOMATED PROVIDER EXECUTION:",
+    "================================================================================",
+    "CRITICAL MANDATORY EXECUTION CONSTRAINTS (PREVENT TIMEOUT & ELIMINATE SCRIPTING):",
+    "================================================================================",
     `INPUT_FOLDER: ${packageDir}`,
-    "Watch the complete draft and inspect every supplied review input before deciding. Do not stop at a plan and do not ask for approval.",
-    "Return the single complete gemini_draft_review JSON object required by the prompt. Do not return prose or Markdown."
+    ...(resultDir ? [`RESULT_FOLDER: ${resultDir}`] : []),
+    "",
+    "STRICTLY PROHIBITED ACTIONS FOR AGENTS/CLI:",
+    "1. PROHIBITED: Do NOT write or execute any Python, shell, PowerShell, batch, or Node.js scripts (no scripts in `scratch/` or any other directory).",
+    "2. PROHIBITED: Do NOT extract video frames to image files (no FFmpeg frame extraction, no OpenCV image slicing, no frame dumping).",
+    "3. PROHIBITED: Do NOT run ffprobe, ffmpeg, or exploratory shell commands (e.g., Get-ChildItem, dir, ls, Test-Path, find). All files are already located in INPUT_FOLDER.",
+    "4. All necessary review inputs (draft video, hook audition clip, transcript SRT, manifests) are already provided in INPUT_FOLDER.",
+    "5. Use the `view_file` tool directly to inspect video clips, SRT, and JSON metadata.",
+    "",
+    "REVIEW DECISION & OUTPUT CONTRACT:",
+    "1. This is a one-turn headless execution. Do NOT stop after making an implementation plan, do NOT ask for approval, and do NOT return a plan file.",
+    "2. Watch the complete draft and inspect every supplied review input before deciding. Synthesize your review directly using multimodal inspection.",
+    "3. OUTPUT: Write the completed `gemini-draft-review.json` directly into INPUT_FOLDER (or emit the single complete JSON object wrapped in the required schema).",
+    "4. Return ONLY the valid `gemini_draft_review` JSON object required by the prompt. Do not return prose or Markdown.",
+    "================================================================================"
   ].join("\n");
 }
 
@@ -235,11 +252,11 @@ class ConfiguredAiWorkflowService {
     }
   }
 
-  async runAntigravity({ folder, prompt, onProgress }) {
+  async runAntigravity({ folder, prompt, onProgress, options = {} }) {
     const delegate = new ManualAntigravityStage1Service(this.settings);
     this.activeDelegate = delegate;
     try {
-      const config = delegate.buildCommand(prompt, "", folder);
+      const config = delegate.buildCommand(prompt, "", folder, options);
       const result = await delegate.runCli({
         ...config,
         prompt,
@@ -248,6 +265,20 @@ class ConfiguredAiWorkflowService {
         progressStep: "configured_ai_draft_review"
       });
       return result.stdout;
+    } catch (error) {
+      const reviewPath = path.join(folder, "gemini-draft-review.json");
+      try {
+        const review = await readJson(reviewPath, "gemini-draft-review.json");
+        if (review && review.artifactType === "gemini_draft_review") {
+          onProgress?.({
+            step: "configured_ai_draft_review",
+            percent: 98,
+            message: "Antigravity đã lưu gemini-draft-review.json thành công trước khi kết thúc."
+          });
+          return JSON.stringify(review);
+        }
+      } catch (_) {}
+      throw error;
     } finally {
       this.activeDelegate = null;
     }
@@ -358,36 +389,65 @@ class ConfiguredAiWorkflowService {
     const resultDir = path.join(packageRoot, DRAFT_RESULT_DIR);
     await fs.mkdir(resultDir, { recursive: true });
     onProgress?.({ step: "configured_ai_draft_review", percent: 5, message: `Đang chuẩn bị Draft V${info.revision} cho ${descriptor.label}` });
-    const transportPrompt = buildDraftTransportPrompt(promptText, inputDir);
-    const vertexRun = descriptor.provider === "vertex_ai"
-      ? await this.runVertex({
-          files,
-          prompt: transportPrompt,
-          taskType: "draft_review",
-          onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" })
-        })
-      : null;
-    const raw = descriptor.provider === "gemini"
-      ? await this.runGemini({
-          files,
-          prompt: transportPrompt,
-          onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" })
-        })
-      : descriptor.provider === "vertex_ai"
-        ? vertexRun.response
-        : await this.runAntigravity({ folder: inputDir, prompt: transportPrompt, onProgress });
-    let review = findObject(raw, (value) => value.artifactType === "gemini_draft_review");
-    if (!review) {
+    const expectedBinding = info.reviewTarget?.reviewBindingId;
+    let review = null;
+    const existingCandidates = [
+      path.join(resultDir, "gemini-draft-review.json"),
+      path.join(inputDir, "gemini-draft-review.json")
+    ];
+    for (const candidatePath of existingCandidates) {
       try {
-        review = await readJson(path.join(inputDir, "gemini-draft-review.json"), "gemini-draft-review.json");
-      } catch (_) {
+        const candidate = await readJson(candidatePath, "existing gemini-draft-review.json");
+        const actualBinding = candidate?.reviewTarget?.reviewBindingId || candidate?.review_target?.reviewBindingId;
+        if (candidate?.artifactType === "gemini_draft_review" && (!expectedBinding || actualBinding === expectedBinding)) {
+          review = candidate;
+          onProgress?.({
+            step: "configured_ai_draft_review",
+            percent: 95,
+            message: `Tìm thấy file review Draft V${info.revision} đã hoàn tất hợp lệ trên đĩa.`
+          });
+          break;
+        }
+      } catch (_) {}
+    }
+
+    let vertexRun = null;
+    if (!review) {
+      const transportPrompt = buildDraftTransportPrompt(promptText, inputDir, { resultDir });
+      vertexRun = descriptor.provider === "vertex_ai"
+        ? await this.runVertex({
+            files,
+            prompt: transportPrompt,
+            taskType: "draft_review",
+            onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" })
+          })
+        : null;
+      const raw = descriptor.provider === "gemini"
+        ? await this.runGemini({
+            files,
+            prompt: transportPrompt,
+            onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" })
+          })
+        : descriptor.provider === "vertex_ai"
+          ? vertexRun.response
+          : await this.runAntigravity({
+              folder: inputDir,
+              prompt: transportPrompt,
+              onProgress,
+              options: { packageInfo: info }
+            });
+      review = findObject(raw, (value) => value.artifactType === "gemini_draft_review");
+      if (!review) {
         try {
-          review = await readJson(path.join(resultDir, "gemini-draft-review.json"), "gemini-draft-review.json");
-        } catch (__) {}
+          review = await readJson(path.join(inputDir, "gemini-draft-review.json"), "gemini-draft-review.json");
+        } catch (_) {
+          try {
+            review = await readJson(path.join(resultDir, "gemini-draft-review.json"), "gemini-draft-review.json");
+          } catch (__) {}
+        }
       }
     }
     if (!review) throw new Error(`${descriptor.label} không trả về gemini_draft_review JSON hợp lệ.`);
-    const expectedBinding = info.reviewTarget?.reviewBindingId;
     const actualBinding = review.reviewTarget?.reviewBindingId || review.review_target?.reviewBindingId;
     if (expectedBinding && actualBinding !== expectedBinding) {
       throw new Error("AI trả về reviewBindingId không khớp Draft V1 hiện tại.");

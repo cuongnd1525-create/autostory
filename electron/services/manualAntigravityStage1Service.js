@@ -527,7 +527,12 @@ function resolveAntigravityTimeoutMs(settingsTimeout, packageInfo = null) {
     baseTimeout = 900000;
   }
   if (packageInfo) {
-    const proxyChunkCount = Number(packageInfo.proxyChunkCount || 1);
+    const proxyChunkCount = Number(
+      packageInfo.proxyChunkCount
+      || packageInfo.sourceProxyFiles?.length
+      || (Array.isArray(packageInfo.uploadFiles) ? packageInfo.uploadFiles.filter((f) => f.includes("proxy") || f.includes("draft")).length : 0)
+      || 1
+    );
     const sceneCount = Number(packageInfo.sceneCount || 0);
     // Allow 6 minutes per chunk + 15 minutes base for prompt/transcript/manifests + script generation
     const chunkTimeout = (Math.max(1, proxyChunkCount) * 360 + 900) * 1000;

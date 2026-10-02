@@ -82,8 +82,8 @@ const MODE_PRESENTATION = Object.freeze({
     configurable: false
   },
   recap: {
-    category: "story",
-    categoryLabel: "STORY & RECAP",
+    category: "recap",
+    categoryLabel: "AI VIDEO RECAP",
     title: "AI Video Recap (Đồng bộ thị giác cao cấp)",
     description: "Tự động hiểu cốt truyện, phân rã Visual Events và lồng tiếng Anh chuẩn khớp từng hành động thị giác.",
     badges: ["AI Recap", "Grounded Sync", "Editor-Grade", "Auto & Review"],
@@ -92,6 +92,7 @@ const MODE_PRESENTATION = Object.freeze({
   }
 });
 const MODE_CATEGORY_DEFAULTS = Object.freeze({
+  recap: "recap",
   highlight: "manual_gemini_pro",
   story: "diy_story_remix",
   podcast: "podcast_viral_cut",
@@ -103,7 +104,7 @@ const state = {
   projects: [],
   currentProject: null,
   currentStep: 1,
-  selectedMode: "dubbing",
+  selectedMode: "recap",
   selectedSegmentIndex: 0,
   expandedScenePickerIndex: -1,
   pendingSceneChoices: {},
@@ -271,11 +272,11 @@ function selectSetupMode(mode, { persist = true, invalidate = true } = {}) {
     && (isManualGeminiWorkflowMode(previousMode) || isManualGeminiWorkflowMode(state.selectedMode))) {
     invalidateManualGeminiPack("Chế độ phân tích Gemini đã thay đổi.");
   }
-  if (["satisfying_storytime", "manual_gemini_pro", "story_recut", "diy_story_remix", "podcast_viral_cut", "vertex_auto_story"].includes(state.selectedMode) && el.targetLanguage) {
+  if (["recap", "satisfying_storytime", "manual_gemini_pro", "story_recut", "diy_story_remix", "podcast_viral_cut", "vertex_auto_story"].includes(state.selectedMode) && el.targetLanguage) {
     el.targetLanguage.value = "en";
   }
   if (isPodcastViralMode() && el.sourceLanguage) el.sourceLanguage.value = "en";
-  syncModeSelectionUi();
+  syncModeUi();
   if (persist) writeSetupDraft();
   renderSteps();
 }
@@ -415,6 +416,12 @@ function queryElements() {
     previewPresetVoice: $("preview-preset-voice"),
     usePresetVoice: $("use-preset-voice"),
     presetVoiceInfo: $("preset-voice-info"),
+    heroVoiceName: $("hero-voice-name"),
+    heroVoiceProviderBadge: $("hero-voice-provider-badge"),
+    heroVoiceDetail: $("hero-voice-detail"),
+    heroPreviewVoiceBtn: $("hero-preview-voice-btn"),
+    sourceDropzone: $("source-dropzone"),
+    changeSourceVideoBtn: $("change-source-video-btn"),
     draftVoiceMode: $("draft-voice-mode"),
     draftVoiceProvider: $("draft-voice-provider"),
     draftVoiceList: $("draft-voice-list"),
@@ -754,7 +761,27 @@ function queryElements() {
     showSubtitles: $("show-subtitles"),
     omniVoiceRenderMode: $("omnivoice-render-mode"),
     storytimeContinuousVoice: $("storytime-continuous-voice"),
-    autoFitVoice: $("auto-fit-voice")
+    autoFitVoice: $("auto-fit-voice"),
+    draftReviewModal: $("draft-review-modal"),
+    closeDraftReviewModal: $("close-draft-review-modal"),
+    dismissDraftReviewModal: $("dismiss-draft-review-modal"),
+    applyDraftReviewModalV2: $("apply-draft-review-modal-v2"),
+    reviewModalVariantBadge: $("review-modal-variant-badge"),
+    reviewModalScoreV1: $("review-modal-score-v1"),
+    reviewModalScoreV2: $("review-modal-score-v2"),
+    reviewModalScoreDelta: $("review-modal-score-delta"),
+    reviewModalDecisionBadge: $("review-modal-decision-badge"),
+    reviewModalIssuesBadge: $("review-modal-issues-badge"),
+    reviewModalSummary: $("review-modal-summary"),
+    reviewModalHookAnalysis: $("review-modal-hook-analysis"),
+    reviewModalIdealAudit: $("review-modal-ideal-audit"),
+    reviewModalIssuesStats: $("review-modal-issues-stats"),
+    reviewModalIssuesList: $("review-modal-issues-list"),
+    diffV1Duration: $("diff-v1-duration"),
+    diffV2Duration: $("diff-v2-duration"),
+    diffDurationDelta: $("diff-duration-delta"),
+    diffSegmentCount: $("diff-segment-count"),
+    reviewModalDiffList: $("review-modal-diff-list")
   });
 }
 
@@ -2370,7 +2397,10 @@ function writeSetupDraft() {
     lastVoiceSetup: getVoiceSetupState(),
     autoWhisper: Boolean(el.autoWhisper?.checked),
     sourceLanguage: el.sourceLanguage?.value || "auto",
-    targetLanguage: el.targetLanguage?.value || "vi"
+    targetLanguage: el.targetLanguage?.value || "vi",
+    recapWorkflowMode: el.recapWorkflowMode?.value || "full_auto",
+    recapVisualLead: el.recapVisualLead?.value || "0.25",
+    recapAllowReuse: Boolean(el.recapAllowReuse?.checked)
   };
   localStorage.setItem(setupDraftKey, JSON.stringify(draft));
 }
@@ -2380,8 +2410,11 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (draft.projectTitle && el.projectTitle) el.projectTitle.value = draft.projectTitle;
   if (draft.selectedMode) {
     state.selectedMode = draft.selectedMode === "script_rewrite" ? "dubbing" : draft.selectedMode;
-    document.querySelectorAll("[data-mode]").forEach((node) => node.classList.toggle("active", node.dataset.mode === state.selectedMode));
   }
+  if (draft.recapWorkflowMode && el.recapWorkflowMode) el.recapWorkflowMode.value = draft.recapWorkflowMode;
+  if (draft.recapVisualLead && el.recapVisualLead) el.recapVisualLead.value = draft.recapVisualLead;
+  if (typeof draft.recapAllowReuse === "boolean" && el.recapAllowReuse) el.recapAllowReuse.checked = draft.recapAllowReuse;
+  selectSetupMode(state.selectedMode, { persist: false, invalidate: false });
   if (draft.targetDuration && el.targetDuration) el.targetDuration.value = draft.targetDuration;
   if (draft.voiceSpeed && el.voiceSpeed) el.voiceSpeed.value = draft.voiceSpeed;
   if (typeof draft.viralOptimization === "boolean" && el.viralOptimization) el.viralOptimization.checked = draft.viralOptimization;
@@ -2535,7 +2568,7 @@ function resetSetupStep(step) {
   if (step === 1) {
     el.projectTitle.value = "project_default";
   } else if (step === 2) {
-    state.selectedMode = "dubbing";
+    state.selectedMode = "recap";
     el.targetDuration.value = "60";
     el.voiceSpeed.value = "1.00";
     el.viralOptimization.checked = true;
@@ -2743,20 +2776,19 @@ function getVariantExportStatusLabel(status = "waiting") {
 
 function renderVariantExportQueue() {
   if (!el.variantExportStatuses) return;
-  const queue = Array.isArray(state.variantExportQueue) ? state.variantExportQueue : [];
-  el.variantExportStatuses.classList.toggle("hidden", !queue.length);
-  el.variantExportStatuses.innerHTML = queue.map((item, index) => `
-    <div class="variant-export-item ${escapeHtml(item.status || "waiting")}" title="${escapeHtml(item.error || item.label || "")}">
-      <span>#${index + 1} ${escapeHtml(item.label || `Variant ${index + 1}`)}</span>
-      <strong>${getVariantExportStatusLabel(item.status)}</strong>
-    </div>
-  `).join("");
+  // Hàng danh sách variant ở header phía trên là thừa;
+  // Trạng thái processing được hiển thị trực tiếp và sống động bên trong từng card của DANH SÁCH VARIANTS.
+  el.variantExportStatuses.classList.add("hidden");
+  el.variantExportStatuses.innerHTML = "";
 }
 
 function setVariantExportQueue(items = []) {
   state.variantExportQueue = Array.isArray(items) ? items.map((item) => ({ ...item })) : [];
   renderVariantExportQueue();
   renderHighlightVariantBar();
+  if (state.currentProject && !el.studioView?.classList.contains("hidden")) {
+    renderStudioVariantHub(state.currentProject);
+  }
 }
 
 function setRenderCancellable(isCancellable) {
@@ -2808,6 +2840,7 @@ function setVoiceTab(tabName = "designed") {
   });
   syncSelectedVoiceTuningVisibility();
   renderHighlightPromptTemplate();
+  syncHeroVoiceCard();
 }
 
 function closeConfirmAction(result = false) {
@@ -5916,6 +5949,7 @@ function updatePresetVoiceInfoFromSelection() {
     infoEl: el.presetVoiceInfo,
     voices: state.presetVoices
   });
+  syncHeroVoiceCard();
 }
 
 function updateDraftVoiceInfoFromSelection() {
@@ -5946,6 +5980,56 @@ function updateVoiceInfoFromSelection({ listEl, providerEl, infoEl, voices = [] 
       <dt>Category</dt><dd>${escapeHtml(labels.category || labels.mode || "Không rõ")}</dd>
     </dl>
   `;
+}
+
+function syncHeroVoiceCard() {
+  if (!el.heroVoiceName) return;
+  const activeTab = document.querySelector(".voice-tab.active")?.dataset.voiceTab || "preset";
+  const providerLabels = {
+    edge_neural: "Edge Neural",
+    kokoro: "Kokoro Local",
+    elevenlabs: "ElevenLabs",
+    omnivoice: "OmniVoice",
+    windows_local: "Windows Local"
+  };
+
+  if (activeTab === "preset") {
+    const providerVal = el.presetVoiceProvider?.value || "edge_neural";
+    if (el.heroVoiceProviderBadge) {
+      el.heroVoiceProviderBadge.textContent = providerLabels[providerVal] || providerVal;
+    }
+    const selectedOption = el.presetVoiceList?.options[el.presetVoiceList.selectedIndex];
+    const voiceVal = el.presetVoiceList?.value || "";
+    const voiceName = selectedOption?.textContent?.trim() || voiceVal || "Guy Neural (en-US-GuyNeural)";
+    el.heroVoiceName.textContent = voiceName;
+
+    const activeChip = Array.from(document.querySelectorAll(".btn-voice-chip")).find((chip) => chip.dataset.quickVoice === voiceVal);
+    if (activeChip && activeChip.dataset.quickDetail) {
+      if (el.heroVoiceDetail) el.heroVoiceDetail.textContent = activeChip.dataset.quickDetail;
+      document.querySelectorAll(".btn-voice-chip").forEach((c) => c.classList.toggle("active", c === activeChip));
+    } else {
+      const speed = el.voiceSpeed?.value ? `${Number(el.voiceSpeed.value).toFixed(2)}x` : "1.0x";
+      if (el.heroVoiceDetail) el.heroVoiceDetail.textContent = `${providerLabels[providerVal] || providerVal} · Tốc độ: ${speed}`;
+      document.querySelectorAll(".btn-voice-chip").forEach((c) => c.classList.remove("active"));
+    }
+  } else if (activeTab === "designed") {
+    if (el.heroVoiceProviderBadge) el.heroVoiceProviderBadge.textContent = "Thiết kế AI";
+    const gender = el.voiceGenderAge?.value || "Nam trung niên";
+    const trait = el.voiceTrait?.value || "Trầm ấm, uy quyền";
+    el.heroVoiceName.textContent = `${gender} · ${trait}`;
+    if (el.heroVoiceDetail) {
+      el.heroVoiceDetail.textContent = el.voicePrompt?.value || "Giọng đọc được sinh tự động bằng mô tả ngữ cảnh OmniVoice.";
+    }
+    document.querySelectorAll(".btn-voice-chip").forEach((c) => c.classList.remove("active"));
+  } else if (activeTab === "clone") {
+    if (el.heroVoiceProviderBadge) el.heroVoiceProviderBadge.textContent = "Clone giọng";
+    const sample = el.voiceSamplePath?.value ? fileName(el.voiceSamplePath.value) : "Chưa chọn file mẫu";
+    el.heroVoiceName.textContent = sample;
+    if (el.heroVoiceDetail) {
+      el.heroVoiceDetail.textContent = "Sao chép âm sắc và ngữ điệu từ file audio mẫu đã chọn.";
+    }
+    document.querySelectorAll(".btn-voice-chip").forEach((c) => c.classList.remove("active"));
+  }
 }
 
 function syncElevenLabsSliderLabels() {
@@ -6344,6 +6428,7 @@ function updateReview() {
   }
   el.translateButton.textContent = `Dịch ngữ cảnh với ${getAiProviderLabel()}`;
   renderHighlightPromptTemplate();
+  syncHeroVoiceCard();
 }
 
 function syncLocalTranslationSettings() {
@@ -7025,6 +7110,39 @@ function switchRightTab(_tabName = "log") {
   // Panel bên phải giờ là Nhật ký xử lý cố định
 }
 
+function updateVariantHubProgress(payload = {}) {
+  if (!el.variantHubCards) return;
+  const queue = state.variantExportQueue || [];
+  const processingIdx = queue.findIndex((item) => item.status === "processing" || item.status === "rendering");
+  const activeIdx = typeof payload.variantBatch?.activeIndex === "number"
+    ? payload.variantBatch.activeIndex
+    : (processingIdx >= 0 ? processingIdx : (state.variantProgress?.activeIndex ?? 0));
+
+  const card = el.variantHubCards.children[activeIdx];
+  if (!card) return;
+
+  const variants = getHighlightVariants();
+  const total = variants.length || 1;
+  const pct = Number(payload.percent || 0);
+  const computed = Math.round((pct * total) - (activeIdx * 100));
+  const variantPct = Math.max(0, Math.min(100, computed));
+
+  const bar = card.querySelector(".variant-card-progress-bar");
+  const pctText = card.querySelector(".progress-pct-text");
+  const stepText = card.querySelector(".progress-step-text");
+
+  if (bar) bar.style.width = `${variantPct > 0 ? variantPct : 100}%`;
+  if (pctText && variantPct > 0) pctText.textContent = `${variantPct}%`;
+  if (stepText && payload.message) {
+    const cleanMsg = payload.message
+      .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
+      .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
+      .trim();
+    stepText.textContent = cleanMsg;
+    stepText.title = cleanMsg;
+  }
+}
+
 function renderStudioVariantHub(project = state.currentProject) {
   if (!el.studioVariantHub || !el.variantHubCards) return;
   const variants = getHighlightVariants(project);
@@ -7044,44 +7162,98 @@ function renderStudioVariantHub(project = state.currentProject) {
     const isActive = variant.id === activeId;
     const duration = (variant.segments || []).reduce((sum, s) => sum + getSegmentTimelineDuration(s), 0);
     const title = variant.label || variant.title || `Variant ${index + 1}`;
-    const queueItem = queueById.get(variant.id);
+    const queueItem = queueById.get(variant.id) || (queue[index] && queue[index].id === variant.id ? queue[index] : null);
+
+    const isProcessing = queueItem?.status === "processing" || queueItem?.status === "rendering";
+    const isReviewing = queueItem?.status === "reviewing";
+    const isWaiting = queueItem?.status === "waiting";
+    const isFailed = queueItem?.status === "failed";
+    const isDone = queueItem?.status === "done";
 
     let badgeText = "Chờ xử lý";
     let badgeClass = "badge-pending";
 
-    if (queueItem?.status === "rendering") {
-      badgeText = "Đang dựng...";
-      badgeClass = "badge-rendering";
-    } else if (queueItem?.status === "reviewing") {
-      badgeText = "Đang review AI...";
+    if (isProcessing) {
+      badgeText = "Processing";
+      badgeClass = "badge-processing";
+    } else if (isReviewing) {
+      badgeText = "Review AI...";
       badgeClass = "badge-reviewing";
+    } else if (isWaiting) {
+      badgeText = "Waiting";
+      badgeClass = "badge-waiting";
+    } else if (isFailed) {
+      badgeText = "Lỗi";
+      badgeClass = "badge-failed";
+    } else if (isDone || variant.artifacts?.finalVideoPath) {
+      badgeText = variant.artifacts?.finalVideoPath ? "Đã xuất" : "Hoàn tất";
+      badgeClass = "badge-pass";
     } else if (variant.draftReview?.verdict === "PASS" || variant.draftReviewReadiness?.grade === "A") {
       badgeText = "V2 PASS";
       badgeClass = "badge-pass";
     } else if (variant.draftReview?.verdict === "NEEDS_ATTENTION") {
       badgeText = "Cần chú ý";
       badgeClass = "badge-warning";
-    } else if (variant.artifacts?.finalVideoPath) {
-      badgeText = "Đã xuất";
-      badgeClass = "badge-pass";
     } else if (variant.artifacts?.fastDraftVideoPath) {
       badgeText = "Draft sẵn sàng";
       badgeClass = "badge-pending";
     }
 
+    let variantPct = 0;
+    let progressMsg = "";
+    if (isProcessing || isReviewing) {
+      if (state.variantProgress) {
+        const total = variants.length || 1;
+        const computed = Math.round((Number(state.variantProgress.percent || 0) * total) - (index * 100));
+        variantPct = Math.max(0, Math.min(100, computed));
+        if (state.variantProgress.message) {
+          progressMsg = state.variantProgress.message
+            .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
+            .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
+            .trim();
+        }
+      }
+      if (!progressMsg) {
+        progressMsg = isReviewing ? "Đang chạy Gemini Review..." : "Đang kết xuất video nháp...";
+      }
+    }
+
     const viralScore = Number(variant.viralPreflight?.score || variant.draftReviewReadiness?.score || 0);
     const scoreClass = viralScore >= 80 ? "score-high" : viralScore >= 60 ? "score-med" : "score-low";
     const scoreDisplay = viralScore > 0 ? `${viralScore}/100` : "--";
+    const hasReview = Boolean(
+      variant.artifacts?.draftReviewAiResultPath ||
+      variant.draftReview?.sourcePath ||
+      variant.draftReviewAiResultPath ||
+      variant.draftReview
+    );
 
     return `
-      <div class="variant-hub-card ${isActive ? "active" : ""}" data-highlight-variant="${escapeHtml(variant.id)}" title="${escapeHtml(title)}">
+      <div class="variant-hub-card ${isActive ? "active" : ""} ${isProcessing || isReviewing ? "is-processing" : ""}" data-highlight-variant="${escapeHtml(variant.id)}" title="${escapeHtml(title)}">
         <div class="variant-hub-card-top">
           <span class="variant-hub-card-title">#${index + 1} ${escapeHtml(title)}</span>
-          <span class="variant-hub-card-badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+          <span class="variant-hub-card-badge ${badgeClass}">
+            ${isProcessing || isReviewing ? '<span class="badge-spinner"></span>' : ""}
+            ${escapeHtml(badgeText)}
+          </span>
         </div>
+        ${(isProcessing || isReviewing) ? `
+          <div class="variant-hub-card-progress">
+            <div class="variant-card-progress-track">
+              <div class="variant-card-progress-bar" style="width: ${variantPct > 0 ? variantPct : 100}%;"></div>
+            </div>
+            <div class="variant-card-progress-detail">
+              <span class="progress-step-text" title="${escapeHtml(progressMsg)}">${escapeHtml(progressMsg)}</span>
+              ${variantPct > 0 ? `<span class="progress-pct-text">${variantPct}%</span>` : ""}
+            </div>
+          </div>
+        ` : ""}
         <div class="variant-hub-card-bottom">
           <span>${fmt(duration, 1)}s · ${(variant.segments || []).length} cảnh</span>
-          <span class="variant-hub-card-score ${scoreClass}">Điểm: ${scoreDisplay}</span>
+          <div style="display:inline-flex;align-items:center;gap:6px;">
+            ${hasReview ? `<button type="button" class="btn-review-report-pill" data-open-review-report="${escapeHtml(variant.id)}" title="Xem báo cáo AI Review và so sánh V1/V2">📊 Xem AI review</button>` : ""}
+            <span class="variant-hub-card-score ${scoreClass}">Điểm: ${scoreDisplay}</span>
+          </div>
         </div>
       </div>
     `;
@@ -9161,6 +9333,13 @@ async function renderFastDraftVideo() {
   setBusy(true);
   state.activeOperation = "Render nháp nhanh";
   setExportProgress(5, "Đang chuẩn bị render nháp nhanh");
+  const activeVarId = state.currentProject?.analysis?.activeVariantId || getHighlightVariants()[0]?.id;
+  if (activeVarId && state.currentProject?.mode === "highlight_cut") {
+    setVariantExportQueue([{
+      id: activeVarId,
+      status: "processing"
+    }]);
+  }
   try {
     await saveCurrentSegments();
     await applyCurrentProjectSettings();
@@ -9192,6 +9371,11 @@ async function renderFastDraftVideo() {
     showToast(error.message);
   } finally {
     setBusy(false);
+    setTimeout(() => {
+      state.variantExportQueue = [];
+      state.variantProgress = null;
+      renderStudioVariantHub();
+    }, 4000);
   }
 }
 
@@ -9240,6 +9424,11 @@ async function renderAllFastDraftVariants({ skipConfirm = false } = {}) {
     showToast(error.message);
   } finally {
     setBusy(false);
+    setTimeout(() => {
+      state.variantExportQueue = [];
+      state.variantProgress = null;
+      renderStudioVariantHub();
+    }, 4500);
   }
 }
 
@@ -9328,6 +9517,11 @@ async function runConfiguredDraftReview() {
       );
     }
     showToast(`Đã tạo bản review V2 bằng ${result.providerLabel || aiInfo.label}. Hãy kiểm tra trước khi import.`);
+    try {
+      await openDraftReviewReportModal(state.currentProject?.id, result.variantId || activeVariant?.id);
+    } catch (modalErr) {
+      console.warn("Could not open draft review modal automatically:", modalErr);
+    }
     return result;
   } catch (error) {
     addLog(error.message, "ERROR");
@@ -9567,6 +9761,227 @@ async function importConfiguredDraftReview() {
     return;
   }
   await importReviewedScriptPath(resultPath, { autoRouted: true });
+}
+
+let currentReviewReportData = null;
+
+function setReviewModalTab(tabName) {
+  document.querySelectorAll(".draft-review-tabs .review-tab").forEach((tab) => {
+    tab.classList.toggle("active", tab.dataset.reviewTab === tabName);
+  });
+  document.querySelectorAll(".draft-review-content .review-tab-pane").forEach((pane) => {
+    pane.classList.toggle("hidden", pane.id !== `review-tab-${tabName}`);
+  });
+}
+
+function closeDraftReviewReportModal() {
+  if (el.draftReviewModal) {
+    el.draftReviewModal.classList.add("hidden");
+  }
+  currentReviewReportData = null;
+}
+
+async function openDraftReviewReportModal(projectId, variantId) {
+  const pId = projectId || state.currentProject?.id;
+  if (!pId) {
+    showToast("Chưa có dự án nào được mở.");
+    return;
+  }
+  setBusy(true);
+  try {
+    const report = await window.cineviral.getDraftReviewReport(pId, variantId);
+    if (!report || !report.ready) {
+      showToast(report?.message || report?.error || "Không tìm thấy kết quả review AI.");
+      return;
+    }
+
+    currentReviewReportData = report;
+
+    // Header info
+    if (el.reviewModalVariantBadge) {
+      el.reviewModalVariantBadge.textContent = `#${report.variantLabel || "Variant"}`;
+    }
+    if (el.reviewModalScoreV1) {
+      el.reviewModalScoreV1.textContent = report.scores?.before || "--";
+    }
+    if (el.reviewModalScoreV2) {
+      el.reviewModalScoreV2.textContent = report.scores?.afterEstimated || "--";
+    }
+    if (el.reviewModalScoreDelta) {
+      const delta = report.scores?.delta || 0;
+      el.reviewModalScoreDelta.textContent = delta > 0 ? `+${delta}` : `${delta}`;
+      el.reviewModalScoreDelta.style.color = delta >= 0 ? "#10b981" : "#ef4444";
+    }
+    if (el.reviewModalDecisionBadge) {
+      const dec = (report.decision || "patch").toLowerCase();
+      el.reviewModalDecisionBadge.textContent = dec.toUpperCase();
+      el.reviewModalDecisionBadge.className = `review-decision-badge ${dec}`;
+    }
+
+    // Tab 1: Overview
+    if (el.reviewModalSummary) {
+      el.reviewModalSummary.textContent = report.summary || "AI đã review và tạo bản kịch bản V2.";
+    }
+
+    // Hook analysis
+    if (el.reviewModalHookAnalysis) {
+      const hook = report.hookAudit || {};
+      el.reviewModalHookAnalysis.innerHTML = `
+        <div class="audit-metric-row">
+          <span class="audit-metric-label">Điểm Hook V1 ➔ V2:</span>
+          <span class="audit-metric-value" style="color: ${Number(hook.v2Score) >= Number(hook.v1Score) ? '#34d399' : '#f87171'}">${hook.v1Score || 0} ➔ ${hook.v2Score || 0} (${hook.scoreDelta > 0 ? '+' : ''}${hook.scoreDelta || 0})</span>
+        </div>
+        <div class="audit-metric-row">
+          <span class="audit-metric-label">Cần đổi hook (3s đầu):</span>
+          <span class="audit-metric-value">${hook.replacementRequired ? '<span style="color:#f59e0b">⚠️ Có (Thay bằng cảnh đắt giá hơn)</span>' : '<span style="color:#10b981">✓ Giữ nguyên cảnh mở đầu</span>'}</span>
+        </div>
+        ${hook.triggerType ? `
+          <div class="audit-metric-row">
+            <span class="audit-metric-label">Trigger kích thích tò mò:</span>
+            <span class="audit-metric-value" style="color: #38bdf8">${escapeHtml(hook.triggerType)}</span>
+          </div>
+        ` : ''}
+        ${hook.comparison ? `
+          <p style="margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: #94a3b8;">
+            <b style="color: #e2e8f0;">So sánh 3s đầu:</b> ${escapeHtml(hook.comparison)}
+          </p>
+        ` : ''}
+      `;
+    }
+
+    // Ideal audit & payoff
+    if (el.reviewModalIdealAudit) {
+      const ideal = report.idealEdit || {};
+      el.reviewModalIdealAudit.innerHTML = `
+        <div class="audit-metric-row">
+          <span class="audit-metric-label">Câu hỏi giữ chân người xem:</span>
+          <span class="audit-metric-value" style="color: #fbbf24">${escapeHtml(ideal.question || "N/A")}</span>
+        </div>
+        <div class="audit-metric-row">
+          <span class="audit-metric-label">Lời hứa đầu video (Hook Promise):</span>
+          <span class="audit-metric-value">${escapeHtml(ideal.hookPromise || "N/A")}</span>
+        </div>
+        <div class="audit-metric-row">
+          <span class="audit-metric-label">Cao trào & Trả lời (Payoff):</span>
+          <span class="audit-metric-value" style="color: #38bdf8">${escapeHtml(ideal.payoff || ideal.climax || "N/A")}</span>
+        </div>
+        ${ideal.whyV1Differs ? `
+          <p style="margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: #94a3b8;">
+            <b style="color: #e2e8f0;">Lý do cần chỉnh:</b> ${escapeHtml(ideal.whyV1Differs)}
+          </p>
+        ` : ''}
+      `;
+    }
+
+    // Tab 2: Issues
+    const issues = report.issues || [];
+    if (el.reviewModalIssuesBadge) {
+      el.reviewModalIssuesBadge.textContent = issues.length;
+    }
+    if (el.reviewModalIssuesStats) {
+      el.reviewModalIssuesStats.textContent = issues.length > 0
+        ? `Phát hiện ${issues.length} vấn đề cần xử lý trong bản draft:`
+        : `Tuyệt vời! Không phát hiện lỗi nghiêm trọng nào trong bản draft.`;
+    }
+    if (el.reviewModalIssuesList) {
+      if (issues.length === 0) {
+        el.reviewModalIssuesList.innerHTML = `<div class="empty-state-card" style="padding: 24px; text-align: center; color: #94a3b8;">Bản nháp đã đạt tiêu chuẩn chất lượng cao.</div>`;
+      } else {
+        el.reviewModalIssuesList.innerHTML = issues.map((issue) => {
+          const sev = (issue.severity || "warning").toLowerCase();
+          return `
+            <div class="issue-item-card ${sev}">
+              <div class="issue-header">
+                <span class="issue-severity-pill ${sev}">${escapeHtml(issue.severity || "Warning")}</span>
+                ${issue.category ? `<span class="issue-category-pill">${escapeHtml(issue.category)}</span>` : ""}
+                ${issue.segmentIndex ? `<span class="issue-category-pill">Cảnh #${issue.segmentIndex}</span>` : ""}
+              </div>
+              <div class="issue-problem">⚠️ ${escapeHtml(issue.problem || issue.issue || "")}</div>
+              ${issue.action ? `<div class="issue-action"><b>➔ Khắc phục:</b> ${escapeHtml(issue.action)}</div>` : ""}
+              ${issue.reason ? `<div class="issue-reason">Lý do: ${escapeHtml(issue.reason)}</div>` : ""}
+            </div>
+          `;
+        }).join("");
+      }
+    }
+
+    // Tab 3: Diff V1 vs V2
+    const timelines = report.timelines || {};
+    if (el.diffV1Duration) el.diffV1Duration.textContent = `${timelines.v1Duration || 0}s`;
+    if (el.diffV2Duration) el.diffV2Duration.textContent = `${timelines.v2Duration || 0}s`;
+    if (el.diffDurationDelta) {
+      const delta = timelines.durationDelta || 0;
+      el.diffDurationDelta.textContent = delta > 0 ? `+${delta}s` : `${delta}s`;
+      el.diffDurationDelta.className = `diff-delta-badge ${delta > 0 ? "pos" : delta < 0 ? "neg" : ""}`;
+    }
+    if (el.diffSegmentCount) {
+      el.diffSegmentCount.textContent = `${timelines.v1Count || 0} cảnh ➔ ${timelines.v2Count || 0} cảnh`;
+    }
+
+    if (el.reviewModalDiffList) {
+      const diffList = report.diffList || [];
+      if (diffList.length === 0) {
+        el.reviewModalDiffList.innerHTML = `<div class="empty-state-card" style="padding: 24px; text-align: center; color: #94a3b8;">Không có danh sách so sánh.</div>`;
+      } else {
+        el.reviewModalDiffList.innerHTML = diffList.map((diff) => {
+          let statusLabel = "Giữ nguyên";
+          if (diff.type === "trimmed") statusLabel = "Cắt gọt";
+          else if (diff.type === "voice_rewritten") statusLabel = "Viết lại thoại";
+          else if (diff.type === "modified_all") statusLabel = "Sửa thoại & Cắt";
+          else if (diff.type === "added") statusLabel = "Bổ sung";
+          else if (diff.type === "removed") statusLabel = "Đã bỏ";
+
+          return `
+            <div class="diff-row-card">
+              <div class="diff-row-header">
+                <div class="diff-row-left">
+                  <span class="diff-index-badge">Cảnh #${diff.index}</span>
+                  <span class="diff-status-pill ${diff.type}">${statusLabel}</span>
+                </div>
+                <div class="diff-row-note">${escapeHtml(diff.note || "")}</div>
+              </div>
+              <div class="diff-comparison-grid">
+                <div class="diff-pane v1">
+                  <div class="diff-pane-title">
+                    <span>Bản Draft V1</span>
+                    <span>${diff.v1 ? `${diff.v1.duration}s` : "--"}</span>
+                  </div>
+                  <div class="diff-pane-text">${diff.v1?.text ? escapeHtml(diff.v1.text) : '<em style="color:#64748b;">(Không có lời thoại)</em>'}</div>
+                </div>
+                <div class="diff-pane v2">
+                  <div class="diff-pane-title">
+                    <span>Bản Review V2</span>
+                    <span>${diff.v2 ? `${diff.v2.duration}s` : "--"}</span>
+                  </div>
+                  <div class="diff-pane-text">${diff.v2?.text ? escapeHtml(diff.v2.text) : '<em style="color:#64748b;">(Không có lời thoại)</em>'}</div>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join("");
+      }
+    }
+
+    // Update apply button text
+    if (el.applyDraftReviewModalV2) {
+      if (report.isImported) {
+        el.applyDraftReviewModalV2.innerHTML = "✅ Đã áp dụng V2 (Bấm để áp dụng lại)";
+      } else {
+        el.applyDraftReviewModalV2.innerHTML = "🚀 Áp dụng bản sửa V2 (Import kịch bản mới)";
+      }
+    }
+
+    // Default to Overview tab
+    setReviewModalTab("overview");
+
+    // Show modal
+    el.draftReviewModal.classList.remove("hidden");
+  } catch (error) {
+    addLog(`Lỗi hiển thị báo cáo AI review: ${error.message}`, "ERROR");
+    showToast(`Không thể mở báo cáo review: ${error.message}`);
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function openGeminiDraftReviewPackage() {
@@ -10050,6 +10465,53 @@ function bindEvents() {
     await applySourceSelection({ videoPath: selected, clearSourceUrl: true });
     addLog(`Đã chọn nguồn: ${selected}`);
   });
+
+  if (el.sourceDropzone) {
+    el.sourceDropzone.addEventListener("click", () => {
+      el.browseVideo?.click();
+    });
+    el.sourceDropzone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        el.browseVideo?.click();
+      }
+    });
+    el.sourceDropzone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      el.sourceDropzone.classList.add("dragover");
+    });
+    el.sourceDropzone.addEventListener("dragleave", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      el.sourceDropzone.classList.remove("dragover");
+    });
+    el.sourceDropzone.addEventListener("drop", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      el.sourceDropzone.classList.remove("dragover");
+      const files = event.dataTransfer?.files;
+      if (!files || !files.length) return;
+      const file = files[0];
+      const filePath = file.path;
+      if (!filePath) {
+        showToast("Không thể đọc đường dẫn file trực tiếp.");
+        return;
+      }
+      const ext = filePath.toLowerCase().split(".").pop();
+      const validExts = ["mp4", "mov", "mkv", "avi", "webm", "m4v"];
+      if (!validExts.includes(ext)) {
+        showToast("File không thuộc định dạng video hỗ trợ (.mp4, .mov, .mkv, .avi, .webm).");
+        return;
+      }
+      await applySourceSelection({ videoPath: filePath, clearSourceUrl: true });
+      addLog(`Đã chọn video nguồn qua kéo thả: ${filePath}`);
+    });
+  }
+
+  el.changeSourceVideoBtn?.addEventListener("click", () => {
+    el.browseVideo?.click();
+  });
   el.downloadSourceUrl?.addEventListener("click", downloadSourceFromUrl);
   el.sourceDownloadUrl?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
@@ -10397,6 +10859,41 @@ function bindEvents() {
         ? "Hello, this is a short voice preview for your video."
         : "Xin chào, đây là đoạn nghe thử giọng đọc cho video của bạn.",
       onSuccess: rememberVoiceSetupSoon
+    });
+  });
+
+  el.heroPreviewVoiceBtn?.addEventListener("click", () => {
+    const tab = document.querySelector(".voice-tab.active")?.dataset.voiceTab || "preset";
+    if (tab === "preset") {
+      el.previewPresetVoice?.click();
+    } else if (tab === "clone") {
+      el.previewVoiceSample?.click();
+    } else {
+      showToast("Đang ở chế độ thiết kế giọng AI.");
+    }
+  });
+
+  document.querySelectorAll(".btn-voice-chip").forEach((chip) => {
+    chip.addEventListener("click", async () => {
+      document.querySelectorAll(".btn-voice-chip").forEach((c) => c.classList.remove("active"));
+      chip.classList.add("active");
+      const provider = chip.dataset.quickProvider;
+      const voiceId = chip.dataset.quickVoice;
+      if (el.presetVoiceProvider && provider) {
+        el.presetVoiceProvider.value = provider;
+      }
+      setVoiceTab("preset");
+      if (el.presetVoiceList) {
+        el.presetVoiceList.dataset.preferredVoiceId = voiceId;
+      }
+      syncSelectedVoiceTuningVisibility();
+      await loadPresetVoices();
+      if (el.presetVoiceList && voiceId) {
+        el.presetVoiceList.value = voiceId;
+      }
+      updatePresetVoiceInfoFromSelection();
+      syncHeroVoiceCard();
+      rememberVoiceSetupSoon();
     });
   });
   el.refreshDraftVoices?.addEventListener("click", loadDraftVoices);
@@ -10936,6 +11433,11 @@ function bindEvents() {
       showToast(error.message);
     } finally {
       setBusy(false);
+      setTimeout(() => {
+        state.variantExportQueue = [];
+        state.variantProgress = null;
+        renderStudioVariantHub();
+      }, 4500);
     }
   });
   el.renderAllFastDrafts?.addEventListener("click", renderAllFastDraftVariants);
@@ -10967,6 +11469,13 @@ function bindEvents() {
     }
   });
   el.variantHubCards?.addEventListener("click", async (event) => {
+    const reportBtn = event.target.closest("[data-open-review-report]");
+    if (reportBtn) {
+      event.stopPropagation();
+      const variantId = reportBtn.dataset.openReviewReport;
+      await openDraftReviewReportModal(state.currentProject?.id, variantId);
+      return;
+    }
     const card = event.target.closest("[data-highlight-variant]");
     if (!card) return;
     try {
@@ -11033,7 +11542,33 @@ function bindEvents() {
   el.importConfiguredDraftReview?.addEventListener("click", importConfiguredDraftReview);
   el.openGeminiDraftReview?.addEventListener("click", openGeminiDraftReviewPackage);
   el.openDraftReviewPrompt?.addEventListener("click", () => openDraftReviewArtifact("prompt"));
-  el.openDraftReviewReport?.addEventListener("click", () => openDraftReviewArtifact("report"));
+  el.openDraftReviewReport?.addEventListener("click", async () => {
+    const artifacts = getDraftReviewArtifacts();
+    if (artifacts.aiResultPath) {
+      await openDraftReviewReportModal();
+    } else {
+      openDraftReviewArtifact("report");
+    }
+  });
+  el.closeDraftReviewModal?.addEventListener("click", closeDraftReviewReportModal);
+  el.dismissDraftReviewModal?.addEventListener("click", closeDraftReviewReportModal);
+  el.draftReviewModal?.addEventListener("click", (event) => {
+    if (event.target === el.draftReviewModal) closeDraftReviewReportModal();
+  });
+  document.querySelectorAll(".draft-review-tabs .review-tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      setReviewModalTab(tab.dataset.reviewTab);
+    });
+  });
+  el.applyDraftReviewModalV2?.addEventListener("click", async () => {
+    if (!currentReviewReportData?.jsonPath) {
+      await importConfiguredDraftReview();
+      closeDraftReviewReportModal();
+      return;
+    }
+    await importReviewedScriptPath(currentReviewReportData.jsonPath, { autoRouted: true });
+    closeDraftReviewReportModal();
+  });
   el.importReviewedScript?.addEventListener("click", importReviewedScriptFromGemini);
 
   el.previewPlayer.addEventListener("timeupdate", () => {
@@ -11245,6 +11780,7 @@ async function bootstrap() {
   if (el.draftVoiceMode?.value === "custom") {
     loadDraftVoices();
   }
+  syncHeroVoiceCard();
   addLog("Đã khởi tạo RecapTool Studio.");
   addLog(`AI provider mặc định: ${getAiProviderLabel(state.settings.aiProvider)}.`);
   if (payload.recoverableRenderJobs?.length) {
@@ -11260,6 +11796,16 @@ async function bootstrap() {
     }
     if (Array.isArray(payload.variantBatch?.items)) {
       setVariantExportQueue(payload.variantBatch.items);
+    }
+    if (payload.variantBatch || state.variantExportQueue?.length) {
+      state.variantProgress = {
+        activeIndex: typeof payload.variantBatch?.activeIndex === "number"
+          ? payload.variantBatch.activeIndex
+          : (state.variantProgress?.activeIndex ?? 0),
+        percent: Number(payload.percent || 0),
+        message: payload.message || ""
+      };
+      updateVariantHubProgress(payload);
     }
     if (payload.message) {
       const formattedLog = [payload.stage || payload.step, payload.message].filter(Boolean).join(': ');

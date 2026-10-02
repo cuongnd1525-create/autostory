@@ -53,6 +53,7 @@ contextBridge.exposeInMainWorld("cineviral", {
   importReviewedScriptProject: (projectId, jsonPath) => ipcRenderer.invoke("project:importReviewedScript", projectId, jsonPath),
   createGeminiDraftReviewPackage: (projectId) => ipcRenderer.invoke("project:createGeminiDraftReviewPackage", projectId),
   runConfiguredAiDraftReview: (projectId, packageDir) => ipcRenderer.invoke("project:runConfiguredAiDraftReview", projectId, packageDir),
+  getDraftReviewReport: (projectId, variantId) => ipcRenderer.invoke("project:getDraftReviewReport", projectId, variantId),
   getViralRepairContext: (projectId) => ipcRenderer.invoke("project:getViralRepairContext", projectId),
   translateDubbingProject: (projectId) => ipcRenderer.invoke("project:translateDubbing", projectId),
   diarizeDubbingProject: (projectId) => ipcRenderer.invoke("project:diarizeDubbing", projectId),

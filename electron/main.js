@@ -920,6 +920,152 @@ app.whenReady().then(async () => {
     }
   });
 
+  handleIpc("project:getDraftReviewReport", async (_event, projectId, variantId) => {
+    const workspaceRoot = getWorkspaceRoot();
+    const project = await projectStore.getProject(workspaceRoot, projectId);
+    if (!project) throw new Error("Không tìm thấy dự án.");
+    const variants = project.analysis?.highlightVariants || [];
+    const targetVariant = (variantId ? variants.find((v) => v.id === variantId) : null)
+      || variants.find((v) => v.id === project.analysis?.activeVariantId)
+      || variants[0];
+    if (!targetVariant) throw new Error("Không tìm thấy variant.");
+
+    const jsonPath = targetVariant.artifacts?.draftReviewAiResultPath
+      || targetVariant.draftReview?.sourcePath
+      || "";
+    if (!jsonPath) {
+      return {
+        ready: false,
+        variantId: targetVariant.id,
+        variantLabel: targetVariant.label || "Variant",
+        message: "Chưa có kết quả review AI cho variant này."
+      };
+    }
+
+    try {
+      const raw = await fs.readFile(jsonPath, "utf8");
+      const parsed = JSON.parse(raw);
+      const review = parsed.review || {};
+      const idealEdit = parsed.idealEditAudit || parsed.ideal_edit_audit || {};
+      const hookAudit = parsed.hookReplacementAudit || parsed.hook_replacement_audit || {};
+      const hookTrigger = parsed.hookTriggerAudit || parsed.hook_trigger_audit || {};
+      const revisedScript = parsed.revisedScript || parsed.revised_script || {};
+      const v2Segments = Array.isArray(revisedScript.segments) ? revisedScript.segments : [];
+
+      let v1Segments = [];
+      const history = Array.isArray(targetVariant.revisionHistory) ? targetVariant.revisionHistory : [];
+      const v1Snapshot = history.find((h) => Number(h.revisionNumber) === 1);
+      if (v1Snapshot && Array.isArray(v1Snapshot.segments) && v1Snapshot.segments.length > 0) {
+        v1Segments = v1Snapshot.segments;
+      } else {
+        v1Segments = Array.isArray(targetVariant.segments) ? targetVariant.segments : [];
+      }
+
+      const diffList = [];
+      const v1Duration = v1Segments.reduce((sum, s) => sum + (Number(s.duration || s.timelineDuration || 0)), 0);
+      const v2Duration = v2Segments.reduce((sum, s) => sum + (Number(s.duration || s.timelineDuration || 0)), 0);
+
+      const maxLen = Math.max(v1Segments.length, v2Segments.length);
+      for (let i = 0; i < maxLen; i += 1) {
+        const s1 = v1Segments[i] || null;
+        const s2 = v2Segments[i] || null;
+        if (s1 && !s2) {
+          diffList.push({
+            type: "removed",
+            index: i + 1,
+            v1: { duration: s1.duration || s1.timelineDuration || 0, text: s1.dubbingLine || s1.text || "" },
+            v2: null,
+            note: "Cảnh bị loại bỏ khỏi kịch bản V2"
+          });
+        } else if (!s1 && s2) {
+          diffList.push({
+            type: "added",
+            index: i + 1,
+            v1: null,
+            v2: { duration: s2.duration || s2.timelineDuration || 0, text: s2.dubbingLine || s2.text || "" },
+            note: "Cảnh mới được bổ sung vào kịch bản V2"
+          });
+        } else {
+          const d1 = Number(s1.duration || s1.timelineDuration || 0);
+          const d2 = Number(s2.duration || s2.timelineDuration || 0);
+          const t1 = String(s1.dubbingLine || s1.text || "").trim();
+          const t2 = String(s2.dubbingLine || s2.text || "").trim();
+          const durationDiff = Math.round((d2 - d1) * 10) / 10;
+          const textChanged = t1 !== t2;
+
+          let diffType = "kept";
+          if (Math.abs(durationDiff) >= 0.5 && textChanged) {
+            diffType = "modified_all";
+          } else if (Math.abs(durationDiff) >= 0.5) {
+            diffType = "trimmed";
+          } else if (textChanged) {
+            diffType = "voice_rewritten";
+          }
+
+          diffList.push({
+            type: diffType,
+            index: i + 1,
+            v1: { duration: d1, text: t1 },
+            v2: { duration: d2, text: t2 },
+            durationDiff,
+            note: diffType === "trimmed" ? `Cắt gọt ${durationDiff > 0 ? "+" : ""}${durationDiff}s` :
+                  diffType === "voice_rewritten" ? "Viết lại lời thoại thuyết minh" :
+                  diffType === "modified_all" ? `Chỉnh thời lượng (${durationDiff > 0 ? "+" : ""}${durationDiff}s) & viết lại lời thoại` : "Giữ nguyên"
+          });
+        }
+      }
+
+      return {
+        ready: true,
+        variantId: targetVariant.id,
+        variantLabel: targetVariant.label || "Variant",
+        revision: targetVariant.revisionNumber || 1,
+        isImported: Number(targetVariant.revisionNumber || 1) > 1,
+        jsonPath,
+        scores: {
+          before: Number(review.scoreBefore || 0),
+          afterEstimated: Number(review.scoreAfterEstimated || 0),
+          delta: Number(review.scoreAfterEstimated || 0) - Number(review.scoreBefore || 0)
+        },
+        decision: parsed.reviewDecision || parsed.review_decision || "patch",
+        summary: review.summary || "AI đã hoàn tất review và biên soạn kịch bản V2 tối ưu.",
+        issues: Array.isArray(review.issues) ? review.issues : [],
+        hookAudit: {
+          v1Score: hookAudit.v1Score || 0,
+          v2Score: hookAudit.sourceWinnerScore || 0,
+          scoreDelta: hookAudit.scoreDelta || 0,
+          replacementRequired: Boolean(hookAudit.replacementRequired),
+          comparison: hookAudit.first3SecComparison || "",
+          triggerType: hookTrigger.triggerType || "",
+          exactTrigger: hookTrigger.exactTrigger || ""
+        },
+        idealEdit: {
+          question: idealEdit.centralViewerQuestion || "",
+          hookPromise: idealEdit.hookPromise || "",
+          climax: idealEdit.climax || "",
+          payoff: idealEdit.payoff || "",
+          whyV1Differs: idealEdit.whyV1Differs || ""
+        },
+        timelines: {
+          v1Duration: Math.round(v1Duration * 10) / 10,
+          v2Duration: Math.round(v2Duration * 10) / 10,
+          durationDelta: Math.round((v2Duration - v1Duration) * 10) / 10,
+          v1Count: v1Segments.length,
+          v2Count: v2Segments.length
+        },
+        diffList,
+        changelog: Array.isArray(revisedScript.decisionChangelog) ? revisedScript.decisionChangelog : []
+      };
+    } catch (err) {
+      return {
+        ready: false,
+        variantId: targetVariant.id,
+        variantLabel: targetVariant.label || "Variant",
+        error: `Không thể đọc kết quả review: ${err.message}`
+      };
+    }
+  });
+
   handleIpc("project:getViralRepairContext", async (_event, projectId) => {
     return dubbingService.getViralRepairContext({
       workspaceRoot: getWorkspaceRoot(),

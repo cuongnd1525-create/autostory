@@ -537,7 +537,7 @@ HOOK TOURNAMENT RUBRIC:
 - action-candidates rank, motionScore, and audioEnergyScore are discovery hints only and cannot justify a Hook.
 - State the exact first3SecEvent and exactQuoteOrAction for V1 and every challenger.
 - HOOK TRIGGER GATE: the expected rendered draft duration is ${draftDurationSec.toFixed(3)}s. The draft inputAccessAudit entry must cover 0-${draftDurationSec.toFixed(3)}s within 1.0s; 0-0 coverage is a failed review.
-${hookAuditMedia ? `- Inspect ${hookAuditMedia.file} frame-by-frame. It maps local 0.000s to source ${safeNumber(hookAuditMedia.sourceStartSec).toFixed(3)}s and local ${safeNumber(hookAuditMedia.durationSec).toFixed(3)}s to source ${safeNumber(hookAuditMedia.sourceEndSec).toFixed(3)}s. Populate hookTriggerAudit from this clip, not from scene labels or memory.` : "- No focused Hook audit clip is available. Do not claim sub-second trigger verification; set verifiedAgainstHookAuditClip=false."}
+${hookAuditMedia ? `- Inspect ${hookAuditMedia.file} directly (do not extract frames or run python scripts). It maps local 0.000s to source ${safeNumber(hookAuditMedia.sourceStartSec).toFixed(3)}s and local ${safeNumber(hookAuditMedia.durationSec).toFixed(3)}s to source ${safeNumber(hookAuditMedia.sourceEndSec).toFixed(3)}s. Populate hookTriggerAudit from this clip, not from scene labels or memory.` : "- No focused Hook audit clip is available. Do not claim sub-second trigger verification; set verifiedAgainstHookAuditClip=false."}
 - Set triggerSourceSec to the exact first frame/word containing the selected command, impact, accusation, reveal, or peak action. Maximum setup before trigger is 0.5s. Driving, unbuckling, opening a door, walking, generic sirens, or approach footage does not count as the trigger.
 
 VIRAL MOMENT INVENTORY:
@@ -1487,6 +1487,7 @@ class GeminiDraftReviewService {
       contextPath,
       sourceProxyIncluded: sourceProxyFiles.length > 0,
       sourceProxyFiles,
+      proxyChunkCount: sourceProxyFiles.length,
       sourceCoverageComplete,
       hookAuditMedia,
       transcriptIncluded: Boolean(transcriptPath),
