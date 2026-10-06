@@ -339,6 +339,36 @@ function queryElements() {
     createAndRunStage1Ai: $("create-and-run-stage1-ai"),
     configuredAiAutoLevel: $("configured-ai-auto-level"),
     configuredAiAutoStatus: $("configured-ai-auto-status"),
+    autoSelectHook: $("auto-select-hook"),
+    openHookPickerBtn: $("open-hook-picker-btn"),
+    hookPickerModal: $("hook-picker-modal"),
+    closeHookPickerModal: $("close-hook-picker-modal"),
+    cancelHookPickerModal: $("cancel-hook-picker-modal"),
+    confirmHookAndRunStage1: $("confirm-hook-and-run-stage1"),
+    hookCandidatesList: $("hook-candidates-list"),
+    hookVariantSlotsBar: $("hook-variant-slots-bar"),
+    slotBtnV1: $("slot-btn-v1"),
+    slotBtnV2: $("slot-btn-v2"),
+    slotBtnV3: $("slot-btn-v3"),
+    slotTitleV1: $("slot-title-v1"),
+    slotTitleV2: $("slot-title-v2"),
+    slotTitleV3: $("slot-title-v3"),
+    slotRangeV1: $("slot-range-v1"),
+    slotRangeV2: $("slot-range-v2"),
+    slotRangeV3: $("slot-range-v3"),
+    hookDuplicateWarningBox: $("hook-duplicate-warning-box"),
+    hookDuplicateWarningText: $("hook-duplicate-warning-text"),
+    hookPreviewPlayerSection: $("hook-preview-player-section"),
+    hookPreviewPlayer: $("hook-preview-player"),
+    hookPreviewTitle: $("hook-preview-title"),
+    hookPreviewTime: $("hook-preview-time"),
+    closeHookPreviewPlayer: $("close-hook-preview-player"),
+    hookEditorBadge: $("hook-editor-badge"),
+    hookEditorScore: $("hook-editor-score"),
+    hookEditorStartSec: $("hook-editor-start-sec"),
+    hookEditorEndSec: $("hook-editor-end-sec"),
+    hookEditorStartTol: $("hook-editor-start-tol"),
+    hookEditorEndTol: $("hook-editor-end-tol"),
     vertexAutoPipeline: $("vertex-auto-pipeline"),
     manualWorkflowAdvanced: $("manual-workflow-advanced"),
     openManualGeminiPack: $("open-manual-gemini-pack"),
@@ -2283,6 +2313,7 @@ let exportProgressFadeTimer = null;
 
 function setExportProgress(percent = 0, label = "Đang xuất") {
   const value = Math.max(0, Math.min(100, Number(percent || 0)));
+  state.exportProgressPercent = value;
 
   if (exportProgressFadeTimer) {
     clearTimeout(exportProgressFadeTimer);
@@ -2306,6 +2337,7 @@ function setExportProgress(percent = 0, label = "Đang xuất") {
       setTimeout(() => {
         el.exportProgress?.classList.add("hidden");
         el.exportProgress?.classList.remove("fade-out");
+        state.exportProgressPercent = 0;
       }, 400);
     }, 2500);
   }
@@ -2690,8 +2722,10 @@ function setBusy(isBusy) {
   renderAutoStoryStatus();
   document.body.classList.toggle("busy", isBusy);
   if (!isBusy) {
-    setExportProgress(0, state.activeOperation || "Sẵn sàng");
-    el.exportProgress?.classList.add("hidden");
+    if ((state.exportProgressPercent ?? 0) < 100) {
+      setExportProgress(0, state.activeOperation || "Sẵn sàng");
+      el.exportProgress?.classList.add("hidden");
+    }
     state.activeOperation = "";
   }
   [
@@ -5318,6 +5352,451 @@ async function cancelManualAntigravityStage1() {
   }
 }
 
+let currentHookCandidatesData = null;
+let activeVariantSlot = "variant_01";
+let variantHookAssignments = {
+  variant_01: null,
+  variant_02: null,
+  variant_03: null
+};
+let hookPickerResolvePromise = null;
+
+function formatHookTimeClock(seconds = 0) {
+  const s = Math.max(0, Number(seconds) || 0);
+  const mins = Math.floor(s / 60);
+  const secs = Math.floor(s % 60);
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function createDefaultSlotAssignment(candidate, scriptId, variantName) {
+  if (!candidate) return null;
+  const startSec = Number(candidate.sourceStartSec || 0);
+  const endSec = Number(candidate.sourceEndSec || (startSec + 10));
+  return {
+    scriptId,
+    variantName,
+    candidate,
+    userAnchorRange: { startSec, endSec },
+    trimmingTolerance: { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 }
+  };
+}
+
+function updateHookVariantSlotsUi() {
+  const slots = [
+    { key: "variant_01", btn: el.slotBtnV1, titleEl: el.slotTitleV1, rangeEl: el.slotRangeV1, name: "Variant 01" },
+    { key: "variant_02", btn: el.slotBtnV2, titleEl: el.slotTitleV2, rangeEl: el.slotRangeV2, name: "Variant 02" },
+    { key: "variant_03", btn: el.slotBtnV3, titleEl: el.slotTitleV3, rangeEl: el.slotRangeV3, name: "Variant 03" }
+  ];
+
+  slots.forEach((s) => {
+    const isActive = activeVariantSlot === s.key;
+    if (s.btn) {
+      s.btn.classList.toggle("is-active", isActive);
+      const indicator = s.btn.querySelector(".slot-indicator");
+      if (indicator) {
+        indicator.textContent = isActive ? "Đang chỉnh" : "";
+      }
+    }
+    const data = variantHookAssignments[s.key];
+    if (data && data.candidate) {
+      const c = data.candidate;
+      const start = Number(data.userAnchorRange?.startSec ?? c.sourceStartSec ?? 0);
+      const end = Number(data.userAnchorRange?.endSec ?? c.sourceEndSec ?? (start + 10));
+      if (s.titleEl) s.titleEl.textContent = c.title || c.coreEventDescription || "Hook Event";
+      if (s.rangeEl) s.rangeEl.textContent = `${formatHookTimeClock(start)} - ${formatHookTimeClock(end)} (${(end - start).toFixed(1)}s)`;
+    } else {
+      if (s.titleEl) s.titleEl.textContent = "Chưa gán Hook";
+      if (s.rangeEl) s.rangeEl.textContent = "--:-- - --:--";
+    }
+  });
+
+  checkHookDuplicateWarning();
+}
+
+function checkHookDuplicateWarning() {
+  const v1 = variantHookAssignments.variant_01;
+  const v2 = variantHookAssignments.variant_02;
+  const v3 = variantHookAssignments.variant_03;
+
+  const id1 = v1?.candidate?.hookId || "";
+  const id2 = v2?.candidate?.hookId || "";
+  const id3 = v3?.candidate?.hookId || "";
+
+  let duplicates = [];
+  if (id1 && id2 && id1 === id2 && id2 === id3) {
+    duplicates.push("Cả 3 Variant (Script 1, Script 3, Script 4) đang chọn cùng một Hook.");
+  } else {
+    if (id1 && id2 && id1 === id2) duplicates.push("Variant 01 (Script 1) và Variant 02 (Script 3) đang chọn cùng một Hook.");
+    if (id1 && id3 && id1 === id3) duplicates.push("Variant 01 (Script 1) và Variant 03 (Script 4) đang chọn cùng một Hook.");
+    if (id2 && id3 && id2 === id3) duplicates.push("Variant 02 (Script 3) và Variant 03 (Script 4) đang chọn cùng một Hook.");
+  }
+
+  if (duplicates.length > 0) {
+    if (el.hookDuplicateWarningBox) el.hookDuplicateWarningBox.classList.remove("hidden");
+    if (el.hookDuplicateWarningText) {
+      el.hookDuplicateWarningText.textContent = duplicates.join(" · ");
+    }
+  } else {
+    if (el.hookDuplicateWarningBox) el.hookDuplicateWarningBox.classList.add("hidden");
+  }
+}
+
+function switchVariantSlot(slotKey) {
+  if (activeVariantSlot === slotKey) return;
+  saveActiveSlotEditorValues();
+  activeVariantSlot = slotKey;
+  updateHookVariantSlotsUi();
+  populateHookEditorForActiveSlot();
+  renderHookCandidateCards(currentHookCandidatesData?.topCandidates || []);
+}
+
+function populateHookEditorForActiveSlot() {
+  const current = variantHookAssignments[activeVariantSlot];
+  const c = current?.candidate;
+  if (!c) return;
+
+  if (el.hookEditorBadge) el.hookEditorBadge.textContent = c.archetype || "Hook";
+  if (el.hookEditorScore) el.hookEditorScore.textContent = `${c.scores?.overall || 85}/100`;
+
+  const start = Number(current?.userAnchorRange?.startSec ?? c.sourceStartSec ?? 0);
+  const end = Number(current?.userAnchorRange?.endSec ?? c.sourceEndSec ?? (start + 10));
+  const startTol = Number(current?.trimmingTolerance?.startOffsetMaxSec ?? 2.0);
+  const endTol = Number(current?.trimmingTolerance?.endOffsetMaxSec ?? 3.0);
+
+  if (el.hookEditorStartSec) el.hookEditorStartSec.value = start.toFixed(1);
+  if (el.hookEditorEndSec) el.hookEditorEndSec.value = end.toFixed(1);
+  if (el.hookEditorStartTol) el.hookEditorStartTol.value = startTol.toFixed(1);
+  if (el.hookEditorEndTol) el.hookEditorEndTol.value = endTol.toFixed(1);
+}
+
+function saveActiveSlotEditorValues() {
+  const current = variantHookAssignments[activeVariantSlot];
+  if (!current) return;
+  const startSec = Number(el.hookEditorStartSec?.value ?? current.userAnchorRange.startSec);
+  const endSec = Number(el.hookEditorEndSec?.value ?? current.userAnchorRange.endSec);
+  const startTol = Number(el.hookEditorStartTol?.value ?? current.trimmingTolerance.startOffsetMaxSec);
+  const endTol = Number(el.hookEditorEndTol?.value ?? current.trimmingTolerance.endOffsetMaxSec);
+
+  current.userAnchorRange = { startSec, endSec };
+  current.trimmingTolerance = { startOffsetMaxSec: startTol, endOffsetMaxSec: endTol };
+
+  const s = activeVariantSlot === "variant_01" ? el.slotRangeV1 : (activeVariantSlot === "variant_02" ? el.slotRangeV2 : el.slotRangeV3);
+  if (s) {
+    s.textContent = `${formatHookTimeClock(startSec)} - ${formatHookTimeClock(endSec)} (${(endSec - startSec).toFixed(1)}s)`;
+  }
+}
+
+async function openHookPickerModal(packageDir, options = {}) {
+  const dir = packageDir || el.manualGeminiPackPath?.value;
+  if (!dir) {
+    showToast("Chưa có gói phân tích để chọn Hook.");
+    return null;
+  }
+  setBusy(true);
+  try {
+    const auditionResult = await window.cineviral.getHookCandidates(dir);
+    if (!auditionResult || !auditionResult.topCandidates?.length) {
+      showToast(auditionResult?.warning || "Không tìm thấy ứng viên Hook nào.");
+      return null;
+    }
+
+    currentHookCandidatesData = auditionResult;
+    const top = auditionResult.topCandidates;
+    const best = auditionResult.defaultRecommendedHook || top[0];
+
+    // Initialize assignments for all 3 variants:
+    variantHookAssignments.variant_01 = createDefaultSlotAssignment(best, 1, "Variant 01");
+    variantHookAssignments.variant_02 = createDefaultSlotAssignment(top[1] || best, 3, "Variant 02");
+    variantHookAssignments.variant_03 = createDefaultSlotAssignment(top[2] || top[1] || best, 4, "Variant 03");
+    activeVariantSlot = "variant_01";
+
+    el.hookPreviewPlayerSection?.classList.add("hidden");
+    if (el.hookPreviewPlayer) {
+      el.hookPreviewPlayer.pause();
+      el.hookPreviewPlayer.removeAttribute("src");
+      delete el.hookPreviewPlayer.dataset.loadedUrl;
+    }
+
+    updateHookVariantSlotsUi();
+    renderHookCandidateCards(top);
+    populateHookEditorForActiveSlot();
+
+    el.hookPickerModal?.classList.remove("hidden");
+
+    return new Promise((resolve) => {
+      hookPickerResolvePromise = resolve;
+    });
+  } catch (error) {
+    addLog(`Lỗi mở Hook Picker: ${error.message}`, "ERROR");
+    showToast(error.message);
+    return null;
+  } finally {
+    setBusy(false);
+  }
+}
+
+function closeHookPickerModal(cancelled = true) {
+  if (el.hookPreviewPlayer) {
+    el.hookPreviewPlayer.pause();
+    el.hookPreviewPlayer.removeAttribute("src");
+    delete el.hookPreviewPlayer.dataset.loadedUrl;
+    if (el.hookPreviewPlayer._timeUpdateHandler) {
+      el.hookPreviewPlayer.removeEventListener("timeupdate", el.hookPreviewPlayer._timeUpdateHandler);
+      el.hookPreviewPlayer._timeUpdateHandler = null;
+    }
+  }
+  el.hookPreviewPlayerSection?.classList.add("hidden");
+  updateHookCardPlayState("");
+  el.hookPickerModal?.classList.add("hidden");
+  if (hookPickerResolvePromise) {
+    hookPickerResolvePromise(cancelled ? null : variantHookAssignments);
+    hookPickerResolvePromise = null;
+  }
+}
+
+function renderHookCandidateCards(candidates = []) {
+  if (!el.hookCandidatesList) return;
+  el.hookCandidatesList.innerHTML = "";
+
+  const activeAssignment = variantHookAssignments[activeVariantSlot];
+  const activeHookId = activeAssignment?.candidate?.hookId;
+
+  candidates.forEach((c) => {
+    const card = document.createElement("div");
+    const isSelectedForActive = activeHookId === c.hookId;
+    card.className = `hook-candidate-card ${isSelectedForActive ? "is-selected" : ""}`;
+    card.dataset.hookId = c.hookId;
+
+    let archetypeClass = "friction";
+    if (c.archetype?.includes("Contradiction")) archetypeClass = "contradiction";
+    else if (c.archetype?.includes("Discovery") || c.archetype?.includes("Revelation")) archetypeClass = "discovery";
+
+    const dialogueSnippet = c.keyDialogue ? `<div class="hook-card-dialogue">"${escapeHtml(c.keyDialogue)}"</div>` : "";
+    const durFormatted = `${c.durationSec}s`;
+    const timeFormatted = `${formatHookTimeClock(c.sourceStartSec)} - ${formatHookTimeClock(c.sourceEndSec)}`;
+
+    const assignedTags = [];
+    if (variantHookAssignments.variant_01?.candidate?.hookId === c.hookId) assignedTags.push('<span class="hook-card-variant-tag tag-v1">V1</span>');
+    if (variantHookAssignments.variant_02?.candidate?.hookId === c.hookId) assignedTags.push('<span class="hook-card-variant-tag tag-v2">V2</span>');
+    if (variantHookAssignments.variant_03?.candidate?.hookId === c.hookId) assignedTags.push('<span class="hook-card-variant-tag tag-v3">V3</span>');
+    const badgesHtml = assignedTags.length ? `<div class="hook-card-variant-badges">${assignedTags.join("")}</div>` : "";
+
+    const slotLabel = activeVariantSlot === "variant_01" ? "V1" : (activeVariantSlot === "variant_02" ? "V2" : "V3");
+
+    card.innerHTML = `
+      <div>
+        <div class="hook-card-header">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <span class="hook-archetype-pill ${archetypeClass}">${escapeHtml(c.archetype || "Hook")}</span>
+            ${badgesHtml}
+          </div>
+          <span class="hook-score-badge">${c.scores?.overall || 85}/100</span>
+        </div>
+        <div class="hook-card-title">${escapeHtml(c.title || c.coreEventDescription || "Hook Event")}</div>
+        ${dialogueSnippet}
+        <div class="hook-card-meta">
+          <span>⏱️ ${timeFormatted} (${durFormatted})</span>
+          <span>👁️ Thị giác: ${c.scores?.visual_immediacy || 60} · ⚡ Xung đột: ${c.scores?.conflict || 60}</span>
+        </div>
+      </div>
+      <div class="hook-card-actions">
+        <button class="secondary-button preview-hook-btn" type="button" data-start="${c.sourceStartSec}" data-end="${c.sourceEndSec}">▶ Xem thử</button>
+        <button class="primary-button select-hook-btn" type="button">${isSelectedForActive ? `✓ Đang gán cho ${slotLabel}` : `Gán cho ${slotLabel}`}</button>
+      </div>
+    `;
+
+    card.addEventListener("click", (e) => {
+      if (e.target.closest(".preview-hook-btn")) return;
+      selectHookCandidateForActiveSlot(c);
+    });
+
+    const previewBtn = card.querySelector(".preview-hook-btn");
+    previewBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      previewHookClip(c);
+    });
+
+    const selectBtn = card.querySelector(".select-hook-btn");
+    selectBtn?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectHookCandidateForActiveSlot(c);
+    });
+
+    el.hookCandidatesList.appendChild(card);
+  });
+}
+
+function selectHookCandidateForActiveSlot(candidate) {
+  if (!candidate) return;
+  const scriptId = activeVariantSlot === "variant_01" ? 1 : (activeVariantSlot === "variant_02" ? 3 : 4);
+  const variantName = activeVariantSlot === "variant_01" ? "Variant 01" : (activeVariantSlot === "variant_02" ? "Variant 02" : "Variant 03");
+  variantHookAssignments[activeVariantSlot] = createDefaultSlotAssignment(candidate, scriptId, variantName);
+
+  updateHookVariantSlotsUi();
+  populateHookEditorForActiveSlot();
+  renderHookCandidateCards(currentHookCandidatesData?.topCandidates || []);
+}
+
+function previewHookClip(candidate) {
+  if (!candidate) return;
+  const videoPath = currentHookCandidatesData?.videoPath
+    || currentHookCandidatesData?.sourceVideoPath
+    || state.currentProject?.sourceVideoPath
+    || el.manualGeminiPackPath?.value
+    || "";
+
+  if (!videoPath) {
+    showToast("Không tìm thấy đường dẫn video để xem thử.");
+    return;
+  }
+
+  const player = el.hookPreviewPlayer;
+  if (!player) return;
+
+  const start = Math.max(0, Number(candidate.sourceStartSec) || 0);
+  const end = Math.max(start + 1, Number(candidate.sourceEndSec) || (start + 10));
+
+  if (player.dataset.activeHookId === candidate.hookId && !player.paused) {
+    player.pause();
+    updateHookCardPlayState("");
+    return;
+  }
+
+  if (el.hookPreviewPlayerSection) {
+    el.hookPreviewPlayerSection.classList.remove("hidden");
+    if (el.hookPreviewTitle) {
+      el.hookPreviewTitle.textContent = `Đang phát: "${candidate.title || candidate.coreEventDescription || 'Đoạn Hook'}"`;
+    }
+    if (el.hookPreviewTime) {
+      el.hookPreviewTime.textContent = `${formatHookTimeClock(start)} - ${formatHookTimeClock(end)} (${(end - start).toFixed(1)}s)`;
+    }
+    el.hookPreviewPlayerSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  const fileUrl = toVideoFileUrl(videoPath);
+  if (player.dataset.loadedUrl !== fileUrl && fileUrl) {
+    player.src = fileUrl;
+    player.dataset.loadedUrl = fileUrl;
+    player.load();
+  }
+
+  player.dataset.activeHookId = candidate.hookId;
+  updateHookCardPlayState(candidate.hookId);
+
+  const seekAndPlay = () => {
+    player.currentTime = start;
+    player.play().catch((err) => {
+      console.warn("Hook preview play error:", err);
+      showToast("Không thể phát video xem thử: " + (err.message || "Lỗi giải mã"));
+    });
+  };
+
+  if (player.readyState >= 1) {
+    seekAndPlay();
+  } else {
+    player.addEventListener("loadedmetadata", seekAndPlay, { once: true });
+  }
+
+  if (player._timeUpdateHandler) {
+    player.removeEventListener("timeupdate", player._timeUpdateHandler);
+  }
+
+  const onTimeUpdate = () => {
+    if (player.currentTime >= end) {
+      player.pause();
+      player.currentTime = start;
+      updateHookCardPlayState("");
+      player.removeEventListener("timeupdate", onTimeUpdate);
+      player._timeUpdateHandler = null;
+    }
+  };
+  player._timeUpdateHandler = onTimeUpdate;
+  player.addEventListener("timeupdate", onTimeUpdate);
+}
+
+function updateHookCardPlayState(activeHookId = "") {
+  if (!el.hookCandidatesList) return;
+  el.hookCandidatesList.querySelectorAll(".hook-candidate-card").forEach((card) => {
+    const isPlaying = activeHookId && card.dataset.hookId === activeHookId;
+    const btn = card.querySelector(".preview-hook-btn");
+    if (btn) {
+      btn.textContent = isPlaying ? "⏸ Tạm dừng" : "▶ Xem thử";
+      btn.classList.toggle("is-playing", Boolean(isPlaying));
+    }
+  });
+}
+
+async function confirmHookAndLock() {
+  const packageDir = el.manualGeminiPackPath?.value;
+  if (!packageDir) {
+    showToast("Chưa có đường dẫn gói phân tích.");
+    return;
+  }
+  saveActiveSlotEditorValues();
+
+  const fallback = currentHookCandidatesData?.defaultRecommendedHook || currentHookCandidatesData?.topCandidates?.[0];
+  if (!variantHookAssignments.variant_01) variantHookAssignments.variant_01 = createDefaultSlotAssignment(fallback, 1, "Variant 01");
+  if (!variantHookAssignments.variant_02) variantHookAssignments.variant_02 = createDefaultSlotAssignment(fallback, 3, "Variant 02");
+  if (!variantHookAssignments.variant_03) variantHookAssignments.variant_03 = createDefaultSlotAssignment(fallback, 4, "Variant 03");
+
+  const v1 = variantHookAssignments.variant_01;
+  const v2 = variantHookAssignments.variant_02;
+  const v3 = variantHookAssignments.variant_03;
+
+  const id1 = v1.candidate?.hookId || "";
+  const id2 = v2.candidate?.hookId || "";
+  const id3 = v3.candidate?.hookId || "";
+  const hasDuplicates = Boolean(
+    (id1 && id2 && id1 === id2) ||
+    (id1 && id3 && id1 === id3) ||
+    (id2 && id3 && id2 === id3)
+  );
+
+  setBusy(true);
+  try {
+    const lockResult = await window.cineviral.lockHookContract({
+      packageDir,
+      isMultiVariant: true,
+      hasDuplicates,
+      variants: {
+        variant_01: {
+          scriptId: 1,
+          variantName: "Variant 01",
+          candidate: v1.candidate,
+          userAnchorRange: v1.userAnchorRange,
+          trimmingTolerance: v1.trimmingTolerance,
+          storyAngle: "high_octane_thriller"
+        },
+        variant_02: {
+          scriptId: 3,
+          variantName: "Variant 02",
+          candidate: v2.candidate,
+          userAnchorRange: v2.userAnchorRange,
+          trimmingTolerance: v2.trimmingTolerance,
+          storyAngle: "non_linear_in_medias_res"
+        },
+        variant_03: {
+          scriptId: 4,
+          variantName: "Variant 03",
+          candidate: v3.candidate,
+          userAnchorRange: v3.userAnchorRange,
+          trimmingTolerance: v3.trimmingTolerance,
+          storyAngle: "tactical_standoff_breach"
+        }
+      }
+    });
+
+    addLog(`Đã khóa Hook Contract cho cả 3 Variant (${hasDuplicates ? 'Phát hiện Hook trùng -> Đã kích hoạt Divergence Protocol' : 'Mỗi variant 1 Hook độc lập'}).`);
+    showToast("Đã khóa Hook Contract thành công!");
+    closeHookPickerModal(false);
+  } catch (error) {
+    addLog(`Lỗi khóa Hook Contract: ${error.message}`, "ERROR");
+    showToast(error.message);
+  } finally {
+    setBusy(false);
+  }
+}
+
 async function createManualGeminiAnalysisPack() {
   if (!isManualGeminiWorkflowMode()) return;
   if (isStoryRecutMode() && !el.storyRecutRightsConfirmed?.checked) {
@@ -5451,6 +5930,9 @@ async function createManualGeminiAnalysisPack() {
       : isStoryRecutMode()
       ? "Đã tạo gói evidence Story Recut."
       : "Đã tạo gói Lượt 1. Hãy gửi toàn bộ thư mục cho Gemini và tải ba JSON Highlight.");
+    if (result?.hookAuditionResult?.topCandidates?.length) {
+      el.openHookPickerBtn?.classList.remove("hidden");
+    }
   } catch (error) {
     addLog(error.message, "ERROR");
     if (el.manualGeminiPackStatus) el.manualGeminiPackStatus.textContent = error.message;
@@ -5479,6 +5961,25 @@ async function createAndRunConfiguredStage1() {
   setAutoStatus("1/5 · Đang tạo và kiểm tra gói phân tích...");
   const result = await createManualGeminiAnalysisPack();
   if (!result || !isManualGeminiProMode()) return;
+
+  if (result.hookAuditionResult?.topCandidates?.length) {
+    el.openHookPickerBtn?.classList.remove("hidden");
+    const isAuto = el.autoSelectHook?.checked !== false;
+    if (isAuto) {
+      const best = result.hookAuditionResult.defaultRecommendedHook;
+      if (best) {
+        addLog(`Auto Mode: Đã tự động dùng Hook đề xuất #1: "${best.title}" (${best.scores?.overall || 85}/100)`);
+      }
+    } else {
+      setAutoStatus("Chờ duyệt Hook · Hãy chọn một Hook ưng ý trong cửa sổ Hook Picker...");
+      const selected = await openHookPickerModal(result.packageDir);
+      if (!selected) {
+        setAutoStatus("Dừng · Chưa xác nhận Hook.");
+        return;
+      }
+    }
+  }
+
   setAutoStatus("2/5 · AI đang xem nguồn và tạo kịch bản...");
   const selectedPaths = await runManualAntigravityStage1();
   if (!selectedPaths?.length || autoLevel === "scripts") {
@@ -10981,6 +11482,27 @@ function bindEvents() {
   });
   el.createManualGeminiPack?.addEventListener("click", createManualGeminiAnalysisPack);
   el.createAndRunStage1Ai?.addEventListener("click", createAndRunConfiguredStage1);
+  el.openHookPickerBtn?.addEventListener("click", () => openHookPickerModal(el.manualGeminiPackPath?.value));
+  el.closeHookPickerModal?.addEventListener("click", () => closeHookPickerModal(true));
+  el.cancelHookPickerModal?.addEventListener("click", () => closeHookPickerModal(true));
+  el.slotBtnV1?.addEventListener("click", () => switchVariantSlot("variant_01"));
+  el.slotBtnV2?.addEventListener("click", () => switchVariantSlot("variant_02"));
+  el.slotBtnV3?.addEventListener("click", () => switchVariantSlot("variant_03"));
+  [el.hookEditorStartSec, el.hookEditorEndSec, el.hookEditorStartTol, el.hookEditorEndTol].forEach((input) => {
+    input?.addEventListener("input", saveActiveSlotEditorValues);
+  });
+  el.closeHookPreviewPlayer?.addEventListener("click", () => {
+    if (el.hookPreviewPlayer) {
+      el.hookPreviewPlayer.pause();
+      if (el.hookPreviewPlayer._timeUpdateHandler) {
+        el.hookPreviewPlayer.removeEventListener("timeupdate", el.hookPreviewPlayer._timeUpdateHandler);
+        el.hookPreviewPlayer._timeUpdateHandler = null;
+      }
+    }
+    el.hookPreviewPlayerSection?.classList.add("hidden");
+    updateHookCardPlayState("");
+  });
+  el.confirmHookAndRunStage1?.addEventListener("click", confirmHookAndLock);
   el.configuredAiAutoLevel?.addEventListener("change", () => {
     writeSetupDraft();
     syncConfiguredAiWorkflowUi();
@@ -11375,15 +11897,18 @@ function bindEvents() {
     setBusy(true);
     setRenderCancellable(true);
     state.activeOperation = "Đang xuất";
-    setExportProgress(1, "Đang xuất video");
+    setExportProgress(1, "Đang chuẩn bị xuất video...");
     try {
       await saveCurrentSegments();
       await applyCurrentProjectSettings();
       addLog("Đang render video cuối...");
       state.currentProject = await window.cineviral.renderProject(state.currentProject.id);
       renderStudio();
+      setExportProgress(100, "Render đã sẵn sàng!");
       addLog(`Render đã sẵn sàng: ${state.currentProject.artifacts?.finalVideoPath || ""}`);
     } catch (error) {
+      state.exportProgressPercent = 0;
+      setExportProgress(0, "Lỗi khi xuất");
       addLog(error.message, "ERROR");
       showToast(error.message);
     } finally {
@@ -11397,13 +11922,16 @@ function bindEvents() {
     setBusy(true);
     setRenderCancellable(true);
     state.activeOperation = "Tiếp tục xuất";
-    setExportProgress(1, "Đang tiếp tục lần xuất bị gián đoạn");
+    setExportProgress(1, "Đang tiếp tục lần xuất bị gián đoạn...");
     try {
       addLog("Đang tiếp tục render job bị gián đoạn...", "WARNING");
       state.currentProject = await window.cineviral.resumeRender(state.currentProject.id);
       renderStudio();
+      setExportProgress(100, "Render đã sẵn sàng!");
       addLog(`Render đã sẵn sàng: ${state.currentProject.artifacts?.finalVideoPath || ""}`);
     } catch (error) {
+      state.exportProgressPercent = 0;
+      setExportProgress(0, "Lỗi khi xuất");
       addLog(error.message, "ERROR");
       showToast(error.message);
     } finally {

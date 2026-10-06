@@ -1049,12 +1049,19 @@
                       <option value="draft">Tạo project và render draft tất cả variant</option>
                       <option value="review" selected>Render draft và tạo bản review V2</option>
                     </select>
+                    <label class="check-row hook-auto-select-row" style="margin-top: 6px; font-size: 12px; color: #94a3b8; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                      <input id="auto-select-hook" type="checkbox" checked />
+                      <span>Tự động chọn Hook #1</span>
+                    </label>
                   </div>
                 </div>
 
                 <div class="manual-gemini-pack-actions">
                   <button id="create-and-run-stage1-ai" class="primary-button hero-run-ai-btn" type="button">
                     🚀 Tạo gói và phân tích bằng AI
+                  </button>
+                  <button id="open-hook-picker-btn" class="secondary-button hidden" type="button">
+                    🎯 Đổi / Xem Hook
                   </button>
                 </div>
                 <div id="configured-ai-auto-status" class="manual-gemini-pack-status">Chọn video và bấm nút chính để chạy liên tục.</div>
@@ -2016,6 +2023,133 @@
         <div class="confirm-action-buttons">
           <button id="cancel-confirm-action" class="ghost-button" type="button">Hủy</button>
           <button id="submit-confirm-action" class="primary-button" type="button">Xác nhận</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="hook-picker-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="hook-picker-modal-title">
+      <div class="modal-panel hook-picker-modal-panel">
+        <div class="modal-heading hook-picker-modal-heading">
+          <div class="hook-heading-left">
+            <span class="hook-heading-badge">HOOK AUDITION & SELECTION GATE</span>
+            <h2 id="hook-picker-modal-title">Chọn đoạn Hook đắt giá nhất để mở đầu video</h2>
+            <small class="hook-heading-sub">AI đã dò tìm và xếp hạng các điểm va chạm, hội thoại gay cấn và bí mật trong video nguồn.</small>
+          </div>
+          <button id="close-hook-picker-modal" class="ghost-button icon-btn" type="button" title="Đóng">✕</button>
+        </div>
+
+        <div class="hook-picker-modal-body">
+          <div class="hook-variant-slots-wrapper">
+            <div class="hook-slots-header">
+              <span class="hook-slots-title">🎯 Gán Hook cho từng Variant (Bấm chọn tab để gán):</span>
+              <small class="hook-slots-hint">Mỗi variant có thể chọn một Hook riêng biệt hoặc dùng chung Hook</small>
+            </div>
+            <div class="hook-variant-slots-bar" id="hook-variant-slots-bar">
+              <button type="button" class="hook-variant-slot-btn is-active" data-slot="variant_01" id="slot-btn-v1">
+                <div class="slot-badge-row">
+                  <span class="slot-tag">VARIANT 01 (Script 1)</span>
+                  <span class="slot-indicator">Đang chỉnh</span>
+                </div>
+                <div class="slot-hook-title" id="slot-title-v1">Chưa gán Hook</div>
+                <div class="slot-hook-range" id="slot-range-v1">--:-- - --:--</div>
+              </button>
+              <button type="button" class="hook-variant-slot-btn" data-slot="variant_02" id="slot-btn-v2">
+                <div class="slot-badge-row">
+                  <span class="slot-tag">VARIANT 02 (Script 3)</span>
+                  <span class="slot-indicator"></span>
+                </div>
+                <div class="slot-hook-title" id="slot-title-v2">Chưa gán Hook</div>
+                <div class="slot-hook-range" id="slot-range-v2">--:-- - --:--</div>
+              </button>
+              <button type="button" class="hook-variant-slot-btn" data-slot="variant_03" id="slot-btn-v3">
+                <div class="slot-badge-row">
+                  <span class="slot-tag">VARIANT 03 (Script 4)</span>
+                  <span class="slot-indicator"></span>
+                </div>
+                <div class="slot-hook-title" id="slot-title-v3">Chưa gán Hook</div>
+                <div class="slot-hook-range" id="slot-range-v3">--:-- - --:--</div>
+              </button>
+            </div>
+
+            <div class="hook-duplicate-warning-box hidden" id="hook-duplicate-warning-box">
+              <span class="warning-icon">⚠️</span>
+              <div class="warning-content">
+                <strong>Cảnh báo trùng lặp Hook:</strong>
+                <span id="hook-duplicate-warning-text">Bạn đang chọn cùng một Hook cho nhiều Variant.</span>
+                <small>Hệ thống chỉ cảnh báo và không cấm. AI sẽ mở đầu bằng cùng sự kiện này nhưng bắt buộc viết các kịch bản theo những góc nhìn, lời dẫn và nhịp dựng hoàn toàn khác nhau để tránh trùng lặp.</small>
+              </div>
+            </div>
+          </div>
+
+          <div class="hook-candidates-section">
+            <div class="hook-section-title">
+              <span>Ứng viên Hook đề xuất (Top Candidates)</span>
+              <small>Bấm vào thẻ để chọn và xem thử</small>
+            </div>
+            <div class="hook-candidates-list" id="hook-candidates-list">
+              <!-- Rendered dynamically -->
+            </div>
+          </div>
+
+          <div class="hook-preview-player-section hidden" id="hook-preview-player-section">
+            <div class="hook-preview-player-header">
+              <div class="hook-preview-now-playing">
+                <span class="preview-dot"></span>
+                <span id="hook-preview-title">Đang phát đoạn Hook</span>
+                <span id="hook-preview-time" class="hook-preview-time-badge">00:00 - 00:00</span>
+              </div>
+              <button id="close-hook-preview-player" class="ghost-button icon-btn" type="button" title="Đóng trình xem thử">✕</button>
+            </div>
+            <div class="hook-preview-video-wrapper">
+              <video id="hook-preview-player" playsinline controls></video>
+            </div>
+          </div>
+
+          <div class="hook-contract-editor" id="hook-contract-editor">
+            <div class="hook-editor-title">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <strong>🎯 Thiết lập Hook Contract</strong>
+                <span id="hook-editor-badge" class="hook-archetype-pill">Physical Friction</span>
+              </div>
+              <span id="hook-editor-score" class="hook-score-badge">94/100</span>
+            </div>
+
+            <div class="hook-editor-grid">
+              <div class="form-group">
+                <label>Mốc bắt đầu (giây):</label>
+                <input id="hook-editor-start-sec" type="number" step="0.1" min="0" />
+              </div>
+              <div class="form-group">
+                <label>Mốc kết thúc (giây):</label>
+                <input id="hook-editor-end-sec" type="number" step="0.1" min="0" />
+              </div>
+              <div class="form-group">
+                <label>Dung sai lùi đầu (s):</label>
+                <input id="hook-editor-start-tol" type="number" step="0.5" min="0" max="5" value="2.0" />
+              </div>
+              <div class="form-group">
+                <label>Dung sai nới đuôi (s):</label>
+                <input id="hook-editor-end-tol" type="number" step="0.5" min="0" max="6" value="3.0" />
+              </div>
+            </div>
+
+            <div class="hook-nonlinear-directive-box">
+              <div class="directive-header">📖 Cấu trúc kể chuyện phi tuyến tính (JCS / EWU Formula):</div>
+              <div class="directive-steps">
+                <span><strong>1. Hook (0–10s):</strong> Mở đầu ngay lập tức bằng sự kiện va chạm/hội thoại trên.</span>
+                <span><strong>2. Rewind:</strong> Tua ngược 10–15 phút trước ("Mười lăm phút trước...") để giải thích bối cảnh xuất phát điểm.</span>
+                <span><strong>3. Escalation:</strong> Căng thẳng leo thang dần trở lại điểm va chạm.</span>
+                <span><strong>4. Payoff:</strong> Kết cục, bản án hoặc hậu quả thực tế.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-footer hook-picker-modal-footer">
+          <button id="cancel-hook-picker-modal" class="ghost-button" type="button">Hủy</button>
+          <button id="confirm-hook-and-run-stage1" class="primary-button" type="button">
+            🚀 Khóa Hook & Bắt đầu viết kịch bản
+          </button>
         </div>
       </div>
     </div>

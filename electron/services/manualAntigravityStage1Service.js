@@ -512,15 +512,16 @@ function buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds = [1, 3, 
     "================================================================================",
     "MANDATORY CONTEXT AND METADATA INSPECTION",
     "================================================================================",
-    "Inspect the following input files using `view_file`:",
-    ...contextFiles.map((item, idx) => `  ${idx + 1}. view_file("${item.path}") (${item.label})`),
+    "The following files are available as reference in STAGE_1_INPUT_FOLDER:",
+    ...contextFiles.map((item, idx) => `  ${idx + 1}. ${item.path} (${item.label})`),
+    "STRICT RULE: The editorial prompt contains all core rules, contracts, and candidates. DO NOT use the `view_file` tool to page through these long text/JSON files unless strictly necessary to resolve an ambiguity. Rely on your built-in reading capabilities or standard prompt context instead of tool calls.",
     "================================================================================",
     "",
     "CRITICAL EXECUTION CONSTRAINTS (PREVENT TIMEOUT & ELIMINATE WASTED TURNS):",
     "1. DO NOT run directory listing or shell commands (e.g., Get-ChildItem, dir, ls, Test-Path). All files you need are already explicitly provided above.",
     "2. DO NOT read or inspect `00-UPLOAD-ORDER.txt` or any auxiliary/cache files.",
     "3. DO NOT inspect, list, or read any files inside `RESULT_FOLDER_FOR_THE_HOST_APP`.",
-    "4. IMMEDIATELY after inspecting the proxy video chunks and the context files above, synthesize the complete story and write the final scripts. DO NOT call any more tools.",
+    "4. IMMEDIATELY after inspecting the proxy video chunks, synthesize the complete story and write the final scripts. DO NOT call `view_file` on manifests or transcripts unless absolutely blocked.",
     "5. Follow every editorial, timing, narrator, hook, schema, and safety rule from the editorial prompt.",
     `6. Generate exactly these requested independent scripts in order: ${scriptIds.join(", ")}. Each script must exactly follow the root schema in the editorial prompt (including narrativeBeats when the Story Spine schema is requested).`,
     "7. This is a one-turn headless execution. Do NOT stop after making an implementation plan, do NOT ask for approval, and do NOT return a plan file. Complete the analysis and return the final artifacts now.",
@@ -548,8 +549,8 @@ function resolveAntigravityTimeoutMs(settingsTimeout, packageInfo = null) {
       || 1
     );
     const sceneCount = Number(packageInfo.sceneCount || 0);
-    // Allow 6 minutes per chunk + 15 minutes base for prompt/transcript/manifests + script generation
-    const chunkTimeout = (Math.max(1, proxyChunkCount) * 360 + 900) * 1000;
+    // Allow 8 minutes per chunk + 20 minutes base for prompt/transcript/manifests + script generation
+    const chunkTimeout = (Math.max(1, proxyChunkCount) * 480 + 1200) * 1000;
     const sceneTimeout = sceneCount > 50 ? 1500000 : 900000;
     baseTimeout = Math.max(baseTimeout, chunkTimeout, sceneTimeout);
   }
@@ -835,7 +836,18 @@ class ManualAntigravityStage1Service {
           reject(new Error("Đã dừng phân tích GĐ1 bằng Antigravity."));
           return;
         }
+        
+        let validEnvelope = null;
+        try {
+          validEnvelope = findArtifactEnvelope(stdout);
+        } catch (_e) {}
+        
         if (combined.includes("[agy] print timeout after")) {
+          if (validEnvelope && validEnvelope.artifacts && validEnvelope.artifacts.length > 0) {
+            // Partial output contains valid scripts, so accept it!
+            resolve({ stdout, stderr, conversationId, viewedProxySet });
+            return;
+          }
           const timeoutMatch = combined.match(/\[agy\] print timeout after (\S+)/i);
           const limitStr = timeoutMatch ? timeoutMatch[1] : `${Math.round(timeoutMs / 1000)}s`;
           const error = new Error(`Antigravity timed out after ${limitStr}.`);
@@ -844,13 +856,19 @@ class ManualAntigravityStage1Service {
           reject(error);
           return;
         }
+        
         if (code !== 0) {
+          if (validEnvelope && validEnvelope.artifacts && validEnvelope.artifacts.length > 0) {
+            resolve({ stdout, stderr, conversationId, viewedProxySet });
+            return;
+          }
           const error = new Error(`agy exited with code ${code}: ${stderr || stdout}`);
           error.stdout = stdout;
           error.stderr = stderr;
           reject(error);
           return;
         }
+        
         resolve({ stdout, stderr, conversationId, viewedProxySet });
       }));
       child.stdin.end();

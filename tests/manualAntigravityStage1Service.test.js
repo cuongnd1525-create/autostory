@@ -173,17 +173,17 @@ async function createPackage() {
   assert.strictEqual(resolveAntigravityTimeoutMs(300000), 900000, "legacy 300000 must auto-upgrade to 900000");
   assert.strictEqual(resolveAntigravityTimeoutMs(undefined), 900000, "default should be 900000");
   assert.strictEqual(resolveAntigravityTimeoutMs(1800000), 1800000, "custom higher timeout preserved");
-  // Multi-chunk video adaptive timeout: 3 chunks = (3 * 360 + 900) * 1000 = 1980000 ms (33 min)
+  // Multi-chunk video adaptive timeout: 3 chunks = (3 * 480 + 1200) * 1000 = 2640000 ms (44 min)
   assert.strictEqual(
     resolveAntigravityTimeoutMs(900000, { proxyChunkCount: 3, sceneCount: 72 }),
-    1980000,
-    "3 proxy chunks should scale timeout to at least 1980000 ms"
+    2640000,
+    "3 proxy chunks should scale timeout to at least 2640000 ms"
   );
-  // Large scene count: > 50 scenes
+  // Large scene count: > 50 scenes (though 1 chunk now overrides to 1680000)
   assert.strictEqual(
     resolveAntigravityTimeoutMs(900000, { proxyChunkCount: 1, sceneCount: 60 }),
-    1500000,
-    "> 50 scenes should scale timeout to at least 1500000 ms"
+    1680000,
+    "> 50 scenes should scale timeout to at least 1500000 ms (now 1680000 ms due to higher base chunk scaling)"
   );
 
   // Test command builder defaults to stream-json and uses adaptive timeout
@@ -197,8 +197,8 @@ async function createPackage() {
   assert(adaptiveCmd.args.includes("stream-json"), "default output format should be stream-json");
   assert(adaptiveCmd.args.includes("--print-timeout"), "--print-timeout flag should be present");
   const timeoutArgIdx = adaptiveCmd.args.indexOf("--print-timeout");
-  assert.strictEqual(adaptiveCmd.args[timeoutArgIdx + 1], "1980s", "print timeout should adapt to 1980s for 3 chunks");
-  assert.strictEqual(adaptiveCmd.timeoutMs, 1980000);
+  assert.strictEqual(adaptiveCmd.args[timeoutArgIdx + 1], "2640s", "print timeout should adapt to 2640s for 3 chunks");
+  assert.strictEqual(adaptiveCmd.timeoutMs, 2640000);
 
   // Test stream-json live progress updates in runCli
   const streamEvents = [

@@ -189,6 +189,40 @@ function getWorker(settings, model, device) {
   return workers.get(key);
 }
 
+function normalizeVietnamesePreviewSubtitle(rawText = "") {
+  if (!rawText) return "";
+  let text = String(rawText).trim();
+  text = text.replace(/<\/?[^>]+(>|$)/gi, "").replace(/\*\*|__/g, "");
+  text = text.replace(/^>>\s*/, "").replace(/^--\s*/, "");
+  if (/^(Tô sáng|Highlight|Segment|Cảnh|Scene)\s*\d+/i.test(text.trim())) {
+    return "";
+  }
+  const glossary = [
+    [/\bhạt lạc\b/gi, "ốc bánh xe"],
+    [/\blốp bánh rán(\s+tí hon)?\b/gi, "lốp dự phòng"],
+    [/\bbánh rán tạm thời\b/gi, "lốp dự phòng"],
+    [/\bbánh rán\b/gi, "lốp dự phòng"],
+    [/\bđóng cửa (máy gia tốc|chân ga)\b/gi, "đạp lút chân ga"],
+    [/\bmáy gia tốc\b/gi, "chân ga"],
+    [/\brơi xuống một quả bom\b/gi, "tiết lộ tin sét đánh"],
+    [/\bkỵ binh bang\b/gi, "cảnh sát tuần tra bang"],
+    [/\bquân lính bang\b/gi, "cảnh sát tuần tra bang"],
+    [/\bkỵ binh\b/gi, "cảnh sát tuần tra"],
+    [/\bquân lính\b/gi, "cảnh sát tuần tra"],
+    [/\bvai đường cao tốc\b/gi, "lề đường cao tốc"],
+    [/\bkim loại sống\b/gi, "trơ vành kim loại"],
+    [/\bchiếc xe bị thương\b/gi, "chiếc xe hư hỏng"],
+    [/\bsúng,?\s*chiếc xe/gi, "đạp ga chiếc xe"],
+    [/\bchuyển đổi thất thường U-pra\b/gi, "pha quay đầu chữ U nguy hiểm"],
+    [/\bbiến đổi thất thường U-pra\b/gi, "pha quay đầu chữ U nguy hiểm"],
+    [/\bkẻ phá hoại\b/gi, "xe cứu hộ kéo xe"],
+  ];
+  for (const [pattern, replacement] of glossary) {
+    text = text.replace(pattern, replacement);
+  }
+  return text.replace(/\s+/g, " ").trim();
+}
+
 class LocalTranslationService {
   constructor(settings = {}) {
     this.settings = settings;
@@ -223,10 +257,14 @@ class LocalTranslationService {
       throw new Error(`Model OPUS-MT local chỉ hỗ trợ nguồn tiếng Anh, không hỗ trợ "${sourceLanguage}".`);
     }
     const cleanSegments = segments
-      .map((segment, index) => ({
-        id: segment.id || `preview_${index + 1}`,
-        text: String(segment.text || "").replace(/\s+/g, " ").trim()
-      }))
+      .map((segment, index) => {
+        let raw = String(segment.text || "").replace(/<\/?[^>]+(>|$)/gi, "").replace(/\s+/g, " ").trim();
+        if (/^(Highlight|Segment|Scene)\s*\d+/i.test(raw)) raw = "";
+        return {
+          id: segment.id || `preview_${index + 1}`,
+          text: raw
+        };
+      })
       .filter((segment) => segment.text);
     if (!cleanSegments.length) return [];
     const result = await require('./productionResourcePool').withSlot('local-translation', 1, getCancelToken()?.abortController?.signal, async () => {
@@ -243,7 +281,8 @@ class LocalTranslationService {
     const translated = new Map((result.segments || []).map((segment) => [segment.id, segment.text]));
     return segments.map((segment, index) => {
       const id = segment.id || `preview_${index + 1}`;
-      const text = translated.get(id) || "";
+      const rawText = translated.get(id) || "";
+      const text = normalizeVietnamesePreviewSubtitle(rawText);
       return {
         ...segment,
         id,

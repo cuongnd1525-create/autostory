@@ -1535,15 +1535,58 @@ function buildSceneCards(scenes, segments) {
   });
 }
 
+function sanitizeSubtitleText(rawText = "") {
+  if (!rawText) return "";
+  let text = String(rawText).trim();
+  text = text.replace(/<\/?[^>]+(>|$)/gi, "");
+  text = text.replace(/\*\*|__/g, "");
+  text = text.replace(/^>>\s*/, "").replace(/^--\s*/, "");
+  if (/^(Tô sáng|Highlight|Segment|Cảnh|Scene)\s*\d+/i.test(text.trim())) {
+    return "";
+  }
+  const glossary = [
+    [/\bhạt lạc\b/gi, "ốc bánh xe"],
+    [/\blốp bánh rán(\s+tí hon)?\b/gi, "lốp dự phòng"],
+    [/\bbánh rán tạm thời\b/gi, "lốp dự phòng"],
+    [/\bbánh rán\b/gi, "lốp dự phòng"],
+    [/\bđóng cửa (máy gia tốc|chân ga)\b/gi, "đạp lút chân ga"],
+    [/\bmáy gia tốc\b/gi, "chân ga"],
+    [/\brơi xuống một quả bom\b/gi, "tiết lộ tin sét đánh"],
+    [/\bkỵ binh bang\b/gi, "cảnh sát tuần tra bang"],
+    [/\bquân lính bang\b/gi, "cảnh sát tuần tra bang"],
+    [/\bkỵ binh\b/gi, "cảnh sát tuần tra"],
+    [/\bquân lính\b/gi, "cảnh sát tuần tra"],
+    [/\bvai đường cao tốc\b/gi, "lề đường cao tốc"],
+    [/\bkim loại sống\b/gi, "trơ vành kim loại"],
+    [/\bchiếc xe bị thương\b/gi, "chiếc xe hư hỏng"],
+    [/\bsúng,?\s*chiếc xe/gi, "đạp ga chiếc xe"],
+    [/\bchuyển đổi thất thường U-pra\b/gi, "pha quay đầu chữ U nguy hiểm"],
+    [/\bbiến đổi thất thường U-pra\b/gi, "pha quay đầu chữ U nguy hiểm"],
+    [/\bkẻ phá hoại\b/gi, "xe cứu hộ kéo xe"],
+  ];
+  for (const [pattern, replacement] of glossary) {
+    text = text.replace(pattern, replacement);
+  }
+  return text.replace(/\s+/g, " ").trim();
+}
+
 function buildSrt(segments, field = "translatedText") {
-  return segments.map((segment, index) => {
-    const text = segment[field] || segment.text || "";
-    return [
-      String(index + 1),
-      `${formatSrtTime(segment.startSec)} --> ${formatSrtTime(segment.endSec)}`,
-      text
-    ].join("\n");
-  }).join("\n\n");
+  const validCues = [];
+  (segments || []).forEach((segment) => {
+    const raw = segment[field] || segment.text || "";
+    const clean = sanitizeSubtitleText(raw);
+    if (!clean) return;
+    validCues.push({
+      startSec: segment.startSec,
+      endSec: segment.endSec,
+      text: clean
+    });
+  });
+  return validCues.map((cue, index) => [
+    String(index + 1),
+    `${formatSrtTime(cue.startSec)} --> ${formatSrtTime(cue.endSec)}`,
+    cue.text
+  ].join("\n")).join("\n\n");
 }
 
 // Consecutive members of one narrated block, and exactly one canonical passage
@@ -1793,7 +1836,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
       voiceoverText,
       sourceVolume,
       sourceAmbientVolume,
-      text: voiceoverText || previewSubtitleVi || caption || segment.scene_type || `Highlight ${index + 1}`,
+      text: voiceoverText || previewSubtitleVi || caption || "",
       originalText: actionNotes,
       translatedText: caption,
       dubbingLine: voiceoverText,
@@ -2922,16 +2965,14 @@ class DubbingService {
   }
 
   async emitProgress({ workspaceRoot, projectId, onProgress, step, percent, message, partial = {} }) {
+    // Progress crosses Electron's structured-clone boundary. Emit immediately for zero-latency UI updates.
+    onProgress?.({ projectId, step, percent, message });
     const project = await this.projectStore.updateProject(workspaceRoot, projectId, {
       status: step,
       progressPercent: percent,
       statusMessage: message,
       ...partial
     });
-    // Progress crosses Electron's structured-clone boundary. Sending the full
-    // project on every event repeatedly cloned large timelines and render
-    // reports, then forced the renderer to rebuild the complete studio UI.
-    onProgress?.({ projectId, step, percent, message });
     return project;
   }
 
@@ -3281,7 +3322,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     inputPath,
     outputPath,
     name = "video",
-    draft = false
+    draft = false,
+    onProgress = null,
+    totalDurationSec = 0
   }) {
     const decoration = project.videoDecoration || {};
     const resolvedMask = resolveSourceSubtitleMask(project, draft);
@@ -3389,7 +3432,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       height: canvas.height,
       preset: draft ? "ultrafast" : "fast",
       crf: draft ? 29 : 21,
-      masterAudio: project.autoStoryContractVersion === 3 || Boolean(project.mixer?.masterAudio)
+      masterAudio: project.autoStoryContractVersion === 3 || Boolean(project.mixer?.masterAudio),
+      onProgress,
+      totalDurationSec
     });
     return outputPath;
   }
@@ -6044,15 +6089,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           endSec
         }).map((cue) => ({ ...cue, subtitleSource: "gemini_original_audio_transcript" }));
       }
-      const originalAudioText = originalAudioCues.map((cue) => cue.text).join(" ");
-      const voiceText = safeText(
+      const rawCandidateVoiceText = safeText(
         getHighlightVoiceText(segment)
-        || originalAudioText
         || segment.caption
         || segment.translatedText
         || segment.text
         || ""
       );
+      const voiceText = /^(Highlight|Segment|Scene|Cảnh)\s*\d+/i.test(rawCandidateVoiceText.trim()) ? "" : rawCandidateVoiceText;
       const sourceHash = textHash(voiceText);
       const reviewedSubtitle = project.autoStoryPipelineVersion === "editorial-v1"
         ? (project.autoStoryPreviewSubtitleRepairs || []).find(item => item.segmentId === segmentId
@@ -6098,7 +6142,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       };
     });
     const translationItems = subtitleSegments.flatMap((segment) => (
-      segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : [segment]
+      segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
     const needsTranslation = translationItems.filter((item) => item.text && !item.previewSubtitleVi);
 
@@ -7525,6 +7569,11 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       warnings.push(qualityGate.warningMessage);
       await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "warning", percent: 8, message: qualityGate.warningMessage });
     }
+    const totalDurationSec = Math.max(1, renderSegments.reduce((sum, seg) => {
+      const sStart = Math.max(0, Number(seg.sourceStartSec ?? seg.startSec ?? 0));
+      const sEnd = Math.max(sStart + 0.3, Number(seg.sourceEndSec ?? sStart + Number(seg.sourceDuration || seg.duration || 1)));
+      return sum + Math.max(0.3, Number(seg.duration ?? (sEnd - sStart)));
+    }, 0));
     await fs.unlink(outputPath).catch(() => {});
     for (const [index, segment] of renderSegments.entries()) {
       const sourceStartSec = Math.max(0, Number(segment.sourceStartSec ?? segment.startSec ?? 0));
@@ -7538,13 +7587,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const voicedClipPath = path.join(paths.clipsDir, `highlight-${variantSuffix}-${String(index + 1).padStart(4, "0")}-voiced.mp4`);
       const finalClipPath = path.join(paths.clipsDir, `highlight-${variantSuffix}-${String(index + 1).padStart(4, "0")}-final.mp4`);
 
+      const segStartPct = 10 + Math.round((index / Math.max(1, renderSegments.length)) * 62);
+      const segMidPct = 10 + Math.round(((index + 0.5) / Math.max(1, renderSegments.length)) * 62);
+
       await this.emitProgress({
         workspaceRoot,
         projectId,
         onProgress,
         step: "clips",
-        percent: Math.min(75, 12 + Math.round((index / Math.max(1, renderSegments.length)) * 58)),
-        message: `Dang cat ${activeVariant.label || variantId}: block ${index + 1}/${renderSegments.length}`
+        percent: segStartPct,
+        message: `Đang cắt đoạn ${index + 1}/${renderSegments.length} (${sourceDurationSec.toFixed(1)}s)...`
       });
       let voiceResult = null;
       let rawVoiceMeta = null;
@@ -7560,8 +7612,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           projectId,
           onProgress,
           step: "voice",
-          percent: Math.min(82, 22 + Math.round((index / Math.max(1, renderSegments.length)) * 56)),
-          message: `Dang tao voice ${activeVariant.label || variantId}: ${index + 1}/${renderSegments.length}`
+          percent: segMidPct,
+          message: `Đang tạo giọng đọc đoạn ${index + 1}/${renderSegments.length}...`
         });
         try {
           voiceResult = await this.synthesizeDubbingVoice({
@@ -7707,8 +7759,26 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       clipPaths.push(normalizedClipPath);
     }
 
-    await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "rendering", percent: 88, message: `Dang ghep ${activeVariant.label || variantId}` });
-    await ffmpeg.concatSegmentsByFilter(clipPaths, undecoratedOutputPath);
+    await this.emitProgress({
+      workspaceRoot,
+      projectId,
+      onProgress,
+      step: "rendering",
+      percent: 74,
+      message: `Đang ghép nối ${renderSegments.length} đoạn video...`
+    });
+    await ffmpeg.concatSegmentsByFilter(clipPaths, undecoratedOutputPath, {
+      totalDurationSec,
+      onProgress: ({ currentSec }) => {
+        const concatPct = 74 + Math.round((Math.min(currentSec, totalDurationSec) / Math.max(1, totalDurationSec)) * 13);
+        onProgress?.({
+          projectId,
+          step: "rendering",
+          percent: concatPct,
+          message: `Đang ghép nối video (${Math.round(currentSec)}s/${Math.round(totalDurationSec)}s)...`
+        });
+      }
+    });
     if (project.sourceSubtitleMask?.enabled) {
       const mask = project.sourceSubtitleMask;
       await this.emitProgress({
@@ -7716,17 +7786,35 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         projectId,
         onProgress,
         step: "rendering",
-        percent: 91,
+        percent: 87,
         message: `Đang làm mờ vùng phụ đề X ${Number(mask.xPercent || 0).toFixed(1)}% · rộng ${Number(mask.widthPercent || 100).toFixed(1)}%`
       });
     }
+    await this.emitProgress({
+      workspaceRoot,
+      projectId,
+      onProgress,
+      step: "rendering",
+      percent: 88,
+      message: "Đang hoàn thiện khung hình & tiêu đề video..."
+    });
     await this.applyProjectVideoDecoration({
       ffmpeg,
       project,
       paths,
       inputPath: undecoratedOutputPath,
       outputPath,
-      name: `highlight-${variantSuffix}-final`
+      name: `highlight-${variantSuffix}-final`,
+      totalDurationSec,
+      onProgress: ({ currentSec }) => {
+        const decorPct = 88 + Math.round((Math.min(currentSec, totalDurationSec) / Math.max(1, totalDurationSec)) * 6);
+        onProgress?.({
+          projectId,
+          step: "rendering",
+          percent: decorPct,
+          message: `Đang xử lý tiêu đề & khung hình (${Math.round(currentSec)}s/${Math.round(totalDurationSec)}s)...`
+        });
+      }
     });
     const finalTimeline = compileResolvedTimeline({
       mode: "highlight_cut",
@@ -7743,7 +7831,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const finalTimelinePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-resolved-timeline.json`);
     const renderQaPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-render-qa.json`);
     await this.projectStore.writeJson(finalTimelinePath, finalTimeline);
-    await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "qa", percent: 94, message: "Đang kiểm tra âm thanh, khoảng lặng và khung hình Highlight" });
+    await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "qa", percent: 95, message: "Đang kiểm tra chất lượng video cuối (Render QA)..." });
     const renderQa = await new RenderQaService(settings).inspect({
       videoPath: outputPath,
       targetDuration: finalTimeline.resolvedDurationSec,

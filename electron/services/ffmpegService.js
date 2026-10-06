@@ -205,7 +205,27 @@ class FfmpegService {
       const child = spawn(binary, args, { windowsHide: true });
       const untrackChild = trackChild(child, token);
       child.stdout.on("data", (chunk) => stdoutChunks.push(chunk));
-      child.stderr.on("data", (chunk) => stderrChunks.push(chunk));
+      let lastReportedSec = -1;
+      child.stderr.on("data", (chunk) => {
+        stderrChunks.push(chunk);
+        if (typeof options.onProgress === "function") {
+          const str = chunk.toString();
+          const match = str.match(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/);
+          if (match) {
+            const sec = Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+            if (sec >= 0 && Math.abs(sec - lastReportedSec) >= 0.4) {
+              lastReportedSec = sec;
+              options.onProgress({
+                currentSec: sec,
+                totalDurationSec: Number(options.totalDurationSec || 0),
+                percent: options.totalDurationSec > 0
+                  ? Math.min(99, Math.max(1, Math.round((sec / options.totalDurationSec) * 100)))
+                  : null
+              });
+            }
+          }
+        }
+      });
       child.on("error", (error) => {
         untrackChild();
         reject(error);
@@ -1096,7 +1116,7 @@ class FfmpegService {
     await this.run(this.ffmpegPath, args, { captureStdout: false });
   }
 
-  async concatSegmentsByFilter(segmentPaths, outputPath) {
+  async concatSegmentsByFilter(segmentPaths, outputPath, options = {}) {
     if (!Array.isArray(segmentPaths) || segmentPaths.length === 0) {
       throw new Error("No segments were provided for final composition.");
     }
@@ -1119,7 +1139,7 @@ class FfmpegService {
         "-movflags",
         "+faststart",
         outputPath
-      ], { captureStdout: false });
+      ], { captureStdout: false, ...options });
       return;
     }
 
@@ -1156,7 +1176,7 @@ class FfmpegService {
       outputPath
     );
 
-    await this.run(this.ffmpegPath, args, { captureStdout: false });
+    await this.run(this.ffmpegPath, args, { captureStdout: false, ...options });
   }
 
   async concatAudioSegments(audioPaths, outputPath) {
@@ -1257,7 +1277,9 @@ class FfmpegService {
     height = 1920,
     preset = "fast",
     crf = 21,
-    masterAudio = false
+    masterAudio = false,
+    onProgress = null,
+    totalDurationSec = 0
   }) {
     const targetWidth = Math.max(180, Math.round(Number(width) || 1080));
     const targetHeight = Math.max(180, Math.round(Number(height) || 1920));
@@ -1327,7 +1349,7 @@ class FfmpegService {
       "-movflags",
       "+faststart",
       outputPath
-    ], { captureStdout: false });
+    ], { captureStdout: false, onProgress, totalDurationSec });
   }
 
   async extractFastPreviewClip({ sourcePath, outputPath, startSec = 0, durationSec = 5, width = 540 }) {

@@ -134,7 +134,14 @@ function createPipelineProgressSender(event, { onNormalized } = {}) {
   return (payload) => {
     const normalizedPayload = normalize(payload);
     onNormalized?.(normalizedPayload);
-    return sendToFrameSafe(targetFrame, "pipeline:progress", normalizedPayload);
+    let delivered = false;
+    if (targetFrame && !targetFrame.isDestroyed?.() && !targetFrame.detached) {
+      delivered = sendToFrameSafe(targetFrame, "pipeline:progress", normalizedPayload);
+    }
+    if (!delivered) {
+      sendMainWindowSafe("pipeline:progress", normalizedPayload);
+    }
+    return true;
   };
 }
 
@@ -682,6 +689,18 @@ app.whenReady().then(async () => {
     const settings = configStore.getSettings();
     const service = new ManualGeminiPackService(settings);
     return service.importBlueprint(payload || {});
+  });
+
+  handleIpc("analysis:getHookCandidates", async (_event, packageDir) => {
+    const settings = configStore.getSettings();
+    const service = new ManualGeminiPackService(settings);
+    return service.getHookCandidates(packageDir);
+  });
+
+  handleIpc("analysis:lockHookContract", async (_event, payload) => {
+    const settings = configStore.getSettings();
+    const service = new ManualGeminiPackService(settings);
+    return service.lockHookContract(payload || {});
   });
 
   handleIpc("analysis:inspectGeminiJsonFiles", async (_event, filePaths) => (

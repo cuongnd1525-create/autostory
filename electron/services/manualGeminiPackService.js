@@ -8,6 +8,9 @@ const FfmpegService = require("./ffmpegService");
 const SceneDetectionService = require("./sceneDetectionService");
 const SubtitleService = require("./subtitleService");
 const ActionCandidateService = require("./actionCandidateService");
+const HookAuditionService = require("./hookAuditionService");
+const { parseSrtCues } = require("./hookMiningService");
+const { buildHookContract, injectHookContractToPrompt } = require("./hookContractService");
 const {
   buildDiyBlueprintPrompt,
   buildDiyProcessMapPrompt,
@@ -1999,7 +2002,15 @@ ${buildActionCandidatePromptBlock(actionCandidates, { directScripts: true, edito
       .trim();
     return `${contract}\n\n${deduplicatedPrompt}`;
   }
-  return `${contract}\n\n${basePrompt}\n\n${contract}`;
+  
+  const deduplicatedBasePrompt = basePrompt
+    .replace(
+      /(?:THREE|REQUESTED) JSON CODE-BLOCK CONTRACT - HIGHEST PRIORITY[\s\S]*?Do not output prose, headings, filename labels, explanations, tables, or text before, between, or after the (?:three|requested) code blocks\.\s*/gi,
+      ""
+    )
+    .trim();
+    
+  return `${contract}\n\n${deduplicatedBasePrompt}`;
 }
 
 function slugify(input) {
@@ -2585,6 +2596,40 @@ class ManualGeminiPackService {
     const promptPath = evidencePromptPath;
     const readmePath = path.join(packageDir, "HUONG-DAN.txt");
     const infoPath = path.join(packageDir, "package-info.json");
+
+    let hookAuditionResult = null;
+    let hookContract = null;
+    if (isDraftReview) {
+      try {
+        onProgress?.({ step: "gemini_pack", percent: 88, message: "Đang dò tìm và chấm điểm các ứng viên Hook..." });
+        let cues = [];
+        if (transcriptPath && (await nonEmptyFileExists(transcriptPath))) {
+          const srtRaw = await fs.readFile(transcriptPath, "utf8");
+          cues = parseSrtCues(srtRaw);
+        }
+        const hookAuditionService = new HookAuditionService(this.settings);
+        hookAuditionResult = await hookAuditionService.audition({
+          transcriptCues: cues,
+          actionCandidates: actionCandidates?.candidates || [],
+          manifest,
+          durationSec: media.duration,
+          topCount: 5
+        });
+        if (hookAuditionResult?.defaultRecommendedHook) {
+          hookContract = buildHookContract({ candidate: hookAuditionResult.defaultRecommendedHook, isUserLocked: false });
+          await writeJsonAtomic(path.join(pass1UploadDir, "hook-candidates.json"), hookAuditionResult);
+          await writeJsonAtomic(path.join(pass1UploadDir, "hook-contract.json"), hookContract);
+        }
+      } catch (hookErr) {
+        warnings.push(`Không tạo được Hook Candidates: ${hookErr.message}`);
+      }
+    }
+
+    let directHighlightPrompt = buildDirectHighlightScriptsPrompt(prompt, manifest, actionCandidates, proxyChunksManifest);
+    if (hookContract) {
+      directHighlightPrompt = injectHookContractToPrompt(directHighlightPrompt, hookContract);
+    }
+
     await fs.writeFile(
       evidencePromptPath,
       isDiyStoryRemix
@@ -2595,7 +2640,7 @@ class ManualGeminiPackService {
           proxyInputGuide: buildProxyInputGuide(proxyChunksManifest)
         })
         : isDraftReview
-        ? buildDirectHighlightScriptsPrompt(prompt, manifest, actionCandidates, proxyChunksManifest)
+        ? directHighlightPrompt
         : buildPass1JsonFilePrompt(prompt, actionCandidates, proxyChunksManifest),
       "utf8"
     );
@@ -2647,6 +2692,8 @@ class ManualGeminiPackService {
       manifestPath,
       actionCandidatesPath,
       actionCandidateCount: actionCandidates.candidates.length,
+      hookCandidatesPath: hookAuditionResult ? path.join(pass1UploadDir, "hook-candidates.json") : "",
+      hookContractPath: hookContract ? path.join(pass1UploadDir, "hook-contract.json") : "",
       proxyChunksManifestPath: proxyChunksManifest ? path.join(pass1UploadDir, "proxy-chunks-manifest.json") : "",
       proxyChunkCount: proxyChunksManifest?.chunks?.length || 0,
       proxyUploadBatchDirs: proxyChunkLayout.uploadBatchDirs,
@@ -2676,6 +2723,10 @@ class ManualGeminiPackService {
       manifestPath,
       actionCandidatesPath,
       actionCandidateCount: actionCandidates.candidates.length,
+      hookCandidatesPath: hookAuditionResult ? path.join(pass1UploadDir, "hook-candidates.json") : "",
+      hookContractPath: hookContract ? path.join(pass1UploadDir, "hook-contract.json") : "",
+      hookAuditionResult,
+      hookContract,
       proxyChunksManifestPath: proxyChunksManifest ? path.join(pass1UploadDir, "proxy-chunks-manifest.json") : "",
       proxyChunkCount: proxyChunksManifest?.chunks?.length || 0,
       proxyUploadBatchDirs: proxyChunkLayout.uploadBatchDirs,
@@ -3009,6 +3060,108 @@ class ManualGeminiPackService {
       variantDirs,
       macroBlockCount: blueprint.macroBlocks.length,
       nextStage: "variant_scripts"
+    };
+  }
+
+  async getHookCandidates(packageDir) {
+    if (!packageDir) throw new Error("Chưa có đường dẫn gói phân tích.");
+    const pass1UploadDir = path.join(packageDir, "01-GUI-GEMINI");
+    const infoPath = path.join(packageDir, "package-info.json");
+    const info = (await readJsonIfAvailable(infoPath)) || {};
+    const videoPath = info.sourceVideoPath || info.proxyPath || "";
+
+    const candidatesPath = path.join(pass1UploadDir, "hook-candidates.json");
+    let result = null;
+    if (await nonEmptyFileExists(candidatesPath)) {
+      result = await readJsonIfAvailable(candidatesPath);
+    } else {
+      const manifestPath = path.join(pass1UploadDir, "scene-manifest.json");
+      const manifest = (await readJsonIfAvailable(manifestPath)) || {};
+      const actionPath = path.join(pass1UploadDir, "action-candidates.json");
+      const actionCandidates = (await readJsonIfAvailable(actionPath)) || {};
+      const transcriptPath = path.join(pass1UploadDir, "source-transcript.srt");
+      let cues = [];
+      if (await nonEmptyFileExists(transcriptPath)) {
+        cues = parseSrtCues(await fs.readFile(transcriptPath, "utf8"));
+      }
+      const hookAuditionService = new HookAuditionService(this.settings);
+      result = await hookAuditionService.audition({
+        transcriptCues: cues,
+        actionCandidates: actionCandidates?.candidates || [],
+        manifest,
+        durationSec: manifest.videoDurationSec || 0,
+        topCount: 5
+      });
+      if (result?.topCandidates?.length) {
+        await writeJsonAtomic(candidatesPath, result);
+      }
+    }
+    if (result) {
+      result.sourceVideoPath = info.sourceVideoPath || "";
+      result.proxyPath = info.proxyPath || "";
+      result.videoPath = videoPath;
+    }
+    return result;
+  }
+
+  async lockHookContract({
+    packageDir,
+    candidate,
+    userAnchorRange,
+    trimmingTolerance,
+    storyFormat = "non_linear_rewind",
+    isMultiVariant = false,
+    hasDuplicates = false,
+    variants = null
+  } = {}) {
+    if (!packageDir) throw new Error("Chưa có đường dẫn gói phân tích.");
+    if (!candidate && !variants) throw new Error("Chưa chọn ứng viên Hook.");
+    const contract = buildHookContract({
+      candidate,
+      userAnchorRange,
+      trimmingTolerance,
+      storyFormat,
+      isUserLocked: true,
+      isMultiVariant: Boolean(isMultiVariant || variants),
+      hasDuplicates: Boolean(hasDuplicates),
+      variants
+    });
+    const pass1UploadDir = path.join(packageDir, "01-GUI-GEMINI");
+    const contractPath = path.join(pass1UploadDir, "hook-contract.json");
+    await writeJsonAtomic(contractPath, contract);
+
+    const promptPath = path.join(pass1UploadDir, "01-gemini-highlight-scripts-prompt.txt");
+    if (await nonEmptyFileExists(promptPath)) {
+      const currentPrompt = await fs.readFile(promptPath, "utf8");
+      let cleaned = currentPrompt;
+      if (/DIRECT HIGHLIGHT CONTENT RULES:[\s\S]*?(?=- Watch the complete video input)/i.test(currentPrompt)) {
+        cleaned = currentPrompt.replace(
+          /DIRECT HIGHLIGHT CONTENT RULES:[\s\S]*?(?=- Watch the complete video input)/i,
+          "DIRECT HIGHLIGHT CONTENT RULES:\n\n"
+        ).trim();
+      } else {
+        cleaned = currentPrompt.replace(
+          /={10,}\s*(?:HOOK CONTRACT|USER-SELECTED HOOK|3-VARIANT NARRATIVE DIFFERENTIATION|CRITICAL MANDATE: DUPLICATE HOOK DIVERGENCE)[\s\S]*?={10,}\s*/gi,
+          ""
+        ).replace(/\n{3,}/g, "\n\n").trim();
+      }
+      const updatedPrompt = injectHookContractToPrompt(cleaned, contract);
+      await fs.writeFile(promptPath, updatedPrompt, "utf8");
+    }
+
+    const infoPath = path.join(packageDir, "package-info.json");
+    if (await nonEmptyFileExists(infoPath)) {
+      const info = (await readJsonIfAvailable(infoPath)) || {};
+      info.hookContractPath = contractPath;
+      info.selectedHookId = contract.hookId;
+      info.isMultiVariantHook = contract.isMultiVariant;
+      await writeJsonAtomic(infoPath, info);
+    }
+
+    return {
+      success: true,
+      contractPath,
+      contract
     };
   }
 }
