@@ -925,13 +925,16 @@ dt {
 .source-active-badge,
 .source-url-heading > span {
   flex: 0 0 auto;
-  padding: 5px 8px;
-  border: 1px solid rgba(34, 211, 238, 0.35);
-  border-radius: 6px;
-  color: var(--cyan);
-  background: rgba(34, 211, 238, 0.07);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  color: #8c9baf;
+  background: rgba(0, 0, 0, 0.2);
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .source-active-badge.empty {
@@ -2127,7 +2130,10 @@ dd {
 #studio-system-log {
   margin: 0;
   padding: 16px;
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  white-space: pre;
+  text-overflow: ellipsis;
   color: var(--cyan);
   background: #07090d;
   font: 12px/1.55 "Cascadia Code", Consolas, monospace;
@@ -6713,8 +6719,8 @@ body.is-dragging-splitter .timeline-grid {
   font: 11.5px/1.5 "Cascadia Code", Consolas, monospace;
   overflow-y: auto;
   overflow-x: hidden;
-  white-space: pre-wrap;
-  word-break: break-all;
+  white-space: pre;
+  text-overflow: ellipsis;
   border-radius: 0;
   border: none;
 }

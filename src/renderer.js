@@ -2252,8 +2252,14 @@ function syncConfiguredAiWorkflowUi() {
 }
 
 function addLog(message, level = "INFO") {
-  window.previewLog?.append(message, level);
-  const line = `[${level}] ${message}`;
+  // Shorten absolute file paths for cleaner UI (e.g. C:\Users\Admin\...\folder\file.ext -> ...\folder\file.ext)
+  let cleanMessage = message;
+  try {
+    cleanMessage = cleanMessage.replace(/[A-Z]:\\[^\s]+\\([^\\]+\\?[^\\]*)/gi, "...\\$1");
+  } catch (e) {}
+
+  window.previewLog?.append(cleanMessage, level);
+  const line = `[${level}] ${cleanMessage}`;
   const lastLine = state.logLines[state.logLines.length - 1];
   if (lastLine === line) {
     return;
