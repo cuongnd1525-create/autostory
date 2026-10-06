@@ -3748,38 +3748,38 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 ### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
 Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio beats + 4 Narration beats):
 
-1. BEAT 1 (00:00 - ~00:15, ~12-15s) - COLD OPEN HOOK
+1. BEAT 1 (Target: ~12-15s source duration) - COLD OPEN HOOK
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: The single most shocking, loud, or chaotic raw moment from the entire source footage (e.g. screaming at the door, physical struggle, forced breach, frantic yelling).
    - Rule: Grips the viewer in the first 0-3 seconds with zero narration. Pure authentic raw audio.
 
-2. BEAT 2 (~00:15 - ~00:34, ~16-20s) - INCIDENT SETUP & DISPATCH
+2. BEAT 2 (Target: ~16-20s source duration) - INCIDENT SETUP & DISPATCH
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Grounding narration over footage of police arrival / driving. State the date, location, the 911 dispatch premise, what officers were responding to, and the high stakes.
    - Pacing: Active, present-tense, documentary tension.
 
-3. BEAT 3 (~00:34 - ~00:46, ~10-14s) - SCENE ENTRY & RAW REALITY
+3. BEAT 3 (Target: ~10-14s source duration) - SCENE ENTRY & RAW REALITY
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: Officer steps inside the house/scene, encounters the first suspect or family member at the door/stairs, capturing natural ambient dialogue and escalating tension.
 
-4. BEAT 4 (~00:46 - ~01:03, ~15-18s) - ESCALATION & DISCOVERY
+4. BEAT 4 (Target: ~15-18s source duration) - ESCALATION & DISCOVERY
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Narration builds intense suspense as officer rushes upstairs/inward and discovers the core crisis (e.g. suspect physically pinning the victim).
    - Visual matching: Narration directs viewer attention directly to what is about to be seen.
 
-5. BEAT 5 (~01:03 - ~01:16, ~12-15s) - CLIMACTIC TAKEDOWN / CONFRONTATION
+5. BEAT 5 (Target: ~12-15s source duration) - CLIMACTIC TAKEDOWN / CONFRONTATION
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: Peak physical and vocal confrontation! Commands shouted by police ("Get off her! Let go of her! Stand up!"), restraint applied, separating suspect from victim. 100% authentic raw audio.
 
-6. BEAT 6 (~01:16 - ~01:35, ~17-20s) - CONFLICT BREAKDOWN & MORAL CONTRAST
+6. BEAT 6 (Target: ~17-20s source duration) - CONFLICT BREAKDOWN & MORAL CONTRAST
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Identifies key suspects and victims by name. Contrasts the suspect's absurd excuse or fake medical claim ("she was having a mental episode") against the victim's clear explanation ("I just wanted to leave").
 
-7. BEAT 7 (~01:35 - ~01:44, ~7-10s) - RAW DIALOGUE EVIDENCE
+7. BEAT 7 (Target: ~7-10s source duration) - RAW DIALOGUE EVIDENCE
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: Suspect stammers an incriminating excuse or victim gives emotional response to the officer.
 
-8. BEAT 8 (~01:44 - ~01:58, ~14-17s) - CLIFFHANGER & PART 2 OPEN LOOP
+8. BEAT 8 (Target: ~14-17s source duration) - CLIFFHANGER & PART 2 OPEN LOOP
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Questioning begins; suspect eagerly starts trying to justify their actions, unaware they are digging their own grave. Narration delivers a compelling hook urging the audience to watch Part 2 for the full interrogation and arrest.
 
@@ -3805,8 +3805,8 @@ For Script 3, set partBadge to "PART 2". For Script 4, set partBadge to "PART 3"
 ### NON-NEGOTIABLE EDITORIAL RULES
 1. ZERO THIRD-PARTY SOURCE NARRATORS: Completely mute or eliminate any YouTube host, television reporter, or narrator from original_audio. Only involved officers, suspects, victims, 911 dispatchers, or raw ambient sounds may be heard.
 2. STRICT EVIDENCE GROUNDING: Every claim in narration must be strictly supported by what is visible in the video frames or audible in the source transcript. Do not hallucinate charges, deaths, convictions, or motives.
-3. MATHEMATICAL TIMELINE: Output timestamps startSec and endSec must begin at 0.000, be contiguous without gaps, and satisfy: (sourceEndSec - sourceStartSec) / playbackSpeed = endSec - startSec.
-4. Total duration of the 8 segments must sum to between 110.0 and 125.0 seconds.
+3. MATHEMATICAL TIMELINE DELEGATION: Do NOT calculate or output startSec, endSec, outputStartSec, outputEndSec, duration, or playbackSpeed math. Only output sourceStartSec and sourceEndSec (or sceneId). The local compiler will automatically calculate all timeline math and playback speeds.
+4. Total source duration of the 8 segments should aim to be between 110.0 and 125.0 seconds.
 
 ${voiceBlock}
 
@@ -5760,6 +5760,9 @@ async function confirmHookAndLock() {
 
   setBusy(true);
   try {
+    const profile = (typeof readManualGeminiPromptOptions === "function") ? readManualGeminiPromptOptions().profile : "";
+    const isTikTokCrimePart1 = profile === "viral_tiktok_crime_part1";
+
     const lockResult = await window.cineviral.lockHookContract({
       packageDir,
       isMultiVariant: true,
@@ -5771,7 +5774,7 @@ async function confirmHookAndLock() {
           candidate: v1.candidate,
           userAnchorRange: v1.userAnchorRange,
           trimmingTolerance: v1.trimmingTolerance,
-          storyAngle: "high_octane_thriller"
+          storyAngle: isTikTokCrimePart1 ? "part_1_confrontation" : "high_octane_thriller"
         },
         variant_02: {
           scriptId: 3,
@@ -5779,7 +5782,7 @@ async function confirmHookAndLock() {
           candidate: v2.candidate,
           userAnchorRange: v2.userAnchorRange,
           trimmingTolerance: v2.trimmingTolerance,
-          storyAngle: "non_linear_in_medias_res"
+          storyAngle: isTikTokCrimePart1 ? "part_2_interrogation" : "non_linear_in_medias_res"
         },
         variant_03: {
           scriptId: 4,
@@ -5787,7 +5790,7 @@ async function confirmHookAndLock() {
           candidate: v3.candidate,
           userAnchorRange: v3.userAnchorRange,
           trimmingTolerance: v3.trimmingTolerance,
-          storyAngle: "tactical_standoff_breach"
+          storyAngle: isTikTokCrimePart1 ? "part_3_verdict_arrest" : "tactical_standoff_breach"
         }
       }
     });

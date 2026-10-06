@@ -1959,7 +1959,7 @@ function buildDirectHighlightScriptsPrompt(prompt = "", manifest = {}, actionCan
 - Every segment belongs to exactly one sceneId and must satisfy scene.startSec <= sourceStartSec < sourceEndSec <= scene.endSec.
 - Never let one JSON segment cross a scene boundary. If one logical beat spans consecutive scenes, return one segment per scene, preserve source order, and keep the same macroBlockId/sourceRunId/actionSequenceId when applicable.
 - Divide voiceover into non-duplicated complete phrases that fit the individual scene segments. Never copy the same voiceover_text into every split segment.
-- After every split, recalculate startSec/endSec continuously from zero. Before responding, validate every segment against scene-manifest.json; any cross-scene segment makes the JSON invalid.`;
+- Do not calculate startSec/endSec/outputStartSec/outputEndSec or output duration math. The local compiler will automatically calculate all timeline math and playback speeds. Before responding, validate every segment against scene-manifest.json; any cross-scene segment makes the JSON invalid.`;
   const accessGate = basePrompt.includes("STEP 0 - VERIFIED INPUT ACCESS GATE")
     ? ""
     : buildGeminiInputAccessGate({

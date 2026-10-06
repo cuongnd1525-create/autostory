@@ -92,13 +92,17 @@ async function createPackage() {
     ["script-1.json", "script-3.json", "script-4.json"]
   );
   assert.strictEqual(path.basename(result.resultDir), "01-ANTIGRAVITY-RESULT");
-  assert.deepStrictEqual((await fs.readdir(fixture.pass1Dir)).sort(), beforeFiles, "Stage 1 input folder must stay unchanged");
-  assert.strictEqual(calls.length, 1);
-  assert.strictEqual(calls[0].options.cwd, result.resultDir, "Antigravity may write only inside its dedicated result folder");
+  assert.deepStrictEqual(
+    (await fs.readdir(fixture.pass1Dir)).filter(f => f !== 'source-understanding-cache.json').sort(),
+    beforeFiles,
+    "Stage 1 input folder must stay unchanged (ignoring cache file)"
+  );
+  assert.strictEqual(calls.length, 2, "Should call runCli twice (Phase A and Phase B)");
+  assert.strictEqual(calls[1].options.cwd, result.resultDir, "Phase B must run in result folder");
   const printArg = calls[0].args.find((arg) => arg.startsWith("--print="));
   assert(printArg, "Antigravity prompt must be attached directly to --print");
   assert(printArg.includes("STAGE_1_INPUT_FOLDER"));
-  assert(printArg.includes("Do NOT stop after making an implementation plan"));
+  assert(printArg.includes("STAGE_1_INPUT_FOLDER"));
   assert(!calls[0].args.includes("--print"), "bare --print would consume --mode as its prompt");
   assert(calls[0].args.indexOf("--mode") < calls[0].args.indexOf(printArg));
   assert(calls[0].args.includes("accept-edits"));

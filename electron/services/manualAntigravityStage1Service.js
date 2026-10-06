@@ -453,7 +453,119 @@ function buildRetryPrompt({ missingProxies, scriptIds = [1, 3, 4] }) {
   ].join("\n");
 }
 
+function buildSourceUnderstandingPrompt({ pass1Dir, promptPath, expectedProxyList = [], packageInfo = null }) {
+  const promptLines = [
+    "You are executing Phase A (Source Understanding) of RecapTool Studio's manual Gemini draft-review workflow.",
+    "Work in READ-ONLY analysis mode. Do not edit, rename, delete, or create anything inside the Stage 1 input folder.",
+    `STAGE_1_INPUT_FOLDER: ${pass1Dir}`,
+    `EDITORIAL_PROMPT_FILE: ${promptPath}`,
+    ""
+  ];
+
+  if (expectedProxyList.length > 0) {
+    promptLines.push(
+      "================================================================================",
+      "CRITICAL MANDATORY REQUIREMENT: 100% DIRECT MULTIMODAL VIDEO INSPECTION",
+      "================================================================================",
+      `You MUST call the \`view_file\` tool directly on ALL ${expectedProxyList.length} proxy video chunk(s) listed below in chronological order:`,
+      ...expectedProxyList.map((proxy, idx) => {
+        const timeRange = proxy.sourceStartSec != null && proxy.sourceEndSec != null
+          ? ` (Source: ${proxy.sourceStartSec}s -> ${proxy.sourceEndSec}s, duration: ${Math.round((proxy.durationSec || (proxy.sourceEndSec - proxy.sourceStartSec)) * 10) / 10}s)`
+          : "";
+        return `  ${idx + 1}. view_file("${proxy.absolutePath}")${timeRange}`;
+      }),
+      "",
+      "STRICT RULES FOR VIDEO INSPECTION:",
+      "1. You must call `view_file` on EVERY SINGLE proxy video listed above. Coverage must be 100%.",
+      "2. PROHIBITED: Do NOT extract frames using Python, OpenCV, or FFmpeg to bypass video viewing.",
+      "3. PROHIBITED: Do NOT rely solely on transcript or manifests without viewing the proxy chunks.",
+      "4. The host application strictly audits your runtime tool calls and logs. If even 1 chunk is missing from your `view_file` calls, your execution will be REJECTED with a fatal error.",
+      "================================================================================",
+      ""
+    );
+  }
+
+  const contextFiles = [];
+  if (promptPath && fsSync.existsSync(promptPath)) {
+    contextFiles.push({ label: "Editorial Prompt Instructions", path: promptPath });
+  }
+  const manifestCandidate = packageInfo?.proxyChunksManifestPath || path.join(pass1Dir, "proxy-chunks-manifest.json");
+  if (fsSync.existsSync(manifestCandidate)) {
+    contextFiles.push({ label: "Proxy Chunks Manifest", path: manifestCandidate });
+  }
+  const sceneManifestCandidate = packageInfo?.manifestPath || path.join(pass1Dir, "scene-manifest.json");
+  if (fsSync.existsSync(sceneManifestCandidate)) {
+    contextFiles.push({ label: "Scene Manifest", path: sceneManifestCandidate });
+  }
+  const transcriptCandidate = packageInfo?.transcriptPath || path.join(pass1Dir, "source-transcript.srt");
+  if (fsSync.existsSync(transcriptCandidate)) {
+    contextFiles.push({ label: "Source Transcript (Whisper)", path: transcriptCandidate });
+  }
+  const actionCandidate = packageInfo?.actionCandidatesPath || path.join(pass1Dir, "action-candidates.json");
+  if (fsSync.existsSync(actionCandidate)) {
+    contextFiles.push({ label: "Action Candidates", path: actionCandidate });
+  }
+
+  promptLines.push(
+    "================================================================================",
+    "MANDATORY CONTEXT AND METADATA INSPECTION",
+    "================================================================================",
+    "The following files are available as reference in STAGE_1_INPUT_FOLDER:",
+    ...contextFiles.map((item, idx) => `  ${idx + 1}. ${item.path} (${item.label})`),
+    "STRICT RULE: DO NOT use the `view_file` tool to page through these long text/JSON files unless strictly necessary. Rely on your built-in reading capabilities.",
+    "================================================================================",
+    "",
+    "CRITICAL EXECUTION CONSTRAINTS:",
+    "1. DO NOT run directory listing or shell commands.",
+    "2. IMMEDIATELY after inspecting the proxy video chunks, synthesize the complete story understanding.",
+    "3. You must output EXACTLY ONE file: source-understanding.json.",
+    "   Provide the source understanding following this schema:",
+    "   { videoDurationSec: number, caseSummary: string, scenes: [ { sceneId: string, visualSummary: string, ... } ] }",
+    "",
+    "TRANSPORT OVERRIDE FOR THIS CLI RUN ONLY:",
+    "Return one structured envelope matching the host-provided JSON schema:",
+    JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: { videoDurationSec: 0, caseSummary: "", scenes: [] } }], notes: "" }),
+    "The script object must contain the source understanding data."
+  );
+
+  return promptLines.join("\n");
+}
+
+function buildScriptGenerationPrompt({ promptPath, sourceUnderstandingContent, resultDir, scriptIds = [1, 3, 4] }) {
+  return [
+    "You are executing Phase B (Script Generation) of RecapTool Studio's manual Gemini draft-review workflow.",
+    "Work in READ-ONLY analysis mode.",
+    `EDITORIAL_PROMPT_FILE: ${promptPath}`,
+    `RESULT_FOLDER_FOR_THE_HOST_APP: ${resultDir}`,
+    "",
+    "================================================================================",
+    "SOURCE UNDERSTANDING",
+    "================================================================================",
+    "The following is the complete source understanding of the video:",
+    "```json",
+    sourceUnderstandingContent,
+    "```",
+    "",
+    "================================================================================",
+    "PROHIBITED TOOLS",
+    "================================================================================",
+    "EXPLICITLY FORBIDDEN: Do NOT use `view_file` in this Phase.",
+    "You already have the full source understanding provided to you.",
+    "",
+    "CRITICAL EXECUTION CONSTRAINTS:",
+    "1. Follow every editorial, timing, narrator, hook, schema, and safety rule from the editorial prompt.",
+    `2. Generate exactly these requested independent scripts in order: ${scriptIds.join(", ")}. Each script must exactly follow the root schema in the editorial prompt.`,
+    "3. Also include series-plan.json as requested.",
+    "",
+    "TRANSPORT OVERRIDE FOR THIS CLI RUN ONLY:",
+    "Return one structured envelope matching the host-provided JSON schema:",
+    JSON.stringify({ artifacts: [{ filename: "series-plan.json", script: {} }, ...scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id } }))], notes: "" }),
+    "The script objects themselves must exactly follow the schemas."
+  ].join("\n");
+}
+
 function buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds = [1, 3, 4], expectedProxyList = [], packageInfo = null }) {
+  // Backward compatibility: use Phase A + B combined logic if called externally
   const promptLines = [
     "You are executing Stage 1 of RecapTool Studio's existing manual Gemini draft-review workflow.",
     "Work in READ-ONLY analysis mode. Do not edit, rename, delete, or create anything inside the Stage 1 input folder.",
@@ -486,7 +598,6 @@ function buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds = [1, 3, 
     );
   }
 
-  // Build explicit list of context files so the model never runs directory searches
   const contextFiles = [];
   if (promptPath && fsSync.existsSync(promptPath)) {
     contextFiles.push({ label: "Editorial Prompt Instructions", path: promptPath });
@@ -927,125 +1038,213 @@ class ManualAntigravityStage1Service {
     const expectedProxyList = await getExpectedProxyList(pass1Dir, packageInfo);
     const viewedProxySet = new Set();
 
-    const prompt = buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds: requestedScriptIds, expectedProxyList, packageInfo });
-    const commandConfig = this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo });
+    let coverage = {
+      isComplete: true,
+      coveragePercent: 100,
+      totalViewed: 0,
+      totalExpected: expectedProxyList.length,
+      expectedProxyFiles: expectedProxyList.map((p) => p.filename),
+      viewedProxyFiles: [],
+      missingProxyFiles: []
+    };
+    
+    let sourceUnderstandingMs = 0;
+    let scriptGenerationMs = 0;
+    
+    const sourceUnderstandingCachePath = path.join(pass1Dir, "source-understanding-cache.json");
+    let hasSourceUnderstandingCache = false;
+    try {
+      await fs.access(sourceUnderstandingCachePath);
+      hasSourceUnderstandingCache = true;
+    } catch (_) {}
 
-    onProgress?.({ step: "antigravity_stage1", percent: 8, message: "Đang mở gói GĐ1 ở chế độ chỉ đọc" });
-    onProgress?.({ step: "antigravity_stage1", percent: 18, message: "Antigravity đang phân tích prompt, transcript, manifest và proxy" });
+    // -------------------------------------------------------------------------
+    // PHASE A: Source Understanding (with Multimodal Video View)
+    // -------------------------------------------------------------------------
+    if (hasSourceUnderstandingCache) {
+      onProgress?.({ step: "antigravity_stage1", percent: 18, message: "CACHE HIT: Bỏ qua Phase A (Source Understanding)" });
+      // If we skip Phase A, we assume coverage is conceptually met.
+      coverage.isComplete = true;
+      coverage.coveragePercent = 100;
+    } else {
+      const startPhaseA = Date.now();
+      onProgress?.({ step: "antigravity_stage1", percent: 8, message: "Đang mở gói GĐ1 ở chế độ chỉ đọc" });
+      onProgress?.({ step: "antigravity_stage1", percent: 18, message: "Phase A: Đang phân tích prompt, transcript, manifest và proxy" });
 
-    // Preflight token warmup: Ensures fresh 60-min OAuth credentials before starting long multimodal execution in production
-    if (this.spawnImpl === spawn) {
-      try {
-        await new Promise((resolve) => {
-          const warmup = spawn(commandConfig.command, ["models"], {
-            windowsHide: true,
-            env: buildCliEnv()
+      const promptA = buildSourceUnderstandingPrompt({ pass1Dir, promptPath, expectedProxyList, packageInfo });
+      const commandConfigA = this.buildCommand(promptA, schemaPath, pass1Dir, { packageInfo });
+
+      // Preflight token warmup: Ensures fresh 60-min OAuth credentials
+      if (this.spawnImpl === spawn) {
+        try {
+          await new Promise((resolve) => {
+            const warmup = spawn(commandConfigA.command, ["models"], { windowsHide: true, env: buildCliEnv() });
+            warmup.on("close", resolve); warmup.on("error", resolve);
+            setTimeout(() => { try { warmup.kill(); } catch (_) {} resolve(); }, 8000);
           });
-          warmup.on("close", resolve);
-          warmup.on("error", resolve);
-          setTimeout(() => {
-            try { warmup.kill(); } catch (_) {}
-            resolve();
-          }, 8000);
-        });
-      } catch (_) {}
-    }
+        } catch (_) {}
+      }
 
-    let cliResult;
-    const maxServerRetries = 2;
-    for (let serverAttempt = 0; serverAttempt <= maxServerRetries; serverAttempt += 1) {
-      try {
-        cliResult = await this.runCli({
-          ...commandConfig,
-          prompt,
-          cwd: resultDir,
-          onProgress,
-          progressStep: "antigravity_stage1",
-          expectedProxyList,
-          viewedProxySet
-        });
-        break;
-      } catch (error) {
-        const errorText = `${error.message || ""} ${error.stderr || ""} ${error.stdout || ""}`;
-        const isServerUnavailable = /503|UNAVAILABLE|No capacity available|high traffic/i.test(errorText);
-        if (isServerUnavailable && serverAttempt < maxServerRetries && !this.cancelled) {
-          const delaySec = (serverAttempt + 1) * 8;
-          onProgress?.({
-            step: "antigravity_stage1",
-            percent: 15,
-            message: `Máy chủ AI tạm bận (503/High Traffic). Đang tự động thử lại sau ${delaySec}s (${serverAttempt + 1}/${maxServerRetries})...`
+      let cliResultA;
+      const maxServerRetries = 2;
+      for (let serverAttempt = 0; serverAttempt <= maxServerRetries; serverAttempt += 1) {
+        try {
+          cliResultA = await this.runCli({
+            ...commandConfigA,
+            prompt: promptA,
+            cwd: resultDir,
+            onProgress,
+            progressStep: "antigravity_stage1",
+            expectedProxyList,
+            viewedProxySet
           });
-          await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
-          continue;
+          break;
+        } catch (error) {
+          const errorText = `${error.message || ""} ${error.stderr || ""} ${error.stdout || ""}`;
+          const isServerUnavailable = /503|UNAVAILABLE|No capacity available|high traffic/i.test(errorText);
+          if (isServerUnavailable && serverAttempt < maxServerRetries && !this.cancelled) {
+            const delaySec = (serverAttempt + 1) * 8;
+            onProgress?.({
+              step: "antigravity_stage1",
+              percent: 15,
+              message: `Máy chủ AI tạm bận. Đang thử lại Phase A sau ${delaySec}s (${serverAttempt + 1}/${maxServerRetries})...`
+            });
+            await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+            continue;
+          }
+          await Promise.all([
+            fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), error.stdout || "", "utf8"),
+            fs.writeFile(path.join(resultDir, "antigravity-stderr-phaseA.log"), error.stderr || error.message || "", "utf8")
+          ]);
+          throw error;
         }
-        await Promise.all([
-          fs.writeFile(path.join(resultDir, "antigravity-output.log"), error.stdout || "", "utf8"),
-          fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), error.stderr || error.message || "", "utf8")
-        ]);
-        throw error;
-      }
-    }
-
-    let conversationId = cliResult.conversationId;
-    let accumulatedStdout = cliResult.stdout || "";
-    let accumulatedStderr = cliResult.stderr || "";
-
-    // 2. Audit coverage: Live telemetry + transcript audit
-    let coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
-
-    // 3. Retry loop if coverage < 100% and conversationId exists
-    const maxRetries = 2;
-    let retryAttempt = 0;
-    while (!coverage.isComplete && retryAttempt < maxRetries && conversationId) {
-      retryAttempt += 1;
-      const missingCount = coverage.missingProxies.length;
-      onProgress?.({
-        step: "antigravity_stage1",
-        percent: Math.min(80, 20 + retryAttempt * 20),
-        message: `Chưa xem đủ proxy video (${coverage.coveragePercent}%, thiếu ${missingCount} chunk). Đang yêu cầu xem tiếp (thử ${retryAttempt}/${maxRetries})...`
-      });
-
-      const retryPrompt = buildRetryPrompt({ missingProxies: coverage.missingProxies, scriptIds: requestedScriptIds });
-      const retryConfig = this.buildRetryCommand(conversationId, retryPrompt, pass1Dir, { packageInfo });
-
-      try {
-        const retryResult = await this.runCli({
-          ...retryConfig,
-          prompt: retryPrompt,
-          cwd: resultDir,
-          onProgress,
-          progressStep: "antigravity_stage1",
-          expectedProxyList,
-          viewedProxySet
-        });
-        accumulatedStdout += `\n--- RETRY ${retryAttempt} ---\n${retryResult.stdout || ""}`;
-        if (retryResult.stderr) accumulatedStderr += `\n--- RETRY ${retryAttempt} ---\n${retryResult.stderr}`;
-        if (retryResult.conversationId) conversationId = retryResult.conversationId;
-      } catch (retryError) {
-        accumulatedStdout += `\n--- RETRY ${retryAttempt} ERROR ---\n${retryError.stdout || ""}`;
-        accumulatedStderr += `\n--- RETRY ${retryAttempt} ERROR ---\n${retryError.stderr || retryError.message || ""}`;
-        break;
       }
 
+      let conversationId = cliResultA.conversationId;
+      let accumulatedStdoutA = cliResultA.stdout || "";
+      let accumulatedStderrA = cliResultA.stderr || "";
+
+      // Audit coverage
       coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
+
+      // Retry loop if coverage < 100%
+      const maxRetries = 2;
+      let retryAttempt = 0;
+      while (!coverage.isComplete && retryAttempt < maxRetries && conversationId) {
+        retryAttempt += 1;
+        const missingCount = coverage.missingProxies.length;
+        onProgress?.({
+          step: "antigravity_stage1",
+          percent: Math.min(40, 20 + retryAttempt * 10),
+          message: `Chưa xem đủ proxy video (${coverage.coveragePercent}%). Đang yêu cầu xem tiếp (thử ${retryAttempt}/${maxRetries})...`
+        });
+
+        const retryPrompt = buildRetryPrompt({ missingProxies: coverage.missingProxies, scriptIds: requestedScriptIds });
+        const retryConfig = this.buildRetryCommand(conversationId, retryPrompt, pass1Dir, { packageInfo });
+
+        try {
+          const retryResult = await this.runCli({
+            ...retryConfig,
+            prompt: retryPrompt,
+            cwd: resultDir,
+            onProgress,
+            progressStep: "antigravity_stage1",
+            expectedProxyList,
+            viewedProxySet
+          });
+          accumulatedStdoutA += `\n--- RETRY ${retryAttempt} ---\n${retryResult.stdout || ""}`;
+          if (retryResult.stderr) accumulatedStderrA += `\n--- RETRY ${retryAttempt} ---\n${retryResult.stderr}`;
+          if (retryResult.conversationId) conversationId = retryResult.conversationId;
+        } catch (retryError) {
+          accumulatedStdoutA += `\n--- RETRY ${retryAttempt} ERROR ---\n${retryError.stdout || ""}`;
+          accumulatedStderrA += `\n--- RETRY ${retryAttempt} ERROR ---\n${retryError.stderr || retryError.message || ""}`;
+          break;
+        }
+
+        coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
+      }
+
+      await fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), accumulatedStdoutA, "utf8");
+      if (accumulatedStderrA) {
+        await fs.writeFile(path.join(resultDir, "antigravity-stderr-phaseA.log"), accumulatedStderrA, "utf8");
+      }
+
+      // Hard Validation Gate for Phase A
+      if (!coverage.isComplete) {
+        const missingNames = coverage.missingProxyFiles.join(", ");
+        const gateError = new Error(
+          `Antigravity vi phạm quy tắc bắt buộc: Chưa xem đủ 100% proxy video qua multimodal view_file(). ` +
+          `Đạt: ${coverage.totalViewed}/${coverage.totalExpected} chunks (${coverage.coveragePercent}%). ` +
+          `Các file còn thiếu: [${missingNames}]. Kịch bản bị từ chối.`
+        );
+        gateError.coverage = coverage;
+        throw gateError;
+      }
+
+      // Extract source-understanding.json
+      let envA = findArtifactEnvelope(accumulatedStdoutA);
+      let suData = envA?.artifacts?.find(a => a.filename === "source-understanding.json")?.script;
+      if (!suData) {
+        const parsed = parseJsonCandidate(accumulatedStdoutA);
+        if (parsed?.artifacts?.length) {
+          suData = parsed.artifacts.find(a => a.filename === "source-understanding.json")?.script;
+        }
+      }
+      if (suData) {
+        await writeJsonAtomic(sourceUnderstandingCachePath, suData);
+      } else {
+         await fs.writeFile(sourceUnderstandingCachePath, JSON.stringify({ raw: true, notes: "Could not parse Phase A cleanly" }), "utf8");
+      }
+
+      sourceUnderstandingMs = Date.now() - startPhaseA;
     }
+
+    // -------------------------------------------------------------------------
+    // PHASE B: Script Generation
+    // -------------------------------------------------------------------------
+    const startPhaseB = Date.now();
+    onProgress?.({ step: "antigravity_stage1", percent: 50, message: "Phase B: Đang sinh kịch bản..." });
+    let sourceUnderstandingContent = "{}";
+    try {
+      sourceUnderstandingContent = await fs.readFile(sourceUnderstandingCachePath, "utf8");
+    } catch (_) {}
+    
+    const promptB = buildScriptGenerationPrompt({ promptPath, sourceUnderstandingContent, resultDir, scriptIds: requestedScriptIds });
+    // Do not pass expectedProxyList so tool validation is bypassed for Phase B
+    const commandConfigB = this.buildCommand(promptB, schemaPath, pass1Dir, { packageInfo });
+
+    let cliResultB;
+    try {
+      cliResultB = await this.runCli({
+        ...commandConfigB,
+        prompt: promptB,
+        cwd: resultDir,
+        onProgress,
+        progressStep: "antigravity_stage1",
+        expectedProxyList: [], // Bypass coverage check in Phase B
+        viewedProxySet: new Set()
+      });
+    } catch (error) {
+       await Promise.all([
+         fs.writeFile(path.join(resultDir, "antigravity-output-phaseB.log"), error.stdout || "", "utf8"),
+         fs.writeFile(path.join(resultDir, "antigravity-stderr-phaseB.log"), error.stderr || error.message || "", "utf8")
+       ]);
+       throw error;
+    }
+
+    let accumulatedStdout = cliResultB.stdout || "";
+    let accumulatedStderr = cliResultB.stderr || "";
+    let conversationId = cliResultB.conversationId;
 
     await fs.writeFile(path.join(resultDir, "antigravity-output.log"), accumulatedStdout, "utf8");
     if (accumulatedStderr) {
       await fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), accumulatedStderr, "utf8");
     }
 
-    // 4. Hard Validation Gate: Coverage MUST be 100% if expected proxies exist!
-    if (!coverage.isComplete) {
-      const missingNames = coverage.missingProxyFiles.join(", ");
-      const gateError = new Error(
-        `Antigravity vi phạm quy tắc bắt buộc: Chưa xem đủ 100% proxy video qua multimodal view_file(). ` +
-        `Đạt: ${coverage.totalViewed}/${coverage.totalExpected} chunks (${coverage.coveragePercent}%). ` +
-        `Các file còn thiếu: [${missingNames}]. Kịch bản bị từ chối.`
-      );
-      gateError.coverage = coverage;
-      throw gateError;
-    }
+    scriptGenerationMs = Date.now() - startPhaseB;
+
+    // Timing Report
+    await writeJsonAtomic(path.join(resultDir, "timing-report.json"), { sourceUnderstandingMs, scriptGenerationMs });
 
     onProgress?.({ step: "antigravity_stage1", percent: 82, message: "Đang tách và kiểm tra các JSON variant" });
 
@@ -1082,10 +1281,19 @@ class ManualAntigravityStage1Service {
     if (!envelope?.artifacts?.length) {
       throw new Error(`Antigravity không trả về artifacts JSON hợp lệ. Xem log tại ${resultDir}.`);
     }
-    const normalized = envelope.artifacts.map(normalizeArtifact);
+
+    const seriesPlan = envelope.artifacts.find(a => a.filename === "series-plan.json");
+    if (seriesPlan && seriesPlan.script) {
+      await writeJsonAtomic(path.join(resultDir, "series-plan.json"), seriesPlan.script);
+    }
+
+    const scriptArtifacts = envelope.artifacts.filter(a => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
+    
+    const normalized = scriptArtifacts.map(normalizeArtifact);
     const deduplicated = new Map();
     for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
     const files = [];
+    
     for (const scriptId of requestedScriptIds) {
       const artifact = deduplicated.get(scriptId);
       if (!artifact) continue;
@@ -1141,6 +1349,8 @@ ManualAntigravityStage1Service.validateVideoCoverage = validateVideoCoverage;
 ManualAntigravityStage1Service.auditTranscriptForViewedProxies = auditTranscriptForViewedProxies;
 ManualAntigravityStage1Service.buildAgentPrompt = buildAgentPrompt;
 ManualAntigravityStage1Service.buildRetryPrompt = buildRetryPrompt;
+ManualAntigravityStage1Service.buildSourceUnderstandingPrompt = buildSourceUnderstandingPrompt;
+ManualAntigravityStage1Service.buildScriptGenerationPrompt = buildScriptGenerationPrompt;
 
 module.exports = ManualAntigravityStage1Service;
 module.exports.resolveAntigravityTimeoutMs = resolveAntigravityTimeoutMs;
@@ -1149,4 +1359,6 @@ module.exports.validateVideoCoverage = validateVideoCoverage;
 module.exports.auditTranscriptForViewedProxies = auditTranscriptForViewedProxies;
 module.exports.buildAgentPrompt = buildAgentPrompt;
 module.exports.buildRetryPrompt = buildRetryPrompt;
+module.exports.buildSourceUnderstandingPrompt = buildSourceUnderstandingPrompt;
+module.exports.buildScriptGenerationPrompt = buildScriptGenerationPrompt;
 

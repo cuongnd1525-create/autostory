@@ -242,16 +242,19 @@ function selectReviewProxyChunks(proxyManifest = {}, segments = [], maxFiles = 6
   const chunks = (Array.isArray(proxyManifest?.chunks) ? proxyManifest.chunks : [])
     .map((chunk, index) => ({ ...chunk, _index: index }))
     .sort((left, right) => safeNumber(left.sourceStartSec) - safeNumber(right.sourceStartSec));
-  if (chunks.length <= maxFiles) {
-    return chunks.map(({ _index, ...chunk }) => chunk);
-  }
+
   const ranges = (Array.isArray(segments) ? segments : [])
     .map((segment) => ({
       startSec: safeNumber(segment.sourceStartSec, -1),
       endSec: safeNumber(segment.sourceEndSec, -1)
     }))
     .filter((range) => range.startSec >= 0 && range.endSec > range.startSec);
-  const ranked = chunks
+
+  if (!ranges.length) {
+    return chunks.slice(0, maxFiles).map(({ _index, ...chunk }) => chunk);
+  }
+
+  const overlappingChunks = chunks
     .map((chunk) => {
       const startSec = safeNumber(chunk.sourceStartSec, -1);
       const endSec = safeNumber(chunk.sourceEndSec, -1);
@@ -260,20 +263,11 @@ function selectReviewProxyChunks(proxyManifest = {}, segments = [], maxFiles = 6
       ), 0);
       return { ...chunk, _overlapSec: overlapSec };
     })
-    .filter((chunk) => chunk._overlapSec > 0)
+    .filter((chunk) => chunk._overlapSec > 0);
+
+  return overlappingChunks
     .sort((left, right) => right._overlapSec - left._overlapSec || left._index - right._index)
-    .slice(0, Math.min(2, Math.max(1, maxFiles)));
-  const selected = new Map(ranked.map((chunk) => [chunk._index, chunk]));
-  const remainingSlots = Math.max(0, maxFiles - selected.size);
-  for (let slot = 0; slot < remainingSlots; slot += 1) {
-    const targetIndex = Math.round((slot * (chunks.length - 1)) / Math.max(1, remainingSlots - 1));
-    let candidate = chunks[targetIndex];
-    if (selected.has(candidate._index)) {
-      candidate = chunks.find((chunk) => !selected.has(chunk._index)) || candidate;
-    }
-    selected.set(candidate._index, candidate);
-  }
-  return [...selected.values()]
+    .slice(0, maxFiles)
     .sort((left, right) => safeNumber(left.sourceStartSec) - safeNumber(right.sourceStartSec))
     .map(({ _index, _overlapSec, ...chunk }) => chunk);
 }
@@ -398,9 +392,15 @@ function buildDraftTimeline(variant = {}) {
   const independentEditorialMode = safeText(variant.promptProfile || "independent").toLowerCase() === "independent"
     && variant.seriesMode !== "interleaved_multipart";
   const segments = (variant.segments || []).map((segment, index) => {
+    const playbackSpeed = Number(Math.max(0.1, safeNumber(segment.playbackSpeed, 1)));
+    const sourceDuration = Math.max(0, safeNumber(segment.sourceEndSec) - safeNumber(segment.sourceStartSec));
+    const calculatedDuration = sourceDuration / playbackSpeed;
+    const explicitDuration = Number.isFinite(Number(segment.endSec)) && Number.isFinite(Number(segment.startSec)) 
+      ? Number(segment.endSec) - Number(segment.startSec) 
+      : calculatedDuration;
     const requestedDuration = Math.max(
       0.2,
-      safeNumber(segment.duration, safeNumber(segment.endSec) - safeNumber(segment.startSec))
+      safeNumber(segment.duration, explicitDuration)
     );
     const outputStartSec = Number.isFinite(Number(segment.resolvedPreviewStartSec))
       ? Number(segment.resolvedPreviewStartSec)

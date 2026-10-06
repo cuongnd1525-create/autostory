@@ -42,7 +42,8 @@
   },
   "devDependencies": {
     "electron": "^35.2.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "msedge-tts": "^2.0.5",

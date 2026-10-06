@@ -57,10 +57,9 @@ const reviewChunks = GeminiDraftReviewService.selectReviewProxyChunks({
     sourceEndSec: (index + 1) * 100
   }))
 }, [{ sourceStartSec: 310, sourceEndSec: 350 }], 6);
-assert.strictEqual(reviewChunks.length, 6);
-assert.strictEqual(reviewChunks[0].sourceStartSec, 0);
-assert.strictEqual(reviewChunks.at(-1).sourceEndSec, 800);
-assert.ok(reviewChunks.some((chunk) => chunk.sourceStartSec === 300));
+assert.strictEqual(reviewChunks.length, 1);
+assert.strictEqual(reviewChunks[0].sourceStartSec, 300);
+assert.strictEqual(reviewChunks.at(-1).sourceEndSec, 400);
 
 const semanticCues = GeminiDraftReviewService.parseSrtCues([
   "1",

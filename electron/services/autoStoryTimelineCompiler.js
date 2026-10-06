@@ -84,8 +84,10 @@ function compile(decisions, { story, evidence, config, sourceDuration = Infinity
     }
     const clipStart = clip.sourceStart ?? clip.sourceStartSec;
     const id = `s${story.scriptId}_${hash([index, start, end, d.storyRole])}`;
+    const playbackSpeed = d.playbackSpeed || 1;
+    const segmentDuration = (end - start) / playbackSpeed;
     const segment = { id, evidenceId: clip.id, start: start - clipStart, end: end - clipStart,
-      sourceStartSec: start, sourceEndSec: end, outputStartSec: cursor, outputEndSec: cursor + end - start,
+      sourceStartSec: start, sourceEndSec: end, playbackSpeed, outputStartSec: cursor, outputEndSec: cursor + segmentDuration,
       storyRole: d.storyRole, narrativePurpose: d.reason || '', audioMode: d.audioIntent === 'original' ? 'original_audio' : 'voiceover_only',
       sourceNarratorPresent: d.audioIntent === 'original' ? false : ['mixed', 'external_narrator'].includes(d.audio?.audioType),
       audioClassification: d.audio, voiceoverText: d.voiceoverText || '', previewVi: d.previewVi || '' };

@@ -4801,19 +4801,6 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     return this.synthesizeFastDraftVoiceDirect({ project, settings, text, outputPath, voiceRenderOptions });
   }
   async synthesizeFastDraftVoiceDirect({ project, settings = {}, text, outputPath, voiceRenderOptions = {} }) {
-    if (project.analysisWorkflow === "vertex_auto_story" && project.draftVoiceMode === "final") {
-      const cache = getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOptions });
-      const measuredPath = project.autoStoryVoiceCache?.[cache.cacheKey];
-      if (measuredPath) {
-        try {
-          const stat = await fs.stat(measuredPath);
-          if (stat.size > 512) {
-            if (path.resolve(measuredPath) !== path.resolve(outputPath)) await fs.copyFile(measuredPath, outputPath);
-            return { outputPath, cacheHit: true, provider: cache.provider, voiceId: cache.voiceId };
-          }
-        } catch (_) { /* Recreate missing measured audio using the selected voice. */ }
-      }
-    }
     const draftMode = project.draftVoiceMode || "edge_neural";
     const provider = draftMode === "final"
       ? (project.voiceProvider || settings.defaultVoiceProvider || "edge_neural")
@@ -4825,25 +4812,45 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       : draftMode === "custom"
         ? (project.draftVoiceId || "")
         : "";
+        
+    const draftProject = {
+      ...project,
+      voiceProvider: provider,
+      voiceId
+    };
+
+    const cache = getVoiceCacheInfo({ settings, project: draftProject, text, outputPath, voiceRenderOptions });
+    const measuredPath = project.autoStoryVoiceCache?.[cache.cacheKey];
+    if (measuredPath) {
+      try {
+        const stat = await fs.stat(measuredPath);
+        if (stat.size > 512) {
+          if (path.resolve(measuredPath) !== path.resolve(outputPath)) await fs.copyFile(measuredPath, outputPath);
+          return { outputPath, cacheHit: true, provider: cache.provider, voiceId: cache.voiceId };
+        }
+      } catch (_) { /* Recreate missing measured audio using the selected voice. */ }
+    }
+
+    try {
+      const outStat = await fs.stat(outputPath);
+      if (outStat.size > 512) {
+        return { outputPath, cacheHit: true, provider: cache.provider, voiceId: cache.voiceId };
+      }
+    } catch (_) { /* Continue rendering */ }
     if (provider === "kokoro" && !/^[ab][fm]_[a-z0-9_]+$/i.test(voiceId)) {
-      voiceId = project.voiceProvider === "kokoro" && /^[ab][fm]_[a-z0-9_]+$/i.test(project.voiceId || "")
-        ? project.voiceId
+      voiceId = draftProject.voiceProvider === "kokoro" && /^[ab][fm]_[a-z0-9_]+$/i.test(draftProject.voiceId || "")
+        ? draftProject.voiceId
         : "af_heart";
     }
     if (provider === "edge_neural" && voiceId && !/Neural$/i.test(voiceId)) {
       voiceId = "";
     }
     if (provider !== "edge_neural") {
-      const draftProject = {
-        ...project,
-        voiceProvider: provider,
-        voiceId,
-        cloneSourceVoice: draftMode === "final" ? project.cloneSourceVoice : false,
-        voiceDesign: {
-          ...(project.voiceDesign || {}),
-          presetProvider: provider,
-          presetVoiceId: voiceId
-        }
+      draftProject.cloneSourceVoice = draftMode === "final" ? project.cloneSourceVoice : false;
+      draftProject.voiceDesign = {
+        ...(project.voiceDesign || {}),
+        presetProvider: provider,
+        presetVoiceId: voiceId
       };
       return this.synthesizeDubbingVoice({
         settings,
@@ -6221,7 +6228,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }
     const paths = this.projectStore.getProjectPaths(workspaceRoot, projectId);
     const ffmpeg = new FfmpegService(settings);
-    const autoStorySourceStat = project.analysisWorkflow === "vertex_auto_story" ? await fs.stat(project.sourceVideoPath) : null;
+    const autoStorySourceStat = await fs.stat(project.sourceVideoPath).catch(() => null);
     const activeVariant = getActiveHighlightVariant(project);
     const variantId = activeVariant.id || "variant_01";
     const variantMetadata = resolveVariantFileMetadata(project, activeVariant);
