@@ -1436,20 +1436,23 @@ class ManualAntigravityStage1Service {
     const commandParts = splitArgs(this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy");
     const command = commandParts[0] || "agy";
     let args = [...commandParts.slice(1), ...splitArgs(this.settings.antigravityArgs || process.env.ANTIGRAVITY_ARGS || "")];
-    const rawModel = String(this.settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "").trim();
-    const model = normalizeAntigravityModel(rawModel);
+    const rawConfiguredModel = String(this.settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "").trim();
+    const rawOverrideModel = String(options.modelOverride || "").trim();
+    const requestedModel = normalizeAntigravityModel(rawOverrideModel || rawConfiguredModel);
 
-    // Normalize any existing --model flag in args
-    let activeModel = model;
+    // Normalize any existing --model flag in args. A stage-specific override
+    // wins over antigravityArgs / the globally selected model.
+    let activeModel = requestedModel;
     for (let index = 0; index < args.length; index += 1) {
       if (args[index] === "--model" && args[index + 1]) {
-        args[index + 1] = normalizeAntigravityModel(args[index + 1]);
-        activeModel = args[index + 1];
+        const norm = rawOverrideModel ? requestedModel : normalizeAntigravityModel(args[index + 1]);
+        args[index + 1] = norm;
+        activeModel = norm;
         break;
       }
       if (args[index].startsWith("--model=")) {
         const val = args[index].slice("--model=".length);
-        const norm = normalizeAntigravityModel(val);
+        const norm = rawOverrideModel ? requestedModel : normalizeAntigravityModel(val);
         args[index] = `--model=${norm}`;
         activeModel = norm;
         break;
@@ -2562,6 +2565,11 @@ class ManualAntigravityStage1Service {
     const metrics = newMetrics();
     const label = `PHASE_A_MAP ${task.chunkId}`;
     const tag = `[MAP ${task.chunkId}]`;
+    const mapModel = normalizeAntigravityModel(
+      this.settings.antigravityMapModel
+      || process.env.ANTIGRAVITY_MAP_MODEL
+      || "gemini-3.7-flash-medium"
+    );
     const record = {
       chunkId: task.chunkId,
       proxyFile: task.proxy.filename,
@@ -2577,6 +2585,7 @@ class ManualAntigravityStage1Service {
       actionCount: task.actions.length,
       startedAt: new Date(startedAt).toISOString(),
       timeoutMs: timeouts.mapChunkTimeoutMs,
+      model: mapModel,
       coverageRetryCount: 0,
       promptBlockRetryCount: 0,
       serializationRepair: "none",
@@ -2699,14 +2708,14 @@ class ManualAntigravityStage1Service {
       await fs.writeFile(path.join(workDir, `prompt-attempt${attemptNo}.txt`), prompt, "utf8").catch(() => {});
       record.promptChars = prompt.length;
       record.contextMode = contextMode;
-      this.emitLog(onProgress, 13, `${tag} START attempt ${attemptNo} (${contextMode === "inline" ? "context inline" : "context file"}${strictCoverage ? ", strict coverage" : ""}, timeout ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s).`, logs);
+      this.emitLog(onProgress, 13, `${tag} START attempt ${attemptNo} (model ${mapModel}, ${contextMode === "inline" ? "context inline" : "context file"}${strictCoverage ? ", strict coverage" : ""}, timeout ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s).`, logs);
       pool.active += 1;
       pool.maxActive = Math.max(pool.maxActive, pool.active);
       const viewsBefore = metrics.viewFileVideoCount;
       try {
         outcome = await this.runAgyOnce({
           label,
-          commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.mapChunkTimeoutMs }),
+          commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.mapChunkTimeoutMs, modelOverride: mapModel }),
           prompt, resultDir: workDir, cwd: workDir, onProgress: chunkProgress, expectedProxyList: [task.proxy], viewedProxySet, metrics, logs,
           logBase: task.chunkId, toolGuard, activityLabel: "Antigravity đang phân tích video..."
         });
@@ -2835,7 +2844,7 @@ class ManualAntigravityStage1Service {
         videoViewed: true,
         viewedProxyFiles: coverage.viewedProxyFiles,
         conversationId: conversationId || null,
-        model: this.settings.antigravityModel || "",
+        model: mapModel,
         durationMs: Date.now() - startedAt,
         agyProcessCount: metrics.agyProcessCount,
         videoViewFileCount: metrics.viewFileVideoCount,
@@ -2852,6 +2861,13 @@ class ManualAntigravityStage1Service {
 
   async runReducer({ chunks, pass1Dir, packageInfo, resultDir, schemaPath, videoDurationSec, timeouts, onProgress, logs, diagnostics, metrics }) {
     const label = "PHASE_A_REDUCE";
+    const reduceModel = normalizeAntigravityModel(
+      this.settings.antigravityReduceModel
+      || process.env.ANTIGRAVITY_REDUCE_MODEL
+      || this.settings.antigravityMapModel
+      || process.env.ANTIGRAVITY_MAP_MODEL
+      || "gemini-3.7-flash-medium"
+    );
     const overhead = MapReduce.buildReducePrompt({ reducerInput: "", videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors: ["x".repeat(900)] }).length;
     const budget = MAX_PRINT_PROMPT_CHARS - overhead - 200;
     let { text: reducerInput, overBudget } = MapReduce.renderReducerInputWithinBudget(chunks, budget);
@@ -2878,7 +2894,8 @@ class ManualAntigravityStage1Service {
       percent: Math.min(45, Math.max(41, Math.round(41 + (Number(item.percent) - 18) * 0.05))),
       message: `[REDUCE] ${String(item.message || "")}`.slice(0, 220)
     });
-    this.emitLog(onProgress, 41, `[REDUCE] START (text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
+    diagnostics.reduce.model = reduceModel;
+    this.emitLog(onProgress, 41, `[REDUCE] START (model ${reduceModel}, text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
     let errors = [];
     let capacityRetries = 0;
     let repairs = 0;
@@ -2891,7 +2908,7 @@ class ManualAntigravityStage1Service {
       }), "Phase A reduce");
       const outcome = await this.runAgyOnce({
         label,
-        commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.reduceTimeoutMs }),
+        commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.reduceTimeoutMs, modelOverride: reduceModel }),
         prompt, resultDir: workDir, cwd: workDir, onProgress: reduceProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
         logBase: "reduce", toolGuard, activityLabel: "Antigravity đang tổng hợp (text-only)..."
       });
