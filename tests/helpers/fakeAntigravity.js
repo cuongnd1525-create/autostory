@@ -137,7 +137,22 @@ function reduceDurationFromPrompt(prompt = "") {
   return match ? Number(match[1]) : 0;
 }
 
+function mapSerializeTaskFromPrompt(prompt = "") {
+  const match = prompt.match(/for (chunk-\d+) \(([\d.]+)-([\d.]+) SOURCE seconds\)/);
+  const outputMatch = prompt.match(/write ONLY the bare JSON object to:\s*(.+)$/m);
+  const contextMatch = prompt.match(/view_file\("([^"]+-context\.txt)"/);
+  return match ? {
+    chunkId: match[1],
+    startSec: Number(match[2]),
+    endSec: Number(match[3]),
+    outputPath: outputMatch ? outputMatch[1].trim() : "",
+    contextPath: contextMatch ? contextMatch[1] : ""
+  } : null;
+}
+
 function classifyPrompt(prompt = "") {
+  if (prompt.includes("You are the Phase A MAP video viewer")) return "map";
+  if (prompt.includes("You already completed view_file for") && prompt.includes("Now create the compact source understanding")) return "map_serialize";
   if (prompt.includes("You are a Phase A MAP worker")) return "map";
   if (prompt.includes("You are the Phase A REDUCER")) return "reduce";
   if (prompt.includes("Return ONLY the chunk understanding JSON object")) return "map_repair";
@@ -263,7 +278,18 @@ function defaultResponder({ durationSec = 20, scriptIds = [1, 3, 4], phaseBViewF
       const task = mapTaskFromPrompt(prompt);
       return {
         viewFiles: [task.proxy],
-        envelope: { artifacts: [{ filename: `chunk-understanding-${task.chunkId}.json`, script: buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec) }] }
+        rawResult: "VIEW_DONE"
+      };
+    }
+    if (kind === "map_serialize") {
+      const task = mapSerializeTaskFromPrompt(prompt);
+      return {
+        viewFiles: task.contextPath ? [task.contextPath] : [],
+        writeFiles: task.outputPath ? [{
+          path: task.outputPath,
+          content: buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec)
+        }] : [],
+        rawResult: "MAP_DONE"
       };
     }
     if (kind === "reduce") {
@@ -297,6 +323,7 @@ module.exports = {
   buildUnderstanding,
   buildChunkUnderstanding,
   mapTaskFromPrompt,
+  mapSerializeTaskFromPrompt,
   reduceDurationFromPrompt,
   classifyPrompt,
   buildScript,
