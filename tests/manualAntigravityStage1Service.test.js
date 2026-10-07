@@ -123,7 +123,9 @@ async function createPackage() {
   assert(calls[0].args.includes("accept-edits"));
   assert(calls[0].args.includes("--dangerously-skip-permissions"), "headless Stage 1 needs non-interactive file inspection permission");
   assert(!calls[0].args.some((arg) => arg === "--json-schema" || arg.startsWith("--json-schema=")), "agy 1.1.22 JSON schema transport must stay disabled");
-  assert(calls[0].args.includes("test-model"));
+  assert(calls[0].args.includes("gemini-3.7-flash-medium"), "Phase A MAP defaults to the stable low-latency model");
+  assert(calls[1].args.includes("gemini-3.7-flash-medium"), "Phase A REDUCE uses the same stable low-latency model");
+  assert(calls[2].args.includes("test-model"), "Phase B keeps the user's configured high-quality model");
   assert(progress.some((item) => item.percent === 100));
 
   const schemaArgService = new ManualAntigravityStage1Service({
@@ -144,6 +146,9 @@ async function createPackage() {
   const flashHighCmd = flashHighService.buildCommand("test", "schema.json", fixture.pass1Dir);
   assert(flashHighCmd.args.includes("gemini-3.8-flash-high"), "Display label should be normalized to canonical ID");
   assert(!flashHighCmd.args.includes("--effort"), "--effort must not be passed to model with fixed effort");
+  const phaseOverrideCmd = flashHighService.buildCommand("test", "schema.json", fixture.pass1Dir, { modelOverride: "Gemini 3.7 Flash (Medium)" });
+  assert(phaseOverrideCmd.args.includes("gemini-3.7-flash-medium"), "stage model override must replace the configured model");
+  assert(!phaseOverrideCmd.args.includes("gemini-3.8-flash-high"), "stage override must not leak the global model");
 
   const claudeService = new ManualAntigravityStage1Service({
     antigravityCommand: "agy",
