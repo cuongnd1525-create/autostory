@@ -2673,23 +2673,22 @@ class ManualAntigravityStage1Service {
       writeJsonAtomic(path.join(workDir, `${task.chunkId}-actions.json`), task.actions),
       fs.writeFile(contextPath, contextText, "utf8")
     ]);
-    let contextMode = MapReduce.buildMapPrompt({ task, contextText, outputPath }).length > MAX_PRINT_PROMPT_CHARS ? "file" : "inline";
-    const buildPrompt = ({ strictCoverage = false } = {}) => (contextMode === "inline"
-      ? MapReduce.buildMapPrompt({ task, contextText, strictCoverage, outputPath })
-      : MapReduce.buildMapPrompt({ task, contextPath, contextLineCount, strictCoverage, outputPath }));
+    const contextMode = "file";
+    const buildPrompt = ({ strictCoverage = false } = {}) => MapReduce.buildMapPrompt({ task, strictCoverage });
     const allowedVideo = path.basename(String(task.proxy.absolutePath).replace(/\\/g, "/")).toLowerCase();
+    const allowedContext = path.basename(contextPath).toLowerCase();
     const baseOf = (value) => path.basename(String(value || "").replace(/\\/g, "/")).toLowerCase();
-    const toolGuard = ({ toolName, file, stepUpdate }) => {
-      if (toolName === "view_file") {
-        const name = baseOf(file);
-        if (name === allowedVideo || (contextMode === "file" && name === baseOf(contextPath))) return null;
-        return `map ${task.chunkId} chỉ được xem ${task.proxy.filename}`;
-      }
+    const viewToolGuard = ({ toolName, file }) => {
+      if (toolName === "view_file" && baseOf(file) === allowedVideo) return null;
+      return `map-view ${task.chunkId} chỉ được gọi view_file(${task.proxy.filename})`;
+    };
+    const serializationToolGuard = ({ toolName, file, stepUpdate }) => {
+      if (toolName === "view_file" && baseOf(file) === allowedContext) return null;
       if (toolName === "write_to_file") {
         const target = stepUpdate?.tool_info?.parameters?.TargetFile || file;
-        return !target || baseOf(target) === transportName.toLowerCase() ? null : `map ${task.chunkId} chỉ được ghi ${transportName}`;
+        return !target || baseOf(target) === transportName.toLowerCase() ? null : `map-serialize ${task.chunkId} chỉ được ghi ${transportName}`;
       }
-      return `map ${task.chunkId} không được dùng ${toolName || "công cụ"}`;
+      return `map-serialize ${task.chunkId} không được dùng ${toolName || "công cụ"}`;
     };
     const chunkProgress = (item = {}) => onProgress?.({
       step: item.step || "antigravity_stage1",
@@ -2705,10 +2704,18 @@ class ManualAntigravityStage1Service {
     let strictCoverage = false;
     let capacityRetries = 0;
     let videoViewedByEarlierProcess = false;
+    const configuredViewTimeout = Number(this.settings.sourceUnderstandingMapViewTimeoutMs);
+    const viewTimeoutMs = Number.isFinite(configuredViewTimeout) && configuredViewTimeout > 0
+      ? Math.max(60000, Math.min(timeouts.mapChunkTimeoutMs, configuredViewTimeout))
+      : Math.min(timeouts.mapChunkTimeoutMs, 180000);
+    const configuredHandoffGrace = Number(this.settings.sourceUnderstandingVideoHandoffGraceMs);
+    const handoffGraceMs = Number.isFinite(configuredHandoffGrace) && configuredHandoffGrace >= 0
+      ? configuredHandoffGrace
+      : 1200;
     for (;;) {
       if (this.cancelled) return failChunk("cancelled", "Đã dừng theo yêu cầu.");
       try {
-        await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.mapChunkTimeoutMs });
+        await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs, stageTimeoutMs: viewTimeoutMs });
       } catch (error) {
         stopState.kind = error.kind || "auth";
         stopState.reason = String(error.message || "").slice(0, 300);
@@ -2720,16 +2727,19 @@ class ManualAntigravityStage1Service {
       await fs.writeFile(path.join(workDir, `prompt-attempt${attemptNo}.txt`), prompt, "utf8").catch(() => {});
       record.promptChars = prompt.length;
       record.contextMode = contextMode;
-      this.emitLog(onProgress, 13, `${tag} START attempt ${attemptNo} (${contextMode === "inline" ? "context inline" : "context file"}${strictCoverage ? ", strict coverage" : ""}, timeout ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s).`, logs);
+      record.viewTimeoutMs = viewTimeoutMs;
+      record.videoHandoffGraceMs = handoffGraceMs;
+      this.emitLog(onProgress, 13, `${tag} VIEW START attempt ${attemptNo} (video-only${strictCoverage ? ", strict coverage" : ""}, timeout ${Math.round(viewTimeoutMs / 1000)}s; handoff sau DONE + ${Math.round(handoffGraceMs / 1000)}s).`, logs);
       pool.active += 1;
       pool.maxActive = Math.max(pool.maxActive, pool.active);
       const viewsBefore = metrics.viewFileVideoCount;
       try {
         outcome = await this.runAgyOnce({
           label,
-          commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.mapChunkTimeoutMs }),
+          commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: viewTimeoutMs }),
           prompt, resultDir: workDir, cwd: workDir, onProgress: chunkProgress, expectedProxyList: [task.proxy], viewedProxySet, metrics, logs,
-          logBase: task.chunkId, toolGuard, activityLabel: "Antigravity đang phân tích video..."
+          logBase: task.chunkId, toolGuard: viewToolGuard, activityLabel: "Antigravity đang hoàn tất lượt xem video...",
+          handoffOnVideoCoverage: true, videoCoverageHandoffGraceMs: handoffGraceMs
         });
       } finally {
         pool.active -= 1;
@@ -2752,11 +2762,10 @@ class ManualAntigravityStage1Service {
         if (outcome.kind === "prompt_blocked") {
           if (record.promptBlockRetryCount < 1 && !viewedVideo) {
             record.promptBlockRetryCount += 1;
-            contextMode = "file";
-            this.emitLog(onProgress, 14, `${tag} RETRY: AGY từ chối prompt (policy filter, 0 token, model không chạy). Chạy lại riêng chunk này với ngữ cảnh trong file ${path.basename(contextPath)} (1 lần).`, logs);
+            this.emitLog(onProgress, 14, `${tag} RETRY: AGY từ chối prompt video-only trước khi model chạy. Thử lại riêng chunk này một lần.`, logs);
             continue;
           }
-          return failChunk("prompt_blocked", `${describeAgyFailure("prompt_blocked")} Đã thử lại với ngữ cảnh trong file.`);
+          return failChunk("prompt_blocked", describeAgyFailure("prompt_blocked"));
         }
         if (outcome.kind === "capacity" && !viewedVideo && capacityRetries < 2 && !this.cancelled) {
           capacityRetries += 1;
@@ -2770,26 +2779,26 @@ class ManualAntigravityStage1Service {
         videoViewedByEarlierProcess = videoViewedByEarlierProcess || viewedVideo;
       }
       const coverageNow = validateVideoCoverage([task.proxy], viewedProxySet);
-      if (outcome.ok && !coverageNow.isComplete && !viewedThisAttempt) {
-        // Clean turn that answered without viewing the video: check AGY's own transcript first.
-        const audited = await auditTranscriptForViewedProxies(conversationId, [task.proxy], viewedProxySet);
-        if (!audited.isComplete && record.coverageRetryCount < 1 && !this.cancelled) {
-          record.coverageRetryCount += 1;
-          strictCoverage = true;
-          this.emitLog(onProgress, 14, `${tag} RETRY: lượt AGY kết thúc mà không gọi view_file(${task.proxy.filename}). Chạy lại RIÊNG chunk này một lần với yêu cầu view_file trước tiên.`, logs);
-          continue;
-        }
+      if (!coverageNow.isComplete && !viewedThisAttempt && outcome.ok && record.coverageRetryCount < 1 && !this.cancelled) {
+        record.coverageRetryCount += 1;
+        strictCoverage = true;
+        this.emitLog(onProgress, 14, `${tag} RETRY: lượt AGY kết thúc nhưng view_file chưa có state DONE. Chạy lại RIÊNG chunk này một lần.`, logs);
+        continue;
       }
       break;
     }
     await fs.writeFile(path.join(workDir, "stdout-all-attempts.log"), stdout, "utf8").catch(() => {});
 
-    const coverage = await auditTranscriptForViewedProxies(conversationId, [task.proxy], viewedProxySet);
+    // Critical invariant: only in-memory DONE events count as completed video
+    // inspection. A transcript merely recording that view_file was CALLED is
+    // not enough; the old code falsely promoted ACTIVE calls to 100% coverage.
+    const coverage = validateVideoCoverage([task.proxy], viewedProxySet);
     record.coverage = { complete: coverage.isComplete, viewedProxyFiles: coverage.viewedProxyFiles };
     const failureText = outcome.ok ? "" : `${describeAgyFailure(outcome.kind, outcome.error)}${outcome.error?.stats?.streamInterrupted ? " AGY báo \"The stream was interrupted\" (lỗi phía máy chủ)." : ""} `;
     if (!coverage.isComplete) {
-      return failChunk(outcome.ok ? "coverage" : outcome.kind, `${failureText}AGY không gọi view_file(${task.proxy.filename}) (đã kiểm tra stream-json và transcript AGY; coverage retry=${record.coverageRetryCount}); JSON (nếu có) bị từ chối, không ghi cache.`);
+      return failChunk(outcome.ok ? "coverage" : outcome.kind, `${failureText}view_file(${task.proxy.filename}) chưa có state DONE; không serialize, không ghi cache. coverage retry=${record.coverageRetryCount}.`);
     }
+    this.emitLog(onProgress, 30, `${tag} VIEW DONE thật · chuyển sang serialize trong cùng conversation, không xem lại video.`, logs);
 
     const tryParse = async (text) => {
       const extracted = await extractChunkUnderstanding(text, task, workDir);
