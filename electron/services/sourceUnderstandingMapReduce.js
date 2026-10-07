@@ -267,10 +267,11 @@ function sanitizeRecoveredChunk(data) {
 // ---------------------------------------------------------------------------
 // Per-chunk persistent cache
 // ---------------------------------------------------------------------------
-function computeChunkKey({ task, sourceFingerprint, proxySchemaVersion = 3 }) {
+function computeChunkKey({ task, sourceFingerprint, proxySchemaVersion = 3, mapModel = "" }) {
   const components = {
     chunkSchemaVersion: CHUNK_SCHEMA_VERSION,
     mapPromptVersion: MAP_PROMPT_VERSION,
+    mapModel: String(mapModel || ""),
     sourceFingerprint: String(sourceFingerprint),
     chunkId: task.chunkId,
     chunkRange: `${task.sourceStartSec.toFixed(3)}-${task.sourceEndSec.toFixed(3)}`,
@@ -339,11 +340,12 @@ async function saveChunkUnderstanding({ cacheDir, task, key, components, data, m
 // ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
-function computeReducerKey({ sourceFingerprint, videoDurationSec, chunkKeys = [] }) {
+function computeReducerKey({ sourceFingerprint, videoDurationSec, chunkKeys = [], reduceModel = "" }) {
   const components = {
     sourceUnderstandingSchemaVersion: 2,
     reducePromptVersion: REDUCE_PROMPT_VERSION,
     architecture: "chunked_map_reduce",
+    reduceModel: String(reduceModel || ""),
     sourceFingerprint: String(sourceFingerprint),
     videoDurationSec: Number(num(videoDurationSec, 0).toFixed(3)),
     chunkKeys: chunkKeys.join(",")
