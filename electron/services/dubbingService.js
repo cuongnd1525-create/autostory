@@ -9255,6 +9255,7 @@ module.exports.buildVideoTitleOverlaySvg = buildVideoTitleOverlaySvg;
 module.exports.resolveSourceSubtitleMask = resolveSourceSubtitleMask;
 module.exports.resolveManualGeminiManifestPath = resolveManualGeminiManifestPath;
 module.exports.wrapVideoTitle = wrapVideoTitle;
+module.exports.wrapTikTokHookTitle = wrapTikTokHookTitle;
 module.exports.calculateVideoTitleWrapChars = calculateVideoTitleWrapChars;
 module.exports.snapshotHighlightRevision = snapshotHighlightRevision;
 module.exports.appendHighlightRevisionHistory = appendHighlightRevisionHistory;
