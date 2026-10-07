@@ -7682,25 +7682,22 @@ function updateVariantHubProgress(payload = {}) {
   const card = el.variantHubCards.children[activeIdx];
   if (!card) return;
 
-  const variants = getHighlightVariants();
-  const total = variants.length || 1;
-  const pct = Number(payload.percent || 0);
-  const computed = Math.round((pct * total) - (activeIdx * 100));
-  const variantPct = Math.max(0, Math.min(100, computed));
+  const queueItem = queue[activeIdx] || null;
+  const variantPct = Math.max(0, Math.min(100, Number(queueItem?.percent ?? 0)));
+  const localMessage = String(queueItem?.message || payload.message || "")
+    .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
+    .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
+    .trim();
 
   const bar = card.querySelector(".variant-card-progress-bar");
   const pctText = card.querySelector(".progress-pct-text");
   const stepText = card.querySelector(".progress-step-text");
 
-  if (bar) bar.style.width = `${variantPct > 0 ? variantPct : 100}%`;
-  if (pctText && variantPct > 0) pctText.textContent = `${variantPct}%`;
-  if (stepText && payload.message) {
-    const cleanMsg = payload.message
-      .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
-      .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
-      .trim();
-    stepText.textContent = cleanMsg;
-    stepText.title = cleanMsg;
+  if (bar) bar.style.width = `${variantPct}%`;
+  if (pctText) pctText.textContent = `${Math.round(variantPct)}%`;
+  if (stepText && localMessage) {
+    stepText.textContent = localMessage;
+    stepText.title = localMessage;
   }
 }
 
@@ -7763,16 +7760,13 @@ function renderStudioVariantHub(project = state.currentProject) {
     let variantPct = 0;
     let progressMsg = "";
     if (isProcessing || isReviewing) {
-      if (state.variantProgress) {
-        const total = variants.length || 1;
-        const computed = Math.round((Number(state.variantProgress.percent || 0) * total) - (index * 100));
-        variantPct = Math.max(0, Math.min(100, computed));
-        if (state.variantProgress.message) {
-          progressMsg = state.variantProgress.message
-            .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
-            .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
-            .trim();
-        }
+      variantPct = Math.max(0, Math.min(100, Number(queueItem?.percent ?? 0)));
+      progressMsg = String(queueItem?.message || "").trim();
+      if (!progressMsg && state.variantProgress?.activeIndex === index && state.variantProgress?.message) {
+        progressMsg = state.variantProgress.message
+          .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
+          .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
+          .trim();
       }
       if (!progressMsg) {
         progressMsg = isReviewing ? "Đang chạy Gemini Review..." : "Đang kết xuất video nháp...";
@@ -7801,11 +7795,11 @@ function renderStudioVariantHub(project = state.currentProject) {
         ${(isProcessing || isReviewing) ? `
           <div class="variant-hub-card-progress">
             <div class="variant-card-progress-track">
-              <div class="variant-card-progress-bar" style="width: ${variantPct > 0 ? variantPct : 100}%;"></div>
+              <div class="variant-card-progress-bar" style="width: ${variantPct}%;"></div>
             </div>
             <div class="variant-card-progress-detail">
               <span class="progress-step-text" title="${escapeHtml(progressMsg)}">${escapeHtml(progressMsg)}</span>
-              ${variantPct > 0 ? `<span class="progress-pct-text">${variantPct}%</span>` : ""}
+              <span class="progress-pct-text">${Math.round(variantPct)}%</span>
             </div>
           </div>
         ` : ""}
@@ -12430,7 +12424,22 @@ async function bootstrap() {
     } else {
       if (typeof payload.percent === "number") {
         const step = payload.stage || payload.step;
-        const label = payload.message || step || state.activeOperation || "Đang xử lý";
+        let label = payload.message || step || state.activeOperation || "Đang xử lý";
+        if (payload.step === "variant_draft_batch" && Array.isArray(payload.variantBatch?.items)) {
+          const items = payload.variantBatch.items;
+          const completed = items.filter((item) => ["done", "failed"].includes(item.status)).length;
+          const processing = items.filter((item) => ["processing", "rendering"].includes(item.status));
+          if (processing.length) {
+            const activeText = processing.map((item) => {
+              const ordinal = Number.isInteger(item.index) ? item.index + 1 : items.indexOf(item) + 1;
+              const localPct = Math.max(0, Math.min(100, Number(item.percent || 0)));
+              return `#${ordinal} ${Math.round(localPct)}%`;
+            }).join(" · ");
+            label = `Đã hoàn tất ${completed}/${items.length} · Đang render ${activeText}`;
+          } else if (completed === items.length) {
+            label = `Đã xử lý xong ${completed}/${items.length} variant`;
+          }
+        }
         setExportProgress(payload.percent, label.trim());
       }
     }
