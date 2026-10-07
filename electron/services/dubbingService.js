@@ -1387,7 +1387,7 @@ function getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOpt
  * cache key always describes the audio that was actually rendered.
  */
 function resolveFastDraftVoicePlan({ project = {}, settings = {}, text = "", outputPath = "voice.mp3", voiceRenderOptions = {} }) {
-  const draftMode = project.draftVoiceMode || "edge_neural";
+  const draftMode = project.draftVoiceMode || (project.analysisWorkflow === "manual_gemini_draft_review" ? "final" : "edge_neural");
   const provider = draftMode === "final"
     ? (project.voiceProvider || settings.defaultVoiceProvider || "edge_neural")
     : draftMode === "custom"
