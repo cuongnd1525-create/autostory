@@ -1208,6 +1208,7 @@ function getEffectiveVideoEditProject(project = state.currentProject, scope = st
       topCaptionEnabled: globalDecoration.topCaptionEnabled,
       topCaptionText: globalDecoration.topCaptionText,
       topCaptionAutoFromScript: globalDecoration.topCaptionAutoFromScript,
+      topCaptionStyle: globalDecoration.topCaptionStyle,
       topCaptionFontSize: globalDecoration.topCaptionFontSize,
       topCaptionYPercent: globalDecoration.topCaptionYPercent
     },
@@ -1300,6 +1301,7 @@ async function persistCurrentVideoEditSettings() {
       topCaptionEnabled: nextDecoration.topCaptionEnabled,
       topCaptionText: nextDecoration.topCaptionText,
       topCaptionAutoFromScript: nextDecoration.topCaptionAutoFromScript,
+      topCaptionStyle: nextDecoration.topCaptionStyle,
       topCaptionFontSize: nextDecoration.topCaptionFontSize,
       topCaptionYPercent: nextDecoration.topCaptionYPercent
     };
@@ -1645,6 +1647,29 @@ function wrapPreviewVideoTitle(value, maxChars = 36) {
   return finalLines.slice(0, 3).join("\n");
 }
 
+function wrapPreviewTikTokHookTitle(value) {
+  const words = String(value || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (!words.length) return "";
+  if (words.length === 1) return words[0].toUpperCase();
+  let bestIndex = 1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < words.length; index += 1) {
+    const left = words.slice(0, index).join(" ");
+    const right = words.slice(index).join(" ");
+    const longest = Math.max(left.length, right.length);
+    const imbalance = Math.abs(left.length - right.length);
+    const score = longest * 2 + imbalance;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  return [
+    words.slice(0, bestIndex).join(" "),
+    words.slice(bestIndex).join(" ")
+  ].filter(Boolean).join("\n").toUpperCase();
+}
+
 function clampSubtitleMaskValue(value, min, max) {
   return Math.max(min, Math.min(max, Number(value) || 0));
 }
@@ -1911,17 +1936,29 @@ function updateVideoDecorationPreview() {
   el.videoCanvasCustomSize?.classList.toggle("hidden", el.videoCanvasAspect?.value !== "custom");
   if (el.videoCanvasRatioLabel) el.videoCanvasRatioLabel.textContent = canvas.label;
   if (el.videoTitleOverlay) {
-    const isViralGreenTitle = (el.topCaptionStyle?.value || state.currentProject?.videoDecoration?.topCaptionStyle) === "viral_green";
-    const isUpper = isViralGreenTitle || (captionText && captionText === captionText.toUpperCase());
-    const wrappedCaption = wrapPreviewVideoTitle(
-      captionText,
-      calculatePreviewTitleWrapChars(canvas.width, el.topCaptionFontSize?.value || 52, isUpper)
-    );
-    el.videoTitleOverlay.textContent = wrappedCaption;
+    const titleStyle = el.topCaptionStyle?.value || state.currentProject?.videoDecoration?.topCaptionStyle || "classic";
+    const isViralGreenTitle = titleStyle === "viral_green";
+    const isTikTokHookTitle = titleStyle === "tiktok_hook";
+    const isUpper = isTikTokHookTitle || isViralGreenTitle || (captionText && captionText === captionText.toUpperCase());
+    const wrappedCaption = isTikTokHookTitle
+      ? wrapPreviewTikTokHookTitle(captionText)
+      : wrapPreviewVideoTitle(
+        captionText,
+        calculatePreviewTitleWrapChars(canvas.width, el.topCaptionFontSize?.value || 52, isUpper)
+      );
+    if (isTikTokHookTitle) {
+      const hookLines = wrappedCaption.split("\n").filter(Boolean);
+      el.videoTitleOverlay.innerHTML = hookLines.map((line, index) => (
+        `<span class="hook-caption-line${index === 1 ? " accent" : ""}">${escapeHtml(line)}</span>`
+      )).join("");
+    } else {
+      el.videoTitleOverlay.textContent = wrappedCaption;
+    }
     el.videoTitleOverlay.classList.toggle("hidden", !(captionEnabled && captionText));
     el.videoTitleOverlay.classList.toggle("viral-green", isViralGreenTitle);
-    el.videoTitleOverlay.style.fontSize = `${Math.max(11, Number(el.topCaptionFontSize?.value || 52) * (previewWidth / canvas.width))}px`;
-    el.videoTitleOverlay.style.top = `${Number(el.topCaptionY?.value || 8)}%`;
+    el.videoTitleOverlay.classList.toggle("tiktok-hook", isTikTokHookTitle);
+    el.videoTitleOverlay.style.fontSize = `${Math.max(11, Number(el.topCaptionFontSize?.value || (isTikTokHookTitle ? 64 : 52)) * (previewWidth / canvas.width))}px`;
+    el.videoTitleOverlay.style.top = `${Number(el.topCaptionY?.value || (isTikTokHookTitle ? 11 : 8))}%`;
   }
   if (el.videoPartLabelOverlay) {
     const partText = resolveCurrentPartLabelText(state.currentProject);
@@ -3742,7 +3779,10 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 - prompt_profile: viral_tiktok_crime_part1
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
 - Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
-- Every script must follow the exact 8-beat formula and use 9:16 vertical framing with viral green badges.
+- Every script must follow the exact 8-beat formula and use 9:16 vertical framing.
+- TOP HOOK CAPTION: suggestedTitle/title must be a concise 4-8 word cold-viewer hook, ideally <= 42 characters, grounded in the actual conflict/action. Create curiosity without generic clickbait, hashtags, "PART 1/2/3", or spoiling the final payoff.
+- titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
+- Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
 - The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
   * Script 1 / PART 1 - The Confrontation: hook, dispatch/arrival, scene entry, escalation, first confrontation. Ends on a verified unresolved cliffhanger.
   * Script 3 / PART 2 - The Interrogation: questioning, explanations, lies, contradictions and evidence. Ends on the strongest verified pre-arrest cliffhanger.
@@ -3799,7 +3839,7 @@ Every generated JSON script must include:
   "title": "<UPPERCASE VIRAL TITLE GROUNDED IN THIS SOURCE>",
   "partBadge": "PART 1",
   "cameraLabel": "CAM 1",
-  "titleStyle": "viral_green",
+  "titleStyle": "tiktok_hook",
   "subtitleStyle": "tiktok_karaoke",
   "targetDurationSec": 117.5,
   "segments": [ ...8 segments... ]
@@ -5243,20 +5283,22 @@ async function applyAntigravityVariantSelection(filePaths = []) {
   const firstScript = inspectedFiles[0];
   if (firstScript) {
     const isViralMode = readManualGeminiPromptOptions().profile === "viral_tiktok_crime_part1"
-      || firstScript.titleStyle === "viral_green";
+      || ["viral_green", "tiktok_hook"].includes(firstScript.titleStyle);
     if (isViralMode) {
       if (el.videoCanvasAspect) el.videoCanvasAspect.value = "9:16";
       if (el.blurBackgroundEnabled) el.blurBackgroundEnabled.checked = true;
       if (el.topCaptionEnabled) el.topCaptionEnabled.checked = true;
-      if (el.topCaptionStyle) el.topCaptionStyle.value = "viral_green";
+      if (el.topCaptionStyle) el.topCaptionStyle.value = "tiktok_hook";
+      if (el.topCaptionFontSize) el.topCaptionFontSize.value = "64";
+      if (el.topCaptionFontSizeValue) el.topCaptionFontSizeValue.textContent = "64";
+      if (el.topCaptionY) el.topCaptionY.value = "11";
+      if (el.topCaptionYValue) el.topCaptionYValue.textContent = "11%";
       if (firstScript.suggestedTitle && el.topCaptionText) {
         el.topCaptionText.value = firstScript.suggestedTitle;
       }
-      if (el.partLabelEnabled) el.partLabelEnabled.checked = true;
-      if (el.partLabelStyle) el.partLabelStyle.value = "viral_green";
-      if (firstScript.partBadge && el.partLabelText) {
-        el.partLabelText.value = firstScript.partBadge;
-      }
+      // Multipart identity stays in metadata/variant labels, not burned into the video by default.
+      if (el.partLabelEnabled) el.partLabelEnabled.checked = false;
+      if (el.partLabelText) el.partLabelText.value = "";
       if (el.cameraLabelEnabled) el.cameraLabelEnabled.checked = true;
       if (el.cameraLabelText) el.cameraLabelText.value = firstScript.cameraLabel || "CAM 1";
       if (el.showSubtitles) el.showSubtitles.checked = true;
