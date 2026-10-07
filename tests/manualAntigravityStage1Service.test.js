@@ -100,21 +100,26 @@ async function createPackage() {
     beforeFiles,
     "Stage 1 input folder must stay unchanged (the understanding cache lives in the persistent source cache)"
   );
-  assert.deepStrictEqual(calls.map((call) => call.kind), ["map", "reduce", "phase_b"], "cold run: chunked Phase A (map + text-only reduce) then Phase B");
-  assert.strictEqual(calls[2].options.cwd, result.resultDir, "Phase B must run in result folder");
+  assert.deepStrictEqual(calls.map((call) => call.kind), ["map", "map_serialize", "reduce", "phase_b"], "cold run: video-only MAP, same-conversation serialize, text-only reduce, then Phase B");
+  assert.strictEqual(calls[3].options.cwd, result.resultDir, "Phase B must run in result folder");
   const printArg = calls[0].args.find((arg) => arg.startsWith("--print="));
   assert(printArg, "Antigravity prompt must be attached directly to --print");
-  assert(printArg.includes('view_file("') && printArg.includes("analysis-proxy.mp4"), "the map worker watches its proxy chunk");
-  assert(printArg.includes("TEXT CONTEXT FOR THIS INTERVAL"), "the chunk text context is inlined (no file paging)");
-  assert(!printArg.includes("phase-a-context.txt"), "no global context file in the map prompt");
-  assert(!printArg.includes("source-transcript.srt"), "map must not open the raw SRT");
-  assert(!printArg.includes("scene-manifest.json"), "map must not open the raw scene manifest");
-  assert(!printArg.includes("01-gemini-highlight-scripts-prompt.txt"), "map stays editorial-neutral (no editorial prompt)");
-  assert(!/hook.contract/i.test(printArg), "map gets no Hook Contract");
-  const reducePrint = calls[1].args.find((arg) => arg.startsWith("--print="));
+  assert(printArg.includes('view_file("') && printArg.includes("analysis-proxy.mp4"), "the MAP view turn watches its proxy chunk");
+  assert(printArg.includes("reply only VIEW_DONE"), "video turn must hand off immediately after completed view");
+  assert(!printArg.includes("TRANSCRIPT"), "video turn carries no transcript payload");
+  assert(!printArg.includes("source-transcript.srt"), "video turn must not open the raw SRT");
+  assert(!printArg.includes("scene-manifest.json"), "video turn must not open the raw scene manifest");
+  assert(!printArg.includes("01-gemini-highlight-scripts-prompt.txt"), "MAP stays editorial-neutral (no editorial prompt)");
+  assert(!/hook.contract/i.test(printArg), "MAP gets no Hook Contract");
+  const serializePrint = calls[1].args.find((arg) => arg.startsWith("--print="));
+  assert(serializePrint.includes("SAME conversation"), "serializer must resume the watched conversation");
+  assert(serializePrint.includes("-context.txt"), "serializer reads the compact chunk context");
+  assert(serializePrint.includes("Do NOT call view_file on any video again."), "serializer must never rewatch video");
+  assert(!/view_file\("[^"]+\.mp4"\)/.test(serializePrint), "serializer prompt has no video view_file");
+  const reducePrint = calls[2].args.find((arg) => arg.startsWith("--print="));
   assert(reducePrint.includes("TEXT ONLY") && reducePrint.includes("Do NOT call view_file"), "reducer is text-only");
   assert(!/\.mp4/i.test(reducePrint), "reducer prompt carries no video path");
-  const phaseBPrint = calls[2].args.find((arg) => arg.startsWith("--print="));
+  const phaseBPrint = calls[3].args.find((arg) => arg.startsWith("--print="));
   assert(phaseBPrint.includes("HOST-VERIFIED INPUT ACCESS OVERRIDE"), "Phase B must override the STEP 0 proxy gate");
   assert(phaseBPrint.includes("Do NOT call view_file (or any other tool) on any .mp4 file"));
   assert(!/view_file\("[^"]+\.mp4"\)/.test(phaseBPrint), "Phase B prompt must not ask to view proxies");

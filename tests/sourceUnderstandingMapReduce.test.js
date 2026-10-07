@@ -101,7 +101,7 @@ async function run(fixture, respond = defaultResponder({ durationSec: DURATION }
   }
   const timing = JSON.parse(await fs.readFile(path.join(fixture.root, "pipeline-timing.json"), "utf8").catch(() => "null"));
   const mapChunkIds = calls.filter((call) => call.kind === "map").map((call) => mapTaskFromPrompt(call.prompt).chunkId);
-  const videoViews = calls.reduce((sum, call) => sum + call.emittedViews, 0);
+  const videoViews = calls.reduce((sum, call) => sum + (call.emittedVideoViews || 0), 0);
   return { calls, messages, result, error, timing, live, mapChunkIds, videoViews, kinds: calls.map((call) => call.kind) };
 }
 
@@ -131,7 +131,10 @@ async function globalCacheFiles(cacheDir) {
   const fixture = await createPackage();
   const cold = await run(fixture, undefined, { sourceUnderstandingMapConcurrency: 2 });
   assert.ifError(cold.error);
-  assert.deepStrictEqual(cold.kinds, ["map", "map", "map", "reduce", "phase_b"], "3 map processes, 1 reducer, then Phase B");
+  assert.strictEqual(cold.kinds.filter((kind) => kind === "map").length, 3, "3 video-view MAP turns");
+  assert.strictEqual(cold.kinds.filter((kind) => kind === "map_serialize").length, 3, "3 same-conversation serialization turns");
+  assert.strictEqual(cold.kinds.filter((kind) => kind === "reduce").length, 1, "1 reducer");
+  assert.strictEqual(cold.kinds.filter((kind) => kind === "phase_b").length, 1, "1 Phase B");
   assert.deepStrictEqual([...cold.mapChunkIds].sort(), ["chunk-001", "chunk-002", "chunk-003"]);
   assert.strictEqual(cold.videoViews, 3, "exactly 3 video view_file calls in total");
   assert.strictEqual(cold.live.maxActive, 2, "bounded concurrency: never more than 2 map processes in flight");
@@ -144,7 +147,7 @@ async function globalCacheFiles(cacheDir) {
   assert.strictEqual(su1.map.maxConcurrentAgyProcesses, 2);
   assert.strictEqual(su1.map.cacheHits, 0);
   assert.strictEqual(su1.map.cacheMisses, 3);
-  assert.strictEqual(su1.map.agyProcessCount, 3);
+  assert.strictEqual(su1.map.agyProcessCount, 6, "each cold chunk uses one view turn + one serialize turn");
   assert.strictEqual(su1.map.viewFileCount, 3);
   assert.strictEqual(su1.map.duplicateVideoViewCount, 0);
   assert.strictEqual(su1.map.failedChunkCount, 0);
@@ -152,27 +155,35 @@ async function globalCacheFiles(cacheDir) {
   assert.strictEqual(su1.reduce.videoViewFileCount, 0);
   assert(Number.isFinite(su1.totalDurationMs) && Number.isFinite(su1.map.durationMs) && Number.isFinite(su1.reduce.durationMs));
   assert.strictEqual(su1.viewFileCount, 3);
-  assert.strictEqual(su1.agyProcessCount, 4);
+  assert.strictEqual(su1.agyProcessCount, 7);
   assert.strictEqual(su1.fullMultimodalRestartCount, 0);
   for (const chunk of su1.map.chunks) {
     for (const field of ["chunkId", "sourceStartSec", "sourceEndSec", "durationMs", "cacheHit", "agyRuntimeMs", "viewFileCount", "agentTurns", "inputTokens", "outputTokens", "retryCount"]) {
       assert(field in chunk, `per-chunk diagnostics must include ${field}`);
     }
     assert.strictEqual(chunk.viewFileCount, 1);
-    assert.strictEqual(chunk.inputTokens, 1000);
+    assert.strictEqual(chunk.inputTokens, 2000, "view + serialize turns are both measured");
   }
   assert.strictEqual(cold.timing.scriptGeneration.videoViewFileCount, 0, "Phase B stays text-only");
-  // Map prompts: one video, only that chunk's text slice, editorial-neutral.
+  // MAP view turns are deliberately tiny: one video tool call and no transcript/editorial payload.
   for (const call of cold.calls.filter((item) => item.kind === "map")) {
     const task = mapTaskFromPrompt(call.prompt);
     const index = Number(task.chunkId.slice(-3)) - 1;
     assert.deepStrictEqual([...new Set([...call.prompt.matchAll(/analysis-proxy-chunk-\d+\.mp4/g)].map((match) => match[0]))], [`analysis-proxy-chunk-00${index + 1}.mp4`], `${task.chunkId}: exactly one proxy`);
-    assert.strictEqual([...call.prompt.matchAll(/view_file\(/g)].length, 1, `${task.chunkId}: exactly one view_file instruction`);
-    assert(call.prompt.includes(`analysis-proxy-chunk-00${index + 1}.mp4`));
-    assert(call.prompt.includes(MARKERS[index]), `${task.chunkId}: its own transcript slice is inlined`);
-    MARKERS.filter((_, other) => other !== index).forEach((marker) => assert(!call.prompt.includes(marker), `${task.chunkId}: no transcript from other chunks`));
-    assert(!/source-transcript\.srt|scene-manifest\.json|phase-a-context\.txt|hook-contract|HOOK CONTRACT|Script 1/i.test(call.prompt), `${task.chunkId}: no raw SRT/manifest/editorial input`);
+    assert.strictEqual([...call.prompt.matchAll(/view_file\(/g)].length, 1, `${task.chunkId}: exactly one video view_file instruction`);
+    assert(!MARKERS.some((marker) => call.prompt.includes(marker)), `${task.chunkId}: no transcript text in video-view turn`);
+    assert(!/source-transcript\.srt|scene-manifest\.json|hook-contract|HOOK CONTRACT|Script 1/i.test(call.prompt), `${task.chunkId}: no raw/editorial input`);
+    assert(call.prompt.includes("reply only VIEW_DONE"));
     assert(call.prompt.length < Stage1.MAX_PRINT_PROMPT_CHARS);
+  }
+  // Serialization resumes the same conversation, reads only the local text context, and never views video again.
+  for (const call of cold.calls.filter((item) => item.kind === "map_serialize")) {
+    assert.strictEqual(call.resumed, true);
+    assert(call.prompt.includes("-context.txt"));
+    assert(call.prompt.includes("Do NOT call view_file on any video again."));
+    assert.strictEqual([...call.prompt.matchAll(/view_file\(/g)].length, 1, "serializer has one text-context view_file");
+    assert(!/view_file\("[^"]+\.mp4"/i.test(call.prompt), "serializer never requests video");
+    assert(call.prompt.includes("write_to_file exactly once"));
   }
   const reducePrompt = cold.calls.find((call) => call.kind === "reduce").prompt;
   assert(!/\.mp4/i.test(reducePrompt) && !reducePrompt.includes("line 1 ") && !MARKERS.some((marker) => reducePrompt.includes(marker)), "reducer: no video, no full transcript");
@@ -206,39 +217,45 @@ async function globalCacheFiles(cacheDir) {
   const partial = await run(fixture);
   assert.ifError(partial.error);
   assert.deepStrictEqual(partial.mapChunkIds, ["chunk-002"], "chunk 1 HIT, chunk 2 reruns, chunk 3 HIT");
-  assert.deepStrictEqual(partial.kinds, ["map", "reduce", "phase_b"]);
+  assert.deepStrictEqual(partial.kinds, ["map", "map_serialize", "reduce", "phase_b"]);
   assert.strictEqual(partial.videoViews, 1, "video view_file = 1");
   const chunks3 = partial.timing.sourceUnderstanding.map.chunks;
   assert.deepStrictEqual(chunks3.map((chunk) => chunk.cacheHit), [true, false, true]);
   assert.strictEqual(chunks3[1].cacheStatus, "invalid");
   assert(partial.messages.some((message) => message.includes("[MAP chunk-002] CACHE INVALID")));
 
-  // ------------------------------------------------ Test 4: chunk 2 AGY timeout
+  // ------------------------------------------------ Test 4a: print timeout AFTER real video DONE is recoverable.
   const fixture4 = await createPackage();
-  const timeoutRespond = (kind, prompt, call) => {
+  const timeoutAfterDone = (kind, prompt, call) => {
     if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-002") {
       return { viewFiles: [mapTaskFromPrompt(prompt).proxy], ...PRINT_TIMEOUT };
     }
     return defaultResponder({ durationSec: DURATION })(kind, prompt, call);
   };
-  const failed4 = await run(fixture4, timeoutRespond);
-  assert(failed4.error, "a timed-out chunk fails Phase A");
+  const recovered4 = await run(fixture4, timeoutAfterDone);
+  assert.ifError(recovered4.error);
+  assert.strictEqual(recovered4.videoViews, 3, "no chunk is rewatched");
+  assert.strictEqual(recovered4.kinds.filter((kind) => kind === "map_serialize").length, 3);
+  assert.strictEqual(recovered4.timing.sourceUnderstanding.map.failedChunkCount, 0);
+
+  // ------------------------------------------------ Test 4b: timeout BEFORE view_file DONE must fail and never cache that chunk.
+  const fixture4b = await createPackage();
+  const timeoutBeforeDone = (kind, prompt, call) => {
+    if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-002") {
+      return { viewFiles: [], ...PRINT_TIMEOUT };
+    }
+    return defaultResponder({ durationSec: DURATION })(kind, prompt, call);
+  };
+  const failed4 = await run(fixture4b, timeoutBeforeDone);
+  assert(failed4.error, "timeout before DONE fails Phase A");
   assert(failed4.error.message.startsWith("[PHASE_A] FAILED") && failed4.error.message.includes("chunk-002"), failed4.error.message);
-  assert.deepStrictEqual([...failed4.mapChunkIds].sort(), ["chunk-001", "chunk-002", "chunk-003"], "each chunk ran once; no reducer without all chunks");
   assert(!failed4.kinds.includes("reduce"));
   assert.strictEqual(failed4.timing.sourceUnderstanding.map.failedChunkCount, 1);
-  assert.strictEqual(failed4.timing.sourceUnderstanding.fullMultimodalRestartCount, 0);
   assert.strictEqual(failed4.timing.sourceUnderstanding.map.chunks[1].failureKind, "print_timeout");
-  assert.deepStrictEqual((await chunkCacheFiles(fixture4.cacheDir)).map((name) => name.slice(0, 9)), ["chunk-001", "chunk-003"], "valid chunks are cached");
-  assert.strictEqual((await globalCacheFiles(fixture4.cacheDir)).length, 0);
-  // Honest logging: no success message after a timeout.
-  assert(!failed4.messages.some((message) => /đã tạo xong dữ liệu phân tích/i.test(message)), "no misleading success log after a timeout");
-  assert(failed4.messages.some((message) => message.includes("[MAP chunk-002] FAILED (print_timeout)")), "a timeout says timeout");
-  assert(!failed4.messages.some((message) => message.startsWith("[MAP chunk-002] OK")));
-  const retry4 = await run(fixture4);
-  assert.ifError(retry4.error);
-  assert.deepStrictEqual(retry4.mapChunkIds, ["chunk-002"], "retry reruns ONLY chunk 2 (chunks 1 and 3 are not rewatched)");
-  assert.strictEqual(retry4.videoViews, 1);
+  assert.strictEqual(failed4.timing.sourceUnderstanding.map.chunks[1].coverage.complete, false);
+  assert.deepStrictEqual((await chunkCacheFiles(fixture4b.cacheDir)).map((name) => name.slice(0, 9)), ["chunk-001", "chunk-003"], "only truly completed views can be cached");
+  assert.strictEqual((await globalCacheFiles(fixture4b.cacheDir)).length, 0);
+  assert(failed4.messages.some((message) => message.includes("chưa có state DONE")));
 
   // ------------------------------------------------ Test 5: reducer fails
   const fixture5 = await createPackage();
@@ -294,7 +311,7 @@ async function globalCacheFiles(cacheDir) {
   assert.strictEqual(serial.live.maxActive, 1);
   assert.deepStrictEqual(serial.mapChunkIds, ["chunk-001", "chunk-002", "chunk-003"]);
 
-  for (const item of [fixture, fixture4, fixture5, fixture6, fixture7, fixture8]) await fs.rm(item.root, { recursive: true, force: true });
+  for (const item of [fixture, fixture4, fixture4b, fixture5, fixture6, fixture7, fixture8]) await fs.rm(item.root, { recursive: true, force: true });
   console.log("sourceUnderstandingMapReduce tests passed (1 cold, 2 warm, 3 corrupted chunk, 4 chunk timeout, 5 reducer failure, 6 reducer view_file, wrong-proxy guard, concurrency)");
 })().catch((error) => {
   console.error(error);

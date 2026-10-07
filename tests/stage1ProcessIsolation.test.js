@@ -17,7 +17,7 @@ const path = require("path");
 const { PassThrough, Writable } = require("stream");
 
 const Stage1 = require("../electron/services/manualAntigravityStage1Service");
-const { createPhaseAwareSpawn, defaultResponder, mapTaskFromPrompt, buildChunkUnderstanding } = require("./helpers/fakeAntigravity");
+const { createPhaseAwareSpawn, defaultResponder, mapTaskFromPrompt, mapSerializeTaskFromPrompt, buildChunkUnderstanding } = require("./helpers/fakeAntigravity");
 
 const DURATION = 771.901;
 const CHUNKS = [[0, 239.25], [239.25, 480.5], [480.5, 771.901]];
@@ -51,6 +51,7 @@ function controlledSpawn(registry) {
 }
 
 const viewEvent = (conversation, index, file) => ({ event: "step_update", step_update: { conversation_id: conversation, step_index: index, state: "DONE", step_type: "tool", tool_name: "view_file", tool_info: { name: "view_file", parameters: { AbsolutePath: file } } } });
+const activeViewEvent = (conversation, index, file) => ({ event: "step_update", step_update: { conversation_id: conversation, step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "view_file", tool_info: { name: "view_file", parameters: { AbsolutePath: file } } } });
 const resultEvent = (conversation, payload) => ({ event: "result", result: { conversation_id: conversation, status: "SUCCESS", response: JSON.stringify(payload), usage: { total_tokens: 10 } } });
 const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 const settle = (promise) => promise.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
@@ -125,6 +126,42 @@ async function processIsolationTests() {
   assert.strictEqual(r2.value.stats.viewFileVideoCount, 1);
   assert.notStrictEqual(r1.value.stats.runId, r2.value.stats.runId);
 
+  // ACTIVE is not completed coverage. This is the live regression that made
+  // "đang xem proxy (1/1)" look like a completed view even when AGY later timed out.
+  const viewedActive = new Set();
+  const activeRun = settle(service2.runCli({
+    command: "agy", args: ["--print=ACTIVE_ONLY"], prompt: "ACTIVE_ONLY", cwd: os.tmpdir(), timeoutMs: 60000,
+    expectedProxyList: [proxy1], viewedProxySet: viewedActive
+  }));
+  await tick();
+  const activeChild = children.get("ACTIVE_ONLY");
+  activeChild.line(activeViewEvent("c-active", 1, proxy1.absolutePath));
+  await tick();
+  assert.strictEqual(Stage1.validateVideoCoverage([proxy1], viewedActive).isComplete, false, "ACTIVE view_file must not count as coverage");
+  activeChild.line(resultEvent("c-active", {}));
+  activeChild.close(0);
+  const activeDone = await activeRun;
+  assert(activeDone.ok);
+  assert.strictEqual(activeDone.value.stats.viewFileVideoCount, 0, "ACTIVE-only view is not counted as completed");
+
+  // Once DONE arrives, a video-only MAP turn can be handed off immediately
+  // instead of waiting minutes for an unnecessary synthesis response.
+  const viewedHandoff = new Set();
+  const handoffRun = settle(service2.runCli({
+    command: "agy", args: ["--print=HANDOFF"], prompt: "HANDOFF", cwd: os.tmpdir(), timeoutMs: 60000,
+    expectedProxyList: [proxy1], viewedProxySet: viewedHandoff,
+    handoffOnVideoCoverage: true, videoCoverageHandoffGraceMs: 5
+  }));
+  await tick();
+  const handoffChild = children.get("HANDOFF");
+  handoffChild.line(activeViewEvent("c-handoff", 1, proxy1.absolutePath));
+  handoffChild.line(viewEvent("c-handoff", 1, proxy1.absolutePath));
+  const handoffDone = await handoffRun;
+  assert(handoffDone.ok, "DONE coverage handoff resolves cleanly");
+  assert.strictEqual(handoffChild.killed, true, "host terminates only the completed video-view turn");
+  assert.strictEqual(handoffDone.value.stats.terminationReason, "video_coverage_handoff");
+  assert.strictEqual(Stage1.validateVideoCoverage([proxy1], viewedHandoff).isComplete, true);
+
   // Real AGY transcript.jsonl double-encodes tool args; the auditor must still see the view.
   const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-transcript-"));
   const abridged = path.join(transcriptDir, "transcript.jsonl");
@@ -183,21 +220,14 @@ const happy = defaultResponder({ durationSec: DURATION });
 const BLOCKED = { resultObject: { status: "SUCCESS", response: "The prompt could not be submitted. The prompt contains sensitive words that violate Google's [Generative AI Prohibited Use policy](https://policies.google.com/terms/generative-ai/use-policy). Try rephrasing the prompt.\n", usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } };
 
 async function mapRecoveryTests() {
-  // --- chunk-001 prompt rejected by the policy filter -> one retry with file context; other chunks untouched.
+  // --- chunk-001 video-only prompt rejected -> retry only that video turn; context stays in serialize turn.
   {
     const fixture = await createPackage();
     let blocked = 0;
     const respond = (kind, prompt, call) => {
-      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-001" && prompt.includes("TEXT CONTEXT FOR THIS INTERVAL")) {
+      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-001" && blocked === 0) {
         blocked += 1;
         return BLOCKED;
-      }
-      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-001") {
-        const task = mapTaskFromPrompt(prompt);
-        const contextFile = [...prompt.matchAll(/view_file\("([^"]+-context\.txt)"/g)].map((match) => match[1]);
-        assert.strictEqual(contextFile.length, 1, "retry reads the chunk-local context file");
-        assert(contextFile[0].includes(path.join("map", "chunk-001")), "context file lives in the chunk workspace");
-        return { viewFiles: [task.proxy, contextFile[0]], envelope: { artifacts: [{ filename: "x.json", script: buildChunkUnderstanding("chunk-001", task.startSec, task.endSec) }] } };
       }
       return happy(kind, prompt, call);
     };
@@ -205,14 +235,17 @@ async function mapRecoveryTests() {
     assert.ifError(run.error);
     assert.strictEqual(blocked, 1);
     const mapChunks = run.calls.filter((call) => call.kind === "map").map(run.chunkOf);
-    assert.deepStrictEqual(mapChunks.filter((id) => id === "chunk-001").length, 2, "chunk-001: blocked attempt + one file-context retry");
+    assert.deepStrictEqual(mapChunks.filter((id) => id === "chunk-001").length, 2, "chunk-001: blocked video turn + one video-only retry");
     assert.deepStrictEqual(mapChunks.filter((id) => id !== "chunk-001").sort(), ["chunk-002", "chunk-003"], "other chunks ran once");
+    assert.strictEqual(run.calls.filter((call) => call.kind === "map_serialize").length, 3, "each completed video gets one serialization turn");
+    const chunk1Serialize = run.calls.find((call) => call.kind === "map_serialize" && mapSerializeTaskFromPrompt(call.prompt)?.chunkId === "chunk-001");
+    assert(chunk1Serialize && chunk1Serialize.prompt.includes("chunk-001-context.txt"), "context is read only during serialization");
     const chunk1 = run.su.map.chunks[0];
     assert.strictEqual(chunk1.promptBlockRetryCount, 1);
     assert.strictEqual(chunk1.promptBlocked, true);
     assert.strictEqual(chunk1.contextMode, "file");
     assert.strictEqual(chunk1.attempts[0].kind, "prompt_blocked", "classified as prompt_blocked, not coverage");
-    assert(run.messages.some((message) => message.startsWith("[MAP chunk-001] RETRY: AGY từ chối prompt")));
+    assert(run.messages.some((message) => message.startsWith("[MAP chunk-001] RETRY: AGY từ chối prompt video-only")));
     assert(!run.calls.some((call) => call.kind === "phase_b" || call.kind === "series_plan"), "stopAfter=source_understanding runs Phase A only");
     // Per-chunk workspaces: distinct cwd for every concurrent process, reducer separate.
     const cwds = run.calls.map((call) => call.options.cwd);
@@ -251,48 +284,51 @@ async function mapRecoveryTests() {
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 
-  // --- bare root object (no artifacts wrapper) and truncated output are accepted deterministically.
+  // --- serializer accepts bare root JSON and locally repairs truncated JSON.
   {
     const fixture = await createPackage();
     const respond = (kind, prompt, call) => {
-      if (kind === "map") {
-        const task = mapTaskFromPrompt(prompt);
+      if (kind === "map_serialize") {
+        const task = mapSerializeTaskFromPrompt(prompt);
         const data = buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec, 5);
-        if (task.chunkId === "chunk-001") return { viewFiles: [task.proxy], rawResult: `\`\`\`json\n${JSON.stringify(data)}\n\`\`\`` };
+        if (task.chunkId === "chunk-001") {
+          return { viewFiles: [task.contextPath], rawResult: `\`\`\`json\n${JSON.stringify(data)}\n\`\`\`` };
+        }
         if (task.chunkId === "chunk-002") {
           const text = JSON.stringify(data, null, 1);
           const cut = text.indexOf('"eventId": "e5"');
-          return { viewFiles: [task.proxy], rawResult: text.slice(0, cut + 30) };
+          return { viewFiles: [task.contextPath], rawResult: text.slice(0, cut + 30) };
         }
       }
       return happy(kind, prompt, call);
     };
     const run = await runPhaseA(fixture, respond);
     assert.ifError(run.error);
-    assert.strictEqual(run.calls.filter((call) => call.kind === "map_repair").length, 0, "no AGY repair needed");
-    assert.strictEqual(run.su.map.chunks[0].outputSource, "stream", "bare root object accepted");
-    assert.strictEqual(run.su.map.chunks[1].serializationRepair, "local_truncation_repair");
+    assert.strictEqual(run.su.map.chunks[0].outputSource, "stream", "bare root object accepted from serializer");
+    assert.strictEqual(run.su.map.chunks[1].serializationRepair, "same_conversation_v2+local_truncation_repair");
     assert.strictEqual(run.su.map.chunks[1].eventCount, 4, "only complete events kept");
     const written = JSON.parse(await fs.readFile(path.join(fixture.root, "01-ANTIGRAVITY-RESULT", "map", "chunk-001", "chunk-understanding-chunk-001.json"), "utf8"));
-    assert.strictEqual(written.chunkId, "chunk-001", "host writes the chunk result file itself");
+    assert.strictEqual(written.chunkId, "chunk-001", "host persists validated serializer output");
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 
-  // --- stream interrupted AFTER durable file write: accept the validated file immediately.
+  // --- serializer stream interrupted AFTER durable file write: accept the validated file.
   {
     const fixture = await createPackage();
     const respond = (kind, prompt, call) => {
-      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-003") {
-        const task = mapTaskFromPrompt(prompt);
-        return {
-          viewFiles: [task.proxy],
-          writeFiles: [{
-            name: `chunk-understanding-${task.chunkId}.json`,
-            content: buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec)
-          }],
-          resultObject: { status: "ERROR", response: "", error: "The stream was interrupted. Please continue the task you were working on." },
-          exitCode: 1
-        };
+      if (kind === "map_serialize") {
+        const task = mapSerializeTaskFromPrompt(prompt);
+        if (task.chunkId === "chunk-003") {
+          return {
+            viewFiles: [task.contextPath],
+            writeFiles: [{
+              path: task.outputPath,
+              content: buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec)
+            }],
+            resultObject: { status: "ERROR", response: "", error: "The stream was interrupted. Please continue the task you were working on." },
+            exitCode: 1
+          };
+        }
       }
       return happy(kind, prompt, call);
     };
@@ -301,52 +337,51 @@ async function mapRecoveryTests() {
     const chunk3 = run.su.map.chunks[2];
     assert.strictEqual(chunk3.ok, true);
     assert.strictEqual(chunk3.outputSource, "agent_file");
-    assert.strictEqual(chunk3.streamInterrupted, true, "diagnostics preserve the backend interruption");
-    assert.strictEqual(chunk3.attempts[0].kind, "stream_interrupted");
-    assert.strictEqual(chunk3.attempts[0].terminationReason, "agy_result_stream_interrupted", "terminal result error is handled immediately instead of waiting for print timeout");
-    assert.strictEqual(run.calls.filter((call) => call.kind === "map_repair").length, 0, "durable file avoids repair");
+    assert.strictEqual(chunk3.streamInterrupted, true, "diagnostics preserve serializer interruption");
+    assert.strictEqual(chunk3.attempts[1].kind, "stream_interrupted");
+    assert.strictEqual(chunk3.attempts[1].terminationReason, "agy_result_stream_interrupted");
     assert.strictEqual(run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003").length, 1, "video is not rewatched");
+    const serializers = run.calls.filter((call) => call.kind === "map_serialize" && mapSerializeTaskFromPrompt(call.prompt)?.chunkId === "chunk-003");
+    assert.strictEqual(serializers.length, 1);
+    assert.strictEqual(serializers[0].emittedVideoViews, 0, "serializer does not view video");
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 
-  // --- stream interrupted with no file: fail-fast, then one same-conversation serialization repair; never rewatch video.
+  // --- serializer stream interrupted with no file: fail the chunk, but never rewatch video.
   {
     const fixture = await createPackage();
     const respond = (kind, prompt, call) => {
-      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-003") {
-        return {
-          viewFiles: [mapTaskFromPrompt(prompt).proxy],
-          resultObject: { status: "ERROR", response: "", error: "The stream was interrupted. Please continue the task you were working on." },
-          exitCode: 1
-        };
-      }
-      if (kind === "map_repair") {
-        const [startSec, endSec] = [480.5, 771.901];
-        return { envelope: { artifacts: [{ filename: "chunk-understanding-chunk-003.json", script: buildChunkUnderstanding("chunk-003", startSec, endSec) }] } };
+      if (kind === "map_serialize") {
+        const task = mapSerializeTaskFromPrompt(prompt);
+        if (task.chunkId === "chunk-003") {
+          return {
+            viewFiles: [task.contextPath],
+            resultObject: { status: "ERROR", response: "", error: "The stream was interrupted. Please continue the task you were working on." },
+            exitCode: 1
+          };
+        }
       }
       return happy(kind, prompt, call);
     };
     const run = await runPhaseA(fixture, respond);
-    assert.ifError(run.error);
+    assert(run.error);
     const chunk3 = run.su.map.chunks[2];
-    assert.strictEqual(chunk3.ok, true);
-    assert.strictEqual(chunk3.serializationRepair, "same_conversation");
+    assert.strictEqual(chunk3.ok, false);
+    assert.strictEqual(chunk3.failureKind, "stream_interrupted");
     assert.strictEqual(chunk3.streamInterrupted, true);
-    assert.strictEqual(chunk3.attempts[0].kind, "stream_interrupted");
-    assert.strictEqual(chunk3.attempts[0].terminationReason, "agy_result_stream_interrupted");
-    const chunk3MapCalls = run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003");
-    assert.strictEqual(chunk3MapCalls.length, 1, "no fresh multimodal retry");
-    const repairs = run.calls.filter((call) => call.kind === "map_repair");
-    assert.strictEqual(repairs.length, 1);
-    assert.strictEqual(repairs[0].resumed, true, "repair resumes the watched conversation");
-    assert.strictEqual(repairs[0].emittedViews, 0, "repair never calls view_file");
+    assert.strictEqual(chunk3.serializationRepair, "same_conversation_v2");
+    assert.strictEqual(run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003").length, 1, "no fresh multimodal retry");
+    const serializers = run.calls.filter((call) => call.kind === "map_serialize" && mapSerializeTaskFromPrompt(call.prompt)?.chunkId === "chunk-003");
+    assert.strictEqual(serializers.length, 1);
+    assert.strictEqual(serializers[0].resumed, true, "serializer resumes the watched conversation");
+    assert.strictEqual(serializers[0].emittedVideoViews, 0, "serializer never calls view_file on video");
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 
   // --- auth TTL guard: token shorter than map timeout + 120 s -> fail before ANY AGY process.
   {
     const fixture = await createPackage();
-    const run = await runPhaseA(fixture, happy, { authProbe: async () => ({ expiresAt: new Date(Date.now() + 5 * 60000), expiredFlag: false }) });
+    const run = await runPhaseA(fixture, happy, { authProbe: async () => ({ expiresAt: new Date(Date.now() + 4 * 60000), expiredFlag: false }) });
     assert(run.error);
     assert.strictEqual(run.error.kind, "auth_ttl");
     assert.strictEqual(run.calls.length, 0, "no AGY process, no view_file");
