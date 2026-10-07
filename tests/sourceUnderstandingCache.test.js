@@ -147,6 +147,15 @@ function fullSourceViewCalls(calls) {
   assert(phaseBPrompt.includes(path.join(packB.packageDir, "01-ANTIGRAVITY-RESULT", "phase-b-input", "source-understanding.json")));
   assert(phaseBPrompt.length < ManualAntigravityStage1Service.MAX_PRINT_PROMPT_CHARS, "Phase B prompt must stay under the Windows command-line limit");
 
+  // Model changes affect source-understanding quality and must not silently
+  // reuse a chunk/reducer cache produced by a different model.
+  const runBModelChange = await runStage1(packB.packageDir, {
+    settings: { antigravityModel: "gemini-3.1-pro-high" }
+  });
+  assert.ifError(runBModelChange.error);
+  assert.deepStrictEqual(runBModelChange.calls.map((call) => call.kind), ["map", "reduce", "phase_b"], "changing selected model invalidates Phase A model-dependent cache");
+  assert.strictEqual(runBModelChange.result.timing.sourceUnderstanding.cacheHit, false);
+
   // ---------------------------------------------------------------- Test C
   // Prompt/settings change (voice, narrator style, hook, duration, profile)
   // without changing the source: the understanding stays reusable.

@@ -123,9 +123,9 @@ async function createPackage() {
   assert(calls[0].args.includes("accept-edits"));
   assert(calls[0].args.includes("--dangerously-skip-permissions"), "headless Stage 1 needs non-interactive file inspection permission");
   assert(!calls[0].args.some((arg) => arg === "--json-schema" || arg.startsWith("--json-schema=")), "agy 1.1.22 JSON schema transport must stay disabled");
-  assert(calls[0].args.includes("gemini-3.7-flash-medium"), "Phase A MAP defaults to the stable low-latency model");
-  assert(calls[1].args.includes("gemini-3.7-flash-medium"), "Phase A REDUCE uses the same stable low-latency model");
-  assert(calls[2].args.includes("test-model"), "Phase B keeps the user's configured high-quality model");
+  assert(calls[0].args.includes("test-model"), "Phase A MAP follows the user's selected model by default");
+  assert(calls[1].args.includes("test-model"), "Phase A REDUCE follows the user's selected model by default");
+  assert(calls[2].args.includes("test-model"), "Phase B uses the same selected model");
   assert(progress.some((item) => item.percent === 100));
 
   const schemaArgService = new ManualAntigravityStage1Service({

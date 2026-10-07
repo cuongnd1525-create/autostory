@@ -25,12 +25,12 @@ const DETECTION_PROXY_SCHEMA_VERSION = 1;
 const PROXY_SCHEMA_VERSION = 3;
 const TRANSCRIPT_SCHEMA_VERSION = 2;
 const JSON_CODE_FENCE = "```";
-// AGY/Gemini 3.8 Flash High repeatedly times out after viewing ~4 minute
-// proxies in one headless turn. Keep each multimodal MAP unit small enough to
-// finish view_file -> compact JSON well inside the CLI print timeout.
-const LONG_PROXY_THRESHOLD_SEC = 2 * 60;
-const PROXY_CHUNK_TARGET_SEC = 90;
-const PROXY_CHUNK_MAX_SEC = 2 * 60;
+// Balanced default for headless multimodal MAP: 90s proved stable but creates
+// excessive AGY process overhead, while the former ~4-5 minute chunks were too
+// risky on unstable model pools. Aim for ~3 minutes and never exceed 3.5 minutes.
+const LONG_PROXY_THRESHOLD_SEC = 4 * 60;
+const PROXY_CHUNK_TARGET_SEC = 3 * 60;
+const PROXY_CHUNK_MAX_SEC = 3.5 * 60;
 const MAX_ROOT_PROXY_CHUNKS = 5;
 const MAX_EARLY_BATCH_PROXY_CHUNKS = 8;
 const DEFAULT_INDEPENDENT_HOOK_PRIORITY = [
@@ -2449,7 +2449,12 @@ class ManualGeminiPackService {
     }
     await writeJsonAtomic(actionCandidatesPath, actionCandidates);
 
-    const proxyChunkPlan = buildProxyChunkPlan(manifest);
+    const proxyChunkConfig = {
+      thresholdSec: Number(this.settings.sourceUnderstandingProxyChunkThresholdSec) || LONG_PROXY_THRESHOLD_SEC,
+      targetSec: Number(this.settings.sourceUnderstandingProxyChunkTargetSec) || PROXY_CHUNK_TARGET_SEC,
+      maxSec: Number(this.settings.sourceUnderstandingProxyChunkMaxSec) || PROXY_CHUNK_MAX_SEC
+    };
+    const proxyChunkPlan = buildProxyChunkPlan(manifest, proxyChunkConfig);
     const usesChunkedProxy = proxyChunkPlan.length > 0;
     const rootProxyPath = path.join(pass1UploadDir, "analysis-proxy.mp4");
     cacheKeys.proxyKey = buildProxyCacheKey(cacheKeys.sceneKey, manifest);
@@ -2532,8 +2537,8 @@ class ManualGeminiPackService {
         sourceDurationSec: Number(media.duration.toFixed(3)),
         normalPlaybackSpeed: true,
         timestampRule: "Burned SOURCE timestamps are absolute original-video timestamps. Local chunk player time is not a source timestamp.",
-        chunkTargetSec: PROXY_CHUNK_TARGET_SEC,
-        chunkMaxSec: PROXY_CHUNK_MAX_SEC,
+        chunkTargetSec: proxyChunkConfig.targetSec,
+        chunkMaxSec: proxyChunkConfig.maxSec,
         uploadBatched: proxyChunkLayout.batched,
         uploadBatchCount: proxyChunkLayout.uploadBatchDirs.length,
         chunks: proxyChunkPlan

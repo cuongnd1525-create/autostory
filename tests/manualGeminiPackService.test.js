@@ -147,16 +147,19 @@ const longProxyManifest = {
   }))
 };
 const proxyChunks = buildProxyChunkPlan(longProxyManifest);
-assert.ok(proxyChunks.length >= 8);
+assert.ok(proxyChunks.length >= 5 && proxyChunks.length <= 7, "balanced default should avoid excessive process count");
 assert.strictEqual(proxyChunks[0].sourceStartSec, 0);
 assert.strictEqual(proxyChunks.at(-1).sourceEndSec, 964.836);
 proxyChunks.forEach((chunk, index) => {
-  assert.ok(chunk.durationSec <= 120);
+  assert.ok(chunk.durationSec <= 210);
   if (index) assert.strictEqual(chunk.sourceStartSec, proxyChunks[index - 1].sourceEndSec);
 });
 const mediumProxyChunks = buildProxyChunkPlan({ videoDurationSec: 480, scenes: [] });
-assert.ok(mediumProxyChunks.length >= 4, "sources over 2 minutes are chunked for reliable AGY MAP turns");
-mediumProxyChunks.forEach((chunk) => assert.ok(chunk.durationSec <= 120));
+assert.strictEqual(mediumProxyChunks.length, 3, "8-minute source should use about three balanced MAP chunks");
+mediumProxyChunks.forEach((chunk) => assert.ok(chunk.durationSec <= 210));
+const shortStableChunks = buildProxyChunkPlan({ videoDurationSec: 480, scenes: [] }, { thresholdSec: 120, targetSec: 90, maxSec: 120 });
+assert.strictEqual(shortStableChunks.length, 4, "90s-style chunking remains available as an explicit override");
+shortStableChunks.forEach((chunk) => assert.ok(chunk.durationSec <= 120));
 assert.strictEqual(partitionProxyChunksForUpload(proxyChunks).flat().length, proxyChunks.length);
 const chunkedPrompt = buildDirectHighlightScriptsPrompt("DIRECT SCRIPT RULES", longProxyManifest, {
   candidates: []

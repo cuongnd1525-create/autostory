@@ -123,6 +123,22 @@ async function globalCacheFiles(cacheDir) {
   assert.strictEqual(Stage1.resolveMapConcurrency({ sourceUnderstandingMapConcurrency: 2 }), 2);
   assert.strictEqual(Stage1.resolveMapConcurrency({ sourceUnderstandingMapConcurrency: 99 }), 4, "concurrency is bounded");
   assert.strictEqual(Stage1.resolveSourceUnderstandingArchitecture({}), "chunked_map_reduce", "map/reduce is the normal Phase A");
+  const cacheKeyTask = {
+    chunkId: "chunk-001",
+    sourceStartSec: 0,
+    sourceEndSec: 90,
+    proxy: { filename: "analysis-proxy-chunk-001.mp4", sizeBytes: 123 },
+    transcript: [],
+    scenes: [],
+    actions: [],
+    handleSec: 4
+  };
+  const keyHigh = MapReduce.computeChunkKey({ task: cacheKeyTask, sourceFingerprint: "fp", mapModel: "gemini-3.1-pro-high" });
+  const keyFlash = MapReduce.computeChunkKey({ task: cacheKeyTask, sourceFingerprint: "fp", mapModel: "gemini-3.8-flash-high" });
+  assert.notStrictEqual(keyHigh.key, keyFlash.key, "MAP cache key must include the effective model");
+  const reduceHigh = MapReduce.computeReducerKey({ sourceFingerprint: "fp", videoDurationSec: 90, chunkKeys: [keyHigh.key], reduceModel: "gemini-3.1-pro-high" });
+  const reduceFlash = MapReduce.computeReducerKey({ sourceFingerprint: "fp", videoDurationSec: 90, chunkKeys: [keyHigh.key], reduceModel: "gemini-3.8-flash-high" });
+  assert.notStrictEqual(reduceHigh.key, reduceFlash.key, "REDUCE cache key must include the effective model");
   const timeouts = MapReduce.resolveMapReduceTimeouts({}, { chunkDurationSec: 291 });
   assert(timeouts.mapChunkTimeoutMs >= 240000 && timeouts.mapChunkTimeoutMs <= 480000, "bounded per-chunk timeout, not chunkCount*8min+20min");
   assert.strictEqual(timeouts.reduceTimeoutMs, 240000);
