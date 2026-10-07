@@ -1566,7 +1566,9 @@ class ManualAntigravityStage1Service {
     forbiddenTools = [],
     toolGuard = null,
     label = "",
-    activityLabel = "Antigravity đang phân tích..."
+    activityLabel = "Antigravity đang phân tích...",
+    handoffOnVideoCoverage = false,
+    videoCoverageHandoffGraceMs = 1200
   }) {
     return new Promise((resolve, reject) => {
       let forbiddenToolError = null;
@@ -1576,6 +1578,7 @@ class ManualAntigravityStage1Service {
       const stderrChunks = [];
       let stdoutBuffer = "";
       let settled = false;
+      let coverageHandoffTimer = null;
       if (this.cancelled) {
         const error = new Error("Đã dừng phân tích GĐ1 bằng Antigravity.");
         error.kind = "cancelled";
@@ -1667,6 +1670,7 @@ class ManualAntigravityStage1Service {
         settled = true;
         clearInterval(heartbeatInterval);
         clearTimeout(hardTimer);
+        if (coverageHandoffTimer) clearTimeout(coverageHandoffTimer);
         this.activeRuns.delete(runId);
         stats.endedAt = new Date().toISOString();
         callback();
@@ -1747,32 +1751,43 @@ class ManualAntigravityStage1Service {
                   || "";
                 const fileName = paramFile ? path.basename(paramFile) : "";
                 const isVideoFile = /\.(mp4|mov|webm|m4v)$/i.test(fileName);
+                const toolDone = su.state !== "ACTIVE";
                 let toolLabel = `Antigravity đang chạy ${toolName}`;
 
                 if (toolName === "view_file") {
                   if (isVideoFile) {
-                    viewedProxySet.add(fileName);
-                    if (paramFile) viewedProxySet.add(paramFile);
+                    if (toolDone) {
+                      viewedProxySet.add(fileName);
+                      if (paramFile) viewedProxySet.add(paramFile);
+                    }
                     const coverage = validateVideoCoverage(expectedProxyList, viewedProxySet);
                     const ratioStr = expectedProxyList.length > 0
                       ? ` (${coverage.totalViewed}/${coverage.totalExpected})`
                       : "";
-                    toolLabel = `Antigravity đang xem proxy video${ratioStr}: ${fileName}`;
+                    toolLabel = toolDone
+                      ? `Antigravity đã xem xong proxy video${ratioStr}: ${fileName}`
+                      : `Antigravity đang xem proxy video: ${fileName}`;
+                    if (toolDone && handoffOnVideoCoverage && coverage.isComplete && !coverageHandoffTimer && !forbiddenToolError) {
+                      const graceMs = Math.max(0, Number(videoCoverageHandoffGraceMs) || 0);
+                      coverageHandoffTimer = setTimeout(() => {
+                        if (!settled) killThisChild("video_coverage_handoff");
+                      }, graceMs);
+                    }
                   } else if (fileName.includes("manifest")) {
-                    toolLabel = `Antigravity đang đọc scene manifest: ${fileName}`;
-                  } else if (fileName.includes("transcript") || fileName.endsWith(".srt")) {
-                    toolLabel = `Antigravity đang đọc transcript: ${fileName}`;
+                    toolLabel = toolDone ? `Antigravity đã đọc scene manifest: ${fileName}` : `Antigravity đang đọc scene manifest: ${fileName}`;
+                  } else if (fileName.includes("transcript") || fileName.endsWith(".srt") || fileName.includes("context")) {
+                    toolLabel = toolDone ? `Antigravity đã đọc context/transcript: ${fileName}` : `Antigravity đang đọc context/transcript: ${fileName}`;
                   } else if (fileName.includes("prompt")) {
-                    toolLabel = `Antigravity đang đọc prompt: ${fileName}`;
+                    toolLabel = toolDone ? `Antigravity đã đọc prompt: ${fileName}` : `Antigravity đang đọc prompt: ${fileName}`;
                   } else if (fileName) {
-                    toolLabel = `Antigravity đang kiểm tra: ${fileName}`;
+                    toolLabel = toolDone ? `Antigravity đã kiểm tra: ${fileName}` : `Antigravity đang kiểm tra: ${fileName}`;
                   }
                 } else if (toolName === "grep_search" || toolName === "find_by_name") {
                   toolLabel = "Antigravity đang tìm dữ liệu cảnh/transcript...";
                 } else if (toolName === "run_command") {
                   toolLabel = "Antigravity đang xử lý lệnh phụ...";
                 }
-                currentPercent = Math.min(98, currentPercent + 2);
+                currentPercent = Math.min(98, currentPercent + (toolDone ? 2 : 0.5));
                 emitProgress(currentPercent, toolLabel);
               } else if (su.step_type === "agent_response") {
                 currentPercent = Math.min(98, Math.max(currentPercent, 35) + 0.2);
@@ -1840,6 +1855,10 @@ class ManualAntigravityStage1Service {
         }
         if (this.cancelled) {
           rejectWith("Đã dừng phân tích GĐ1 bằng Antigravity.", "cancelled");
+          return;
+        }
+        if (hostTermination === "video_coverage_handoff") {
+          resolve({ stdout, stderr, conversationId, viewedProxySet, stats });
           return;
         }
         
@@ -2016,7 +2035,7 @@ class ManualAntigravityStage1Service {
    * caller decides per failure kind. Every attempt's stdout/stderr is kept in
    * its own log file (previously a retry overwrote the first attempt's log).
    */
-  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [], toolGuard = null, cwd = null, activityLabel = undefined }) {
+  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [], toolGuard = null, cwd = null, activityLabel = undefined, handoffOnVideoCoverage = false, videoCoverageHandoffGraceMs = 1200 }) {
     metrics.agyProcessCount += 1;
     const attemptIndex = metrics.agyProcessCount;
     const startedAt = Date.now();
@@ -2050,6 +2069,8 @@ class ManualAntigravityStage1Service {
         forbiddenTools,
         toolGuard,
         label,
+        handoffOnVideoCoverage,
+        videoCoverageHandoffGraceMs,
         ...(activityLabel ? { activityLabel } : {})
       });
       accumulateStats(metrics, result.stats);
