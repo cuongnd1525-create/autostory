@@ -3779,7 +3779,10 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 - prompt_profile: viral_tiktok_crime_part1
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
 - Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
-- Every script must follow the exact 8-beat formula and use 9:16 vertical framing with viral green badges.
+- Every script must follow the exact 8-beat formula and use 9:16 vertical framing.
+- TOP HOOK CAPTION: suggestedTitle/title must be a concise 4-8 word cold-viewer hook, ideally <= 42 characters, grounded in the actual conflict/action. Create curiosity without generic clickbait, hashtags, "PART 1/2/3", or spoiling the final payoff.
+- titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
+- Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
 - The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
   * Script 1 / PART 1 - The Confrontation: hook, dispatch/arrival, scene entry, escalation, first confrontation. Ends on a verified unresolved cliffhanger.
   * Script 3 / PART 2 - The Interrogation: questioning, explanations, lies, contradictions and evidence. Ends on the strongest verified pre-arrest cliffhanger.
