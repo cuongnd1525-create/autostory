@@ -1428,10 +1428,11 @@ function resolveFastDraftVoicePlan({ project = {}, settings = {}, text = "", out
     text,
     voiceName: voiceId || "",
     language: inferFastDraftLanguage(text, project),
-    genreMode: "drama",
+    genreMode: project.genreMode || (project.analysisWorkflow === "manual_gemini_draft_review" ? "thriller" : "drama"),
     rate: getEdgeRateWithDelivery(settings.edgeVoiceRate, voiceRenderOptions),
     pitch: settings.edgeVoicePitchHz,
-    volume: settings.edgeVoiceVolume
+    volume: settings.edgeVoiceVolume,
+    emotionTag: safeText(voiceRenderOptions.emotionTag || "")
   };
   const spec = {
     version: 1,
