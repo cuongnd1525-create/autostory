@@ -147,14 +147,16 @@ const longProxyManifest = {
   }))
 };
 const proxyChunks = buildProxyChunkPlan(longProxyManifest);
-assert.ok(proxyChunks.length >= 4);
+assert.ok(proxyChunks.length >= 8);
 assert.strictEqual(proxyChunks[0].sourceStartSec, 0);
 assert.strictEqual(proxyChunks.at(-1).sourceEndSec, 964.836);
 proxyChunks.forEach((chunk, index) => {
-  assert.ok(chunk.durationSec <= 300);
+  assert.ok(chunk.durationSec <= 120);
   if (index) assert.strictEqual(chunk.sourceStartSec, proxyChunks[index - 1].sourceEndSec);
 });
-assert.deepStrictEqual(buildProxyChunkPlan({ videoDurationSec: 480, scenes: [] }), []);
+const mediumProxyChunks = buildProxyChunkPlan({ videoDurationSec: 480, scenes: [] });
+assert.ok(mediumProxyChunks.length >= 4, "sources over 2 minutes are chunked for reliable AGY MAP turns");
+mediumProxyChunks.forEach((chunk) => assert.ok(chunk.durationSec <= 120));
 assert.strictEqual(partitionProxyChunksForUpload(proxyChunks).flat().length, proxyChunks.length);
 const chunkedPrompt = buildDirectHighlightScriptsPrompt("DIRECT SCRIPT RULES", longProxyManifest, {
   candidates: []
