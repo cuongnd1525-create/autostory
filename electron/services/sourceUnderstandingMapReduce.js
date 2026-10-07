@@ -20,7 +20,7 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const CHUNK_SCHEMA_VERSION = 1;
-const MAP_PROMPT_VERSION = 3; // v3: durable file-first output + stdout fallback after mandatory video view
+const MAP_PROMPT_VERSION = 4; // v4: dedicated video-view turn, then same-conversation serialization
 const REDUCE_PROMPT_VERSION = 2; // v2: durable file-first output + stdout fallback
 const DEFAULT_HANDLE_SEC = 4;
 const MAX_CHUNK_EVENTS = 15;
@@ -158,38 +158,44 @@ function chunkTransportExample(task) {
  * strictCoverage -> the targeted coverage retry after a turn that answered
  *                 without calling view_file on the chunk video.
  */
-function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0, strictCoverage = false, outputPath = "" }) {
-  const inline = Boolean(contextText);
+function buildMapPrompt({ task, strictCoverage = false }) {
   const videoCall = `view_file("${task.proxy.absolutePath}")`;
   return [
-    `You are a Phase A MAP worker of RecapTool Studio. Understand ONLY source interval ${task.sourceStartSec.toFixed(2)}-${task.sourceEndSec.toFixed(2)}s (${task.chunkId}). Editorial-neutral: no scripts, hooks, titles or narration.`,
+    `You are the Phase A MAP video viewer for RecapTool Studio. Inspect ONLY source interval ${task.sourceStartSec.toFixed(2)}-${task.sourceEndSec.toFixed(2)}s (${task.chunkId}). Editorial-neutral: no scripts, hooks, titles or narration.`,
     "",
     ...(strictCoverage
-      ? [`MANDATORY: your FIRST tool action must be ${videoCall}. A previous attempt answered without watching the video and was rejected. Any answer before that call is rejected again.`, ""]
+      ? [`MANDATORY: your FIRST tool action must be ${videoCall}. A previous attempt did not complete the required video inspection.`, ""]
       : []),
-    "STEP 1 - your first response makes exactly these tool calls and nothing else:",
-    `  1. ${videoCall}`,
-    ...(inline ? [] : [`  2. view_file("${contextPath}", StartLine=1, EndLine=${Math.max(1, contextLineCount)})`]),
-    "Watching the video with view_file is mandatory (audited). Never extract frames with Python/OpenCV/FFmpeg. Do not open any other file, do not list directories, do not run commands. Do not view the video twice.",
-    "Burned-in SOURCE timestamps on the frames are absolute; local player time is not.",
+    "This turn has ONE job only: complete the video inspection.",
+    `1. Call ${videoCall} exactly once.`,
+    "2. After the view_file tool has COMPLETED, reply only VIEW_DONE.",
+    "Do NOT analyze, summarize, serialize JSON, write files, open text files, list directories or run commands in this turn.",
+    "Never extract frames with Python/OpenCV/FFmpeg. Do not view the video twice.",
+    "Burned-in SOURCE timestamps on the frames are absolute; local player time is not."
+  ].join("\n");
+}
+
+function buildMapSerializationPrompt({ task, contextPath, contextLineCount = 0, outputPath, errors = [] }) {
+  return [
+    `You already completed view_file for ${task.proxy.filename} in this SAME conversation. Now create the compact source understanding for ${task.chunkId} (${task.sourceStartSec.toFixed(2)}-${task.sourceEndSec.toFixed(2)} SOURCE seconds).`,
     "",
-    "STEP 2 - after the video tool returns, serialize the compact understanding immediately.",
-    ...(outputPath ? [
-      "PREFERRED TRANSPORT: call write_to_file exactly ONCE and write ONLY the JSON object to this exact file:",
-      `  ${outputPath}`,
-      "After write_to_file succeeds, reply only MAP_DONE. Do not perform more analysis or use any other tool.",
-      "If write_to_file is unavailable, return the same bare JSON object directly in the response.",
-    ] : ["Return the bare JSON object directly in the response."]),
+    "MANDATORY:",
+    "- Do NOT call view_file on any video again.",
+    "- Do NOT run commands, search directories or inspect any other file.",
+    `- Read the prepared text context exactly once with view_file("${contextPath}", StartLine=1, EndLine=${Math.max(1, contextLineCount)}).`,
+    `- Then call write_to_file exactly once and write ONLY the bare JSON object to: ${outputPath}`,
+    "- After write_to_file succeeds, reply only MAP_DONE.",
+    ...(errors.length ? ["", "The host rejected an earlier serialization for:", ...errors.slice(0, 6).map((error) => `- ${error}`)] : []),
+    "",
     "- importantEvents: 3-8 meaningful story events for this interval (never more than 12). Never one per scene; merge scenes that carry the same beat.",
     "- Each event: exact SOURCE range inside this interval, sceneIds, eventType, one-sentence summary, at most 2 short visualFacts, at most 2 dialogueFacts (short exact quote, SOURCE second, speaker), importance and viralValue 0-100.",
     "- Mark continuesFromPreviousChunk / continuesIntoNextChunk when an event is cut by the interval boundary.",
     "- openStateAtStart: what is already in progress when the interval begins. openStateAtEnd: what is unresolved when it ends. One sentence each.",
     "- candidateMoments: at most 5 (hook|confrontation|interrogation|climax|resolution|context) with exact SOURCE ranges.",
-    "- Only facts visible in the frames or audible / present in the transcript. Never invent names, charges, outcomes or motives. Do not copy the transcript.",
+    "- Only facts visible in the video you already watched or present in the prepared context. Never invent names, charges, outcomes or motives. Do not copy the transcript.",
     "- Keep the JSON under ~900 words.",
     "",
-    ...(inline ? ["TEXT CONTEXT FOR THIS INTERVAL (already complete; do not open any file for it):", contextText.trim(), ""] : []),
-    "JSON SHAPE (root object; no wrapper and no Markdown inside the file/response):",
+    "JSON SHAPE (root object; no wrapper and no Markdown inside the file):",
     JSON.stringify(chunkTransportExample(task))
   ].join("\n");
 }
@@ -478,6 +484,7 @@ module.exports = {
   buildMapTasks,
   renderChunkContext,
   buildMapPrompt,
+  buildMapSerializationPrompt,
   validateChunkUnderstanding,
   normalizeChunkUnderstanding,
   sanitizeRecoveredChunk,
