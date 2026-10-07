@@ -6972,7 +6972,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const ambientVolume = treatment === "voiceover_only" ? 0 : getBlockAmbientVolume(lead, project);
     const duck = project.mixer?.narrationDuckDefault === true;
     const voiceVolume = Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100);
-    const maxStretchRatio = Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08);
+    const maxStretchRatio = project.analysisWorkflow === "manual_gemini_draft_review"
+      ? Math.min(0.04, Math.max(0, safeNumber(project.manualDraftMaxVoiceStretch ?? settings.manualDraftMaxVoiceStretch, 0.04)))
+      : Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08);
     const voiceRenderOptions = getSegmentVoiceRenderOptions(lead);
     const rawVoicePath = path.join(paths.audioDir, `${tag}${draftVoiceExt}`);
     const fittedVoicePath = path.join(paths.audioDir, `${tag}.m4a`);
@@ -9389,6 +9391,7 @@ module.exports.buildDraftVoiceAlignmentReport = buildDraftVoiceAlignmentReport;
 module.exports.buildDraftVoiceGeminiPrompt = buildDraftVoiceGeminiPrompt;
 module.exports.normalizeHighlightCutScript = normalizeHighlightCutScript;
 module.exports.narratedBlockRuns = narratedBlockRuns;
+module.exports.buildManualDraftContinuousNarration = buildManualDraftContinuousNarration;
 module.exports.placeNarratedBlocks = placeNarratedBlocks;
 module.exports.autoStoryDraftKey = autoStoryDraftKey;
 module.exports.resolveReviewedHighlightVariant = resolveReviewedHighlightVariant;
