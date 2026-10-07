@@ -2857,6 +2857,20 @@ class ManualAntigravityStage1Service {
         });
         const source = serializationOutcome.ok ? serializationOutcome.result : serializationOutcome.error;
         parsed = await tryParse(source?.stdout || "");
+        if (!parsed.validation.ok) {
+          const recovered = MapReduce.sanitizeRecoveredChunk(recoverTruncatedUnderstanding(
+            source?.stdout || "",
+            { marker: "importantEvents", anchors: ['"artifactType"', '"chunkId"', '"importantEvents"'] }
+          ));
+          if (recovered && Array.isArray(recovered.importantEvents)) {
+            const data = MapReduce.normalizeChunkUnderstanding(recovered, task);
+            const validation = MapReduce.validateChunkUnderstanding(data, task);
+            if (validation.ok) {
+              parsed = { data, source: "local_truncation_repair", validation };
+              record.serializationRepair = "same_conversation_v2+local_truncation_repair";
+            }
+          }
+        }
         if (parsed.validation.ok) {
           this.emitLog(onProgress, 34, `${tag} SERIALIZE OK · JSON hợp lệ${parsed.source ? ` từ ${parsed.source}` : ""}.`, logs);
         }
