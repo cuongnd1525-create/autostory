@@ -6,6 +6,7 @@ const FfmpegService = require("../electron/services/ffmpegService");
 const DubbingService = require("../electron/services/dubbingService");
 const {
   wrapVideoTitle,
+  wrapTikTokHookTitle,
   buildVideoTitleOverlaySvg,
   calculateVideoTitleWrapChars,
   resolveVideoTitleRasterDimensions,
@@ -69,6 +70,22 @@ const {
     assert.ok(viralGreenSvg.includes('fill="#ffffff"'), "Title text must have white fill");
     assert.ok(viralGreenSvg.includes(">CAM 1</text>"), "Camera label text must be present");
     assert.ok(viralGreenSvg.includes('fill="#ff3333"'), "Camera label must be red");
+
+    const tiktokHookTitle = wrapTikTokHookTitle("Wanted felon refuses to exit car");
+    assert.strictEqual(tiktokHookTitle.split("\n").length, 2, "TikTok hook should balance into exactly two lines");
+    const tiktokHookSvg = buildVideoTitleOverlaySvg({
+      title: tiktokHookTitle,
+      width: 1080,
+      height: 1920,
+      fontSize: 64,
+      yPercent: 11,
+      titleStyle: "tiktok_hook"
+    });
+    assert.ok(tiktokHookSvg.includes('font-weight="900"'));
+    assert.ok(tiktokHookSvg.includes('stroke="#000000"'));
+    assert.ok(tiktokHookSvg.includes('paint-order="stroke fill"'));
+    assert.ok(tiktokHookSvg.includes('fill="#FFE600"'), "Second hook line should use the TikTok accent color");
+    assert.ok(!tiktokHookSvg.includes('fill="#00A63E"'), "TikTok hook must not use the old green badge");
 
     assert.ok(partOnlySvg.includes(">PART 2</text>"));
     assert.ok(partOnlySvg.includes('fill="#0b0d11"'));
