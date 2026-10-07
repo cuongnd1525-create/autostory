@@ -10,6 +10,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
       - run: node --check electron/services/manualAntigravityStage1Service.js
       - run: node tests/manualAntigravityStage1Service.test.js
