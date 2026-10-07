@@ -2456,7 +2456,7 @@ class ManualAntigravityStage1Service {
       ? `[SOURCE_UNDERSTANDING] CACHE INVALID (${globalLoaded.reason}) → bỏ qua; chunk cache: ${chunkStatusLine}`
       : `[SOURCE_UNDERSTANDING] CACHE MISS key=${reducer.key}; chunk cache: ${chunkStatusLine}`, logs);
     const pendingCount = chunkLoads.filter((item) => item.status !== "hit").length;
-    this.emitLog(onProgress, 10, `[PHASE_A] START map/reduce: ${tasks.length} chunk (${pendingCount} cần xem video, ${tasks.length - pendingCount} cache HIT), song song tối đa ${concurrency}; timeout map ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s/chunk, reduce ${Math.round(timeouts.reduceTimeoutMs / 1000)}s.`, logs);
+    this.emitLog(onProgress, 10, `[PHASE_A] START map/reduce: ${tasks.length} chunk (${pendingCount} cần xem video, ${tasks.length - pendingCount} cache HIT), song song tối đa ${concurrency}; MAP model ${mapModel || "(AGY default)"}, REDUCE model ${reduceModel || "(AGY default)"}; timeout map ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s/chunk, reduce ${Math.round(timeouts.reduceTimeoutMs / 1000)}s.`, logs);
 
     // ---------------------------- MAP ----------------------------------
     const mapStartedAt = Date.now();
@@ -2560,6 +2560,8 @@ class ManualAntigravityStage1Service {
       phaseA: {
         architecture: "chunked_map_reduce",
         model: this.settings.antigravityModel || "",
+        mapModel,
+        reduceModel,
         videoDurationSec,
         coverage: { isComplete: true, expectedProxyFiles, viewedProxyFiles: expectedProxyFiles },
         chunks: mapResults.map((result) => ({ chunkId: result.record.chunkId, cacheKey: result.record.cacheKey, cacheHit: result.record.cacheHit, cachePath: result.record.cachePath })),
