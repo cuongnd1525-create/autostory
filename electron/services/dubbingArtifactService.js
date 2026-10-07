@@ -35,6 +35,29 @@ function wrapVideoTitle(value, maxChars = 36) {
   return finalLines.slice(0, 3).join("\n");
 }
 
+function wrapTikTokHookTitle(value) {
+  const words = String(value || "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  if (!words.length) return "";
+  if (words.length === 1) return words[0].toUpperCase();
+  let bestIndex = 1;
+  let bestScore = Number.POSITIVE_INFINITY;
+  for (let index = 1; index < words.length; index += 1) {
+    const left = words.slice(0, index).join(" ");
+    const right = words.slice(index).join(" ");
+    const longest = Math.max(left.length, right.length);
+    const imbalance = Math.abs(left.length - right.length);
+    const score = longest * 2 + imbalance;
+    if (score < bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+  return [
+    words.slice(0, bestIndex).join(" "),
+    words.slice(bestIndex).join(" ")
+  ].filter(Boolean).join("\n").toUpperCase();
+}
+
 function escapeSvgText(value = "") {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -84,31 +107,34 @@ function buildVideoTitleOverlaySvg({
   const canvasHeight = Math.max(180, Math.round(Number(height) || 1920));
   const baseScaledFontSize = Math.max(16, Math.round((Number(fontSize) || 52) * (canvasWidth / 1080)));
   const lines = String(title || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).slice(0, 3);
-  const inset = Math.max(8, Math.round(canvasWidth * 0.09));
+  const isTikTokHook = titleStyle === "tiktok_hook";
+  const inset = Math.max(8, Math.round(canvasWidth * (isTikTokHook ? 0.07 : 0.09)));
   const boxWidth = canvasWidth - inset * 2;
   const isViralGreen = titleStyle === "viral_green" || partLabel?.style === "viral_green";
-  const isUppercase = isViralGreen || (lines.length > 0 && lines.every((l) => l === l.toUpperCase()));
-  const glyphFactor = isUppercase ? 0.70 : 0.54;
-  const maxAvailableTextWidth = boxWidth - 36;
+  const isUppercase = isTikTokHook || isViralGreen || (lines.length > 0 && lines.every((l) => l === l.toUpperCase()));
+  const glyphFactor = isTikTokHook ? 0.62 : (isUppercase ? 0.70 : 0.54);
+  const maxAvailableTextWidth = boxWidth - (isTikTokHook ? 18 : 36);
   const maxLineWidthChars = Math.max(...lines.map((l) => l.length), 0);
   let scaledFontSize = baseScaledFontSize;
   if (maxLineWidthChars > 0 && maxLineWidthChars * baseScaledFontSize * glyphFactor > maxAvailableTextWidth) {
     scaledFontSize = Math.max(16, Math.floor(maxAvailableTextWidth / (maxLineWidthChars * glyphFactor)));
   }
-  const paddingY = Math.max(6, Math.round(scaledFontSize * 0.55));
-  const lineHeight = Math.round(scaledFontSize * 1.12);
+  const paddingY = Math.max(6, Math.round(scaledFontSize * (isTikTokHook ? 0.16 : 0.55)));
+  const lineHeight = Math.round(scaledFontSize * (isTikTokHook ? 1.02 : 1.12));
   const boxHeight = lines.length * lineHeight + paddingY * 2;
-  const top = Math.round(canvasHeight * Math.max(3, Math.min(75, Number(yPercent) || 8)) / 100);
+  const top = Math.round(canvasHeight * Math.max(3, Math.min(75, Number(yPercent) || (isTikTokHook ? 11 : 8))) / 100);
   const radius = Math.max(4, Math.round(scaledFontSize * 0.46));
-  const firstBaseline = top + paddingY + Math.round(scaledFontSize * 0.84);
+  const firstBaseline = top + paddingY + Math.round(scaledFontSize * (isTikTokHook ? 0.88 : 0.84));
   const resolvedTitleBg = safeHexColor(titleBackgroundColor, isViralGreen ? "#00A63E" : "#ffffff");
   const resolvedTitleText = safeHexColor(titleTextColor, isViralGreen ? "#ffffff" : "#0b0d11");
   const textSpans = lines.map((line, index) => (
-    `<tspan x="${canvasWidth / 2}" y="${firstBaseline + index * lineHeight}">${escapeSvgText(line)}</tspan>`
+    `<tspan x="${canvasWidth / 2}" y="${firstBaseline + index * lineHeight}"${isTikTokHook && index === 1 ? ' fill="#FFE600"' : ""}>${escapeSvgText(line)}</tspan>`
   )).join("");
-  const titleMarkup = lines.length ? `
+  const titleMarkup = lines.length ? (isTikTokHook ? `
+  <text x="${canvasWidth / 2}" text-anchor="middle" font-family="Arial Black, Segoe UI, Arial, sans-serif" font-size="${scaledFontSize}" font-weight="900" fill="#FFFFFF" stroke="#000000" stroke-width="${Math.max(4, Math.round(scaledFontSize * 0.11))}" stroke-linejoin="round" paint-order="stroke fill" filter="url(#shadow)">${textSpans}</text>`
+  : `
   <rect x="${inset}" y="${top}" width="${boxWidth}" height="${boxHeight}" rx="${radius}" ry="${radius}" fill="${resolvedTitleBg}" fill-opacity="0.96" filter="url(#shadow)"/>
-  <text x="${canvasWidth / 2}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="${scaledFontSize}" font-weight="800" fill="${resolvedTitleText}">${textSpans}</text>` : "";
+  <text x="${canvasWidth / 2}" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif" font-size="${scaledFontSize}" font-weight="800" fill="${resolvedTitleText}">${textSpans}</text>`) : "";
   const rawPartText = safeText(partLabel?.text || "").slice(0, 48);
   const partText = partLabel?.uppercase === false ? rawPartText : rawPartText.toUpperCase();
   const partFontSize = Math.max(12, Math.round((Number(partLabel?.fontSize) || 38) * (canvasWidth / 1080)));
@@ -429,5 +455,6 @@ module.exports = {
   resolveVideoCanvasDimensions,
   resolveVideoTitleRasterDimensions,
   sanitizeFilePart,
-  wrapVideoTitle
+  wrapVideoTitle,
+  wrapTikTokHookTitle
 };
