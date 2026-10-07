@@ -2821,37 +2821,54 @@ class ManualAntigravityStage1Service {
       }
     }
     const repairSetting = this.settings.sourceUnderstandingMapSerializationRepair;
-    const repairAllowed = repairSetting === "always"
-      || (repairSetting !== false && (outcome.ok || outcome.kind === "stream_interrupted"));
+    let serializationOutcome = null;
+    const repairAllowed = repairSetting !== false;
     if (!parsed.validation.ok && conversationId && repairAllowed && !this.cancelled) {
-      // ONE short same-conversation serialization, every tool forbidden. Only
-      // after a CLEAN turn by default: after a server-side stream interruption
-      // the 2026-10-07 global run showed it fails the same way.
-      record.serializationRepair = "same_conversation";
-      this.emitLog(onProgress, 32, `${tag} video đã xem nhưng JSON chưa hợp lệ; serialize ngắn trong cùng hội thoại (${Math.round(timeouts.mapSerializationTimeoutMs / 1000)}s, cấm mọi công cụ).`, logs);
+      record.serializationRepair = "same_conversation_v2";
+      this.emitLog(onProgress, 32, `${tag} SERIALIZE START · dùng context text + video memory trong cùng conversation; KHÔNG view_file video lại (timeout ${Math.round(timeouts.mapSerializationTimeoutMs / 1000)}s).`, logs);
       try {
-        await this.ensureAntigravityAuth({ label: `${label} REPAIR`, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.mapSerializationTimeoutMs });
-        const repairPrompt = assertPrintPromptSize([
-          `Return ONLY the chunk understanding JSON object for ${task.chunkId} now, from what you already watched. Do not call any tool. Do not view any video, transcript or manifest again.`,
-          ...parsed.validation.errors.slice(0, 6).map((error) => `- ${error}`)
-        ].join("\n"), `Phase A map ${task.chunkId} repair`);
-        const repair = await this.runAgyOnce({
-          label: `${label} REPAIR`,
-          commandConfig: this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, { packageInfo, timeoutMs: timeouts.mapSerializationTimeoutMs }),
-          prompt: repairPrompt, resultDir: workDir, cwd: workDir, onProgress: chunkProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
-          logBase: `${task.chunkId}-repair`,
-          forbiddenTools: ["view_file", "run_command", "grep_search", "find_by_name", "list_dir", "codebase_search", "write_to_file"],
-          toolGuard: ({ toolName }) => `serialization repair: ${toolName || "công cụ"} bị cấm`,
-          activityLabel: "Antigravity đang serialize JSON..."
+        await this.ensureAntigravityAuth({ label: `${label} SERIALIZE`, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.mapSerializationTimeoutMs });
+        const serializationPrompt = assertPrintPromptSize(MapReduce.buildMapSerializationPrompt({
+          task,
+          contextPath,
+          contextLineCount,
+          outputPath,
+          errors: parsed.validation.errors
+        }), `Phase A map ${task.chunkId} serialize`);
+        await fs.writeFile(path.join(workDir, `prompt-serialize.txt`), serializationPrompt, "utf8").catch(() => {});
+        serializationOutcome = await this.runAgyOnce({
+          label: `${label} SERIALIZE`,
+          commandConfig: this.buildRetryCommand(conversationId, serializationPrompt, pass1Dir, { packageInfo, timeoutMs: timeouts.mapSerializationTimeoutMs }),
+          prompt: serializationPrompt,
+          resultDir: workDir,
+          cwd: workDir,
+          onProgress: chunkProgress,
+          expectedProxyList: [],
+          viewedProxySet: new Set(),
+          metrics,
+          logs,
+          logBase: `${task.chunkId}-serialize`,
+          forbiddenTools: ["view_file:video", "run_command", "grep_search", "find_by_name", "list_dir", "codebase_search"],
+          toolGuard: serializationToolGuard,
+          activityLabel: "Antigravity đang serialize JSON từ video memory..."
         });
-        const source = repair.ok ? repair.result : repair.error;
+        const source = serializationOutcome.ok ? serializationOutcome.result : serializationOutcome.error;
         parsed = await tryParse(source?.stdout || "");
+        if (parsed.validation.ok) {
+          this.emitLog(onProgress, 34, `${tag} SERIALIZE OK · JSON hợp lệ${parsed.source ? ` từ ${parsed.source}` : ""}.`, logs);
+        }
       } catch (error) {
         if (error.kind === "auth" || error.kind === "auth_ttl") record.serializationRepair = `skipped_${error.kind}`;
       }
     }
     if (!parsed.validation.ok) {
-      return failChunk(outcome.ok ? "invalid_json" : outcome.kind, `${failureText}Đã xem video chunk nhưng chunk JSON không hợp lệ (${parsed.validation.errors.slice(0, 3).join(" ")}). Chỉ chunk này lỗi; không ghi cache.`);
+      const finalKind = serializationOutcome && !serializationOutcome.ok
+        ? serializationOutcome.kind
+        : (outcome.ok ? "invalid_json" : outcome.kind);
+      const serializationFailure = serializationOutcome && !serializationOutcome.ok
+        ? `${describeAgyFailure(serializationOutcome.kind, serializationOutcome.error)} `
+        : "";
+      return failChunk(finalKind, `${failureText}${serializationFailure}Video đã DONE nhưng không tạo được chunk JSON hợp lệ (${parsed.validation.errors.slice(0, 3).join(" ")}). Không xem lại video; không ghi cache.`);
     }
     // Host writes the result (the model never has to name the file).
     await writeJsonAtomic(path.join(workDir, transportName), parsed.data);
