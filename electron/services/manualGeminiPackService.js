@@ -25,9 +25,12 @@ const DETECTION_PROXY_SCHEMA_VERSION = 1;
 const PROXY_SCHEMA_VERSION = 3;
 const TRANSCRIPT_SCHEMA_VERSION = 2;
 const JSON_CODE_FENCE = "```";
-const LONG_PROXY_THRESHOLD_SEC = 8 * 60;
-const PROXY_CHUNK_TARGET_SEC = 4 * 60;
-const PROXY_CHUNK_MAX_SEC = 5 * 60;
+// AGY/Gemini 3.8 Flash High repeatedly times out after viewing ~4 minute
+// proxies in one headless turn. Keep each multimodal MAP unit small enough to
+// finish view_file -> compact JSON well inside the CLI print timeout.
+const LONG_PROXY_THRESHOLD_SEC = 2 * 60;
+const PROXY_CHUNK_TARGET_SEC = 90;
+const PROXY_CHUNK_MAX_SEC = 2 * 60;
 const MAX_ROOT_PROXY_CHUNKS = 5;
 const MAX_EARLY_BATCH_PROXY_CHUNKS = 8;
 const DEFAULT_INDEPENDENT_HOOK_PRIORITY = [
