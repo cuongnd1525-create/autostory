@@ -1,5 +1,7 @@
 name: temp-natural-manual-draft
 on:
+  push:
+    branches: [fix/natural-manual-draft-narration]
   pull_request:
     branches: [main]
 jobs:
