@@ -92,7 +92,52 @@ function buildSeriesPlan(durationSec = 20) {
   };
 }
 
+function buildChunkUnderstanding(chunkId, startSec, endSec, eventCount = 4) {
+  const step = (endSec - startSec) / eventCount;
+  const events = Array.from({ length: eventCount }, (_, index) => ({
+    eventId: `e${index + 1}`,
+    sourceStartSec: Number((startSec + index * step).toFixed(3)),
+    sourceEndSec: Number((startSec + (index + 1) * step).toFixed(3)),
+    sceneIds: ["scene_0001"],
+    eventType: index === 0 ? "arrival" : "confrontation",
+    summary: `${chunkId} event ${index + 1}`,
+    visualFacts: ["Bodycam view."],
+    dialogueFacts: [{ sourceSec: Number((startSec + index * step + 0.5).toFixed(3)), speaker: "Officer A", quote: "Open the door!" }],
+    importantQuotes: ["Open the door!"],
+    continuesFromPreviousChunk: false,
+    continuesIntoNextChunk: false,
+    sourceNarratorPresent: false,
+    importance: 60,
+    viralValue: 50
+  }));
+  return {
+    artifactType: "source_chunk_understanding",
+    schemaVersion: 1,
+    chunkId,
+    sourceStartSec: startSec,
+    sourceEndSec: endSec,
+    openStateAtStart: "",
+    charactersSeen: [{ id: "c1", nameOrRole: "Officer A", description: "Bodycam officer" }],
+    importantEvents: events,
+    candidateMoments: [{ sourceStartSec: events[0].sourceStartSec, sourceEndSec: events[0].sourceEndSec, sceneIds: ["scene_0001"], type: "hook", reason: "Shouting" }],
+    openStateAtEnd: "The resident is still refusing to answer."
+  };
+}
+
+/** Parses the map prompt: chunkId, absolute range and the single proxy path. */
+function mapTaskFromPrompt(prompt = "") {
+  const match = prompt.match(/Understand ONLY source interval ([\d.]+)-([\d.]+)s \((chunk-\d+)\)/);
+  return match ? { startSec: Number(match[1]), endSec: Number(match[2]), chunkId: match[3], proxy: proxyPathsFromPrompt(prompt)[0] || "" } : null;
+}
+
+function reduceDurationFromPrompt(prompt = "") {
+  const match = prompt.match(/ONE source video \(([\d.]+)s\)/);
+  return match ? Number(match[1]) : 0;
+}
+
 function classifyPrompt(prompt = "") {
+  if (prompt.includes("You are a Phase A MAP worker")) return "map";
+  if (prompt.includes("You are the Phase A REDUCER")) return "reduce";
   if (prompt.includes("Phase A (Source Understanding)")) return "phase_a";
   if (prompt.includes("You have already inspected 100% of the required source proxy videos.")) return "phase_a_repair";
   if (prompt.includes("MANDATORY VIDEO COVERAGE GATE FAILED")) return "phase_a_coverage_retry";
@@ -196,6 +241,16 @@ function contextPathsFromPrompt(prompt = "") {
 /** Default happy-path responder. */
 function defaultResponder({ durationSec = 20, scriptIds = [1, 3, 4], phaseBViewFiles = [] } = {}) {
   return (kind, prompt) => {
+    if (kind === "map") {
+      const task = mapTaskFromPrompt(prompt);
+      return {
+        viewFiles: [task.proxy],
+        envelope: { artifacts: [{ filename: `chunk-understanding-${task.chunkId}.json`, script: buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec) }] }
+      };
+    }
+    if (kind === "reduce") {
+      return { envelope: { artifacts: [{ filename: "source-understanding.json", script: buildUnderstanding(reduceDurationFromPrompt(prompt) || durationSec) }] } };
+    }
     if (kind === "phase_a" || kind === "phase_a_coverage_retry") {
       return {
         viewFiles: [...proxyPathsFromPrompt(prompt), ...contextPathsFromPrompt(prompt)],
@@ -222,6 +277,10 @@ function defaultResponder({ durationSec = 20, scriptIds = [1, 3, 4], phaseBViewF
 
 module.exports = {
   buildUnderstanding,
+  buildChunkUnderstanding,
+  mapTaskFromPrompt,
+  reduceDurationFromPrompt,
+  classifyPrompt,
   buildScript,
   buildSeriesPlan,
   createPhaseAwareSpawn,

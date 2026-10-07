@@ -10,7 +10,10 @@
 // again on the same package and must report CACHE HIT / PHASE_A SKIPPED /
 // 0 video view_file. Results: tools/stage1-benchmark-<timestamp>.json
 //
-// Options: --cold (force a cold first run)  --warm-only (skip run 1)
+// Options: --cold (force a cold first run: moves aside the global AND per-chunk
+//          understanding caches of this source)  --warm-only (skip run 1)
+//          --concurrency=N (sourceUnderstandingMapConcurrency, default from config or 2)
+//          --global (legacy global_single_pass Phase A, for comparison only)
 // Env: BENCH_CONFIG = path to the app config.json (defaults to the app's).
 
 const fs = require("fs/promises");
@@ -20,8 +23,51 @@ const ManualAntigravityStage1Service = require("../electron/services/manualAntig
 
 const CONFIG_PATH = process.env.BENCH_CONFIG || "C:\\Users\\Admin\\AppData\\Roaming\\cineviral-studio\\config.json";
 
+function pickChunk(chunk = {}) {
+  return {
+    chunkId: chunk.chunkId,
+    range: `${chunk.sourceStartSec}-${chunk.sourceEndSec}`,
+    cacheHit: chunk.cacheHit,
+    cacheStatus: chunk.cacheStatus,
+    durationMs: chunk.durationMs ?? null,
+    agyRuntimeMs: chunk.agyRuntimeMs ?? null,
+    agyProcessCount: chunk.agyProcessCount ?? 0,
+    viewFileCount: chunk.viewFileCount ?? 0,
+    agentTurns: chunk.agentTurns ?? 0,
+    inputTokens: chunk.inputTokens ?? null,
+    outputTokens: chunk.outputTokens ?? null,
+    retryCount: chunk.retryCount ?? 0,
+    promptChars: chunk.promptChars ?? null,
+    failureKind: chunk.failureKind || null
+  };
+}
+
 function pick(su = {}) {
   return {
+    architecture: su.architecture || null,
+    totalDurationMs: su.totalDurationMs ?? su.durationMs ?? null,
+    map: su.map ? {
+      chunkCount: su.map.chunkCount,
+      concurrency: su.map.concurrency,
+      maxConcurrentAgyProcesses: su.map.maxConcurrentAgyProcesses,
+      durationMs: su.map.durationMs,
+      cacheHits: su.map.cacheHits,
+      cacheMisses: su.map.cacheMisses,
+      agyProcessCount: su.map.agyProcessCount,
+      viewFileCount: su.map.viewFileCount,
+      duplicateVideoViewCount: su.map.duplicateVideoViewCount,
+      failedChunkCount: su.map.failedChunkCount,
+      chunks: (su.map.chunks || []).map(pickChunk)
+    } : null,
+    reduce: su.reduce ? {
+      cacheHit: su.reduce.cacheHit,
+      durationMs: su.reduce.durationMs,
+      agyProcessCount: su.reduce.agyProcessCount,
+      videoViewFileCount: su.reduce.videoViewFileCount,
+      retryCount: su.reduce.retryCount,
+      inputChars: su.reduce.inputChars,
+      failureKinds: su.reduce.failureKinds
+    } : null,
     cacheHit: su.cacheHit,
     phaseASkipped: su.phaseASkipped,
     durationMs: su.durationMs,
@@ -54,7 +100,7 @@ async function runOnce(label, settings, packageDir) {
       packageDir,
       onProgress: (item) => {
         const message = String(item.message || "");
-        if (/^\[(SOURCE_UNDERSTANDING|PHASE_A|PHASE_B|SERIES_PLAN)/.test(message)) {
+        if (/^\[(SOURCE_UNDERSTANDING|PHASE_A|PHASE_B|SERIES_PLAN|PHASE_A_REDUCE)[\] ]/.test(message)) {
           messages.push(message);
           console.log(`[${label}] ${message}`);
         }
@@ -82,6 +128,9 @@ async function runOnce(label, settings, packageDir) {
   const packageDir = path.resolve(process.argv[2] || "");
   if (!process.argv[2]) throw new Error("Usage: node tools/run-stage1-benchmark.js <packageDir> [--cold] [--warm-only]");
   const settings = JSON.parse(await fs.readFile(CONFIG_PATH, "utf8"));
+  const concurrencyArg = process.argv.find((arg) => arg.startsWith("--concurrency="));
+  if (concurrencyArg) settings.sourceUnderstandingMapConcurrency = Number(concurrencyArg.split("=")[1]);
+  if (process.argv.includes("--global")) settings.sourceUnderstandingArchitecture = "global_single_pass";
   const info = JSON.parse(await fs.readFile(path.join(packageDir, "package-info.json"), "utf8"));
   if (process.argv.includes("--cold") && info.cache?.cacheDir) {
     for (const name of await fs.readdir(info.cache.cacheDir).catch(() => [])) {
@@ -89,6 +138,12 @@ async function runOnce(label, settings, packageDir) {
         await fs.rename(path.join(info.cache.cacheDir, name), path.join(info.cache.cacheDir, `${name}.bench-backup-${Date.now()}`));
         console.log(`moved aside ${name}`);
       }
+    }
+    const chunkDir = path.join(info.cache.cacheDir, "chunk-understanding");
+    if (await fs.stat(chunkDir).then(() => true, () => false)) {
+      const backup = `${chunkDir}.bench-backup-${Date.now()}`;
+      await fs.rename(chunkDir, backup);
+      console.log(`moved aside chunk-understanding -> ${path.basename(backup)}`);
     }
   }
   const runs = [];
@@ -98,6 +153,16 @@ async function runOnce(label, settings, packageDir) {
   const outPath = path.join(__dirname, `stage1-benchmark-${Date.now()}.json`);
   await fs.writeFile(outPath, JSON.stringify(report, null, 2), "utf8");
   console.log(JSON.stringify(runs.map(({ messages, ...rest }) => rest), null, 2));
+  for (const item of runs) {
+    const su = item.sourceUnderstanding;
+    console.log(`\n${item.label}: ${item.error ? `FAILED (${item.error.kind})` : "OK"} | Stage 1 ${(item.stage1Ms / 1000).toFixed(1)}s | Phase A ${((su.totalDurationMs || 0) / 1000).toFixed(1)}s`
+      + ` (map ${((su.map?.durationMs || 0) / 1000).toFixed(1)}s, reduce ${((su.reduce?.durationMs || 0) / 1000).toFixed(1)}s)`
+      + ` | series plan ${((item.seriesPlanMs || 0) / 1000).toFixed(1)}s | Phase B ${((item.phaseBMs || 0) / 1000).toFixed(1)}s`);
+    console.log(`  view_file video=${su.viewFileCount ?? 0} AGY processes=${su.agyProcessCount ?? 0} chunk cache hit/miss=${su.map?.cacheHits ?? "-"}/${su.map?.cacheMisses ?? "-"} global cache=${su.cacheHit ? "HIT" : "MISS"} max concurrent maps=${su.map?.maxConcurrentAgyProcesses ?? "-"}`);
+    for (const chunk of su.map?.chunks || []) {
+      console.log(`  ${chunk.chunkId} [${chunk.range}] ${chunk.cacheHit ? "HIT" : chunk.failureKind ? `FAIL ${chunk.failureKind}` : "RAN"} ${((chunk.durationMs || 0) / 1000).toFixed(1)}s agy=${((chunk.agyRuntimeMs || 0) / 1000).toFixed(1)}s view_file=${chunk.viewFileCount} turns=${chunk.agentTurns} tokens in/out=${chunk.inputTokens ?? "-"}/${chunk.outputTokens ?? "-"} retries=${chunk.retryCount}`);
+    }
+  }
   console.log(`report: ${outPath}`);
 })().catch((error) => {
   console.error(error);

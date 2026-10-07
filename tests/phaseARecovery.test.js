@@ -84,7 +84,7 @@ async function run(fixture, respond, { authProbe } = {}) {
   const calls = [];
   const progress = [];
   const service = new Stage1(
-    { antigravityCommand: "agy", antigravityModel: "gemini-3.8-flash-high" },
+    { antigravityCommand: "agy", antigravityModel: "gemini-3.8-flash-high", sourceUnderstandingArchitecture: "global_single_pass" },
     { spawn: createPhaseAwareSpawn({ calls, respond }), authProbe: authProbe || (async () => ({ expiresAt: new Date(Date.now() + 50 * 60000), expiredFlag: false })) }
   );
   let result = null;

@@ -15,6 +15,7 @@ const {
   saveSourceUnderstanding
 } = require("./sourceUnderstandingService");
 const { resetPipelineTiming } = require("./pipelineTimingService");
+const MapReduce = require("./sourceUnderstandingMapReduce");
 
 // Lazy: manualGeminiPackService is heavy and only needed for legacy packages
 // whose package-info.json predates cache.sourceFingerprint.
@@ -891,7 +892,40 @@ function resolvePhaseTimeoutMs(phase, settings = {}, { sourceDurationSec = 0 } =
   return resolveAntigravityTimeoutMs(settings.antigravityTimeoutMs);
 }
 
-const KEYRING_EXPIRY_PATTERN = /keyringAuth: loaded token, expiry=(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? ([+-]\d{2})(\d{2})\S* \S+ expired=(true|false)/;
+/**
+ * Phase A architecture. "chunked_map_reduce" (default): one AGY process per
+ * proxy chunk + one text-only reducer. "global_single_pass": the previous
+ * single conversation that watches every proxy (kept only as an explicit
+ * opt-in; real runs on 2026-10-07 failed its synthesis turn repeatedly).
+ */
+function resolveSourceUnderstandingArchitecture(settings = {}) {
+  return String(settings.sourceUnderstandingArchitecture || "").trim() === "global_single_pass"
+    ? "global_single_pass"
+    : "chunked_map_reduce";
+}
+
+function resolveMapConcurrency(settings = {}) {
+  const value = Number(settings.sourceUnderstandingMapConcurrency);
+  if (!Number.isFinite(value) || value <= 0) return 2;
+  return Math.max(1, Math.min(4, Math.floor(value)));
+}
+
+/** Bounded worker pool: never more than `limit` workers in flight. Workers must not throw. */
+async function runBounded(items, limit, worker) {
+  const results = new Array(items.length);
+  let next = 0;
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await worker(items[index], index);
+    }
+  });
+  await Promise.all(lanes);
+  return results;
+}
+
+const KEYRING_EXPIRY_PATTERN =/keyringAuth: loaded token, expiry=(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? ([+-]\d{2})(\d{2})\S* \S+ expired=(true|false)/;
 
 function parseKeyringExpiry(logText = "") {
   let found = null;
@@ -1291,6 +1325,7 @@ class ManualAntigravityStage1Service {
     this.spawnImpl = dependencies.spawn || spawn;
     this.authProbe = dependencies.authProbe || null;
     this.activeChild = null;
+    this.activeChildren = new Set();
     this.cancelled = false;
   }
 
@@ -1425,7 +1460,8 @@ class ManualAntigravityStage1Service {
     progressStep = "antigravity_stage1",
     expectedProxyList = [],
     viewedProxySet = new Set(),
-    forbiddenTools = []
+    forbiddenTools = [],
+    toolGuard = null
   }) {
     return new Promise((resolve, reject) => {
       let forbiddenToolError = null;
@@ -1434,7 +1470,12 @@ class ManualAntigravityStage1Service {
       const stderrChunks = [];
       let stdoutBuffer = "";
       let settled = false;
-      this.cancelled = false;
+      if (this.cancelled) {
+        const error = new Error("Đã dừng phân tích GĐ1 bằng Antigravity.");
+        error.kind = "cancelled";
+        reject(error);
+        return;
+      }
       let lastActivityTime = Date.now();
       let currentPercent = 18;
       let conversationId = null;
@@ -1490,13 +1531,16 @@ class ManualAntigravityStage1Service {
         env: buildCliEnv()
       });
       this.activeChild = child;
+      this.activeChildren.add(child);
+      const killThisChild = () => this.killChild(child);
 
       const finish = (callback) => {
         if (settled) return;
         settled = true;
         clearInterval(heartbeatInterval);
         clearTimeout(hardTimer);
-        this.activeChild = null;
+        this.activeChildren.delete(child);
+        if (this.activeChild === child) this.activeChild = null;
         callback();
       };
 
@@ -1512,7 +1556,7 @@ class ManualAntigravityStage1Service {
       };
 
       const hardTimer = setTimeout(() => {
-        this.terminateActiveChild({ asCancel: false });
+        killThisChild();
         finish(() => rejectWith(`Antigravity timed out after ${Math.round(timeoutMs / 1000)}s.`, "hard_timeout"));
       }, hardTimeoutMs);
 
@@ -1520,7 +1564,7 @@ class ManualAntigravityStage1Service {
         if (settled) return;
         const idleMs = Date.now() - lastActivityTime;
         if (idleMs >= inactivityLimitMs) {
-          this.terminateActiveChild({ asCancel: false });
+          killThisChild();
           finish(() => rejectWith(`Antigravity không có phản hồi trong ${Math.round(idleMs / 1000)}s (quá thời gian chờ hoạt động).`, "inactivity_timeout"));
         }
       }, 5000);
@@ -1555,13 +1599,14 @@ class ManualAntigravityStage1Service {
             if (event.event === "step_update" && event.step_update) {
               const su = event.step_update;
               recordStep(su);
-              if (su.step_type === "tool" && forbiddenTools.length && !forbiddenToolError) {
+              if (su.step_type === "tool" && (forbiddenTools.length || toolGuard) && !forbiddenToolError) {
                 const toolName = su.tool_name || su.tool_info?.name || "";
                 const file = String(su.tool_info?.parameters?.AbsolutePath || "");
-                if (forbiddenTools.includes(toolName) || (forbiddenTools.includes("view_file:video") && toolName === "view_file" && /\.(mp4|mov|webm|m4v)$/i.test(file))) {
-                  forbiddenToolError = `${toolName}${file ? ` ${path.basename(file.replace(/\\/g, "/"))}` : ""}`;
+                const guardReason = toolGuard ? toolGuard({ toolName, file, stepUpdate: su }) : null;
+                if (guardReason || forbiddenTools.includes(toolName) || (forbiddenTools.includes("view_file:video") && toolName === "view_file" && /\.(mp4|mov|webm|m4v)$/i.test(file))) {
+                  forbiddenToolError = `${toolName}${file ? ` ${path.basename(file.replace(/\\/g, "/"))}` : ""}${typeof guardReason === "string" ? ` (${guardReason})` : ""}`;
                   failureKind = "forbidden_tool";
-                  this.terminateActiveChild({ asCancel: false });
+                  killThisChild();
                 }
               }
               if (su.step_type === "tool") {
@@ -1604,7 +1649,11 @@ class ManualAntigravityStage1Service {
                 emitProgress(currentPercent, "Antigravity đang phân tích và viết kịch bản...");
               }
             } else if (event.event === "result") {
-              emitProgress(99, "Antigravity đã tạo xong dữ liệu phân tích");
+              // Not a success signal: the host still has to parse and validate the JSON.
+              const failed = event.result?.status === "ERROR" || Boolean(event.result?.error);
+              emitProgress(currentPercent, failed
+                ? `Antigravity kết thúc lượt với lỗi: ${String(event.result?.error || "ERROR").slice(0, 160)}`
+                : "Antigravity đã trả kết quả; đang kiểm tra JSON...");
             }
           } catch (_e) {
             // Non-JSON line, ignore
@@ -1672,10 +1721,8 @@ class ManualAntigravityStage1Service {
     });
   }
 
-  terminateActiveChild({ asCancel = true } = {}) {
-    const child = this.activeChild;
+  killChild(child) {
     if (!child) return false;
-    if (asCancel) this.cancelled = true;
     if (process.platform === "win32" && child.pid) {
       try {
         spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
@@ -1688,8 +1735,21 @@ class ManualAntigravityStage1Service {
     return true;
   }
 
+  /** Cancel: kills every running AGY child (map stages may run in parallel). */
+  terminateActiveChild({ asCancel = true } = {}) {
+    const children = [...this.activeChildren];
+    if (this.activeChild && !children.includes(this.activeChild)) children.push(this.activeChild);
+    if (!children.length) return false;
+    if (asCancel) this.cancelled = true;
+    children.forEach((child) => this.killChild(child));
+    return true;
+  }
+
   cancel() {
-    return this.terminateActiveChild();
+    // Also covers the gaps between map chunks / retry delays when no child is running.
+    this.cancelled = true;
+    this.terminateActiveChild();
+    return true;
   }
 
   emitLog(onProgress, percent, message, logs) {
@@ -1753,7 +1813,7 @@ class ManualAntigravityStage1Service {
    * caller decides per failure kind. Every attempt's stdout/stderr is kept in
    * its own log file (previously a retry overwrote the first attempt's log).
    */
-  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [] }) {
+  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [], toolGuard = null, cwd = null }) {
     metrics.agyProcessCount += 1;
     const attemptIndex = metrics.agyProcessCount;
     const startedAt = Date.now();
@@ -1765,12 +1825,13 @@ class ManualAntigravityStage1Service {
       const result = await this.runCli({
         ...commandConfig,
         prompt,
-        cwd: resultDir,
+        cwd: cwd || resultDir,
         onProgress,
         progressStep: "antigravity_stage1",
         expectedProxyList,
         viewedProxySet,
-        forbiddenTools
+        forbiddenTools,
+        toolGuard
       });
       accumulateStats(metrics, result.stats);
       metrics.attempts.push({ label, attempt: attemptIndex, ok: true, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: result.stats?.viewFileVideoCount || 0 });
@@ -1977,6 +2038,570 @@ class ManualAntigravityStage1Service {
     return { data: parsed.data, coverage, conversationId, warnings: parsed.validation.warnings };
   }
 
+  capacityRetryDelayMs(attempt) {
+    const base = Number(this.settings.antigravityCapacityRetryBaseMs);
+    return (Number.isFinite(base) && base >= 0 ? base : 8000) * (attempt + 1);
+  }
+
+  /**
+   * Deterministic chunk tasks + cache keys. Pure local work (no AGY): the
+   * reducer key is derived from the chunk keys, so a warm run can check the
+   * global cache without starting any model process.
+   */
+  async prepareChunkedPhaseA({ packageInfo, inputPaths, expectedProxyList, videoDurationSec, sourceFingerprint }) {
+    let sceneManifest = null;
+    try { sceneManifest = JSON.parse(await fs.readFile(inputPaths.sceneManifestPath, "utf8")); } catch (_error) { sceneManifest = null; }
+    const transcriptText = inputPaths.transcriptPath ? await fs.readFile(inputPaths.transcriptPath, "utf8").catch(() => "") : "";
+    let actionCandidates = [];
+    try {
+      const parsed = JSON.parse(await fs.readFile(inputPaths.actionCandidatesPath, "utf8"));
+      actionCandidates = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.candidates) ? parsed.candidates : []);
+    } catch (_error) { actionCandidates = []; }
+    const handleSec = Number.isFinite(Number(this.settings.sourceUnderstandingChunkHandleSec))
+      ? Math.max(0, Math.min(10, Number(this.settings.sourceUnderstandingChunkHandleSec)))
+      : MapReduce.DEFAULT_HANDLE_SEC;
+    const tasks = MapReduce.buildMapTasks({
+      expectedProxyList,
+      cues: parseSrtForContext(transcriptText),
+      scenes: Array.isArray(sceneManifest?.scenes) ? sceneManifest.scenes : [],
+      actionCandidates,
+      videoDurationSec,
+      handleSec
+    });
+    const chunkKeys = tasks.map((task) => MapReduce.computeChunkKey({ task, sourceFingerprint, proxySchemaVersion: packageInfo.cache?.proxySchemaVersion }));
+    const reducer = MapReduce.computeReducerKey({ sourceFingerprint, videoDurationSec, chunkKeys: chunkKeys.map((item) => item.key) });
+    return { tasks, chunkKeys, reducer };
+  }
+
+  /**
+   * Phase A, chunked MAP/REDUCE (default architecture).
+   *   MAP: one AGY process per proxy chunk (bounded concurrency), each with only
+   *        its own transcript/scene/action slice; result cached per chunk.
+   *   REDUCE: one TEXT-ONLY AGY process over the chunk JSONs; any tool call
+   *        other than writing source-understanding.json kills it (view_file = FAIL).
+   * A failed chunk fails only itself: valid chunks are cached and never rewatched.
+   */
+  async runChunkedSourceUnderstanding({ pass1Dir, packageInfo, resultDir, schemaPath, expectedProxyList, videoDurationSec, inputPaths, sourceFingerprint, cacheDir, onProgress, logs }) {
+    const startedAt = Date.now();
+    const concurrency = resolveMapConcurrency(this.settings);
+    const { tasks, chunkKeys, reducer } = await this.prepareChunkedPhaseA({ packageInfo, inputPaths, expectedProxyList, videoDurationSec, sourceFingerprint });
+    const expectedProxyFiles = expectedProxyList.map((proxy) => proxy.filename);
+    const maxChunkSec = Math.max(...tasks.map((task) => task.sourceEndSec - task.sourceStartSec));
+    const timeouts = MapReduce.resolveMapReduceTimeouts(this.settings, { chunkDurationSec: maxChunkSec });
+    const totals = newMetrics();
+    const diagnostics = {
+      architecture: "chunked_map_reduce",
+      cacheHit: false,
+      cacheStatus: "miss",
+      cacheKey: reducer.key,
+      cachePath: "",
+      phaseASkipped: false,
+      timeouts,
+      map: {
+        chunkCount: tasks.length,
+        concurrency,
+        maxConcurrentAgyProcesses: 0,
+        durationMs: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
+        agyProcessCount: 0,
+        viewFileCount: 0,
+        duplicateVideoViewCount: 0,
+        failedChunkCount: 0,
+        chunks: []
+      },
+      reduce: {
+        cacheHit: false,
+        durationMs: 0,
+        agyProcessCount: 0,
+        videoViewFileCount: 0,
+        viewFileCount: 0,
+        retryCount: 0,
+        inputChars: 0,
+        failureKinds: []
+      },
+      totalDurationMs: 0,
+      authChecks: [],
+      failureKinds: []
+    };
+    const finalize = () => {
+      diagnostics.totalDurationMs = Date.now() - startedAt;
+      const videoReads = Object.entries(totals.fileReads).filter(([name]) => /\.(mp4|mov|webm|m4v)$/i.test(name));
+      Object.assign(diagnostics, {
+        durationMs: diagnostics.totalDurationMs,
+        agyProcessCount: totals.agyProcessCount,
+        viewFileCount: totals.viewFileVideoCount,
+        videoViewFileCount: totals.viewFileVideoCount,
+        textViewFileCount: totals.viewFileTextCount,
+        duplicateVideoViewCount: videoReads.reduce((sum, [, count]) => sum + Math.max(0, count - 1), 0),
+        transcriptReadCount: Object.entries(totals.fileReads).filter(([name]) => /transcript|\.srt$/i.test(name)).reduce((sum, [, count]) => sum + count, 0),
+        manifestReadCount: Object.entries(totals.fileReads).filter(([name]) => /manifest/i.test(name)).reduce((sum, [, count]) => sum + count, 0),
+        agentTurnCount: totals.agentTurns,
+        // A rewatch = a second map process for a chunk whose earlier process had already viewed video.
+        fullMultimodalRestartCount: diagnostics.map.chunks.reduce((sum, chunk) => sum + (chunk.rewatchCount || 0), 0),
+        serializationRepairUsed: diagnostics.map.chunks.some((chunk) => chunk.serializationRepairUsed) ? "map_chunk_short_repair" : false,
+        timeoutOccurred: diagnostics.failureKinds.some((kind) => /timeout/.test(kind)),
+        retryCount: totals.retryCount,
+        inputTokens: totals.usageReported ? totals.inputTokens : null,
+        outputTokens: totals.usageReported ? totals.outputTokens : null,
+        thinkingTokens: totals.usageReported ? totals.thinkingTokens : null,
+        cacheReadTokens: totals.usageReported ? totals.cacheReadTokens : null,
+        modelSeconds: totals.usageReported ? Number(totals.modelSeconds.toFixed(1)) : null,
+        timeoutMs: timeouts.mapChunkTimeoutMs,
+        expectedProxyCount: expectedProxyList.length,
+        attempts: totals.attempts
+      });
+      diagnostics.map.duplicateVideoViewCount = diagnostics.map.chunks.reduce((sum, chunk) => sum + (chunk.duplicateVideoViewCount || 0), 0);
+      return diagnostics;
+    };
+    const fail = (error, kind) => {
+      error.kind = error.kind || kind;
+      error.diagnostics = finalize();
+      return error;
+    };
+
+    const [globalLoaded, chunkLoads] = await Promise.all([
+      loadSourceUnderstanding({ cacheDir, key: reducer.key, components: reducer.components, expectedProxyFiles, videoDurationSec }),
+      Promise.all(tasks.map((task, index) => MapReduce.loadChunkUnderstanding({ cacheDir, task, key: chunkKeys[index].key, components: chunkKeys[index].components })))
+    ]);
+    const chunkStatusLine = tasks.map((task, index) => `${task.chunkId}=${chunkLoads[index].status.toUpperCase()}`).join(" ");
+
+    if (globalLoaded.status === "hit") {
+      tasks.forEach((task, index) => {
+        diagnostics.map.chunks.push({
+          chunkId: task.chunkId, proxyFile: task.proxy.filename, sourceStartSec: task.sourceStartSec, sourceEndSec: task.sourceEndSec,
+          cacheKey: chunkKeys[index].key, cacheHit: chunkLoads[index].status === "hit", cacheStatus: chunkLoads[index].status,
+          durationMs: 0, agyRuntimeMs: 0, agyProcessCount: 0, viewFileCount: 0, duplicateVideoViewCount: 0, agentTurns: 0,
+          inputTokens: null, outputTokens: null, retryCount: 0, rewatchCount: 0, ok: true
+        });
+      });
+      diagnostics.map.cacheHits = chunkLoads.filter((item) => item.status === "hit").length;
+      diagnostics.map.cacheMisses = tasks.length - diagnostics.map.cacheHits;
+      Object.assign(diagnostics, { cacheHit: true, cacheStatus: "hit", cachePath: globalLoaded.path, phaseASkipped: true });
+      diagnostics.reduce.cacheHit = true;
+      this.emitLog(onProgress, 18, `[SOURCE_UNDERSTANDING] CACHE HIT key=${reducer.key} (${globalLoaded.path}); chunk cache: ${chunkStatusLine}`, logs);
+      this.emitLog(onProgress, 19, `[PHASE_A] SKIPPED: dùng lại understanding (map/reduce) đã xác minh lúc ${globalLoaded.envelope.createdAt}; 0 tiến trình AGY, 0 view_file video.`, logs);
+      const cachedCoverage = globalLoaded.envelope.phaseA?.coverage || {};
+      return {
+        data: globalLoaded.data,
+        cacheKey: reducer.key,
+        keyComponents: reducer.components,
+        coverage: {
+          isComplete: true, coveragePercent: 100, totalExpected: expectedProxyList.length, totalViewed: expectedProxyList.length,
+          expectedProxyFiles, viewedProxyFiles: cachedCoverage.viewedProxyFiles || expectedProxyFiles, missingProxyFiles: [],
+          source: "source_understanding_cache", verifiedAt: globalLoaded.envelope.createdAt, verifiedConversationId: null
+        },
+        diagnostics: finalize()
+      };
+    }
+
+    diagnostics.cacheStatus = globalLoaded.status;
+    this.emitLog(onProgress, 8, globalLoaded.status === "invalid"
+      ? `[SOURCE_UNDERSTANDING] CACHE INVALID (${globalLoaded.reason}) → bỏ qua; chunk cache: ${chunkStatusLine}`
+      : `[SOURCE_UNDERSTANDING] CACHE MISS key=${reducer.key}; chunk cache: ${chunkStatusLine}`, logs);
+    const pendingCount = chunkLoads.filter((item) => item.status !== "hit").length;
+    this.emitLog(onProgress, 10, `[PHASE_A] START map/reduce: ${tasks.length} chunk (${pendingCount} cần xem video, ${tasks.length - pendingCount} cache HIT), song song tối đa ${concurrency}; timeout map ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s/chunk, reduce ${Math.round(timeouts.reduceTimeoutMs / 1000)}s.`, logs);
+
+    // ---------------------------- MAP ----------------------------------
+    const mapStartedAt = Date.now();
+    const stopState = { kind: null, reason: "" };
+    const pool = { active: 0, maxActive: 0 };
+    const mapResults = await runBounded(tasks, concurrency, async (task, index) => {
+      try {
+        return await this.runMapChunk({
+          task, keyInfo: chunkKeys[index], cached: chunkLoads[index], pass1Dir, packageInfo, resultDir, schemaPath, cacheDir,
+          timeouts, onProgress, logs, diagnostics, stopState, pool
+        });
+      } catch (error) {
+        return {
+          data: null,
+          metrics: newMetrics(),
+          record: {
+            chunkId: task.chunkId, proxyFile: task.proxy.filename, sourceStartSec: task.sourceStartSec, sourceEndSec: task.sourceEndSec,
+            cacheKey: chunkKeys[index].key, cacheHit: false, cacheStatus: chunkLoads[index].status, ok: false,
+            failureKind: error.kind || "map_error", failureMessage: String(error.message || "").slice(0, 400)
+          }
+        };
+      }
+    });
+    diagnostics.map.durationMs = Date.now() - mapStartedAt;
+    diagnostics.map.maxConcurrentAgyProcesses = pool.maxActive;
+    for (const result of mapResults) {
+      mergeMetrics(totals, result.metrics);
+      diagnostics.map.chunks.push(result.record);
+      if (result.record.failureKind) diagnostics.failureKinds.push(result.record.failureKind);
+    }
+    diagnostics.map.cacheHits = mapResults.filter((result) => result.record.cacheHit).length;
+    diagnostics.map.cacheMisses = tasks.length - diagnostics.map.cacheHits;
+    diagnostics.map.agyProcessCount = mapResults.reduce((sum, result) => sum + result.metrics.agyProcessCount, 0);
+    diagnostics.map.viewFileCount = mapResults.reduce((sum, result) => sum + result.metrics.viewFileVideoCount, 0);
+    const failed = mapResults.filter((result) => !result.record.ok);
+    diagnostics.map.failedChunkCount = failed.length;
+    this.emitLog(onProgress, 40, `[PHASE_A] MAP xong sau ${(diagnostics.map.durationMs / 1000).toFixed(1)}s: ${tasks.length - failed.length}/${tasks.length} chunk hợp lệ, cache HIT ${diagnostics.map.cacheHits}, tiến trình AGY ${diagnostics.map.agyProcessCount}, view_file video ${diagnostics.map.viewFileCount}.`, logs);
+    if (failed.length) {
+      const okIds = mapResults.filter((result) => result.record.ok).map((result) => result.record.chunkId);
+      const error = new Error(
+        `[PHASE_A] FAILED: ${failed.length}/${tasks.length} map chunk lỗi: `
+        + failed.map((result) => `${result.record.chunkId} (${result.record.failureKind}: ${String(result.record.failureMessage || "").slice(0, 160)})`).join("; ")
+        + `. Các chunk hợp lệ đã được cache (${okIds.join(", ") || "không có"}) và sẽ KHÔNG bị xem lại; chạy lại chỉ xem các chunk lỗi. Chưa chạy reducer, không ghi cache toàn cục.`
+      );
+      const kinds = failed.map((result) => result.record.failureKind);
+      throw fail(error, kinds.includes("auth") ? "auth" : kinds.includes("cancelled") ? "cancelled" : kinds[0] || "map_failed");
+    }
+
+    // ---------------------------- REDUCE -------------------------------
+    const chunks = mapResults.map((result, index) => ({ task: tasks[index], data: result.data }));
+    const reduceStartedAt = Date.now();
+    const reduceMetrics = newMetrics();
+    let reduced;
+    try {
+      reduced = await this.runReducer({ chunks, pass1Dir, packageInfo, resultDir, schemaPath, videoDurationSec, timeouts, onProgress, logs, diagnostics, metrics: reduceMetrics });
+    } catch (error) {
+      mergeMetrics(totals, reduceMetrics);
+      Object.assign(diagnostics.reduce, {
+        durationMs: Date.now() - reduceStartedAt,
+        agyProcessCount: reduceMetrics.agyProcessCount,
+        videoViewFileCount: reduceMetrics.viewFileVideoCount,
+        viewFileCount: reduceMetrics.viewFileVideoCount + reduceMetrics.viewFileTextCount,
+        attempts: reduceMetrics.attempts,
+        failed: true
+      });
+      diagnostics.failureKinds.push(error.kind || "reduce_failed");
+      error.message = `${error.message} Map chunk cache vẫn giữ nguyên: lần chạy lại chỉ chạy lại reducer (0 view_file video).`;
+      throw fail(error, "reduce_failed");
+    }
+    mergeMetrics(totals, reduceMetrics);
+    Object.assign(diagnostics.reduce, {
+      durationMs: Date.now() - reduceStartedAt,
+      agyProcessCount: reduceMetrics.agyProcessCount,
+      videoViewFileCount: reduceMetrics.viewFileVideoCount,
+      viewFileCount: reduceMetrics.viewFileVideoCount + reduceMetrics.viewFileTextCount,
+      agentTurns: reduceMetrics.agentTurns,
+      inputTokens: reduceMetrics.usageReported ? reduceMetrics.inputTokens : null,
+      outputTokens: reduceMetrics.usageReported ? reduceMetrics.outputTokens : null,
+      attempts: reduceMetrics.attempts,
+      eventCount: reduced.data.storyTimeline.length
+    });
+
+    // Cache only after parse + schema validation + grounding check.
+    const coverage = {
+      isComplete: true,
+      coveragePercent: 100,
+      totalExpected: expectedProxyList.length,
+      totalViewed: expectedProxyList.length,
+      expectedProxyFiles,
+      viewedProxyFiles: expectedProxyFiles,
+      missingProxyFiles: [],
+      source: "phase_a_map_reduce"
+    };
+    const saved = await saveSourceUnderstanding({
+      cacheDir,
+      key: reducer.key,
+      components: reducer.components,
+      data: reduced.data,
+      phaseA: {
+        architecture: "chunked_map_reduce",
+        model: this.settings.antigravityModel || "",
+        videoDurationSec,
+        coverage: { isComplete: true, expectedProxyFiles, viewedProxyFiles: expectedProxyFiles },
+        chunks: mapResults.map((result) => ({ chunkId: result.record.chunkId, cacheKey: result.record.cacheKey, cacheHit: result.record.cacheHit, cachePath: result.record.cachePath })),
+        durationMs: Date.now() - startedAt
+      }
+    });
+    diagnostics.cachePath = saved.path;
+    (reduced.warnings || []).forEach((warning) => logs.push(`[PHASE_A] warning: ${warning}`));
+    this.emitLog(onProgress, 46, `[PHASE_A] DONE (map/reduce): ${reduced.data.storyTimeline.length} sự kiện toàn cục; map ${(diagnostics.map.durationMs / 1000).toFixed(1)}s, reduce ${(diagnostics.reduce.durationMs / 1000).toFixed(1)}s; view_file video ${totals.viewFileVideoCount}; JSON đã kiểm tra và lưu cache: ${saved.path}`, logs);
+    return { data: reduced.data, cacheKey: reducer.key, keyComponents: reducer.components, coverage, diagnostics: finalize() };
+  }
+
+  async runMapChunk({ task, keyInfo, cached, pass1Dir, packageInfo, resultDir, schemaPath, cacheDir, timeouts, onProgress, logs, diagnostics, stopState, pool }) {
+    const startedAt = Date.now();
+    const metrics = newMetrics();
+    const label = `PHASE_A_MAP ${task.chunkId}`;
+    const record = {
+      chunkId: task.chunkId,
+      proxyFile: task.proxy.filename,
+      sourceStartSec: task.sourceStartSec,
+      sourceEndSec: task.sourceEndSec,
+      cacheKey: keyInfo.key,
+      cacheHit: false,
+      cacheStatus: cached.status,
+      cacheReason: cached.reason || null,
+      cachePath: cached.path,
+      transcriptCueCount: task.transcript.length,
+      sceneCount: task.scenes.length,
+      actionCount: task.actions.length,
+      ok: false
+    };
+    const finish = (extra = {}, data = null) => {
+      const videoReads = Object.entries(metrics.fileReads).filter(([name]) => /\.(mp4|mov|webm|m4v)$/i.test(name));
+      Object.assign(record, {
+        durationMs: Date.now() - startedAt,
+        agyRuntimeMs: metrics.attempts.reduce((sum, attempt) => sum + (attempt.durationMs || 0), 0),
+        agyProcessCount: metrics.agyProcessCount,
+        viewFileCount: metrics.viewFileVideoCount,
+        textViewFileCount: metrics.viewFileTextCount,
+        duplicateVideoViewCount: videoReads.reduce((sum, [, count]) => sum + Math.max(0, count - 1), 0),
+        agentTurns: metrics.agentTurns,
+        inputTokens: metrics.usageReported ? metrics.inputTokens : null,
+        outputTokens: metrics.usageReported ? metrics.outputTokens : null,
+        thinkingTokens: metrics.usageReported ? metrics.thinkingTokens : null,
+        retryCount: record.retryCount || 0,
+        rewatchCount: record.rewatchCount || 0,
+        attempts: metrics.attempts,
+        ...extra
+      });
+      return { record, metrics, data };
+    };
+
+    if (cached.status === "hit") {
+      this.emitLog(onProgress, 14, `[PHASE_A] MAP ${task.chunkId} CACHE HIT (${task.sourceStartSec.toFixed(1)}-${task.sourceEndSec.toFixed(1)}s): 0 view_file video.`, logs);
+      return finish({ ok: true, cacheHit: true }, cached.data);
+    }
+    if (stopState.kind) {
+      return finish({ ok: false, failureKind: stopState.kind, failureMessage: `không chạy: ${stopState.reason}`.slice(0, 400), skipped: true });
+    }
+    if (this.cancelled) return finish({ ok: false, failureKind: "cancelled", failureMessage: "Đã dừng theo yêu cầu." });
+    this.emitLog(onProgress, 12, cached.status === "invalid"
+      ? `[PHASE_A] MAP ${task.chunkId} CACHE INVALID (${cached.reason}) → chỉ chạy lại chunk này.`
+      : `[PHASE_A] MAP ${task.chunkId} CACHE MISS → xem ${task.proxy.filename} (${task.sourceStartSec.toFixed(1)}-${task.sourceEndSec.toFixed(1)}s).`, logs);
+
+    // Chunk-specific inputs (kept for traceability; the compact context is inlined in the prompt).
+    const chunkInputDir = path.join(resultDir, "phase-a-input", task.chunkId);
+    await fs.mkdir(chunkInputDir, { recursive: true });
+    const srtTime = (value) => {
+      const ms = Math.max(0, Math.round(Number(value) * 1000));
+      const pad = (number, width = 2) => String(number).padStart(width, "0");
+      return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
+    };
+    const contextText = MapReduce.renderChunkContext(task);
+    const contextPath = path.join(chunkInputDir, `${task.chunkId}-context.txt`);
+    await Promise.all([
+      fs.writeFile(path.join(chunkInputDir, `${task.chunkId}-transcript.srt`), task.transcript.map((cue, index) => `${index + 1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text}\n`).join("\n"), "utf8"),
+      writeJsonAtomic(path.join(chunkInputDir, `${task.chunkId}-scenes.json`), task.scenes),
+      writeJsonAtomic(path.join(chunkInputDir, `${task.chunkId}-actions.json`), task.actions),
+      fs.writeFile(contextPath, contextText, "utf8")
+    ]);
+    let prompt = MapReduce.buildMapPrompt({ task, contextText });
+    let contextInline = true;
+    if (prompt.length > MAX_PRINT_PROMPT_CHARS) {
+      contextInline = false;
+      prompt = MapReduce.buildMapPrompt({ task, contextPath, contextLineCount: contextText.split("\n").length });
+    }
+    assertPrintPromptSize(prompt, `Phase A map ${task.chunkId}`);
+    Object.assign(record, { promptChars: prompt.length, contextInline });
+
+    const transportName = `chunk-understanding-${task.chunkId}.json`;
+    const allowedVideo = path.basename(String(task.proxy.absolutePath).replace(/\\/g, "/")).toLowerCase();
+    const allowedContext = contextInline ? null : path.basename(contextPath).toLowerCase();
+    const baseOf = (value) => path.basename(String(value || "").replace(/\\/g, "/")).toLowerCase();
+    const toolGuard = ({ toolName, file, stepUpdate }) => {
+      if (toolName === "view_file") {
+        const name = baseOf(file);
+        if (name === allowedVideo || (allowedContext && name === allowedContext)) return null;
+        return `map ${task.chunkId} chỉ được xem ${task.proxy.filename}`;
+      }
+      if (toolName === "write_to_file") {
+        const target = stepUpdate?.tool_info?.parameters?.TargetFile || file;
+        return !target || baseOf(target) === transportName.toLowerCase() ? null : `map ${task.chunkId} chỉ được ghi ${transportName}`;
+      }
+      return `map ${task.chunkId} không được dùng ${toolName || "công cụ"}`;
+    };
+    const chunkProgress = (item = {}) => onProgress?.({
+      step: item.step || "antigravity_stage1",
+      percent: Math.min(40, Math.max(12, Math.round(12 + (Number(item.percent) - 18) * 0.35))),
+      message: `[MAP ${task.chunkId}] ${String(item.message || "")}`.slice(0, 220)
+    });
+
+    const viewedProxySet = new Set();
+    let outcome = null;
+    let conversationId = null;
+    let stdout = "";
+    let videoViewedByEarlierProcess = false;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs });
+      } catch (error) {
+        stopState.kind = error.kind || "auth";
+        stopState.reason = String(error.message || "").slice(0, 300);
+        return finish({ ok: false, failureKind: stopState.kind, failureMessage: stopState.reason });
+      }
+      if (videoViewedByEarlierProcess) record.rewatchCount = (record.rewatchCount || 0) + 1;
+      pool.active += 1;
+      pool.maxActive = Math.max(pool.maxActive, pool.active);
+      try {
+        outcome = await this.runAgyOnce({
+          label,
+          commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.mapChunkTimeoutMs }),
+          prompt, resultDir, onProgress: chunkProgress, expectedProxyList: [task.proxy], viewedProxySet, metrics, logs,
+          logBase: `map-${task.chunkId}`, toolGuard
+        });
+      } finally {
+        pool.active -= 1;
+      }
+      const source = outcome.ok ? outcome.result : outcome.error;
+      conversationId = source?.conversationId || conversationId;
+      stdout += `${stdout ? `\n--- ${label} ATTEMPT ---\n` : ""}${source?.stdout || ""}`;
+      if (outcome.ok) break;
+      const viewedVideo = viewedProxySet.size > 0 || metrics.viewFileVideoCount > 0;
+      videoViewedByEarlierProcess = videoViewedByEarlierProcess || viewedVideo;
+      if (outcome.kind === "auth") {
+        stopState.kind = "auth";
+        stopState.reason = describeAgyFailure("auth", outcome.error);
+        return finish({ ok: false, failureKind: "auth", failureMessage: stopState.reason });
+      }
+      if (outcome.kind === "cancelled") return finish({ ok: false, failureKind: "cancelled", failureMessage: "Đã dừng theo yêu cầu." });
+      // Capacity before this chunk's video was viewed: nothing was watched yet, a fresh process is free.
+      if (outcome.kind === "capacity" && !viewedVideo && attempt < 2 && !this.cancelled) {
+        record.retryCount = (record.retryCount || 0) + 1;
+        metrics.retryCount += 1;
+        const delayMs = this.capacityRetryDelayMs(attempt);
+        this.emitLog(onProgress, 14, `[PHASE_A] MAP ${task.chunkId} 503/UNAVAILABLE trước khi xem video. Thử lại tiến trình mới sau ${Math.round(delayMs / 1000)}s (${attempt + 1}/2)...`, logs);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        continue;
+      }
+      break;
+    }
+    await fs.writeFile(path.join(resultDir, `antigravity-output-map-${task.chunkId}.log`), stdout, "utf8").catch(() => {});
+
+    const coverage = await auditTranscriptForViewedProxies(conversationId, [task.proxy], viewedProxySet);
+    const parse = async (text) => {
+      const raw = await extractNamedArtifact(text, { filename: transportName, artifactType: "source_chunk_understanding", resultDir });
+      if (!raw) return { data: null, validation: { ok: false, errors: [`Không tìm thấy ${transportName} trong output.`], warnings: [] } };
+      const data = MapReduce.normalizeChunkUnderstanding(raw, task);
+      return { data, validation: MapReduce.validateChunkUnderstanding(data, task) };
+    };
+    const failureMessageOf = () => (outcome.ok ? "" : describeAgyFailure(outcome.kind, outcome.error));
+    if (!coverage.isComplete) {
+      const kind = outcome.ok ? "coverage" : outcome.kind;
+      const message = `${failureMessageOf() ? `${failureMessageOf()} ` : ""}AGY chưa xem video ${task.proxy.filename} bằng view_file; JSON (nếu có) bị từ chối, không ghi cache.`;
+      this.emitLog(onProgress, 30, `[PHASE_A] MAP ${task.chunkId} FAILED (${kind}): ${message}`, logs);
+      return finish({ ok: false, failureKind: kind, failureMessage: message.slice(0, 400) });
+    }
+    let parsed = await parse(stdout);
+    if (!parsed.validation.ok && conversationId && this.settings.sourceUnderstandingMapSerializationRepair === true && !this.cancelled) {
+      // Opt-in only: a SHORT same-conversation serialization (tools forbidden).
+      // The 2026-10-07 global run showed this does not help when the model turn
+      // itself is failing server-side, so it is off by default.
+      record.serializationRepairUsed = true;
+      this.emitLog(onProgress, 32, `[PHASE_A] MAP ${task.chunkId}: video đã xem nhưng JSON chưa hợp lệ; thử serialize ngắn (${Math.round(timeouts.mapSerializationTimeoutMs / 1000)}s, cấm công cụ).`, logs);
+      const repairPrompt = assertPrintPromptSize([
+        `Return ONLY the ${transportName} transport JSON for ${task.chunkId} now, from what you already watched. Do not call any tool.`,
+        ...parsed.validation.errors.slice(0, 6).map((error) => `- ${error}`)
+      ].join("\n"), `Phase A map ${task.chunkId} repair`);
+      const repair = await this.runAgyOnce({
+        label: `${label} REPAIR`,
+        commandConfig: this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, { packageInfo, timeoutMs: timeouts.mapSerializationTimeoutMs }),
+        prompt: repairPrompt, resultDir, onProgress: chunkProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
+        logBase: `map-${task.chunkId}-repair`,
+        forbiddenTools: ["view_file", "run_command", "grep_search", "find_by_name", "list_dir", "codebase_search"]
+      });
+      const source = repair.ok ? repair.result : repair.error;
+      parsed = await parse(source?.stdout || "");
+    }
+    if (!parsed.validation.ok) {
+      const kind = outcome.ok ? "invalid_json" : outcome.kind;
+      const message = `${failureMessageOf() ? `${failureMessageOf()} ` : ""}Đã xem video chunk nhưng chunk JSON không hợp lệ (${parsed.validation.errors.slice(0, 3).join(" ")}). Chỉ chunk này lỗi; không ghi cache.`;
+      this.emitLog(onProgress, 30, `[PHASE_A] MAP ${task.chunkId} FAILED (${kind}): ${message}`, logs);
+      return finish({ ok: false, failureKind: kind, failureMessage: message.slice(0, 400) });
+    }
+    const savedPath = await MapReduce.saveChunkUnderstanding({
+      cacheDir,
+      task,
+      key: keyInfo.key,
+      components: keyInfo.components,
+      data: parsed.data,
+      map: {
+        videoViewed: true,
+        viewedProxyFiles: coverage.viewedProxyFiles,
+        conversationId: conversationId || null,
+        model: this.settings.antigravityModel || "",
+        durationMs: Date.now() - startedAt,
+        agyProcessCount: metrics.agyProcessCount,
+        videoViewFileCount: metrics.viewFileVideoCount
+      }
+    });
+    this.emitLog(onProgress, 36, `[PHASE_A] MAP ${task.chunkId} DONE: ${parsed.data.importantEvents.length} sự kiện, view_file video=${metrics.viewFileVideoCount}, ${((Date.now() - startedAt) / 1000).toFixed(1)}s. JSON đã kiểm tra và lưu cache: ${savedPath}`, logs);
+    record.cachePath = savedPath;
+    return finish({ ok: true, warnings: parsed.validation.warnings }, parsed.data);
+  }
+
+  async runReducer({ chunks, pass1Dir, packageInfo, resultDir, schemaPath, videoDurationSec, timeouts, onProgress, logs, diagnostics, metrics }) {
+    const label = "PHASE_A_REDUCE";
+    const overhead = MapReduce.buildReducePrompt({ reducerInput: "", videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors: ["x".repeat(900)] }).length;
+    const { text: reducerInput, overBudget } = MapReduce.renderReducerInputWithinBudget(chunks, MAX_PRINT_PROMPT_CHARS - overhead - 200);
+    diagnostics.reduce.inputChars = reducerInput.length;
+    const inputDir = path.join(resultDir, "phase-a-input");
+    await fs.mkdir(inputDir, { recursive: true });
+    await fs.writeFile(path.join(inputDir, "reducer-input.txt"), reducerInput, "utf8");
+    if (overBudget) {
+      const error = new Error(`[${label}] FAILED: ${chunks.length} chunk understanding quá lớn cho prompt reducer (${reducerInput.length} ký tự).`);
+      error.kind = "reduce_input_too_large";
+      throw error;
+    }
+    const toolGuard = ({ toolName, file, stepUpdate }) => {
+      if (toolName === "write_to_file") {
+        const target = stepUpdate?.tool_info?.parameters?.TargetFile || file;
+        if (!target || path.basename(String(target).replace(/\\/g, "/")).toLowerCase() === "source-understanding.json") return null;
+      }
+      return `reducer TEXT-ONLY: ${toolName || "công cụ"} bị cấm`;
+    };
+    const reduceProgress = (item = {}) => onProgress?.({
+      step: item.step || "antigravity_stage1",
+      percent: Math.min(45, Math.max(41, Math.round(41 + (Number(item.percent) - 18) * 0.05))),
+      message: `[REDUCE] ${String(item.message || "")}`.slice(0, 220)
+    });
+    this.emitLog(onProgress, 41, `[PHASE_A] REDUCE START (text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
+    let errors = [];
+    let capacityRetries = 0;
+    let repairs = 0;
+    for (;;) {
+      await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs });
+      const prompt = assertPrintPromptSize(MapReduce.buildReducePrompt({
+        reducerInput, videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors
+      }), "Phase A reduce");
+      const outcome = await this.runAgyOnce({
+        label,
+        commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.reduceTimeoutMs }),
+        prompt, resultDir, onProgress: reduceProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
+        logBase: "phaseA-reduce", toolGuard
+      });
+      if (!outcome.ok) {
+        diagnostics.reduce.failureKinds.push(outcome.kind);
+        if (outcome.kind === "capacity" && capacityRetries < 2 && !this.cancelled) {
+          const delayMs = this.capacityRetryDelayMs(capacityRetries);
+          capacityRetries += 1;
+          diagnostics.reduce.retryCount += 1;
+          metrics.retryCount += 1;
+          this.emitLog(onProgress, 42, `[${label}] 503/UNAVAILABLE. Reducer chỉ dùng văn bản; thử lại sau ${Math.round(delayMs / 1000)}s (${capacityRetries}/2)...`, logs);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        const error = new Error(`[${label}] FAILED: ${describeAgyFailure(outcome.kind, outcome.error)}`);
+        error.kind = outcome.kind === "forbidden_tool" ? "reduce_forbidden_tool" : outcome.kind;
+        throw error;
+      }
+      const raw = await extractNamedArtifact(outcome.result.stdout, { filename: "source-understanding.json", artifactType: "source_understanding", resultDir });
+      const parsed = this.normalizeUnderstanding(raw, videoDurationSec);
+      const groundingErrors = parsed.validation.ok ? MapReduce.validateReducerGrounding(parsed.data, chunks) : [];
+      if (parsed.validation.ok && !groundingErrors.length) {
+        return { data: parsed.data, warnings: parsed.validation.warnings };
+      }
+      errors = [...parsed.validation.errors, ...groundingErrors];
+      diagnostics.reduce.failureKinds.push("invalid_json");
+      if (repairs < 1 && !this.cancelled) {
+        repairs += 1;
+        diagnostics.reduce.retryCount += 1;
+        metrics.retryCount += 1;
+        this.emitLog(onProgress, 43, `[${label}] JSON chưa hợp lệ (${errors.slice(0, 2).join(" ")}). Chạy lại reducer text-only một lần (không có video).`, logs);
+        continue;
+      }
+      const error = new Error(`[${label}] FAILED: source-understanding từ reducer không hợp lệ (${errors.slice(0, 4).join(" ")}).`);
+      error.kind = "reduce_invalid";
+      throw error;
+    }
+  }
+
   normalizeUnderstanding(data, videoDurationSec) {
     if (!data || typeof data !== "object") {
       return { data: null, validation: { ok: false, errors: ["Không tìm thấy source-understanding.json trong output."], warnings: [] } };
@@ -2046,6 +2671,7 @@ class ManualAntigravityStage1Service {
 
   async run({ packageDir, onProgress } = {}) {
     const stage1StartedAt = Date.now();
+    this.cancelled = false;
     const logs = [];
     const resolvedPackageDir = path.resolve(String(packageDir || ""));
     if (!packageDir) throw new Error("Hãy tạo gói phân tích GĐ1 trước khi chạy Antigravity.");
@@ -2099,30 +2725,16 @@ class ManualAntigravityStage1Service {
     if (!sourceFingerprint) throw new Error("package-info.json thiếu sourceFingerprint và sourceVideoPath. Hãy bấm Tạo gói lại.");
     const cacheDir = packageInfo.cache?.cacheDir
       || path.join(this.settings.workspaceRoot || path.dirname(resolvedPackageDir), ".cineviral", "cache", "gemini-analysis", sourceFingerprint);
-    const { key: understandingKey, components: understandingComponents } = await computeSourceUnderstandingKey({
-      sourceFingerprint,
-      expectedProxyList,
-      sceneManifestPath: inputPaths.sceneManifestPath,
-      transcriptPath: inputPaths.transcriptPath,
-      proxySchemaVersion: packageInfo.cache?.proxySchemaVersion
-    });
     const expectedProxyFiles = expectedProxyList.map((proxy) => proxy.filename);
     const watchedSourceSec = Number(expectedProxyList.reduce((sum, proxy) => (
       sum + Math.max(0, Number(proxy.sourceEndSec ?? 0) - Number(proxy.sourceStartSec ?? 0))
     ), 0).toFixed(3)) || videoDurationSec;
 
-    const phaseAMetrics = newMetrics();
-    const phaseADiagnostics = {
-      authChecks: [],
-      failureKinds: [],
-      timeoutOccurred: false,
-      serializationRepairUsed: false,
-      serializationVideoViews: 0,
-      freshRetryBeforeAnyVideoCount: 0,
-      coverage: null,
-      contextFile: null,
-      timeoutMs: null
-    };
+    const architecture = resolveSourceUnderstandingArchitecture(this.settings);
+    let understandingKey = null;
+    let understandingComponents = null;
+    let understanding;
+    let coverage;
     const timing = {
       artifactType: "pipeline_timing",
       schemaVersion: 1,
@@ -2132,7 +2744,8 @@ class ManualAntigravityStage1Service {
       sourceUnderstanding: {
         cacheHit: false,
         cacheStatus: "miss",
-        cacheKey: understandingKey,
+        architecture,
+        cacheKey: null,
         cachePath: "",
         durationMs: 0,
         agyProcessCount: 0,
@@ -2150,98 +2763,143 @@ class ManualAntigravityStage1Service {
       scriptGeneration: { durationMs: 0, agyProcessCount: 0 }
     };
 
-    const loaded = await loadSourceUnderstanding({
-      cacheDir,
-      key: understandingKey,
-      components: understandingComponents,
-      expectedProxyFiles,
-      videoDurationSec
-    });
-    let understanding;
-    let coverage;
-    if (loaded.status === "hit") {
-      understanding = loaded.data;
-      const cachedCoverage = loaded.envelope.phaseA?.coverage || {};
-      coverage = {
-        isComplete: true,
-        coveragePercent: 100,
-        totalExpected: expectedProxyList.length,
-        totalViewed: expectedProxyList.length,
-        expectedProxyFiles,
-        viewedProxyFiles: cachedCoverage.viewedProxyFiles || expectedProxyFiles,
-        missingProxyFiles: [],
-        source: "source_understanding_cache",
-        verifiedAt: loaded.envelope.createdAt,
-        verifiedConversationId: loaded.envelope.phaseA?.conversationId || null
-      };
-      Object.assign(timing.sourceUnderstanding, {
-        cacheHit: true,
-        cacheStatus: "hit",
-        cachePath: loaded.path,
-        phaseASkipped: true,
-        viewedProxyCount: 0,
-        watchedSourceSec: 0
-      });
-      this.emitLog(onProgress, 18, `[SOURCE_UNDERSTANDING] CACHE HIT key=${understandingKey} (${loaded.path})`, logs);
-      this.emitLog(onProgress, 19, `[PHASE_A] SKIPPED: dùng lại understanding đã xác minh lúc ${loaded.envelope.createdAt}; 0 view_file video toàn nguồn.`, logs);
-    } else {
-      timing.sourceUnderstanding.cacheStatus = loaded.status;
-      this.emitLog(
-        onProgress,
-        8,
-        loaded.status === "invalid"
-          ? `[SOURCE_UNDERSTANDING] CACHE INVALID (${loaded.reason}) → bỏ qua file cache, chạy lại Phase A.`
-          : `[SOURCE_UNDERSTANDING] CACHE MISS key=${understandingKey}`,
-        logs
-      );
-      this.emitLog(onProgress, 10, `[PHASE_A] START: AI xem ${expectedProxyList.length} proxy (~${(watchedSourceSec / 60).toFixed(1)} phút nguồn).`, logs);
-      const phaseAStartedAt = Date.now();
-      let phaseA;
+    if (architecture === "chunked_map_reduce") {
       try {
-        phaseA = await this.runPhaseA({
+        const chunked = await this.runChunkedSourceUnderstanding({
           pass1Dir, packageInfo, resultDir, schemaPath, expectedProxyList, videoDurationSec, inputPaths,
-          onProgress, metrics: phaseAMetrics, logs, diagnostics: phaseADiagnostics
+          sourceFingerprint, cacheDir, onProgress, logs
+        });
+        understanding = chunked.data;
+        coverage = chunked.coverage;
+        understandingKey = chunked.cacheKey;
+        understandingComponents = chunked.keyComponents;
+        Object.assign(timing.sourceUnderstanding, chunked.diagnostics, {
+          viewedProxyCount: chunked.diagnostics.cacheHit ? 0 : chunked.diagnostics.map.cacheMisses,
+          watchedSourceSec: chunked.diagnostics.cacheHit ? 0 : Number(chunked.diagnostics.map.chunks.filter((chunk) => !chunk.cacheHit).reduce((sum, chunk) => sum + (chunk.sourceEndSec - chunk.sourceStartSec), 0).toFixed(3))
         });
       } catch (error) {
-        Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics), {
-          durationMs: Date.now() - phaseAStartedAt,
+        Object.assign(timing.sourceUnderstanding, error.diagnostics || {}, {
           failed: true,
           failureKind: error.kind || classifyAgyFailure(error),
-          failureMessage: String(error.message || "").slice(0, 600)
+          failureMessage: String(error.message || "").slice(0, 900)
         });
-        this.emitLog(onProgress, 40, `[PHASE_A] FAILED (${timing.sourceUnderstanding.failureKind}) sau ${(timing.sourceUnderstanding.durationMs / 1000).toFixed(1)}s; view_file video=${timing.sourceUnderstanding.viewFileCount}, tiến trình AGY=${phaseAMetrics.agyProcessCount}, restart toàn bộ=0.`, logs);
+        const su = timing.sourceUnderstanding;
+        this.emitLog(onProgress, 40, `[PHASE_A] FAILED (${su.failureKind}) sau ${((su.totalDurationMs || 0) / 1000).toFixed(1)}s; view_file video=${su.viewFileCount ?? 0}, tiến trình AGY=${su.agyProcessCount ?? 0}, chunk lỗi=${su.map?.failedChunkCount ?? "?"}, rewatch=${su.fullMultimodalRestartCount ?? 0}.`, logs);
         await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
         throw error;
       }
-      understanding = phaseA.data;
-      coverage = { ...phaseA.coverage, source: "phase_a_live" };
-      const saved = await saveSourceUnderstanding({
+    } else {
+      ({ key: understandingKey, components: understandingComponents } = await computeSourceUnderstandingKey({
+        sourceFingerprint,
+        expectedProxyList,
+        sceneManifestPath: inputPaths.sceneManifestPath,
+        transcriptPath: inputPaths.transcriptPath,
+        proxySchemaVersion: packageInfo.cache?.proxySchemaVersion
+      }));
+      timing.sourceUnderstanding.cacheKey = understandingKey;
+      const phaseAMetrics = newMetrics();
+      const phaseADiagnostics = {
+        authChecks: [],
+        failureKinds: [],
+        timeoutOccurred: false,
+        serializationRepairUsed: false,
+        serializationVideoViews: 0,
+        freshRetryBeforeAnyVideoCount: 0,
+        coverage: null,
+        contextFile: null,
+        timeoutMs: null
+      };
+      const loaded = await loadSourceUnderstanding({
         cacheDir,
         key: understandingKey,
         components: understandingComponents,
-        data: understanding,
-        phaseA: {
-          conversationId: phaseA.conversationId || null,
-          model: this.settings.antigravityModel || "",
-          videoDurationSec,
-          coverage: {
-            isComplete: phaseA.coverage.isComplete,
-            expectedProxyFiles: phaseA.coverage.expectedProxyFiles,
-            viewedProxyFiles: phaseA.coverage.viewedProxyFiles
-          },
-          durationMs: Date.now() - phaseAStartedAt
+        expectedProxyFiles,
+        videoDurationSec
+      });
+      if (loaded.status === "hit") {
+        understanding = loaded.data;
+        const cachedCoverage = loaded.envelope.phaseA?.coverage || {};
+        coverage = {
+          isComplete: true,
+          coveragePercent: 100,
+          totalExpected: expectedProxyList.length,
+          totalViewed: expectedProxyList.length,
+          expectedProxyFiles,
+          viewedProxyFiles: cachedCoverage.viewedProxyFiles || expectedProxyFiles,
+          missingProxyFiles: [],
+          source: "source_understanding_cache",
+          verifiedAt: loaded.envelope.createdAt,
+          verifiedConversationId: loaded.envelope.phaseA?.conversationId || null
+        };
+        Object.assign(timing.sourceUnderstanding, {
+          cacheHit: true,
+          cacheStatus: "hit",
+          cachePath: loaded.path,
+          phaseASkipped: true,
+          viewedProxyCount: 0,
+          watchedSourceSec: 0
+        });
+        this.emitLog(onProgress, 18, `[SOURCE_UNDERSTANDING] CACHE HIT key=${understandingKey} (${loaded.path})`, logs);
+        this.emitLog(onProgress, 19, `[PHASE_A] SKIPPED: dùng lại understanding đã xác minh lúc ${loaded.envelope.createdAt}; 0 view_file video toàn nguồn.`, logs);
+      } else {
+        timing.sourceUnderstanding.cacheStatus = loaded.status;
+        this.emitLog(
+          onProgress,
+          8,
+          loaded.status === "invalid"
+            ? `[SOURCE_UNDERSTANDING] CACHE INVALID (${loaded.reason}) → bỏ qua file cache, chạy lại Phase A.`
+            : `[SOURCE_UNDERSTANDING] CACHE MISS key=${understandingKey}`,
+          logs
+        );
+        this.emitLog(onProgress, 10, `[PHASE_A] START: AI xem ${expectedProxyList.length} proxy (~${(watchedSourceSec / 60).toFixed(1)} phút nguồn).`, logs);
+        const phaseAStartedAt = Date.now();
+        let phaseA;
+        try {
+          phaseA = await this.runPhaseA({
+            pass1Dir, packageInfo, resultDir, schemaPath, expectedProxyList, videoDurationSec, inputPaths,
+            onProgress, metrics: phaseAMetrics, logs, diagnostics: phaseADiagnostics
+          });
+        } catch (error) {
+          Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics), {
+            durationMs: Date.now() - phaseAStartedAt,
+            failed: true,
+            failureKind: error.kind || classifyAgyFailure(error),
+            failureMessage: String(error.message || "").slice(0, 600)
+          });
+          this.emitLog(onProgress, 40, `[PHASE_A] FAILED (${timing.sourceUnderstanding.failureKind}) sau ${(timing.sourceUnderstanding.durationMs / 1000).toFixed(1)}s; view_file video=${timing.sourceUnderstanding.viewFileCount}, tiến trình AGY=${phaseAMetrics.agyProcessCount}, restart toàn bộ=0.`, logs);
+          await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+          throw error;
         }
-      });
-      Object.assign(timing.sourceUnderstanding, {
-        cachePath: saved.path,
-        durationMs: Date.now() - phaseAStartedAt,
-        viewedProxyCount: phaseA.coverage.totalViewed,
-        watchedSourceSec
-      });
-      (phaseA.warnings || []).forEach((warning) => logs.push(`[PHASE_A] warning: ${warning}`));
-      this.emitLog(onProgress, 46, `[PHASE_A] DONE: ${phaseA.coverage.totalViewed}/${expectedProxyList.length} proxy, ${phaseAMetrics.agyProcessCount} tiến trình AGY. Đã lưu cache: ${saved.path}`, logs);
+        understanding = phaseA.data;
+        coverage = { ...phaseA.coverage, source: "phase_a_live" };
+        const saved = await saveSourceUnderstanding({
+          cacheDir,
+          key: understandingKey,
+          components: understandingComponents,
+          data: understanding,
+          phaseA: {
+            conversationId: phaseA.conversationId || null,
+            model: this.settings.antigravityModel || "",
+            videoDurationSec,
+            coverage: {
+              isComplete: phaseA.coverage.isComplete,
+              expectedProxyFiles: phaseA.coverage.expectedProxyFiles,
+              viewedProxyFiles: phaseA.coverage.viewedProxyFiles
+            },
+            durationMs: Date.now() - phaseAStartedAt
+          }
+        });
+        Object.assign(timing.sourceUnderstanding, {
+          cachePath: saved.path,
+          durationMs: Date.now() - phaseAStartedAt,
+          viewedProxyCount: phaseA.coverage.totalViewed,
+          watchedSourceSec
+        });
+        (phaseA.warnings || []).forEach((warning) => logs.push(`[PHASE_A] warning: ${warning}`));
+        this.emitLog(onProgress, 46, `[PHASE_A] DONE: ${phaseA.coverage.totalViewed}/${expectedProxyList.length} proxy, ${phaseAMetrics.agyProcessCount} tiến trình AGY. Đã lưu cache: ${saved.path}`, logs);
+      }
+      Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics));
     }
-    Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics));
 
     // Phase B inputs are files (command-line length limit); the persistent
     // understanding is copied next to the run so the agent can read it.
@@ -2486,6 +3144,19 @@ function newMetrics() {
   };
 }
 
+function mergeMetrics(target, source) {
+  if (!source) return target;
+  for (const [name, count] of Object.entries(source.fileReads || {})) {
+    target.fileReads[name] = (target.fileReads[name] || 0) + count;
+  }
+  if (source.usageReported) target.usageReported = true;
+  for (const key of ["agyProcessCount", "retryCount", "agentTurns", "toolCalls", "viewFileVideoCount", "viewFileTextCount", "inputTokens", "outputTokens", "thinkingTokens", "cacheReadTokens", "modelSeconds"]) {
+    target[key] += Number(source[key]) || 0;
+  }
+  target.attempts.push(...(source.attempts || []));
+  return target;
+}
+
 function accumulateStats(metrics, stats) {
   if (!stats) return;
   for (const [name, count] of Object.entries(stats.fileReads || {})) {
@@ -2576,6 +3247,9 @@ ManualAntigravityStage1Service.buildPhaseAContext = buildPhaseAContext;
 ManualAntigravityStage1Service.parseKeyringExpiry = parseKeyringExpiry;
 ManualAntigravityStage1Service.recoverTruncatedUnderstanding = recoverTruncatedUnderstanding;
 ManualAntigravityStage1Service.buildSourceUnderstandingSerializationPrompt = buildSourceUnderstandingSerializationPrompt;
+ManualAntigravityStage1Service.resolveSourceUnderstandingArchitecture = resolveSourceUnderstandingArchitecture;
+ManualAntigravityStage1Service.resolveMapConcurrency = resolveMapConcurrency;
+ManualAntigravityStage1Service.parseSrtForContext = parseSrtForContext;
 
 module.exports = ManualAntigravityStage1Service;
 module.exports.resolveAntigravityTimeoutMs = resolveAntigravityTimeoutMs;

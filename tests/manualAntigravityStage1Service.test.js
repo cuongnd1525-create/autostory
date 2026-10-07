@@ -100,16 +100,21 @@ async function createPackage() {
     beforeFiles,
     "Stage 1 input folder must stay unchanged (the understanding cache lives in the persistent source cache)"
   );
-  assert.deepStrictEqual(calls.map((call) => call.kind), ["phase_a", "phase_b"], "cold run: Phase A then Phase B");
-  assert.strictEqual(calls[1].options.cwd, result.resultDir, "Phase B must run in result folder");
+  assert.deepStrictEqual(calls.map((call) => call.kind), ["map", "reduce", "phase_b"], "cold run: chunked Phase A (map + text-only reduce) then Phase B");
+  assert.strictEqual(calls[2].options.cwd, result.resultDir, "Phase B must run in result folder");
   const printArg = calls[0].args.find((arg) => arg.startsWith("--print="));
   assert(printArg, "Antigravity prompt must be attached directly to --print");
-  assert(printArg.includes("analysis-proxy.mp4"), "Phase A must list the proxy to watch");
-  assert(printArg.includes("phase-a-context.txt"), "Phase A reads one compact context file");
-  assert(printArg.includes("ISSUE ALL OF THESE TOOL CALLS AT ONCE"), "Phase A batches every view_file in one response");
-  assert(!printArg.includes("source-transcript.srt\")"), "Phase A must not page through the raw SRT");
-  assert(!printArg.includes("01-gemini-highlight-scripts-prompt.txt"), "Phase A must stay editorial-neutral (no editorial prompt)");
-  const phaseBPrint = calls[1].args.find((arg) => arg.startsWith("--print="));
+  assert(printArg.includes('view_file("') && printArg.includes("analysis-proxy.mp4"), "the map worker watches its proxy chunk");
+  assert(printArg.includes("TEXT CONTEXT FOR THIS INTERVAL"), "the chunk text context is inlined (no file paging)");
+  assert(!printArg.includes("phase-a-context.txt"), "no global context file in the map prompt");
+  assert(!printArg.includes("source-transcript.srt"), "map must not open the raw SRT");
+  assert(!printArg.includes("scene-manifest.json"), "map must not open the raw scene manifest");
+  assert(!printArg.includes("01-gemini-highlight-scripts-prompt.txt"), "map stays editorial-neutral (no editorial prompt)");
+  assert(!/hook.contract/i.test(printArg), "map gets no Hook Contract");
+  const reducePrint = calls[1].args.find((arg) => arg.startsWith("--print="));
+  assert(reducePrint.includes("TEXT ONLY") && reducePrint.includes("Do NOT call view_file"), "reducer is text-only");
+  assert(!/\.mp4/i.test(reducePrint), "reducer prompt carries no video path");
+  const phaseBPrint = calls[2].args.find((arg) => arg.startsWith("--print="));
   assert(phaseBPrint.includes("HOST-VERIFIED INPUT ACCESS OVERRIDE"), "Phase B must override the STEP 0 proxy gate");
   assert(phaseBPrint.includes("Do NOT call view_file (or any other tool) on any .mp4 file"));
   assert(!/view_file\("[^"]+\.mp4"\)/.test(phaseBPrint), "Phase B prompt must not ask to view proxies");
@@ -413,7 +418,7 @@ async function createPackage() {
   const gatePass1 = path.join(gatePackageDir, "01-GUI-GEMINI");
   await fs.mkdir(gatePass1, { recursive: true });
   await fs.writeFile(path.join(gatePass1, "01-gemini-highlight-scripts-prompt.txt"), "Generate Script 1.", "utf8");
-  await fs.writeFile(path.join(gatePass1, "scene-manifest.json"), JSON.stringify({ scenes: [] }), "utf8");
+  await fs.writeFile(path.join(gatePass1, "scene-manifest.json"), JSON.stringify({ videoDurationSec: 20, scenes: [] }), "utf8");
   await fs.writeFile(path.join(gatePass1, "analysis-proxy-chunk-001.mp4"), "dummy mp4", "utf8");
   await fs.writeFile(path.join(gatePass1, "proxy-chunks-manifest.json"), JSON.stringify({
     chunks: [{ chunkId: "chk1", file: "analysis-proxy-chunk-001.mp4" }]
@@ -457,7 +462,7 @@ async function createPackage() {
     await gateService.run({ packageDir: gatePackageDir });
   } catch (err) {
     gateFailed = true;
-    assert(err.message.includes("[PHASE_A] FAILED") && err.message.includes("chưa xem đủ 100% proxy"), "must throw hard gate error");
+    assert(err.message.includes("[PHASE_A] FAILED") && err.message.includes("chưa xem video"), `must throw hard gate error (${err.message})`);
     assert(err.message.includes("analysis-proxy-chunk-001.mp4"), "must name missing chunk");
   }
   assert.strictEqual(gateFailed, true, "run must fail when video chunks were not viewed");

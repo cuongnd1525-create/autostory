@@ -79,7 +79,7 @@ async function runStage1(packageDir, { respond = defaultResponder(), settings = 
 }
 
 function fullSourceViewCalls(calls) {
-  return calls.filter((call) => call.kind === "phase_a" || call.kind === "phase_a_coverage_retry");
+  return calls.filter((call) => call.kind === "phase_a" || call.kind === "phase_a_coverage_retry" || call.kind === "map");
 }
 
 (async () => {
@@ -97,13 +97,15 @@ function fullSourceViewCalls(calls) {
 
   const runA = await runStage1(packA.packageDir);
   assert.ifError(runA.error);
-  assert.deepStrictEqual(runA.calls.map((call) => call.kind), ["phase_a", "phase_b"], "cold run = Phase A + Phase B");
+  assert.deepStrictEqual(runA.calls.map((call) => call.kind), ["map", "reduce", "phase_b"], "cold run = Phase A map + text-only reduce + Phase B");
   const timingA = runA.result.timing;
   assert.strictEqual(timingA.sourceUnderstanding.cacheHit, false);
   assert.strictEqual(timingA.sourceUnderstanding.expectedProxyCount, 1);
   assert.strictEqual(timingA.sourceUnderstanding.viewedProxyCount, 1, "Phase A must view the expected proxy count");
   assert.strictEqual(timingA.sourceUnderstanding.videoViewFileCount, 1);
-  assert.strictEqual(timingA.sourceUnderstanding.agyProcessCount, 1);
+  assert.strictEqual(timingA.sourceUnderstanding.agyProcessCount, 2, "1 map + 1 reducer");
+  assert.strictEqual(timingA.sourceUnderstanding.architecture, "chunked_map_reduce");
+  assert.strictEqual(timingA.sourceUnderstanding.reduce.videoViewFileCount, 0);
   assert.strictEqual(timingA.scriptGeneration.agyProcessCount, 1);
   assert.strictEqual(timingA.scriptGeneration.videoViewFileCount, 0);
   assert(runA.messages.some((message) => message.startsWith("[SOURCE_UNDERSTANDING] CACHE MISS")));
@@ -183,7 +185,7 @@ function fullSourceViewCalls(calls) {
   assert.notStrictEqual(packD.cache.sourceFingerprint, packA.cache.sourceFingerprint, "changed source must change the fingerprint");
   const runD = await runStage1(packD.packageDir);
   assert.ifError(runD.error);
-  assert.deepStrictEqual(runD.calls.map((call) => call.kind), ["phase_a", "phase_b"], "changed source: Phase A reruns");
+  assert.deepStrictEqual(runD.calls.map((call) => call.kind), ["map", "reduce", "phase_b"], "changed source: Phase A reruns");
   assert.strictEqual(runD.result.timing.sourceUnderstanding.cacheHit, false);
   assert(runD.messages.some((message) => message.startsWith("[SOURCE_UNDERSTANDING] CACHE MISS")));
 
@@ -197,17 +199,20 @@ function fullSourceViewCalls(calls) {
   const runD2 = await runStage1(packD.packageDir);
   assert.ifError(runD2.error);
   assert.strictEqual(runD2.result.timing.sourceUnderstanding.cacheHit, false, "transcript change must miss");
+  assert.deepStrictEqual(runD2.calls.map((call) => call.kind), ["map", "reduce", "phase_b"], "the chunk transcript slice changed, so that chunk is rewatched");
 
   // ---------------------------------------------------------------- Test E
   // Corrupt cache: never silently accepted.
   const cacheDirD = packD.cache.cacheDir;
   const cacheFileD = path.join(cacheDirD, (await listUnderstandingCacheFiles(cacheDirD))
     .find((name) => runD2.result.sourceUnderstanding.cachePath.endsWith(name)));
-  // E1: malformed JSON -> INVALID -> Phase A reruns and rewrites a valid cache.
+  // E1: malformed global JSON -> INVALID -> only the text-only reducer reruns
+  // (the chunk understanding is still a valid cache entry: no video rewatch).
   await fs.writeFile(cacheFileD, "{ this is not json", "utf8");
   const runE1 = await runStage1(packD.packageDir);
   assert.ifError(runE1.error);
-  assert.deepStrictEqual(runE1.calls.map((call) => call.kind), ["phase_a", "phase_b"]);
+  assert.deepStrictEqual(runE1.calls.map((call) => call.kind), ["reduce", "phase_b"]);
+  assert.strictEqual(runE1.result.timing.sourceUnderstanding.videoViewFileCount, 0);
   assert.strictEqual(runE1.result.timing.sourceUnderstanding.cacheStatus, "invalid");
   assert(runE1.messages.some((message) => message.startsWith("[SOURCE_UNDERSTANDING] CACHE INVALID")));
   assert.strictEqual(JSON.parse(await fs.readFile(cacheFileD, "utf8")).artifactType, "source_understanding_cache", "cache rewritten with a valid envelope");
@@ -218,45 +223,44 @@ function fullSourceViewCalls(calls) {
   const runE2 = await runStage1(packD.packageDir);
   assert.ifError(runE2.error);
   assert.strictEqual(runE2.result.timing.sourceUnderstanding.cacheStatus, "invalid");
-  assert.strictEqual(fullSourceViewCalls(runE2.calls).length, 1);
+  assert.strictEqual(fullSourceViewCalls(runE2.calls).length, 0, "only the reducer reruns");
 
   // E3: metadata mismatch (e.g. written by an older understanding prompt) is not a hit.
   const validAgain = JSON.parse(await fs.readFile(cacheFileD, "utf8"));
   await fs.writeFile(cacheFileD, JSON.stringify({
     ...validAgain,
-    keyComponents: { ...validAgain.keyComponents, understandingPromptVersion: 0 }
+    keyComponents: { ...validAgain.keyComponents, reducePromptVersion: 0 }
   }), "utf8");
   const runE3 = await runStage1(packD.packageDir);
   assert.strictEqual(runE3.result.timing.sourceUnderstanding.cacheStatus, "invalid");
 
-  // E4: Phase A returns unparseable output twice -> fail clearly, NO cache written.
+  // E4: the map returns unparseable output -> that chunk fails clearly, NO cache written
+  // (no same-conversation serialization by default; no reducer without valid chunks).
   await fs.rm(cacheFileD);
+  await fs.rm(path.join(cacheDirD, "chunk-understanding"), { recursive: true, force: true });
   const brokenRespond = (kind, prompt) => {
-    if (kind === "phase_a") {
+    if (kind === "map") {
       return { viewFiles: [...prompt.matchAll(/view_file\("([^"]+)"\)/g)].map((m) => m[1]), rawResult: "I watched the video. It is about police." };
     }
-    if (kind === "phase_a_repair") return { rawResult: "{ broken json" };
     return defaultResponder()(kind, prompt);
   };
   const runE4 = await runStage1(packD.packageDir, { respond: brokenRespond });
-  assert(runE4.error, "unparseable Phase A must fail");
+  assert(runE4.error, "unparseable map output must fail");
   assert(runE4.error.message.startsWith("[PHASE_A] FAILED"), runE4.error.message);
-  assert.deepStrictEqual(runE4.calls.map((call) => call.kind), ["phase_a", "phase_a_repair"], "one JSON repair in the same conversation, then stop");
-  assert(runE4.calls[1].resumed, "the repair resumes the Phase A conversation instead of rewatching");
+  assert.deepStrictEqual(runE4.calls.map((call) => call.kind), ["map"], "only the failed chunk; no reducer, no rewatch");
   assert.strictEqual(await exists(cacheFileD), false, "no fake cache may be written after a parse failure");
+  assert.deepStrictEqual(await fs.readdir(path.join(cacheDirD, "chunk-understanding")).catch(() => []), [], "no chunk cache after a parse failure");
 
   // E5: truncated understanding (stops half way) is rejected, not cached.
   const truncatedRespond = (kind, prompt) => {
     const truncated = buildUnderstanding(20);
     truncated.storyTimeline = truncated.storyTimeline.slice(0, 4);
-    if (kind === "phase_a") {
-      return { viewFiles: [...prompt.matchAll(/view_file\("([^"]+)"\)/g)].map((m) => m[1]), envelope: { artifacts: [{ filename: "source-understanding.json", script: truncated }] } };
-    }
-    if (kind === "phase_a_repair") return { envelope: { artifacts: [{ filename: "source-understanding.json", script: truncated }] } };
+    if (kind === "reduce") return { envelope: { artifacts: [{ filename: "source-understanding.json", script: truncated }] } };
     return defaultResponder()(kind, prompt);
   };
   const runE5 = await runStage1(packD.packageDir, { respond: truncatedRespond });
-  assert(runE5.error && runE5.error.message.includes("[PHASE_A] FAILED"));
+  assert(runE5.error && runE5.error.message.includes("[PHASE_A_REDUCE] FAILED"), runE5.error?.message);
+  assert.deepStrictEqual(runE5.calls.map((call) => call.kind), ["map", "reduce", "reduce"], "one text-only reducer retry, never a video rewatch");
   assert.strictEqual(await exists(cacheFileD), false);
 
   // Phase B silently opening every proxy is surfaced (not silent).
