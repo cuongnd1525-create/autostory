@@ -461,8 +461,10 @@ function resolveMapReduceTimeouts(settings = {}, { chunkDurationSec = 240 } = {}
   };
   const minutes = Math.max(0.5, num(chunkDurationSec, 240) / 60);
   return {
-    mapChunkTimeoutMs: configured("antigravityMapChunkTimeoutMs") || Math.round(Math.min(480000, Math.max(240000, 180000 + minutes * 30000))),
-    mapSerializationTimeoutMs: configured("antigravityMapSerializationTimeoutMs") || 90000,
+    // Short MAP chunks should not inherit the old 4-8 minute wait budget.
+    // 90s of proxy gets ~225s by default; 120s gets ~240s.
+    mapChunkTimeoutMs: configured("antigravityMapChunkTimeoutMs") || Math.round(Math.min(360000, Math.max(180000, 180000 + minutes * 30000))),
+    mapSerializationTimeoutMs: configured("antigravityMapSerializationTimeoutMs") || 60000,
     reduceTimeoutMs: configured("antigravityReduceTimeoutMs") || 240000
   };
 }
