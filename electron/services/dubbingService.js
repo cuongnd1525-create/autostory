@@ -6439,6 +6439,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
   async renderHighlightFastDraft({ workspaceRoot, projectId, settings, onProgress, project: suppliedProject = null }) {
     let project = suppliedProject || await this.projectStore.getProject(workspaceRoot, projectId);
     project = resolveEffectiveVideoEditProject(project);
+    if (project.analysisWorkflow === "manual_gemini_draft_review" && (project.draftVoiceMode || "edge_neural") === "edge_neural") {
+      project = {
+        ...project,
+        draftVoiceMode: "final",
+        draftVoiceProvider: project.voiceProvider || settings.defaultVoiceProvider || "edge_neural",
+        draftVoiceId: project.voiceId || ""
+      };
+    }
     if (project.mode !== "highlight_cut") {
       throw new Error("Render nháp nhanh Highlight chỉ hỗ trợ mode Highlight Cut.");
     }
@@ -6465,8 +6473,19 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const draftVoiceReports = [];
     const draftVoiceProvider = this.getFastDraftVoiceProvider(project, settings);
     const draftVoiceExt = audioExtensionForProvider(draftVoiceProvider);
-    const blockRuns = new Map(narratedBlockRuns(segments).map((run) => [run.start, run]));
+    const renderSegments = buildManualDraftContinuousNarration(segments, project, settings);
+    const narratedRuns = narratedBlockRuns(renderSegments);
+    const blockRuns = new Map(narratedRuns.map((run) => [run.start, run]));
     const blockVoiceReports = [];
+    const autoNarrationBlockCount = narratedRuns.filter((run) => renderSegments[run.start]?.draftAutoNarrationBlock).length;
+    if (project.analysisWorkflow === "manual_gemini_draft_review") {
+      onProgress?.({
+        projectId,
+        step: "draft",
+        percent: 8,
+        message: `Voice nháp: ${draftVoiceProvider} · ${project.draftVoiceMode === "final" ? "voice xuất thật" : project.draftVoiceMode || "draft"} · ${autoNarrationBlockCount} khối narrator liên tục`
+      });
+    }
     const renderStartedAt = Date.now();
     const renderMetrics = {
       ttsMs: 0,
@@ -6476,18 +6495,18 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       segmentCacheMisses: 0,
       segmentCacheLog: []
     };
-    for (let index = 0; index < segments.length; index++) {
-      const segment = segments[index];
+    for (let index = 0; index < renderSegments.length; index++) {
+      const segment = renderSegments[index];
       const blockRun = blockRuns.get(index);
       if (blockRun) {
         // AutoStory V5: narrated_story delivery block — ONE narration passage,
         // synthesized once, fitted once, mixed and ducked once across all of the
         // block's visual cuts. Visual durations stay exactly the EDL's.
-        onProgress?.({ projectId, step: "draft", percent: Math.min(82, 10 + Math.round((index / Math.max(1, segments.length)) * 68)),
+        onProgress?.({ projectId, step: "draft", percent: Math.min(82, 10 + Math.round((index / Math.max(1, renderSegments.length)) * 68)),
           message: `Đang render khối narrator ${blockRun.blockId} (${blockRun.end - blockRun.start + 1} cảnh)` });
         const block = await this.renderNarratedDeliveryBlock({
           ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat,
-          members: segments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics
+          members: renderSegments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics
         });
         clipPaths.push(block.clipPath);
         blockVoiceReports.push(block.report);
@@ -6510,8 +6529,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       onProgress?.({
         projectId,
         step: "draft",
-        percent: Math.min(82, 10 + Math.round((index / Math.max(1, segments.length)) * 68)),
-        message: `Đang render nháp Highlight ${index + 1}/${segments.length}`
+        percent: Math.min(82, 10 + Math.round((index / Math.max(1, renderSegments.length)) * 68)),
+        message: `Đang render nháp Highlight ${index + 1}/${renderSegments.length}`
       });
       let rawVoiceMeta = null;
       let voiceProfile = null;
