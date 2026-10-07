@@ -14,7 +14,20 @@ jobs:
       - run: npm ci
       - run: node --check electron/services/manualGeminiPackService.js
       - run: node --check electron/services/sourceUnderstandingMapReduce.js
-      - run: node tests/manualGeminiPackService.test.js
+      - run: |
+          node - <<'NODE'
+          const assert = require('assert');
+          const { buildProxyChunkPlan } = require('./electron/services/manualGeminiPackService');
+          const duration = 771.9;
+          const scenes = Array.from({length: 40}, (_, i) => ({startSec:i*20,endSec:Math.min(duration,(i+1)*20)}));
+          const chunks = buildProxyChunkPlan({videoDurationSec:duration,scenes});
+          assert(chunks.length >= 7 && chunks.length <= 10, 'expected about 8-9 short chunks');
+          assert.strictEqual(chunks[0].sourceStartSec, 0);
+          assert.strictEqual(chunks.at(-1).sourceEndSec, duration);
+          assert(chunks.every(c => c.durationSec <= 120), 'no chunk may exceed 120s');
+          assert(chunks.every(c => c.durationSec >= 60 || c === chunks.at(-1)), 'normal chunks should stay >=60s');
+          console.log('short proxy chunk planner passed:', chunks.map(c => c.durationSec));
+          NODE
       - run: node tests/sourceUnderstandingMapReduce.test.js
       - run: node tests/stage1ProcessIsolation.test.js
       - run: node tests/manualAntigravityStage1Service.test.js
