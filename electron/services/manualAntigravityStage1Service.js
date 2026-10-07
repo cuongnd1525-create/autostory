@@ -2895,6 +2895,20 @@ class ManualAntigravityStage1Service {
         prompt, resultDir: workDir, cwd: workDir, onProgress: reduceProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
         logBase: "reduce", toolGuard, activityLabel: "Antigravity đang tổng hợp (text-only)..."
       });
+      // File-first transport can complete before the CLI's final response stream
+      // is interrupted. Always validate the durable artifact before deciding
+      // whether a failed result event needs a retry.
+      const durableRaw = await extractNamedArtifact(outcome.ok ? outcome.result.stdout : (outcome.error?.stdout || ""), {
+        filename: "source-understanding.json", artifactType: "source_understanding", resultDir: workDir
+      });
+      if (durableRaw) {
+        const durableParsed = this.normalizeUnderstanding(durableRaw, videoDurationSec);
+        const durableGroundingErrors = durableParsed.validation.ok ? MapReduce.validateReducerGrounding(durableParsed.data, chunks) : [];
+        if (durableParsed.validation.ok && !durableGroundingErrors.length) {
+          if (!outcome.ok) diagnostics.reduce.recoveredFromDurableFile = true;
+          return { data: durableParsed.data, warnings: durableParsed.validation.warnings };
+        }
+      }
       if (!outcome.ok) {
         diagnostics.reduce.failureKinds.push(outcome.kind);
         if (outcome.kind === "prompt_blocked" && promptBlockRetries < 1 && !this.cancelled) {
