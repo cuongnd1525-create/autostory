@@ -2296,9 +2296,35 @@ class ManualAntigravityStage1Service {
       videoDurationSec,
       handleSec
     });
-    const chunkKeys = tasks.map((task) => MapReduce.computeChunkKey({ task, sourceFingerprint, proxySchemaVersion: packageInfo.cache?.proxySchemaVersion }));
-    const reducer = MapReduce.computeReducerKey({ sourceFingerprint, videoDurationSec, chunkKeys: chunkKeys.map((item) => item.key) });
-    return { tasks, chunkKeys, reducer };
+    const mapModel = normalizeAntigravityModel(
+      this.settings.antigravityMapModel
+      || process.env.ANTIGRAVITY_MAP_MODEL
+      || this.settings.antigravityModel
+      || process.env.ANTIGRAVITY_MODEL
+      || ""
+    );
+    const reduceModel = normalizeAntigravityModel(
+      this.settings.antigravityReduceModel
+      || process.env.ANTIGRAVITY_REDUCE_MODEL
+      || this.settings.antigravityMapModel
+      || process.env.ANTIGRAVITY_MAP_MODEL
+      || this.settings.antigravityModel
+      || process.env.ANTIGRAVITY_MODEL
+      || ""
+    );
+    const chunkKeys = tasks.map((task) => MapReduce.computeChunkKey({
+      task,
+      sourceFingerprint,
+      proxySchemaVersion: packageInfo.cache?.proxySchemaVersion,
+      mapModel
+    }));
+    const reducer = MapReduce.computeReducerKey({
+      sourceFingerprint,
+      videoDurationSec,
+      chunkKeys: chunkKeys.map((item) => item.key),
+      reduceModel
+    });
+    return { tasks, chunkKeys, reducer, mapModel, reduceModel };
   }
 
   /**
@@ -2312,7 +2338,7 @@ class ManualAntigravityStage1Service {
   async runChunkedSourceUnderstanding({ pass1Dir, packageInfo, resultDir, schemaPath, expectedProxyList, videoDurationSec, inputPaths, sourceFingerprint, cacheDir, onProgress, logs }) {
     const startedAt = Date.now();
     const concurrency = resolveMapConcurrency(this.settings);
-    const { tasks, chunkKeys, reducer } = await this.prepareChunkedPhaseA({ packageInfo, inputPaths, expectedProxyList, videoDurationSec, sourceFingerprint });
+    const { tasks, chunkKeys, reducer, mapModel, reduceModel } = await this.prepareChunkedPhaseA({ packageInfo, inputPaths, expectedProxyList, videoDurationSec, sourceFingerprint });
     const expectedProxyFiles = expectedProxyList.map((proxy) => proxy.filename);
     const maxChunkSec = Math.max(...tasks.map((task) => task.sourceEndSec - task.sourceStartSec));
     const timeouts = MapReduce.resolveMapReduceTimeouts(this.settings, { chunkDurationSec: maxChunkSec });
@@ -2326,6 +2352,7 @@ class ManualAntigravityStage1Service {
       phaseASkipped: false,
       timeouts,
       map: {
+        model: mapModel,
         chunkCount: tasks.length,
         concurrency,
         maxConcurrentAgyProcesses: 0,
@@ -2339,6 +2366,7 @@ class ManualAntigravityStage1Service {
         chunks: []
       },
       reduce: {
+        model: reduceModel,
         cacheHit: false,
         durationMs: 0,
         agyProcessCount: 0,
@@ -2568,7 +2596,9 @@ class ManualAntigravityStage1Service {
     const mapModel = normalizeAntigravityModel(
       this.settings.antigravityMapModel
       || process.env.ANTIGRAVITY_MAP_MODEL
-      || "gemini-3.7-flash-medium"
+      || this.settings.antigravityModel
+      || process.env.ANTIGRAVITY_MODEL
+      || ""
     );
     const record = {
       chunkId: task.chunkId,
@@ -2866,7 +2896,9 @@ class ManualAntigravityStage1Service {
       || process.env.ANTIGRAVITY_REDUCE_MODEL
       || this.settings.antigravityMapModel
       || process.env.ANTIGRAVITY_MAP_MODEL
-      || "gemini-3.7-flash-medium"
+      || this.settings.antigravityModel
+      || process.env.ANTIGRAVITY_MODEL
+      || ""
     );
     const overhead = MapReduce.buildReducePrompt({ reducerInput: "", videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors: ["x".repeat(900)] }).length;
     const budget = MAX_PRINT_PROMPT_CHARS - overhead - 200;
