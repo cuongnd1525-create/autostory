@@ -5,6 +5,8 @@
 // calls with AbsolutePath) and returns the envelope for that phase.
 
 const { EventEmitter } = require("events");
+const fs = require("fs");
+const path = require("path");
 const { PassThrough, Writable } = require("stream");
 
 function buildUnderstanding(durationSec = 20) {
@@ -158,7 +160,9 @@ function classifyPrompt(prompt = "") {
  *   omitResult?: boolean,          // e.g. print timeout before serialization
  *   extraEvents?: object[],        // additional raw stream events (before the result)
  *   stderr?: string, exitCode?: number,
- *   resultObject?: object         // raw AGY result object (status/error/response/usage)
+ *   resultObject?: object,        // raw AGY result object (status/error/response/usage)
+ *   writeFiles?: Array<{ path?: string, name?: string, content: string|object }>,
+ *   writeFileToolEvents?: boolean
  * }
  * Lines are emitted one by one; a kill() stops emission immediately, which is
  * how the real CLI behaves when the host terminates it.
@@ -203,6 +207,16 @@ function createPhaseAwareSpawn({ calls, respond }) {
           duration_seconds: 2, usage: { input_tokens: 1000, output_tokens: 200, thinking_tokens: 50, cache_read_tokens: 0 }
         }
       }));
+      for (const item of response.writeFiles || []) {
+        const target = item.path || path.join(options.cwd || process.cwd(), item.name || "artifact.json");
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, typeof item.content === "string" ? item.content : JSON.stringify(item.content), "utf8");
+        if (response.writeFileToolEvents !== false) {
+          stepIndex += 1;
+          const toolInfo = { name: "write_to_file", parameters: { TargetFile: target } };
+          lines.push(JSON.stringify({ event: "step_update", step_update: { conversation_id: conversationId, step_index: stepIndex, state: "DONE", step_type: "tool", tool_name: "write_to_file", duration_seconds: 0.1, tool_info: toolInfo } }));
+        }
+      }
       for (const event of response.extraEvents || []) lines.push(JSON.stringify(event));
       if (response.resultObject) {
         lines.push(JSON.stringify({ event: "result", result: response.resultObject }));
