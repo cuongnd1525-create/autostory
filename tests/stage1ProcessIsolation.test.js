@@ -302,6 +302,8 @@ async function mapRecoveryTests() {
     assert.strictEqual(chunk3.ok, true);
     assert.strictEqual(chunk3.outputSource, "agent_file");
     assert.strictEqual(chunk3.streamInterrupted, true, "diagnostics preserve the backend interruption");
+    assert.strictEqual(chunk3.attempts[0].kind, "stream_interrupted");
+    assert.strictEqual(chunk3.attempts[0].terminationReason, "agy_result_stream_interrupted", "terminal result error is handled immediately instead of waiting for print timeout");
     assert.strictEqual(run.calls.filter((call) => call.kind === "map_repair").length, 0, "durable file avoids repair");
     assert.strictEqual(run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003").length, 1, "video is not rewatched");
     await fs.rm(fixture.root, { recursive: true, force: true });
@@ -330,6 +332,8 @@ async function mapRecoveryTests() {
     assert.strictEqual(chunk3.ok, true);
     assert.strictEqual(chunk3.serializationRepair, "same_conversation");
     assert.strictEqual(chunk3.streamInterrupted, true);
+    assert.strictEqual(chunk3.attempts[0].kind, "stream_interrupted");
+    assert.strictEqual(chunk3.attempts[0].terminationReason, "agy_result_stream_interrupted");
     const chunk3MapCalls = run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003");
     assert.strictEqual(chunk3MapCalls.length, 1, "no fresh multimodal retry");
     const repairs = run.calls.filter((call) => call.kind === "map_repair");
