@@ -407,7 +407,9 @@ function renderReducerInputWithinBudget(chunks, maxChars, { includeDialogue = tr
 function buildReducePrompt({ reducerInput, videoDurationSec = 0, chunkCount = 0, schemaExample, errors = [], outputPath = "" }) {
   return [
     "You are the Phase A REDUCER of RecapTool Studio. TEXT ONLY.",
-    "Do NOT call any tool. Do NOT call view_file. Do NOT open, list or read any file. Everything you need is below.",
+    ...(outputPath
+      ? ["Do NOT call view_file or any analysis/search tool. The ONLY permitted tool is one write_to_file call to the exact output path given below. Everything you need is already in this prompt."]
+      : ["Do NOT call any tool. Do NOT call view_file. Everything you need is already in this prompt."]),
     `Merge the ${chunkCount} chronological chunk understandings of ONE source video (${num(videoDurationSec, 0).toFixed(1)}s) into one global source understanding:`,
     "- caseSummary, centralConflict, centralViewerQuestion for the whole story.",
     "- characters: merge the same person seen in several chunks into one entry.",
