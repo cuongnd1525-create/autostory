@@ -895,6 +895,7 @@ function classifyAgyFailure(error = {}) {
   const text = `${info.status} ${info.code || ""} ${info.text}`;
   if (info.code === 401 || /\bUNAUTHENTICATED\b|\b401\b|not logged into Antigravity|invalid authentication credentials/i.test(text)) return "auth";
   if (info.code === 503 || info.code === 429 || /\bUNAVAILABLE\b|\bRESOURCE_EXHAUSTED\b|No capacity available|high traffic|\(code 503\)|\(code 429\)/i.test(text)) return "capacity";
+  if (/stream was interrupted/i.test(text)) return "stream_interrupted";
   if (/\[agy\] print timeout after/i.test(text)) return "print_timeout";
   return "cli_error";
 }
@@ -905,6 +906,8 @@ function describeAgyFailure(kind, error) {
       return "Antigravity từ chối xác thực (401 UNAUTHENTICATED). Token đăng nhập đã hết hạn hoặc không hợp lệ: mở Antigravity để đăng nhập/làm mới rồi chạy lại.";
     case "capacity":
       return "Máy chủ AI tạm hết dung lượng (503/UNAVAILABLE).";
+    case "stream_interrupted":
+      return `Luồng phản hồi AGY bị ngắt phía máy chủ (${error?.message || "The stream was interrupted"}).`;
     case "print_timeout":
     case "hard_timeout":
       return `AGY hết thời gian chờ của giai đoạn (${error?.message || "print timeout"}).`;
@@ -1568,6 +1571,7 @@ class ManualAntigravityStage1Service {
     return new Promise((resolve, reject) => {
       let forbiddenToolError = null;
       let failureKind = "";
+      let resultFailureMessage = "";
       const stdoutChunks = [];
       const stderrChunks = [];
       let stdoutBuffer = "";
@@ -1781,8 +1785,19 @@ class ManualAntigravityStage1Service {
               if (/stream was interrupted/i.test(String(event.result?.error || ""))) stats.streamInterrupted = true;
               if (isPromptBlockedResponse(event.result)) stats.promptBlocked = true;
               const failed = event.result?.status === "ERROR" || Boolean(event.result?.error);
+              if (failed) {
+                resultFailureMessage = String(event.result?.error || event.result?.status || "ERROR");
+                if (/stream was interrupted/i.test(resultFailureMessage)) failureKind = "stream_interrupted";
+                else if (/\bUNAUTHENTICATED\b|\b401\b|invalid authentication credentials/i.test(resultFailureMessage)) failureKind = "auth";
+                else if (/\bUNAVAILABLE\b|\bRESOURCE_EXHAUSTED\b|No capacity available|high traffic|\b503\b|\b429\b/i.test(resultFailureMessage)) failureKind = "capacity";
+                else failureKind = failureKind || "cli_error";
+                // A final result event is terminal. The real CLI can otherwise keep
+                // the process alive until --print-timeout after a server stream
+                // interruption, wasting the entire per-stage timeout.
+                killThisChild(`agy_result_${failureKind}`);
+              }
               emitProgress(currentPercent, failed
-                ? `Antigravity kết thúc lượt với lỗi: ${String(event.result?.error || "ERROR").slice(0, 160)}`
+                ? `Antigravity kết thúc lượt với lỗi: ${resultFailureMessage.slice(0, 160)}`
                 : "Antigravity đã trả kết quả; đang kiểm tra JSON...");
             }
           } catch (_e) {
@@ -1817,6 +1832,10 @@ class ManualAntigravityStage1Service {
 
         if (forbiddenToolError) {
           rejectWith(`Forbidden tool call: ${forbiddenToolError}`, "forbidden_tool");
+          return;
+        }
+        if (failureKind && resultFailureMessage) {
+          rejectWith(`Antigravity result error: ${resultFailureMessage}`, failureKind);
           return;
         }
         if (this.cancelled) {
@@ -2624,6 +2643,8 @@ class ManualAntigravityStage1Service {
     };
     const contextText = MapReduce.renderChunkContext(task);
     const contextPath = path.join(workDir, `${task.chunkId}-context.txt`);
+    const transportName = `chunk-understanding-${task.chunkId}.json`;
+    const outputPath = path.join(workDir, transportName);
     const contextLineCount = contextText.split("\n").length;
     await Promise.all([
       fs.writeFile(path.join(workDir, `${task.chunkId}-transcript.srt`), task.transcript.map((cue, index) => `${index + 1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text}\n`).join("\n"), "utf8"),
@@ -2631,12 +2652,10 @@ class ManualAntigravityStage1Service {
       writeJsonAtomic(path.join(workDir, `${task.chunkId}-actions.json`), task.actions),
       fs.writeFile(contextPath, contextText, "utf8")
     ]);
-    let contextMode = MapReduce.buildMapPrompt({ task, contextText }).length > MAX_PRINT_PROMPT_CHARS ? "file" : "inline";
+    let contextMode = MapReduce.buildMapPrompt({ task, contextText, outputPath }).length > MAX_PRINT_PROMPT_CHARS ? "file" : "inline";
     const buildPrompt = ({ strictCoverage = false } = {}) => (contextMode === "inline"
-      ? MapReduce.buildMapPrompt({ task, contextText, strictCoverage })
-      : MapReduce.buildMapPrompt({ task, contextPath, contextLineCount, strictCoverage }));
-
-    const transportName = `chunk-understanding-${task.chunkId}.json`;
+      ? MapReduce.buildMapPrompt({ task, contextText, strictCoverage, outputPath })
+      : MapReduce.buildMapPrompt({ task, contextPath, contextLineCount, strictCoverage, outputPath }));
     const allowedVideo = path.basename(String(task.proxy.absolutePath).replace(/\\/g, "/")).toLowerCase();
     const baseOf = (value) => path.basename(String(value || "").replace(/\\/g, "/")).toLowerCase();
     const toolGuard = ({ toolName, file, stepUpdate }) => {
@@ -2772,7 +2791,8 @@ class ManualAntigravityStage1Service {
       }
     }
     const repairSetting = this.settings.sourceUnderstandingMapSerializationRepair;
-    const repairAllowed = repairSetting === "always" || (repairSetting !== false && outcome.ok);
+    const repairAllowed = repairSetting === "always"
+      || (repairSetting !== false && (outcome.ok || outcome.kind === "stream_interrupted"));
     if (!parsed.validation.ok && conversationId && repairAllowed && !this.cancelled) {
       // ONE short same-conversation serialization, every tool forbidden. Only
       // after a CLEAN turn by default: after a server-side stream interruption
@@ -2865,8 +2885,9 @@ class ManualAntigravityStage1Service {
     let promptBlockRetries = 0;
     for (;;) {
       await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.reduceTimeoutMs });
+      const reduceOutputPath = path.join(workDir, "source-understanding.json");
       const prompt = assertPrintPromptSize(MapReduce.buildReducePrompt({
-        reducerInput, videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors
+        reducerInput, videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors, outputPath: reduceOutputPath
       }), "Phase A reduce");
       const outcome = await this.runAgyOnce({
         label,
@@ -2886,12 +2907,12 @@ class ManualAntigravityStage1Service {
           this.emitLog(onProgress, 42, "[REDUCE] RETRY: AGY từ chối prompt (policy filter, model không chạy). Chạy lại một lần không kèm trích dẫn thoại.", logs);
           continue;
         }
-        if (outcome.kind === "capacity" && capacityRetries < 2 && !this.cancelled) {
+        if ((outcome.kind === "capacity" || outcome.kind === "stream_interrupted") && capacityRetries < 2 && !this.cancelled) {
           const delayMs = this.capacityRetryDelayMs(capacityRetries);
           capacityRetries += 1;
           diagnostics.reduce.retryCount += 1;
           metrics.retryCount += 1;
-          this.emitLog(onProgress, 42, `[REDUCE] RETRY: 503/UNAVAILABLE. Reducer chỉ dùng văn bản; thử lại sau ${Math.round(delayMs / 1000)}s (${capacityRetries}/2)...`, logs);
+          this.emitLog(onProgress, 42, `[REDUCE] RETRY: ${outcome.kind === "stream_interrupted" ? "stream interrupted" : "503/UNAVAILABLE"}. Reducer chỉ dùng văn bản; thử lại sau ${Math.round(delayMs / 1000)}s (${capacityRetries}/2)...`, logs);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
