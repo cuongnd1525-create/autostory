@@ -583,7 +583,7 @@ function placeNarratedBlocks(segments = [], blockReports = []) {
   });
 }
 
-function resolveHighlightVoiceFit(segment = {}, plannedDurationSec, actualVoiceDurationSec) {
+function resolveHighlightVoiceFit(segment = {}, plannedDurationSec, actualVoiceDurationSec, options = {}) {
   const audioMode = getHighlightAudioMode(segment, true);
   const protectedVisual = segment.actionOverride === true
     || segment.sustainedBeatOverride === true
@@ -594,7 +594,9 @@ function resolveHighlightVoiceFit(segment = {}, plannedDurationSec, actualVoiceD
     actualVoiceDurationSec,
     hasVoice: true,
     audioMode,
-    protectedVisual
+    protectedVisual,
+    maxVoiceSpeedUp: Number(options.maxVoiceSpeedUp || 1.08),
+    minVisualSpeed: Number(options.minVisualSpeed || 0.9)
   });
 }
 
@@ -6550,7 +6552,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         if (voiceResult?.cacheHit) renderMetrics.ttsCacheHits += 1;
         else renderMetrics.ttsCacheMisses += 1;
         rawVoiceMeta = await ffmpeg.probeAudio(rawVoicePath).catch(() => ({ duration: estimateSpeechSeconds(voiceText) }));
-        fitPolicy = resolveHighlightVoiceFit(segment, durationSec, rawVoiceMeta.duration);
+        const manualDraftMaxStretch = project.analysisWorkflow === "manual_gemini_draft_review"
+          ? Math.min(0.04, Math.max(0, safeNumber(project.manualDraftMaxVoiceStretch ?? settings.manualDraftMaxVoiceStretch, 0.04)))
+          : Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08);
+        fitPolicy = resolveHighlightVoiceFit(segment, durationSec, rawVoiceMeta.duration, {
+          maxVoiceSpeedUp: 1 + manualDraftMaxStretch
+        });
         renderDurationSec = fitPolicy.renderDurationSec;
         voiceProfile = await this.recordVoiceProfileSample({
           workspaceRoot,
@@ -6626,7 +6633,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           inputPath: rawVoicePath,
           outputPath: fittedVoicePath,
           targetDuration: renderDurationSec,
-          maxStretchRatio: Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08),
+          maxStretchRatio: project.analysisWorkflow === "manual_gemini_draft_review"
+            ? Math.min(0.04, Math.max(0, safeNumber(project.manualDraftMaxVoiceStretch ?? settings.manualDraftMaxVoiceStretch, 0.04)))
+            : Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08),
           normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true,
           allowTrim: false,
           allowSlowDown: false,
