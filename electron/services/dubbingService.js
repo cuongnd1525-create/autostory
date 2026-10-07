@@ -1694,6 +1694,102 @@ function narratedBlockRuns(segments = []) {
   return runs;
 }
 
+function ensureNarrationSentence(text = "") {
+  const clean = safeText(text).replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  return /[.!?…]["']?$/.test(clean) ? clean : `${clean}.`;
+}
+
+function narrationContinuityKey(segment = {}, project = {}) {
+  const voiceText = getHighlightVoiceText(segment);
+  if (!voiceText || segment.deliveryBlockId) return "";
+  const audioMode = getHighlightAudioMode(segment, true, project);
+  if (!["voiceover_only", "voiceover_with_ambient"].includes(audioMode)) return "";
+  const options = getSegmentVoiceRenderOptions(segment);
+  return [
+    audioMode,
+    options.deliveryProfile || "natural",
+    options.emotionTag || "",
+    Number(options.speechRateMultiplier || 1).toFixed(2)
+  ].join("|");
+}
+
+function buildManualDraftContinuousNarration(segments = [], project = {}, settings = {}) {
+  if (project.analysisWorkflow !== "manual_gemini_draft_review" || settings.manualDraftContinuousNarration === false) {
+    return Array.isArray(segments) ? segments : [];
+  }
+  const input = Array.isArray(segments) ? segments : [];
+  const output = input.map((segment) => ({ ...segment }));
+  const maxBlockSec = Math.max(6, Math.min(18, safeNumber(
+    project.manualDraftNarrationBlockMaxSec ?? settings.manualDraftNarrationBlockMaxSec,
+    12
+  )));
+  const maxMembers = Math.max(2, Math.min(5, Math.round(safeNumber(
+    project.manualDraftNarrationBlockMaxMembers ?? settings.manualDraftNarrationBlockMaxMembers,
+    4
+  ))));
+  let blockNumber = 0;
+  let index = 0;
+  while (index < output.length) {
+    const key = narrationContinuityKey(output[index], project);
+    if (!key) { index += 1; continue; }
+    const members = [index];
+    let totalSec = Math.max(0.3, safeNumber(output[index].duration, 0.3));
+    let cursor = index + 1;
+    while (cursor < output.length && members.length < maxMembers) {
+      const next = output[cursor];
+      if (narrationContinuityKey(next, project) !== key) break;
+      const nextSec = Math.max(0.3, safeNumber(next.duration, 0.3));
+      if (totalSec + nextSec > maxBlockSec + 1e-6) break;
+      members.push(cursor);
+      totalSec += nextSec;
+      cursor += 1;
+    }
+    if (members.length < 2) { index += 1; continue; }
+
+    blockNumber += 1;
+    const blockId = `manual_draft_narration_${String(blockNumber).padStart(2, "0")}`;
+    const passage = members
+      .map((memberIndex) => {
+        const member = output[memberIndex];
+        let sentence = ensureNarrationSentence(getHighlightVoiceText(member));
+        if (safeNumber(member.pauseDurationMs, 0) >= 250 || safeText(member.pauseAfterPhrase)) {
+          sentence = sentence.replace(/[.!?…]+$/, "") + "…";
+        }
+        return sentence;
+      })
+      .filter(Boolean)
+      .join(" ");
+    const first = output[members[0]];
+    const audioMode = getHighlightAudioMode(first, true, project);
+    members.forEach((memberIndex, memberOffset) => {
+      const original = output[memberIndex];
+      output[memberIndex] = {
+        ...original,
+        deliveryBlockId: blockId,
+        deliveryMode: "narrated_story",
+        deliveryBlockOrder: blockNumber,
+        deliveryBlockPosition: memberOffset,
+        deliveryBlockSize: members.length,
+        blockSourceAudio: audioMode,
+        blockNarrationText: memberOffset === 0 ? passage : "",
+        blockNarrationPreviewVi: "",
+        blockNarratorFunction: memberOffset === 0 ? "continuous_manual_draft" : "",
+        blockNarrationIntent: memberOffset === 0 ? "preserve prosody across adjacent narrator beats" : "",
+        blockStoryFunction: memberOffset === 0 ? safeText(first.storyFunction || first.narrativePurpose || "") : "",
+        blockEmotionTag: memberOffset === 0 ? safeText(first.emotionTag || "") : "",
+        draftAutoNarrationBlock: true,
+        voiceoverText: "",
+        voiceover_text: "",
+        dubbingLine: "",
+        narration: ""
+      };
+    });
+    index = cursor;
+  }
+  return output;
+}
+
 function validateNarratedDeliveryBlocks(segments = []) {
   const runs = narratedBlockRuns(segments);
   const seen = new Set();
