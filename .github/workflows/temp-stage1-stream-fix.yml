@@ -14,3 +14,5 @@ jobs:
       - run: node --check electron/services/sourceUnderstandingMapReduce.js
       - run: node tests/sourceUnderstandingMapReduce.test.js
       - run: node tests/stage1ProcessIsolation.test.js
+      - run: node tests/manualAntigravityStage1Service.test.js
+      - run: node tests/sourceUnderstandingCache.test.js
