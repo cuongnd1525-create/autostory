@@ -20,8 +20,8 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const CHUNK_SCHEMA_VERSION = 1;
-const MAP_PROMPT_VERSION = 2; // v2: root-object output, 3-8 events, strict first tool
-const REDUCE_PROMPT_VERSION = 1;
+const MAP_PROMPT_VERSION = 3; // v3: durable file-first output + stdout fallback after mandatory video view
+const REDUCE_PROMPT_VERSION = 2; // v2: durable file-first output + stdout fallback
 const DEFAULT_HANDLE_SEC = 4;
 const MAX_CHUNK_EVENTS = 15;
 const CANDIDATE_TYPES = ["hook", "confrontation", "interrogation", "climax", "resolution", "context"];
@@ -158,7 +158,7 @@ function chunkTransportExample(task) {
  * strictCoverage -> the targeted coverage retry after a turn that answered
  *                 without calling view_file on the chunk video.
  */
-function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0, strictCoverage = false }) {
+function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0, strictCoverage = false, outputPath = "" }) {
   const inline = Boolean(contextText);
   const videoCall = `view_file("${task.proxy.absolutePath}")`;
   return [
@@ -173,7 +173,13 @@ function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineC
     "Watching the video with view_file is mandatory (audited). Never extract frames with Python/OpenCV/FFmpeg. Do not open any other file, do not list directories, do not run commands. Do not view the video twice.",
     "Burned-in SOURCE timestamps on the frames are absolute; local player time is not.",
     "",
-    "STEP 2 - your second response returns the JSON below. No further tool calls.",
+    "STEP 2 - after the video tool returns, serialize the compact understanding immediately.",
+    ...(outputPath ? [
+      "PREFERRED TRANSPORT: call write_to_file exactly ONCE and write ONLY the JSON object to this exact file:",
+      `  ${outputPath}`,
+      "After write_to_file succeeds, reply only MAP_DONE. Do not perform more analysis or use any other tool.",
+      "If write_to_file is unavailable, return the same bare JSON object directly in the response.",
+    ] : ["Return the bare JSON object directly in the response."]),
     "- importantEvents: 3-8 meaningful story events for this interval (never more than 12). Never one per scene; merge scenes that carry the same beat.",
     "- Each event: exact SOURCE range inside this interval, sceneIds, eventType, one-sentence summary, at most 2 short visualFacts, at most 2 dialogueFacts (short exact quote, SOURCE second, speaker), importance and viralValue 0-100.",
     "- Mark continuesFromPreviousChunk / continuesIntoNextChunk when an event is cut by the interval boundary.",
@@ -183,7 +189,7 @@ function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineC
     "- Keep the JSON under ~900 words.",
     "",
     ...(inline ? ["TEXT CONTEXT FOR THIS INTERVAL (already complete; do not open any file for it):", contextText.trim(), ""] : []),
-    "OUTPUT: exactly one JSON object with this shape (the root object itself; no wrapper, no prose, no Markdown):",
+    "JSON SHAPE (root object; no wrapper and no Markdown inside the file/response):",
     JSON.stringify(chunkTransportExample(task))
   ].join("\n");
 }
@@ -398,10 +404,12 @@ function renderReducerInputWithinBudget(chunks, maxChars, { includeDialogue = tr
   return { text: renderReducerInput(chunks, last), level: last, overBudget: true };
 }
 
-function buildReducePrompt({ reducerInput, videoDurationSec = 0, chunkCount = 0, schemaExample, errors = [] }) {
+function buildReducePrompt({ reducerInput, videoDurationSec = 0, chunkCount = 0, schemaExample, errors = [], outputPath = "" }) {
   return [
     "You are the Phase A REDUCER of RecapTool Studio. TEXT ONLY.",
-    "Do NOT call any tool. Do NOT call view_file. Do NOT open, list or read any file. Everything you need is below.",
+    ...(outputPath
+      ? ["Do NOT call view_file or any analysis/search tool. The ONLY permitted tool is one write_to_file call to the exact output path given below. Everything you need is already in this prompt."]
+      : ["Do NOT call any tool. Do NOT call view_file. Everything you need is already in this prompt."]),
     `Merge the ${chunkCount} chronological chunk understandings of ONE source video (${num(videoDurationSec, 0).toFixed(1)}s) into one global source understanding:`,
     "- caseSummary, centralConflict, centralViewerQuestion for the whole story.",
     "- characters: merge the same person seen in several chunks into one entry.",
@@ -415,7 +423,12 @@ function buildReducePrompt({ reducerInput, videoDurationSec = 0, chunkCount = 0,
     "CHUNK UNDERSTANDINGS:",
     reducerInput,
     "",
-    "TRANSPORT (exactly one JSON object, no prose, no Markdown):",
+    ...(outputPath ? [
+      "PREFERRED TRANSPORT: call write_to_file exactly ONCE and write the JSON object below to this exact file:",
+      `  ${outputPath}`,
+      "After write_to_file succeeds, reply only REDUCE_DONE. Do not call any other tool.",
+      "If write_to_file is unavailable, return the same JSON object directly.",
+    ] : ["TRANSPORT: return exactly one JSON object, no prose, no Markdown."]),
     JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: schemaExample }], notes: "" })
   ].join("\n");
 }

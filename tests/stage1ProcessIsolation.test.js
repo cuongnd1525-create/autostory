@@ -278,7 +278,38 @@ async function mapRecoveryTests() {
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 
-  // --- stream interrupted + AGY print timeout: fail that chunk only, no same-conversation repair.
+  // --- stream interrupted AFTER durable file write: accept the validated file immediately.
+  {
+    const fixture = await createPackage();
+    const respond = (kind, prompt, call) => {
+      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-003") {
+        const task = mapTaskFromPrompt(prompt);
+        return {
+          viewFiles: [task.proxy],
+          writeFiles: [{
+            name: `chunk-understanding-${task.chunkId}.json`,
+            content: buildChunkUnderstanding(task.chunkId, task.startSec, task.endSec)
+          }],
+          resultObject: { status: "ERROR", response: "", error: "The stream was interrupted. Please continue the task you were working on." },
+          exitCode: 1
+        };
+      }
+      return happy(kind, prompt, call);
+    };
+    const run = await runPhaseA(fixture, respond);
+    assert.ifError(run.error);
+    const chunk3 = run.su.map.chunks[2];
+    assert.strictEqual(chunk3.ok, true);
+    assert.strictEqual(chunk3.outputSource, "agent_file");
+    assert.strictEqual(chunk3.streamInterrupted, true, "diagnostics preserve the backend interruption");
+    assert.strictEqual(chunk3.attempts[0].kind, "stream_interrupted");
+    assert.strictEqual(chunk3.attempts[0].terminationReason, "agy_result_stream_interrupted", "terminal result error is handled immediately instead of waiting for print timeout");
+    assert.strictEqual(run.calls.filter((call) => call.kind === "map_repair").length, 0, "durable file avoids repair");
+    assert.strictEqual(run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003").length, 1, "video is not rewatched");
+    await fs.rm(fixture.root, { recursive: true, force: true });
+  }
+
+  // --- stream interrupted with no file: fail-fast, then one same-conversation serialization repair; never rewatch video.
   {
     const fixture = await createPackage();
     const respond = (kind, prompt, call) => {
@@ -286,22 +317,29 @@ async function mapRecoveryTests() {
         return {
           viewFiles: [mapTaskFromPrompt(prompt).proxy],
           resultObject: { status: "ERROR", response: "", error: "The stream was interrupted. Please continue the task you were working on." },
-          extraEvents: [{ event: "step_update", step_update: { step_index: 4, state: "DONE", step_type: "error_message" } }],
-          stderr: "[agy] print timeout after 5m26s with turn in progress; returning partial output\n",
           exitCode: 1
         };
+      }
+      if (kind === "map_repair") {
+        const [startSec, endSec] = [480.5, 771.901];
+        return { envelope: { artifacts: [{ filename: "chunk-understanding-chunk-003.json", script: buildChunkUnderstanding("chunk-003", startSec, endSec) }] } };
       }
       return happy(kind, prompt, call);
     };
     const run = await runPhaseA(fixture, respond);
-    assert(run.error);
+    assert.ifError(run.error);
     const chunk3 = run.su.map.chunks[2];
-    assert.strictEqual(chunk3.failureKind, "print_timeout");
+    assert.strictEqual(chunk3.ok, true);
+    assert.strictEqual(chunk3.serializationRepair, "same_conversation");
     assert.strictEqual(chunk3.streamInterrupted, true);
-    assert.strictEqual(chunk3.terminationReason, "agy_print_timeout", "AGY's own timeout, not a host kill");
-    assert.strictEqual(run.calls.filter((call) => call.kind === "map_repair").length, 0);
-    assert.deepStrictEqual(run.calls.filter((call) => call.kind === "map").map(run.chunkOf).sort(), ["chunk-001", "chunk-002", "chunk-003"]);
-    assert(run.error.message.includes("stream was interrupted"));
+    assert.strictEqual(chunk3.attempts[0].kind, "stream_interrupted");
+    assert.strictEqual(chunk3.attempts[0].terminationReason, "agy_result_stream_interrupted");
+    const chunk3MapCalls = run.calls.filter((call) => call.kind === "map" && run.chunkOf(call) === "chunk-003");
+    assert.strictEqual(chunk3MapCalls.length, 1, "no fresh multimodal retry");
+    const repairs = run.calls.filter((call) => call.kind === "map_repair");
+    assert.strictEqual(repairs.length, 1);
+    assert.strictEqual(repairs[0].resumed, true, "repair resumes the watched conversation");
+    assert.strictEqual(repairs[0].emittedViews, 0, "repair never calls view_file");
     await fs.rm(fixture.root, { recursive: true, force: true });
   }
 
