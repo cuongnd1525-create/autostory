@@ -40,7 +40,8 @@ const {
   resolveVideoCanvasDimensions,
   resolveVideoTitleRasterDimensions,
   sanitizeFilePart,
-  wrapVideoTitle
+  wrapVideoTitle,
+  wrapTikTokHookTitle
 } = require("./dubbingArtifactService");
 const { normalizeStorytimeScript } = require("./dubbingScriptService");
 const {
@@ -3476,12 +3477,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       ? resolveSuggestedTopCaption(project)
       : "";
     const rawTitleSource = automaticTitle || decoration.topCaptionText || project.title || "";
-    const isUppercaseTitle = (decoration.topCaptionStyle || decoration.titleStyle) === "viral_green"
+    const titleStyle = decoration.topCaptionStyle || decoration.titleStyle || "default";
+    const isTikTokHook = titleStyle === "tiktok_hook";
+    const isUppercaseTitle = isTikTokHook
+      || titleStyle === "viral_green"
       || (rawTitleSource && rawTitleSource === rawTitleSource.toUpperCase());
-    const title = wrapVideoTitle(
-      rawTitleSource,
-      calculateVideoTitleWrapChars(canvas.width, topCaptionFontSize, isUppercaseTitle)
-    );
+    const title = isTikTokHook
+      ? wrapTikTokHookTitle(rawTitleSource)
+      : wrapVideoTitle(
+        rawTitleSource,
+        calculateVideoTitleWrapChars(canvas.width, topCaptionFontSize, isUppercaseTitle)
+      );
     const titleTextPath = path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.txt`);
     const titleSvgPath = path.join(paths.tempDir, `${sanitizeFilePart(name)}-top-caption.svg`);
     let titleOverlayPath = "";
@@ -3494,7 +3500,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         height: canvas.height,
         fontSize: topCaptionFontSize,
         yPercent: decoration.topCaptionYPercent ?? 8,
-        titleStyle: decoration.topCaptionStyle || decoration.titleStyle || "default",
+        titleStyle,
         titleBackgroundColor: decoration.topCaptionBackgroundColor || decoration.titleBackgroundColor || null,
         titleTextColor: decoration.topCaptionTextColor || decoration.titleTextColor || null,
         cameraLabel: cameraLabelEnabled ? {
