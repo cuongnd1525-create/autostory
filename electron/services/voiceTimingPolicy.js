@@ -142,7 +142,7 @@ function resolveVoiceVisualFit({
     strategy = "preserve_voice_pending_rewrite";
     requiresRewrite = true;
     warningCode = "voice_far_too_long";
-  } else if (ratio > 1.08) {
+  } else if (ratio > Math.max(1, maxVoiceSpeedUp)) {
     renderDuration = Math.min(
       actualVoiceDuration / Math.max(1, maxVoiceSpeedUp),
       plannedDuration / Math.max(0.5, minVisualSpeed)
