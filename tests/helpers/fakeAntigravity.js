@@ -128,7 +128,7 @@ function buildChunkUnderstanding(chunkId, startSec, endSec, eventCount = 4) {
 
 /** Parses the map prompt: chunkId, absolute range and the single proxy path. */
 function mapTaskFromPrompt(prompt = "") {
-  const match = prompt.match(/Understand ONLY source interval ([\d.]+)-([\d.]+)s \((chunk-\d+)\)/);
+  const match = prompt.match(/(?:Understand|Inspect) ONLY source interval ([\d.]+)-([\d.]+)s \((chunk-\d+)\)/);
   return match ? { startSec: Number(match[1]), endSec: Number(match[2]), chunkId: match[3], proxy: proxyPathsFromPrompt(prompt)[0] || "" } : null;
 }
 
@@ -190,7 +190,7 @@ function createPhaseAwareSpawn({ calls, respond }) {
     const kind = classifyPrompt(prompt);
     const conversationIndex = args.indexOf("--conversation");
     const conversationId = conversationIndex >= 0 ? args[conversationIndex + 1] : `conv-${++conversationCounter}`;
-    const call = { command, args, options, prompt, kind, conversationId, resumed: conversationIndex >= 0, killed: false, emittedViews: 0 };
+    const call = { command, args, options, prompt, kind, conversationId, resumed: conversationIndex >= 0, killed: false, emittedViews: 0, emittedVideoViews: 0 };
     calls.push(call);
     const response = respond(kind, prompt, call) || {};
     const child = new EventEmitter();
@@ -212,7 +212,7 @@ function createPhaseAwareSpawn({ calls, respond }) {
       for (const file of response.viewFiles || []) {
         stepIndex += 1;
         const toolInfo = { name: "view_file", parameters: { AbsolutePath: file } };
-        lines.push({ marker: "view", line: JSON.stringify({ event: "step_update", step_update: { conversation_id: conversationId, step_index: stepIndex, state: "ACTIVE", step_type: "tool", tool_name: "view_file", tool_info: toolInfo } }) });
+        lines.push({ marker: "view", file, line: JSON.stringify({ event: "step_update", step_update: { conversation_id: conversationId, step_index: stepIndex, state: "ACTIVE", step_type: "tool", tool_name: "view_file", tool_info: toolInfo } }) });
         lines.push(JSON.stringify({ event: "step_update", step_update: { conversation_id: conversationId, step_index: stepIndex, state: "DONE", step_type: "tool", tool_name: "view_file", duration_seconds: 3, tool_info: toolInfo } }));
       }
       lines.push(JSON.stringify({
@@ -249,7 +249,10 @@ function createPhaseAwareSpawn({ calls, respond }) {
           return;
         }
         const entry = lines[index];
-        if (typeof entry === "object") call.emittedViews += 1;
+        if (typeof entry === "object") {
+          call.emittedViews += 1;
+          if (/\.(mp4|mov|webm|m4v)$/i.test(String(entry.file || ""))) call.emittedVideoViews += 1;
+        }
         child.stdout.write(`${typeof entry === "object" ? entry.line : entry}\n`);
         setImmediate(() => emitNext(index + 1));
       };
