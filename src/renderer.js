@@ -276,6 +276,9 @@ function selectSetupMode(mode, { persist = true, invalidate = true } = {}) {
     el.targetLanguage.value = "en";
   }
   if (isPodcastViralMode() && el.sourceLanguage) el.sourceLanguage.value = "en";
+  if (state.selectedMode === "manual_gemini_pro" && previousMode !== state.selectedMode && el.draftVoiceMode?.value === "edge_neural") {
+    el.draftVoiceMode.value = "final";
+  }
   syncModeUi();
   if (persist) writeSetupDraft();
   renderSteps();
@@ -1504,9 +1507,21 @@ function syncProjectSettingsControls(project = state.currentProject) {
   if (el.sourceSubtitleMaskStrengthValue) el.sourceSubtitleMaskStrengthValue.textContent = `${el.sourceSubtitleMaskStrength?.value || 18}`;
   if (el.autoFitVoice) el.autoFitVoice.checked = project.autoFitVoice !== false;
   if (el.mixerVisualRemix) el.mixerVisualRemix.checked = Boolean(project.visualRemixEnabled);
-  if (el.draftVoiceMode) el.draftVoiceMode.value = project.draftVoiceMode || "edge_neural";
-  if (el.draftVoiceProvider) el.draftVoiceProvider.value = project.draftVoiceProvider || "edge_neural";
-  if (el.draftVoiceId) el.draftVoiceId.value = project.draftVoiceId || "";
+  const effectiveDraftMode = project.analysisWorkflow === "manual_gemini_draft_review"
+    && (project.draftVoiceMode || "edge_neural") === "edge_neural"
+    ? "final"
+    : (project.draftVoiceMode || "edge_neural");
+  if (el.draftVoiceMode) el.draftVoiceMode.value = effectiveDraftMode;
+  if (el.draftVoiceProvider) {
+    el.draftVoiceProvider.value = effectiveDraftMode === "final"
+      ? (project.voiceProvider || "edge_neural")
+      : (project.draftVoiceProvider || "edge_neural");
+  }
+  if (el.draftVoiceId) {
+    el.draftVoiceId.value = effectiveDraftMode === "final"
+      ? (project.voiceId || "")
+      : (project.draftVoiceId || "");
+  }
   if (el.draftVoiceList && project.draftVoiceId) {
     el.draftVoiceList.dataset.preferredVoiceId = project.draftVoiceId;
     if ([...el.draftVoiceList.options].some((option) => option.value === project.draftVoiceId)) {
@@ -2642,7 +2657,11 @@ function applySetupDraft(draft = readSetupDraft()) {
     presetProvider: draft.presetVoiceProvider,
     presetVoiceId: draft.presetVoiceId
   });
-  if (el.draftVoiceMode) el.draftVoiceMode.value = draft.draftVoiceMode || "edge_neural";
+  if (el.draftVoiceMode) {
+    el.draftVoiceMode.value = isManualGeminiProMode()
+      ? (draft.draftVoiceMode === "custom" ? "custom" : "final")
+      : (draft.draftVoiceMode || "edge_neural");
+  }
   if (el.draftVoiceProvider) el.draftVoiceProvider.value = draft.draftVoiceProvider || "edge_neural";
   if (el.draftVoiceId) el.draftVoiceId.value = draft.draftVoiceId || "";
   if (el.draftVoiceList && draft.draftVoiceId) el.draftVoiceList.dataset.preferredVoiceId = draft.draftVoiceId;
@@ -11494,6 +11513,9 @@ function bindEvents() {
     });
   });
   el.refreshDraftVoices?.addEventListener("click", loadDraftVoices);
+  el.draftVoiceMode?.addEventListener("change", () => {
+    writeSetupDraft();
+  });
   el.draftVoiceProvider?.addEventListener("change", () => {
     el.draftVoiceMode.value = "custom";
     el.draftVoiceList.innerHTML = "";
