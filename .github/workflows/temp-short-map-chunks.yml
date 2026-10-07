@@ -11,6 +11,7 @@ jobs:
         with:
           node-version: '20'
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
       - run: node --check electron/services/manualGeminiPackService.js
       - run: node --check electron/services/sourceUnderstandingMapReduce.js
       - run: node tests/manualGeminiPackService.test.js
