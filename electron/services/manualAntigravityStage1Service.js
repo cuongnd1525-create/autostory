@@ -2759,6 +2759,9 @@ class ManualAntigravityStage1Service {
           return failChunk("auth", stopState.reason);
         }
         if (outcome.kind === "cancelled") return failChunk("cancelled", "Đã dừng theo yêu cầu.");
+        if (outcome.kind === "forbidden_tool") {
+          return failChunk("forbidden_tool", describeAgyFailure("forbidden_tool", outcome.error));
+        }
         if (outcome.kind === "prompt_blocked") {
           if (record.promptBlockRetryCount < 1 && !viewedVideo) {
             record.promptBlockRetryCount += 1;
