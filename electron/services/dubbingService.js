@@ -6994,6 +6994,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       index,
       label: variant.label || variant.id || `Variant ${index + 1}`,
       status: "waiting",
+      percent: 0,
+      message: "Đang chờ",
+      updatedAt: "",
       error: "",
       outputPath: ""
     }));
@@ -7035,6 +7038,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         try {
           await fs.access(variant.artifacts.fastDraftVideoPath);
           variantBatch[variantIndex].status = "done";
+          variantBatch[variantIndex].percent = 100;
+          variantBatch[variantIndex].message = "Đã dùng lại bản nháp có sẵn";
+          variantBatch[variantIndex].updatedAt = new Date().toISOString();
           variantBatch[variantIndex].outputPath = variant.artifacts.fastDraftVideoPath;
           variantPercents[variantIndex] = 100;
           await onVariantReady?.(latest);
@@ -7042,10 +7048,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         } catch (_) {}
       }
       variantBatch[variantIndex].status = "processing";
+      variantBatch[variantIndex].percent = 0;
+      variantBatch[variantIndex].message = `Đang render nháp variant ${variantIndex + 1}/${variants.length}: ${variant.label || variant.id}`;
+      variantBatch[variantIndex].updatedAt = new Date().toISOString();
       sendVariantBatch({
         index: variantIndex,
         percent: overallPercent(),
-        message: `Đang render nháp variant ${variantIndex + 1}/${variants.length}: ${variant.label || variant.id}`
+        message: variantBatch[variantIndex].message
       });
       const projectForVariant = {
         ...latest,
@@ -7058,11 +7067,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         }
       };
       const onVariantProgress = (payload = {}) => {
-        variantPercents[variantIndex] = Math.max(0, Math.min(100, safeNumber(payload.percent, 0)));
+        const localPercent = Math.max(0, Math.min(100, safeNumber(payload.percent, 0)));
+        const localMessage = payload.message || "Đang xử lý";
+        variantPercents[variantIndex] = localPercent;
+        variantBatch[variantIndex].percent = Math.round(localPercent);
+        variantBatch[variantIndex].message = localMessage;
+        variantBatch[variantIndex].updatedAt = new Date().toISOString();
         sendVariantBatch({
           index: variantIndex,
           percent: overallPercent(),
-          message: `Nháp ${variantIndex + 1}/${variants.length} · ${payload.message || "Đang xử lý"}`
+          message: `Nháp ${variantIndex + 1}/${variants.length} · ${localMessage}`
         });
       };
       try {
@@ -7074,12 +7088,18 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           project: projectForVariant
         });
         variantBatch[variantIndex].status = "done";
+        variantBatch[variantIndex].percent = 100;
+        variantBatch[variantIndex].message = `Bản nháp variant ${variantIndex + 1}/${variants.length} đã hoàn tất`;
+        variantBatch[variantIndex].updatedAt = new Date().toISOString();
         variantBatch[variantIndex].outputPath = result.outputPath || "";
         variantBatch[variantIndex].renderMetrics = result.renderMetrics || null;
         await onVariantReady?.(await this.projectStore.getProject(workspaceRoot, projectId));
       } catch (error) {
         if (getCancelToken()?.cancelled) throw error;
         variantBatch[variantIndex].status = "failed";
+        variantBatch[variantIndex].percent = 100;
+        variantBatch[variantIndex].message = `Bản nháp variant ${variantIndex + 1}/${variants.length} bị lỗi`;
+        variantBatch[variantIndex].updatedAt = new Date().toISOString();
         variantBatch[variantIndex].error = error.message;
         failures.push({
           variantId: variant.id,
@@ -7088,12 +7108,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         });
       }
       variantPercents[variantIndex] = 100;
+      variantBatch[variantIndex].percent = 100;
       sendVariantBatch({
         index: variantIndex,
         percent: overallPercent(),
         message: variantBatch[variantIndex].status === "done"
-          ? `Bản nháp variant ${variantIndex + 1}/${variants.length} đã hoàn tất`
-          : `Bản nháp variant ${variantIndex + 1}/${variants.length} bị lỗi; tiếp tục variant kế tiếp`
+          ? variantBatch[variantIndex].message
+          : `${variantBatch[variantIndex].message}; tiếp tục variant kế tiếp`
       });
     };
     let nextVariantIndex = 0;
