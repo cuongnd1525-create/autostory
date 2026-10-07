@@ -3120,6 +3120,34 @@ dd {
   letter-spacing: 0.5px;
 }
 
+.video-title-overlay.tiktok-hook {
+  left: 7%;
+  right: 7%;
+  padding: 0 4px;
+  border-radius: 0;
+  color: #ffffff;
+  background: transparent;
+  box-shadow: none;
+  font-weight: 900;
+  line-height: 1.02;
+  letter-spacing: 0.2px;
+  text-transform: uppercase;
+  text-shadow:
+    -2px -2px 0 #000,
+     2px -2px 0 #000,
+    -2px  2px 0 #000,
+     2px  2px 0 #000,
+     0 4px 8px rgba(0, 0, 0, 0.55);
+}
+
+.video-title-overlay.tiktok-hook .hook-caption-line {
+  display: block;
+}
+
+.video-title-overlay.tiktok-hook .hook-caption-line.accent {
+  color: #ffe600;
+}
+
 .video-part-label-overlay {
   position: absolute;
   z-index: 4;
