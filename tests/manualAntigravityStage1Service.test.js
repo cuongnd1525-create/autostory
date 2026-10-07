@@ -183,7 +183,7 @@ async function createPackage() {
   assert.strictEqual(storySpineArtifact.script.narrativeBeats.length, 1);
 
   let killed = false;
-  service.activeChild = { kill() { killed = true; } };
+  service.activeRuns.set("run-test", { runId: "run-test", label: "test", pid: null, child: { kill() { killed = true; } } });
   assert.strictEqual(service.cancel(), true, "active Antigravity process should be cancellable");
   assert.strictEqual(killed, true);
 
@@ -462,7 +462,8 @@ async function createPackage() {
     await gateService.run({ packageDir: gatePackageDir });
   } catch (err) {
     gateFailed = true;
-    assert(err.message.includes("[PHASE_A] FAILED") && err.message.includes("chưa xem video"), `must throw hard gate error (${err.message})`);
+    assert(err.message.includes("[PHASE_A] FAILED") && err.message.includes("không gọi view_file") && err.message.includes("coverage retry=1"), `must throw hard gate error (${err.message})`);
+    assert.strictEqual(missingVideoCalls.length, 2, "exactly one targeted coverage retry of that chunk");
     assert(err.message.includes("analysis-proxy-chunk-001.mp4"), "must name missing chunk");
   }
   assert.strictEqual(gateFailed, true, "run must fail when video chunks were not viewed");

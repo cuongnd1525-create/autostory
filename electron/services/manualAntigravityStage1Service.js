@@ -412,41 +412,47 @@ async function auditTranscriptForViewedProxies(conversationId, expectedProxyList
     return validateVideoCoverage(expectedProxyList, viewedProxySet);
   }
 
+  // transcript_full.jsonl holds the real tool arguments; transcript.jsonl
+  // stores them JSON-encoded a second time ("\"D:\\\\Video\\\\...mp4\""),
+  // so both are read and merged (a view in either one counts).
   const candidatePaths = [];
   if (customTranscriptPath) {
     candidatePaths.push(customTranscriptPath);
   }
   if (conversationId) {
     const home = os.homedir();
-    candidatePaths.push(
-      path.join(home, ".gemini", "antigravity-cli", "brain", conversationId, ".system_generated", "logs", "transcript.jsonl"),
-      path.join(home, ".gemini", "antigravity", "brain", conversationId, ".system_generated", "logs", "transcript.jsonl")
-    );
+    for (const root of [path.join(home, ".gemini", "antigravity-cli", "brain"), path.join(home, ".gemini", "antigravity", "brain")]) {
+      const logsDir = path.join(root, conversationId, ".system_generated", "logs");
+      candidatePaths.push(path.join(logsDir, "transcript_full.jsonl"), path.join(logsDir, "transcript.jsonl"));
+    }
   }
 
+  const cleanPath = (value) => {
+    let clean = String(value || "").trim();
+    for (let round = 0; round < 2 && /^".*"$/.test(clean); round += 1) {
+      try { clean = JSON.parse(clean); } catch (_error) { clean = clean.replace(/^"|"$/g, ""); }
+    }
+    return clean.replace(/\\\\/g, "\\").trim();
+  };
   for (const transcriptPath of candidatePaths) {
+    let content;
     try {
-      const content = await fs.readFile(transcriptPath, "utf8");
-      const lines = content.split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line);
-          const toolCalls = entry.tool_calls || [];
-          for (const tc of toolCalls) {
-            if (tc.name === "view_file") {
-              const argPath = tc.args?.AbsolutePath || tc.args?.path || tc.args?.file || "";
-              const clean = String(argPath).replace(/^"|"$/g, "").trim();
-              if (clean && /\.(mp4|mov|webm|m4v)$/i.test(clean)) {
-                viewedProxySet.add(clean);
-                viewedProxySet.add(path.basename(clean));
-              }
-            }
-          }
-        } catch (_jsonErr) {}
-      }
-      break;
+      content = await fs.readFile(transcriptPath, "utf8");
     } catch (_readErr) {
-      // try next candidate
+      continue;
+    }
+    for (const line of content.split(/\r?\n/).filter(Boolean)) {
+      try {
+        const entry = JSON.parse(line);
+        for (const tc of entry.tool_calls || []) {
+          if (tc.name !== "view_file") continue;
+          const clean = cleanPath(tc.args?.AbsolutePath || tc.args?.path || tc.args?.file || "");
+          if (clean && /\.(mp4|mov|webm|m4v)$/i.test(clean)) {
+            viewedProxySet.add(clean);
+            viewedProxySet.add(clean.split(/[\\/]/).pop());
+          }
+        }
+      } catch (_jsonErr) {}
     }
   }
 
@@ -583,17 +589,36 @@ function parseSrtForContext(text = "") {
     if (/^\d+$/.test(line) && nextNonEmpty(index).includes("-->")) continue; // cue index
     if (current) current.text = `${current.text} ${line}`.replace(/\s+/g, " ").trim();
   }
-  // Drop empty cues and exact consecutive duplicates (YouTube-style rolling
-  // captions repeat the previous line in a ~10 ms cue); no words are lost.
+  // Rolling captions (the real 2026-10-07 source): every cue repeats the
+  // tail of the previous cue and adds a few words ("I'll come help" ->
+  // "I'll come help you." -> "you." -> "you. >> 5,376"), tripling the text.
+  // Strip only the exact word overlap with the previous cue (adjacent in
+  // time); the new words of every cue are kept, so no spoken word is lost.
   const result = [];
+  let previousWords = [];
+  let previousEnd = -Infinity;
   for (const cue of cues) {
     if (!cue.text) continue;
-    const previous = result[result.length - 1];
-    if (previous && previous.text === cue.text && cue.start - previous.end <= 0.5) {
-      previous.end = Math.max(previous.end, cue.end);
+    const words = cue.text.split(" ");
+    let overlap = 0;
+    if (cue.start - previousEnd <= 0.5) {
+      for (let size = Math.min(words.length, previousWords.length); size > 0; size -= 1) {
+        const tail = previousWords.slice(previousWords.length - size);
+        if (tail.every((word, index) => word === words[index])) {
+          overlap = size;
+          break;
+        }
+      }
+    }
+    previousWords = words;
+    previousEnd = cue.end;
+    const fresh = words.slice(overlap).join(" ").trim();
+    const last = result[result.length - 1];
+    if (!fresh) {
+      if (last) last.end = Math.max(last.end, cue.end);
       continue;
     }
-    result.push(cue);
+    result.push({ ...cue, text: fresh });
   }
   return result;
 }
@@ -704,22 +729,33 @@ function buildSourceUnderstandingRepairPrompt({ errors = [] } = {}) {
  * "source_understanding" object found in the agent's response text. The
  * result is accepted only if it passes the normal schema validation.
  */
-function recoverTruncatedUnderstanding(stdout = "") {
+/** Agent text of a stream-json stdout: final responses plus concatenated text_delta fragments. */
+function collectAgentTexts(stdout = "") {
   const texts = [];
+  const deltas = new Map();
   for (const line of String(stdout || "").split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith("{")) continue;
     try {
       const event = JSON.parse(trimmed);
       const result = event.result;
-      const candidates = [result?.response, result?.text, typeof result === "string" ? result : "", event.step_update?.content, event.content];
-      for (const candidate of candidates) {
-        if (typeof candidate === "string" && candidate.includes("source_understanding")) texts.push(candidate);
+      for (const candidate of [result?.response, result?.text, typeof result === "string" ? result : "", event.step_update?.content, event.content]) {
+        if (typeof candidate === "string" && candidate.trim()) texts.push(candidate);
+      }
+      const su = event.step_update;
+      if (su && typeof su.text_delta === "string") {
+        const key = `${su.conversation_id || ""}#${su.step_index ?? ""}`;
+        deltas.set(key, `${deltas.get(key) || ""}${su.text_delta}`);
       }
     } catch (_error) { /* not an event */ }
   }
+  return [...texts, ...deltas.values()];
+}
+
+function recoverTruncatedUnderstanding(stdout = "", { marker: contentMarker = "source_understanding", anchors = ['"artifactType"'] } = {}) {
+  const texts = collectAgentTexts(stdout).filter((text) => text.includes(contentMarker));
   for (const text of texts.reverse()) {
-    const marker = text.lastIndexOf('"artifactType"');
+    const marker = anchors.map((anchor) => text.lastIndexOf(anchor)).find((index) => index >= 0) ?? -1;
     if (marker < 0) continue;
     const start = text.lastIndexOf("{", marker);
     if (start < 0) continue;
@@ -841,6 +877,18 @@ function extractAgyErrorInfo(error = {}) {
   return { status, code, retryable, text: parts.filter(Boolean).join("\n") };
 }
 
+// Real run 2026-10-07 chunk-001: AGY returned status SUCCESS with this text and
+// 0 tokens in ~2 s; the model never ran (the prompt was rejected before
+// inference). It is NOT a coverage failure and must not be reported as one.
+const PROMPT_BLOCKED_PATTERN = /prompt could not be submitted|Prohibited Use policy|prompt contains sensitive words/i;
+function isPromptBlockedResponse(result) {
+  if (typeof result === "string") return PROMPT_BLOCKED_PATTERN.test(result) && result.length < 600;
+  if (!result || typeof result !== "object") return false;
+  const text = String(result.response || result.text || "");
+  const tokens = Number(result.usage?.total_tokens ?? result.usage?.input_tokens ?? 0);
+  return PROMPT_BLOCKED_PATTERN.test(text) && !(tokens > 0);
+}
+
 function classifyAgyFailure(error = {}) {
   if (error.kind) return error.kind;
   const info = extractAgyErrorInfo(error);
@@ -866,6 +914,10 @@ function describeAgyFailure(kind, error) {
       return `AGY gọi công cụ bị cấm trong bước này (${error?.message || ""}); tiến trình đã bị dừng.`;
     case "cancelled":
       return "Đã dừng theo yêu cầu.";
+    case "prompt_blocked":
+      return "AGY từ chối prompt trước khi chạy model (\"prompt contains sensitive words\" / Prohibited Use policy); model không chạy, không xem video.";
+    case "auth_ttl":
+      return error?.message || "Token Antigravity không đủ thời hạn cho bước này.";
     default:
       return error?.message || "AGY lỗi.";
   }
@@ -904,9 +956,12 @@ function resolveSourceUnderstandingArchitecture(settings = {}) {
     : "chunked_map_reduce";
 }
 
+// Default 1 until a live AGY run proves concurrent map sessions are stable
+// (2026-10-07: both concurrent chunks hit server-side 500/503 "stream was
+// interrupted"; host isolation is fixed and tested, the backend is unproven).
 function resolveMapConcurrency(settings = {}) {
   const value = Number(settings.sourceUnderstandingMapConcurrency);
-  if (!Number.isFinite(value) || value <= 0) return 2;
+  if (!Number.isFinite(value) || value <= 0) return 1;
   return Math.max(1, Math.min(4, Math.floor(value)));
 }
 
@@ -1215,6 +1270,41 @@ async function extractNamedArtifact(stdout, { filename, artifactType, resultDir 
   return null;
 }
 
+function isChunkUnderstandingObject(object, task) {
+  if (!object || typeof object !== "object" || Array.isArray(object)) return false;
+  if (!Array.isArray(object.importantEvents)) return false;
+  if (object.artifactType && object.artifactType !== "source_chunk_understanding") return false;
+  return !object.chunkId || !task || String(object.chunkId) === task.chunkId;
+}
+
+/**
+ * Accepts the chunk understanding in any form AGY returns it: the wrapped
+ * {artifacts:[{filename,script}]} transport (any filename), the bare root
+ * object, JSON inside text_delta fragments / Markdown fences, or a file the
+ * agent wrote into its own chunk workspace. The host knows which chunk is
+ * running and writes chunk-understanding-<id>.json itself after validation.
+ * Returns { data, source } or { data: null }.
+ */
+async function extractChunkUnderstanding(stdout, task, workDir = "") {
+  const predicate = (object) => isChunkUnderstandingObject(object, task);
+  const fromStream = findObjectDeep(stdout, predicate);
+  if (fromStream) return { data: fromStream, source: "stream" };
+  for (const text of collectAgentTexts(stdout).reverse()) {
+    const found = findObjectDeep(text, predicate);
+    if (found) return { data: found, source: "agent_text" };
+  }
+  if (workDir) {
+    for (const name of [`chunk-understanding-${task.chunkId}.json`, "chunk-understanding.json"]) {
+      try {
+        const parsed = parseJsonCandidate(await fs.readFile(path.join(workDir, name), "utf8"));
+        const found = parsed ? findObjectDeep(parsed, predicate) : null;
+        if (found) return { data: found, source: "agent_file" };
+      } catch (_error) { /* not written */ }
+    }
+  }
+  return { data: null, source: null };
+}
+
 function buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds = [1, 3, 4], expectedProxyList = [], packageInfo = null }) {
   // Backward compatibility: use Phase A + B combined logic if called externally
   const promptLines = [
@@ -1324,9 +1414,19 @@ class ManualAntigravityStage1Service {
     this.settings = settings;
     this.spawnImpl = dependencies.spawn || spawn;
     this.authProbe = dependencies.authProbe || null;
-    this.activeChild = null;
-    this.activeChildren = new Set();
+    // Process registry: one entry per running AGY child, keyed by runId.
+    // Nothing per-process is stored on the instance itself, so concurrent map
+    // workers sharing this service cannot clear or kill each other's child.
+    this.activeRuns = new Map();
+    this.runCounter = 0;
     this.cancelled = false;
+    this.timers = { heartbeatMs: 5000, hardTimeoutGraceMs: 30000, ...(dependencies.timers || {}) };
+    this.authCache = null;
+  }
+
+  /** Read-only view for diagnostics/tests. */
+  listActiveRuns() {
+    return [...this.activeRuns.values()].map(({ runId, label, pid, startedAt }) => ({ runId, label, pid, startedAt }));
   }
 
   buildCommand(prompt, schemaPath, pass1Dir, options = {}) {
@@ -1461,7 +1561,9 @@ class ManualAntigravityStage1Service {
     expectedProxyList = [],
     viewedProxySet = new Set(),
     forbiddenTools = [],
-    toolGuard = null
+    toolGuard = null,
+    label = "",
+    activityLabel = "Antigravity đang phân tích..."
   }) {
     return new Promise((resolve, reject) => {
       let forbiddenToolError = null;
@@ -1479,7 +1581,22 @@ class ManualAntigravityStage1Service {
       let lastActivityTime = Date.now();
       let currentPercent = 18;
       let conversationId = null;
+      this.runCounter += 1;
+      const runId = `run-${String(this.runCounter).padStart(3, "0")}`;
+      const startedAtIso = new Date().toISOString();
       const stats = {
+        runId,
+        label,
+        pid: null,
+        startedAt: startedAtIso,
+        endedAt: null,
+        terminationReason: null,
+        exitCode: null,
+        resultStatus: null,
+        resultError: null,
+        streamInterrupted: false,
+        errorMessageSteps: 0,
+        promptBlocked: false,
         agentTurns: 0,
         toolCalls: 0,
         viewFileVideoCount: 0,
@@ -1499,7 +1616,9 @@ class ManualAntigravityStage1Service {
         const stepKey = su.step_index ?? `anon-${countedSteps.size}`;
         if (countedSteps.has(stepKey)) return;
         countedSteps.add(stepKey);
-        if (su.step_type === "agent_response") {
+        if (su.step_type === "error_message") {
+          stats.errorMessageSteps += 1;
+        } else if (su.step_type === "agent_response") {
           stats.agentTurns += 1;
           stats.inputTokens += Number(su.usage?.input_tokens) || 0;
           stats.outputTokens += Number(su.usage?.output_tokens) || 0;
@@ -1530,22 +1649,27 @@ class ManualAntigravityStage1Service {
         stdio: ["pipe", "pipe", "pipe"],
         env: buildCliEnv()
       });
-      this.activeChild = child;
-      this.activeChildren.add(child);
-      const killThisChild = () => this.killChild(child);
+      stats.pid = child.pid ?? null;
+      this.activeRuns.set(runId, { runId, label, pid: stats.pid, startedAt: startedAtIso, child });
+      // Kills exactly THIS child (timeout / forbidden tool). Never touches siblings.
+      let hostTermination = null;
+      const killThisChild = (reason) => {
+        if (!hostTermination) hostTermination = reason;
+        this.killChild(child);
+      };
 
       const finish = (callback) => {
         if (settled) return;
         settled = true;
         clearInterval(heartbeatInterval);
         clearTimeout(hardTimer);
-        this.activeChildren.delete(child);
-        if (this.activeChild === child) this.activeChild = null;
+        this.activeRuns.delete(runId);
+        stats.endedAt = new Date().toISOString();
         callback();
       };
 
       const inactivityLimitMs = Math.min(timeoutMs, 600000);
-      const hardTimeoutMs = timeoutMs + 30000;
+      const hardTimeoutMs = timeoutMs + this.timers.hardTimeoutGraceMs;
 
       const rejectWith = (message, kind, extra = {}) => {
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
@@ -1556,7 +1680,8 @@ class ManualAntigravityStage1Service {
       };
 
       const hardTimer = setTimeout(() => {
-        killThisChild();
+        killThisChild("host_hard_timeout");
+        stats.terminationReason = "host_hard_timeout";
         finish(() => rejectWith(`Antigravity timed out after ${Math.round(timeoutMs / 1000)}s.`, "hard_timeout"));
       }, hardTimeoutMs);
 
@@ -1564,10 +1689,11 @@ class ManualAntigravityStage1Service {
         if (settled) return;
         const idleMs = Date.now() - lastActivityTime;
         if (idleMs >= inactivityLimitMs) {
-          killThisChild();
+          killThisChild("host_inactivity_timeout");
+          stats.terminationReason = "host_inactivity_timeout";
           finish(() => rejectWith(`Antigravity không có phản hồi trong ${Math.round(idleMs / 1000)}s (quá thời gian chờ hoạt động).`, "inactivity_timeout"));
         }
-      }, 5000);
+      }, Math.max(10, Math.min(this.timers.heartbeatMs, inactivityLimitMs)));
 
       let lastReportedMessage = "";
       let lastReportedPercent = 0;
@@ -1606,7 +1732,7 @@ class ManualAntigravityStage1Service {
                 if (guardReason || forbiddenTools.includes(toolName) || (forbiddenTools.includes("view_file:video") && toolName === "view_file" && /\.(mp4|mov|webm|m4v)$/i.test(file))) {
                   forbiddenToolError = `${toolName}${file ? ` ${path.basename(file.replace(/\\/g, "/"))}` : ""}${typeof guardReason === "string" ? ` (${guardReason})` : ""}`;
                   failureKind = "forbidden_tool";
-                  killThisChild();
+                  killThisChild("forbidden_tool");
                 }
               }
               if (su.step_type === "tool") {
@@ -1646,10 +1772,14 @@ class ManualAntigravityStage1Service {
                 emitProgress(currentPercent, toolLabel);
               } else if (su.step_type === "agent_response") {
                 currentPercent = Math.min(98, Math.max(currentPercent, 35) + 0.2);
-                emitProgress(currentPercent, "Antigravity đang phân tích và viết kịch bản...");
+                emitProgress(currentPercent, activityLabel);
               }
             } else if (event.event === "result") {
               // Not a success signal: the host still has to parse and validate the JSON.
+              stats.resultStatus = event.result?.status || null;
+              stats.resultError = event.result?.error ? String(event.result.error).slice(0, 300) : null;
+              if (/stream was interrupted/i.test(String(event.result?.error || ""))) stats.streamInterrupted = true;
+              if (isPromptBlockedResponse(event.result)) stats.promptBlocked = true;
               const failed = event.result?.status === "ERROR" || Boolean(event.result?.error);
               emitProgress(currentPercent, failed
                 ? `Antigravity kết thúc lượt với lỗi: ${String(event.result?.error || "ERROR").slice(0, 160)}`
@@ -1670,6 +1800,7 @@ class ManualAntigravityStage1Service {
       });
 
       child.on("error", (error) => finish(() => {
+        stats.terminationReason = "spawn_error";
         error.kind = error.kind || "spawn_error";
         error.stats = stats;
         reject(error);
@@ -1678,6 +1809,11 @@ class ManualAntigravityStage1Service {
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
         const combined = `${stdout}\n${stderr}`;
+        stats.exitCode = code;
+        stats.terminationReason = hostTermination
+          || (this.cancelled ? "cancelled" : null)
+          || (/\[agy\] print timeout after/i.test(stderr) ? "agy_print_timeout" : null)
+          || (code === 0 ? "exit_ok" : `exit_code_${code}`);
 
         if (forbiddenToolError) {
           rejectWith(`Forbidden tool call: ${forbiddenToolError}`, "forbidden_tool");
@@ -1735,13 +1871,19 @@ class ManualAntigravityStage1Service {
     return true;
   }
 
-  /** Cancel: kills every running AGY child (map stages may run in parallel). */
+  /** Global cancel: intentionally kills EVERY registered AGY child (map workers may run in parallel). */
   terminateActiveChild({ asCancel = true } = {}) {
-    const children = [...this.activeChildren];
-    if (this.activeChild && !children.includes(this.activeChild)) children.push(this.activeChild);
-    if (!children.length) return false;
+    const runs = [...this.activeRuns.values()];
     if (asCancel) this.cancelled = true;
-    children.forEach((child) => this.killChild(child));
+    runs.forEach((run) => this.killChild(run.child));
+    return runs.length > 0;
+  }
+
+  /** Kills one registered run only. */
+  terminateRun(runId) {
+    const run = this.activeRuns.get(runId);
+    if (!run) return false;
+    this.killChild(run.child);
     return true;
   }
 
@@ -1765,35 +1907,68 @@ class ManualAntigravityStage1Service {
    * makes the CLI log the expiry; we read it so an expired token fails fast
    * with an explicit authentication error instead of after a long video turn.
    */
-  async ensureAntigravityAuth({ label, diagnostics = null, onProgress, logs }) {
+  async probeAntigravityAuth(label) {
+    if (this.authProbe) return this.authProbe({ label });
+    if (this.spawnImpl !== spawn) return null;
+    const startedAtMs = Date.now();
+    const commandParts = splitArgs(this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy");
+    await new Promise((resolve) => {
+      try {
+        const warmup = spawn(commandParts[0] || "agy", [...commandParts.slice(1), "models"], { windowsHide: true, env: buildCliEnv() });
+        warmup.on("close", resolve);
+        warmup.on("error", resolve);
+        setTimeout(() => { try { warmup.kill(); } catch (_) {} resolve(); }, 8000);
+      } catch (_error) {
+        resolve();
+      }
+    });
+    return readAntigravityTokenExpiry({ startedAtMs });
+  }
+
+  /**
+   * Credentials preflight before EVERY new AGY process.
+   *
+   * Evidence (CLI logs 2026-10-06/07): the CLI loads the OAuth token from the
+   * keyring at start and only refreshes it in-process AFTER it has expired
+   * ("browser.go: token refreshed" at 09:45:10, 15:24:08, 17:14:38), and the
+   * request in flight still fails with 401 each time. There is no verified
+   * non-interactive refresh command, so the host does not invent one: a
+   * process is only started when the token outlives the stage's own timeout
+   * plus a safety margin; otherwise it fails BEFORE any video is viewed.
+   *
+   * requiredSec = stage timeout + antigravityAuthSafetyMarginSec (default 120).
+   * The expiry is absolute, so a probe is reused across processes (no extra
+   * `agy models` per chunk) and redone only when the cached value is short.
+   */
+  async ensureAntigravityAuth({ label, diagnostics = null, onProgress, logs, stageTimeoutMs = 0 }) {
+    const marginSec = Number.isFinite(Number(this.settings.antigravityAuthSafetyMarginSec)) ? Math.max(0, Number(this.settings.antigravityAuthSafetyMarginSec)) : 120;
+    const requiredSec = stageTimeoutMs > 0 ? Math.ceil(stageTimeoutMs / 1000) + marginSec : 60;
+    let now = Date.now();
+    const cached = this.authCache;
     let probe = null;
-    if (this.authProbe) {
-      probe = await this.authProbe({ label });
-    } else if (this.spawnImpl === spawn) {
-      const startedAtMs = Date.now();
-      const commandParts = splitArgs(this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy");
-      await new Promise((resolve) => {
-        try {
-          const warmup = spawn(commandParts[0] || "agy", [...commandParts.slice(1), "models"], { windowsHide: true, env: buildCliEnv() });
-          warmup.on("close", resolve);
-          warmup.on("error", resolve);
-          setTimeout(() => { try { warmup.kill(); } catch (_) {} resolve(); }, 8000);
-        } catch (_error) {
-          resolve();
-        }
-      });
-      probe = await readAntigravityTokenExpiry({ startedAtMs });
+    let reused = false;
+    if (cached?.expiresAtMs && (cached.expiresAtMs - now) / 1000 >= requiredSec && now - cached.probedAtMs < 15 * 60000) {
+      probe = { expiresAt: new Date(cached.expiresAtMs), expiredFlag: false };
+      reused = true;
+    } else {
+      if (!this.authProbeInFlight) {
+        this.authProbeInFlight = this.probeAntigravityAuth(label).finally(() => { this.authProbeInFlight = null; });
+      }
+      probe = await this.authProbeInFlight;
+      if (probe?.expiresAt instanceof Date) this.authCache = { expiresAtMs: probe.expiresAt.getTime(), probedAtMs: Date.now() };
+      now = Date.now();
     }
-    const now = Date.now();
     const expiresAtMs = probe?.expiresAt instanceof Date ? probe.expiresAt.getTime() : null;
     const remainingSec = expiresAtMs ? Math.round((expiresAtMs - now) / 1000) : null;
     const record = {
       label,
       checkedAt: new Date(now).toISOString(),
       tokenExpiresAt: expiresAtMs ? new Date(expiresAtMs).toISOString() : null,
-      tokenRemainingSec: remainingSec
+      tokenRemainingSec: remainingSec,
+      requiredSec,
+      probeReused: reused
     };
-    if (diagnostics) diagnostics.authChecks.push(record);
+    if (diagnostics?.authChecks) diagnostics.authChecks.push(record);
     if (probe?.expiredFlag === true || (remainingSec !== null && remainingSec < 60)) {
       const error = new Error(
         `[${label}] AUTH: token đăng nhập Antigravity ${remainingSec !== null && remainingSec > 0 ? `chỉ còn ${remainingSec}s` : "đã hết hạn"}`
@@ -1802,8 +1977,17 @@ class ManualAntigravityStage1Service {
       error.kind = "auth";
       throw error;
     }
-    if (remainingSec !== null) {
-      this.emitLog(onProgress, 12, `[${label}] AUTH: token còn ${Math.round(remainingSec / 60)} phút (hết hạn ${record.tokenExpiresAt}).`, logs);
+    if (remainingSec !== null && remainingSec < requiredSec) {
+      const error = new Error(
+        `[${label}] AUTH: token Antigravity còn ${Math.floor(remainingSec / 60)} phút ${remainingSec % 60}s (hết hạn ${record.tokenExpiresAt}) nhưng bước này có thể chạy tới ${Math.round(stageTimeoutMs / 1000)}s + ${marginSec}s an toàn. `
+        + "AGY CLI chỉ tự làm mới token SAU khi hết hạn và yêu cầu đang chạy sẽ lỗi 401. Mở Antigravity để làm mới đăng nhập rồi chạy lại. Chưa khởi động tiến trình AGY, chưa xem video."
+      );
+      error.kind = "auth_ttl";
+      error.authRecord = record;
+      throw error;
+    }
+    if (remainingSec !== null && !reused) {
+      this.emitLog(onProgress, 12, `[${label}] AUTH: token còn ${Math.round(remainingSec / 60)} phút (hết hạn ${record.tokenExpiresAt}); bước này cần ≤ ${Math.round(requiredSec / 60)} phút.`, logs);
     }
     return record;
   }
@@ -1813,7 +1997,7 @@ class ManualAntigravityStage1Service {
    * caller decides per failure kind. Every attempt's stdout/stderr is kept in
    * its own log file (previously a retry overwrote the first attempt's log).
    */
-  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [], toolGuard = null, cwd = null }) {
+  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [], toolGuard = null, cwd = null, activityLabel = undefined }) {
     metrics.agyProcessCount += 1;
     const attemptIndex = metrics.agyProcessCount;
     const startedAt = Date.now();
@@ -1821,6 +2005,20 @@ class ManualAntigravityStage1Service {
       await fs.writeFile(path.join(resultDir, `antigravity-output-${logBase}-attempt${attemptIndex}.log`), stdout || "", "utf8").catch(() => {});
       if (stderr) await fs.writeFile(path.join(resultDir, `antigravity-stderr-${logBase}-attempt${attemptIndex}.log`), stderr, "utf8").catch(() => {});
     };
+    const processInfo = (stats = {}) => ({
+      runId: stats.runId || null,
+      pid: stats.pid ?? null,
+      startedAt: stats.startedAt || null,
+      endedAt: stats.endedAt || null,
+      terminationReason: stats.terminationReason || null,
+      exitCode: stats.exitCode ?? null,
+      resultStatus: stats.resultStatus || null,
+      resultError: stats.resultError || null,
+      streamInterrupted: Boolean(stats.streamInterrupted),
+      errorMessageSteps: stats.errorMessageSteps || 0,
+      promptBlocked: Boolean(stats.promptBlocked),
+      agentTurns: stats.agentTurns || 0
+    });
     try {
       const result = await this.runCli({
         ...commandConfig,
@@ -1831,16 +2029,24 @@ class ManualAntigravityStage1Service {
         expectedProxyList,
         viewedProxySet,
         forbiddenTools,
-        toolGuard
+        toolGuard,
+        label,
+        ...(activityLabel ? { activityLabel } : {})
       });
       accumulateStats(metrics, result.stats);
-      metrics.attempts.push({ label, attempt: attemptIndex, ok: true, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: result.stats?.viewFileVideoCount || 0 });
       await writeAttemptLogs(result.stdout, result.stderr);
+      if (result.stats?.promptBlocked) {
+        metrics.attempts.push({ label, attempt: attemptIndex, ok: false, kind: "prompt_blocked", durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: result.stats?.viewFileVideoCount || 0, ...processInfo(result.stats) });
+        const error = new Error(`[${label}] ${describeAgyFailure("prompt_blocked")}`);
+        Object.assign(error, { kind: "prompt_blocked", stdout: result.stdout, stderr: result.stderr, stats: result.stats, conversationId: result.conversationId });
+        return { ok: false, error, kind: "prompt_blocked" };
+      }
+      metrics.attempts.push({ label, attempt: attemptIndex, ok: true, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: result.stats?.viewFileVideoCount || 0, ...processInfo(result.stats) });
       return { ok: true, result };
     } catch (error) {
       accumulateStats(metrics, error.stats);
       const kind = classifyAgyFailure(error);
-      metrics.attempts.push({ label, attempt: attemptIndex, ok: false, kind, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: error.stats?.viewFileVideoCount || 0, message: String(error.message || "").slice(0, 300) });
+      metrics.attempts.push({ label, attempt: attemptIndex, ok: false, kind, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: error.stats?.viewFileVideoCount || 0, message: String(error.message || "").slice(0, 300), ...processInfo(error.stats) });
       await writeAttemptLogs(error.stdout, error.stderr || error.message);
       return { ok: false, error, kind };
     }
@@ -1853,7 +2059,7 @@ class ManualAntigravityStage1Service {
   async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
     const maxCapacityRetries = 2;
     for (let attempt = 0; ; attempt += 1) {
-      await this.ensureAntigravityAuth({ label, onProgress, logs });
+      await this.ensureAntigravityAuth({ label, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs });
       const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && attempt < maxCapacityRetries && !this.cancelled) {
@@ -1906,7 +2112,7 @@ class ManualAntigravityStage1Service {
     const maxCapacityRetries = 2;
 
     for (let attempt = 0; ; attempt += 1) {
-      await this.ensureAntigravityAuth({ label: "PHASE_A", diagnostics, onProgress, logs });
+      await this.ensureAntigravityAuth({ label: "PHASE_A", diagnostics, onProgress, logs, stageTimeoutMs: commandConfigA.timeoutMs });
       const viewedBefore = viewedProxySet.size;
       mainOutcome = await this.runAgyOnce({
         label: "PHASE_A", commandConfig: commandConfigA, prompt: promptA, resultDir, onProgress,
@@ -1943,7 +2149,7 @@ class ManualAntigravityStage1Service {
     // Missing chunks after a CLEAN turn: ask the same conversation for those chunks only.
     for (let attempt = 1; mainOutcome.ok && !coverage.isComplete && attempt <= 2 && conversationId; attempt += 1) {
       this.emitLog(onProgress, Math.min(40, 20 + attempt * 10), `[PHASE_A] Chưa xem đủ proxy (${coverage.coveragePercent}%). Yêu cầu xem phần thiếu trong cùng hội thoại (${attempt}/2)...`, logs);
-      await this.ensureAntigravityAuth({ label: "PHASE_A_COVERAGE", diagnostics, onProgress, logs });
+      await this.ensureAntigravityAuth({ label: "PHASE_A_COVERAGE", diagnostics, onProgress, logs, stageTimeoutMs: timeoutMs });
       const retryPrompt = assertPrintPromptSize(buildRetryPrompt({ missingProxies: coverage.missingProxies, outputKind: "source_understanding" }), "Phase A coverage");
       const outcome = await this.runAgyOnce({
         label: "PHASE_A_COVERAGE", commandConfig: this.buildRetryCommand(conversationId, retryPrompt, pass1Dir, { packageInfo, timeoutMs }),
@@ -1989,7 +2195,7 @@ class ManualAntigravityStage1Service {
       diagnostics.serializationRepairUsed = "same_conversation";
       this.emitLog(onProgress, 44, `[PHASE_A] Coverage 100% nhưng chưa có JSON hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu serialize trong cùng hội thoại (cấm view_file).`, logs);
       try {
-        await this.ensureAntigravityAuth({ label: "PHASE_A_SERIALIZE", diagnostics, onProgress, logs });
+        await this.ensureAntigravityAuth({ label: "PHASE_A_SERIALIZE", diagnostics, onProgress, logs, stageTimeoutMs: resolvePhaseTimeoutMs("phase_a_serialization", this.settings) });
         const serializationPrompt = buildSourceUnderstandingSerializationPrompt({ errors: parsed.validation.errors });
         const serializationTimeoutMs = resolvePhaseTimeoutMs("phase_a_serialization", this.settings);
         const viewsBefore = metrics.viewFileVideoCount;
@@ -2246,7 +2452,9 @@ class ManualAntigravityStage1Service {
         + `. Các chunk hợp lệ đã được cache (${okIds.join(", ") || "không có"}) và sẽ KHÔNG bị xem lại; chạy lại chỉ xem các chunk lỗi. Chưa chạy reducer, không ghi cache toàn cục.`
       );
       const kinds = failed.map((result) => result.record.failureKind);
-      throw fail(error, kinds.includes("auth") ? "auth" : kinds.includes("cancelled") ? "cancelled" : kinds[0] || "map_failed");
+      const authFailure = failed.find((result) => ["auth", "auth_ttl"].includes(result.record.failureKind));
+      if (authFailure) error.message = `${authFailure.record.failureMessage} ${error.message}`;
+      throw fail(error, authFailure ? authFailure.record.failureKind : kinds.includes("cancelled") ? "cancelled" : kinds[0] || "map_failed");
     }
 
     // ---------------------------- REDUCE -------------------------------
@@ -2309,15 +2517,32 @@ class ManualAntigravityStage1Service {
       }
     });
     diagnostics.cachePath = saved.path;
+    this.emitLog(onProgress, 45, `[REDUCE] OK · 0 video view · ${reduced.data.storyTimeline.length} events · cache written (${(diagnostics.reduce.durationMs / 1000).toFixed(1)}s)`, logs);
     (reduced.warnings || []).forEach((warning) => logs.push(`[PHASE_A] warning: ${warning}`));
     this.emitLog(onProgress, 46, `[PHASE_A] DONE (map/reduce): ${reduced.data.storyTimeline.length} sự kiện toàn cục; map ${(diagnostics.map.durationMs / 1000).toFixed(1)}s, reduce ${(diagnostics.reduce.durationMs / 1000).toFixed(1)}s; view_file video ${totals.viewFileVideoCount}; JSON đã kiểm tra và lưu cache: ${saved.path}`, logs);
     return { data: reduced.data, cacheKey: reducer.key, keyComponents: reducer.components, coverage, diagnostics: finalize() };
   }
 
+  /**
+   * One map chunk, fully isolated: its own workspace (cwd, inputs, prompts,
+   * stdout/stderr logs, result, diagnostics) under 01-ANTIGRAVITY-RESULT/map/<chunkId>/,
+   * its own metrics/viewed set, and every child it starts is registered by runId.
+   *
+   * Recovery, bounded and chunk-local (successful chunks are never touched):
+   *  - capacity error before this chunk's video was viewed -> fresh process (<=2)
+   *  - prompt rejected by the AGY prompt policy filter (0 tokens, model never
+   *    ran; real chunk-001 2026-10-07) -> ONE retry with the chunk context in a
+   *    chunk-local file instead of inline
+   *  - clean turn that never viewed the chunk video -> ONE strict coverage retry
+   *  - video viewed but JSON missing/partial -> deterministic extraction and
+   *    truncation repair; then ONE short same-conversation serialization (tools
+   *    forbidden) only when the turn ended cleanly; else fail this chunk only.
+   */
   async runMapChunk({ task, keyInfo, cached, pass1Dir, packageInfo, resultDir, schemaPath, cacheDir, timeouts, onProgress, logs, diagnostics, stopState, pool }) {
     const startedAt = Date.now();
     const metrics = newMetrics();
     const label = `PHASE_A_MAP ${task.chunkId}`;
+    const tag = `[MAP ${task.chunkId}]`;
     const record = {
       chunkId: task.chunkId,
       proxyFile: task.proxy.filename,
@@ -2331,14 +2556,29 @@ class ManualAntigravityStage1Service {
       transcriptCueCount: task.transcript.length,
       sceneCount: task.scenes.length,
       actionCount: task.actions.length,
+      startedAt: new Date(startedAt).toISOString(),
+      timeoutMs: timeouts.mapChunkTimeoutMs,
+      coverageRetryCount: 0,
+      promptBlockRetryCount: 0,
+      serializationRepair: "none",
       ok: false
     };
+    let workDir = null;
     const finish = (extra = {}, data = null) => {
       const videoReads = Object.entries(metrics.fileReads).filter(([name]) => /\.(mp4|mov|webm|m4v)$/i.test(name));
+      const attempts = metrics.attempts;
       Object.assign(record, {
+        endedAt: new Date().toISOString(),
         durationMs: Date.now() - startedAt,
-        agyRuntimeMs: metrics.attempts.reduce((sum, attempt) => sum + (attempt.durationMs || 0), 0),
+        agyRuntimeMs: attempts.reduce((sum, attempt) => sum + (attempt.durationMs || 0), 0),
         agyProcessCount: metrics.agyProcessCount,
+        runIds: attempts.map((attempt) => attempt.runId).filter(Boolean),
+        pids: attempts.map((attempt) => attempt.pid).filter((pid) => pid !== null && pid !== undefined),
+        conversationIds: [...new Set(attempts.map((attempt) => attempt.conversationId).filter(Boolean))],
+        terminationReason: attempts.length ? attempts[attempts.length - 1].terminationReason : null,
+        terminationReasons: attempts.map((attempt) => attempt.terminationReason),
+        streamInterrupted: attempts.some((attempt) => attempt.streamInterrupted),
+        promptBlocked: attempts.some((attempt) => attempt.promptBlocked),
         viewFileCount: metrics.viewFileVideoCount,
         textViewFileCount: metrics.viewFileTextCount,
         duplicateVideoViewCount: videoReads.reduce((sum, [, count]) => sum + Math.max(0, count - 1), 0),
@@ -2348,57 +2588,61 @@ class ManualAntigravityStage1Service {
         thinkingTokens: metrics.usageReported ? metrics.thinkingTokens : null,
         retryCount: record.retryCount || 0,
         rewatchCount: record.rewatchCount || 0,
-        attempts: metrics.attempts,
+        attempts,
         ...extra
       });
       return { record, metrics, data };
     };
+    const writeDiagnostics = async () => {
+      if (workDir) await writeJsonAtomic(path.join(workDir, "diagnostics.json"), record).catch(() => {});
+    };
+    const failChunk = async (kind, message) => {
+      this.emitLog(onProgress, 30, `${tag} FAILED (${kind}): ${message}`, logs);
+      const result = finish({ ok: false, failureKind: kind, failureMessage: String(message).slice(0, 500) });
+      await writeDiagnostics();
+      return result;
+    };
 
     if (cached.status === "hit") {
-      this.emitLog(onProgress, 14, `[PHASE_A] MAP ${task.chunkId} CACHE HIT (${task.sourceStartSec.toFixed(1)}-${task.sourceEndSec.toFixed(1)}s): 0 view_file video.`, logs);
+      this.emitLog(onProgress, 14, `${tag} CACHE HIT (${task.sourceStartSec.toFixed(1)}-${task.sourceEndSec.toFixed(1)}s): 0 view_file video.`, logs);
       return finish({ ok: true, cacheHit: true }, cached.data);
     }
-    if (stopState.kind) {
-      return finish({ ok: false, failureKind: stopState.kind, failureMessage: `không chạy: ${stopState.reason}`.slice(0, 400), skipped: true });
-    }
+    if (stopState.kind) return finish({ ok: false, failureKind: stopState.kind, failureMessage: `không chạy: ${stopState.reason}`.slice(0, 400), skipped: true });
     if (this.cancelled) return finish({ ok: false, failureKind: "cancelled", failureMessage: "Đã dừng theo yêu cầu." });
     this.emitLog(onProgress, 12, cached.status === "invalid"
-      ? `[PHASE_A] MAP ${task.chunkId} CACHE INVALID (${cached.reason}) → chỉ chạy lại chunk này.`
-      : `[PHASE_A] MAP ${task.chunkId} CACHE MISS → xem ${task.proxy.filename} (${task.sourceStartSec.toFixed(1)}-${task.sourceEndSec.toFixed(1)}s).`, logs);
+      ? `${tag} CACHE INVALID (${cached.reason}) → chỉ chạy lại chunk này.`
+      : `${tag} CACHE MISS → xem ${task.proxy.filename} (${task.sourceStartSec.toFixed(1)}-${task.sourceEndSec.toFixed(1)}s).`, logs);
 
-    // Chunk-specific inputs (kept for traceability; the compact context is inlined in the prompt).
-    const chunkInputDir = path.join(resultDir, "phase-a-input", task.chunkId);
-    await fs.mkdir(chunkInputDir, { recursive: true });
+    // Isolated workspace for this chunk only.
+    workDir = path.join(resultDir, "map", task.chunkId);
+    await fs.mkdir(workDir, { recursive: true });
+    record.workDir = workDir;
     const srtTime = (value) => {
       const ms = Math.max(0, Math.round(Number(value) * 1000));
       const pad = (number, width = 2) => String(number).padStart(width, "0");
       return `${pad(Math.floor(ms / 3600000))}:${pad(Math.floor(ms / 60000) % 60)}:${pad(Math.floor(ms / 1000) % 60)},${pad(ms % 1000, 3)}`;
     };
     const contextText = MapReduce.renderChunkContext(task);
-    const contextPath = path.join(chunkInputDir, `${task.chunkId}-context.txt`);
+    const contextPath = path.join(workDir, `${task.chunkId}-context.txt`);
+    const contextLineCount = contextText.split("\n").length;
     await Promise.all([
-      fs.writeFile(path.join(chunkInputDir, `${task.chunkId}-transcript.srt`), task.transcript.map((cue, index) => `${index + 1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text}\n`).join("\n"), "utf8"),
-      writeJsonAtomic(path.join(chunkInputDir, `${task.chunkId}-scenes.json`), task.scenes),
-      writeJsonAtomic(path.join(chunkInputDir, `${task.chunkId}-actions.json`), task.actions),
+      fs.writeFile(path.join(workDir, `${task.chunkId}-transcript.srt`), task.transcript.map((cue, index) => `${index + 1}\n${srtTime(cue.start)} --> ${srtTime(cue.end)}\n${cue.text}\n`).join("\n"), "utf8"),
+      writeJsonAtomic(path.join(workDir, `${task.chunkId}-scenes.json`), task.scenes),
+      writeJsonAtomic(path.join(workDir, `${task.chunkId}-actions.json`), task.actions),
       fs.writeFile(contextPath, contextText, "utf8")
     ]);
-    let prompt = MapReduce.buildMapPrompt({ task, contextText });
-    let contextInline = true;
-    if (prompt.length > MAX_PRINT_PROMPT_CHARS) {
-      contextInline = false;
-      prompt = MapReduce.buildMapPrompt({ task, contextPath, contextLineCount: contextText.split("\n").length });
-    }
-    assertPrintPromptSize(prompt, `Phase A map ${task.chunkId}`);
-    Object.assign(record, { promptChars: prompt.length, contextInline });
+    let contextMode = MapReduce.buildMapPrompt({ task, contextText }).length > MAX_PRINT_PROMPT_CHARS ? "file" : "inline";
+    const buildPrompt = ({ strictCoverage = false } = {}) => (contextMode === "inline"
+      ? MapReduce.buildMapPrompt({ task, contextText, strictCoverage })
+      : MapReduce.buildMapPrompt({ task, contextPath, contextLineCount, strictCoverage }));
 
     const transportName = `chunk-understanding-${task.chunkId}.json`;
     const allowedVideo = path.basename(String(task.proxy.absolutePath).replace(/\\/g, "/")).toLowerCase();
-    const allowedContext = contextInline ? null : path.basename(contextPath).toLowerCase();
     const baseOf = (value) => path.basename(String(value || "").replace(/\\/g, "/")).toLowerCase();
     const toolGuard = ({ toolName, file, stepUpdate }) => {
       if (toolName === "view_file") {
         const name = baseOf(file);
-        if (name === allowedVideo || (allowedContext && name === allowedContext)) return null;
+        if (name === allowedVideo || (contextMode === "file" && name === baseOf(contextPath))) return null;
         return `map ${task.chunkId} chỉ được xem ${task.proxy.filename}`;
       }
       if (toolName === "write_to_file") {
@@ -2410,101 +2654,157 @@ class ManualAntigravityStage1Service {
     const chunkProgress = (item = {}) => onProgress?.({
       step: item.step || "antigravity_stage1",
       percent: Math.min(40, Math.max(12, Math.round(12 + (Number(item.percent) - 18) * 0.35))),
-      message: `[MAP ${task.chunkId}] ${String(item.message || "")}`.slice(0, 220)
+      message: `${tag} ${String(item.message || "")}`.slice(0, 220)
     });
 
     const viewedProxySet = new Set();
-    let outcome = null;
-    let conversationId = null;
     let stdout = "";
+    let lastStdout = "";
+    let conversationId = null;
+    let outcome = null;
+    let strictCoverage = false;
+    let capacityRetries = 0;
     let videoViewedByEarlierProcess = false;
-    for (let attempt = 0; ; attempt += 1) {
+    for (;;) {
+      if (this.cancelled) return failChunk("cancelled", "Đã dừng theo yêu cầu.");
       try {
-        await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs });
+        await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.mapChunkTimeoutMs });
       } catch (error) {
         stopState.kind = error.kind || "auth";
         stopState.reason = String(error.message || "").slice(0, 300);
-        return finish({ ok: false, failureKind: stopState.kind, failureMessage: stopState.reason });
+        return failChunk(stopState.kind, stopState.reason);
       }
       if (videoViewedByEarlierProcess) record.rewatchCount = (record.rewatchCount || 0) + 1;
+      const prompt = assertPrintPromptSize(buildPrompt({ strictCoverage }), `Phase A map ${task.chunkId}`);
+      const attemptNo = metrics.agyProcessCount + 1;
+      await fs.writeFile(path.join(workDir, `prompt-attempt${attemptNo}.txt`), prompt, "utf8").catch(() => {});
+      record.promptChars = prompt.length;
+      record.contextMode = contextMode;
+      this.emitLog(onProgress, 13, `${tag} START attempt ${attemptNo} (${contextMode === "inline" ? "context inline" : "context file"}${strictCoverage ? ", strict coverage" : ""}, timeout ${Math.round(timeouts.mapChunkTimeoutMs / 1000)}s).`, logs);
       pool.active += 1;
       pool.maxActive = Math.max(pool.maxActive, pool.active);
+      const viewsBefore = metrics.viewFileVideoCount;
       try {
         outcome = await this.runAgyOnce({
           label,
           commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.mapChunkTimeoutMs }),
-          prompt, resultDir, onProgress: chunkProgress, expectedProxyList: [task.proxy], viewedProxySet, metrics, logs,
-          logBase: `map-${task.chunkId}`, toolGuard
+          prompt, resultDir: workDir, cwd: workDir, onProgress: chunkProgress, expectedProxyList: [task.proxy], viewedProxySet, metrics, logs,
+          logBase: task.chunkId, toolGuard, activityLabel: "Antigravity đang phân tích video..."
         });
       } finally {
         pool.active -= 1;
       }
       const source = outcome.ok ? outcome.result : outcome.error;
       conversationId = source?.conversationId || conversationId;
-      stdout += `${stdout ? `\n--- ${label} ATTEMPT ---\n` : ""}${source?.stdout || ""}`;
-      if (outcome.ok) break;
-      const viewedVideo = viewedProxySet.size > 0 || metrics.viewFileVideoCount > 0;
-      videoViewedByEarlierProcess = videoViewedByEarlierProcess || viewedVideo;
-      if (outcome.kind === "auth") {
-        stopState.kind = "auth";
-        stopState.reason = describeAgyFailure("auth", outcome.error);
-        return finish({ ok: false, failureKind: "auth", failureMessage: stopState.reason });
+      const lastAttempt = metrics.attempts[metrics.attempts.length - 1];
+      if (lastAttempt) lastAttempt.conversationId = source?.conversationId || null;
+      lastStdout = source?.stdout || "";
+      stdout += `${stdout ? `\n--- ${label} ATTEMPT ---\n` : ""}${lastStdout}`;
+      const viewedThisAttempt = metrics.viewFileVideoCount > viewsBefore;
+      if (!outcome.ok) {
+        const viewedVideo = viewedProxySet.size > 0 || metrics.viewFileVideoCount > 0;
+        if (outcome.kind === "auth") {
+          stopState.kind = "auth";
+          stopState.reason = describeAgyFailure("auth", outcome.error);
+          return failChunk("auth", stopState.reason);
+        }
+        if (outcome.kind === "cancelled") return failChunk("cancelled", "Đã dừng theo yêu cầu.");
+        if (outcome.kind === "prompt_blocked") {
+          if (record.promptBlockRetryCount < 1 && !viewedVideo) {
+            record.promptBlockRetryCount += 1;
+            contextMode = "file";
+            this.emitLog(onProgress, 14, `${tag} RETRY: AGY từ chối prompt (policy filter, 0 token, model không chạy). Chạy lại riêng chunk này với ngữ cảnh trong file ${path.basename(contextPath)} (1 lần).`, logs);
+            continue;
+          }
+          return failChunk("prompt_blocked", `${describeAgyFailure("prompt_blocked")} Đã thử lại với ngữ cảnh trong file.`);
+        }
+        if (outcome.kind === "capacity" && !viewedVideo && capacityRetries < 2 && !this.cancelled) {
+          capacityRetries += 1;
+          record.retryCount = (record.retryCount || 0) + 1;
+          metrics.retryCount += 1;
+          const delayMs = this.capacityRetryDelayMs(capacityRetries - 1);
+          this.emitLog(onProgress, 14, `${tag} RETRY: 503/UNAVAILABLE trước khi xem video; tiến trình mới sau ${Math.round(delayMs / 1000)}s (${capacityRetries}/2).`, logs);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        videoViewedByEarlierProcess = videoViewedByEarlierProcess || viewedVideo;
       }
-      if (outcome.kind === "cancelled") return finish({ ok: false, failureKind: "cancelled", failureMessage: "Đã dừng theo yêu cầu." });
-      // Capacity before this chunk's video was viewed: nothing was watched yet, a fresh process is free.
-      if (outcome.kind === "capacity" && !viewedVideo && attempt < 2 && !this.cancelled) {
-        record.retryCount = (record.retryCount || 0) + 1;
-        metrics.retryCount += 1;
-        const delayMs = this.capacityRetryDelayMs(attempt);
-        this.emitLog(onProgress, 14, `[PHASE_A] MAP ${task.chunkId} 503/UNAVAILABLE trước khi xem video. Thử lại tiến trình mới sau ${Math.round(delayMs / 1000)}s (${attempt + 1}/2)...`, logs);
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-        continue;
+      const coverageNow = validateVideoCoverage([task.proxy], viewedProxySet);
+      if (outcome.ok && !coverageNow.isComplete && !viewedThisAttempt) {
+        // Clean turn that answered without viewing the video: check AGY's own transcript first.
+        const audited = await auditTranscriptForViewedProxies(conversationId, [task.proxy], viewedProxySet);
+        if (!audited.isComplete && record.coverageRetryCount < 1 && !this.cancelled) {
+          record.coverageRetryCount += 1;
+          strictCoverage = true;
+          this.emitLog(onProgress, 14, `${tag} RETRY: lượt AGY kết thúc mà không gọi view_file(${task.proxy.filename}). Chạy lại RIÊNG chunk này một lần với yêu cầu view_file trước tiên.`, logs);
+          continue;
+        }
       }
       break;
     }
-    await fs.writeFile(path.join(resultDir, `antigravity-output-map-${task.chunkId}.log`), stdout, "utf8").catch(() => {});
+    await fs.writeFile(path.join(workDir, "stdout-all-attempts.log"), stdout, "utf8").catch(() => {});
 
     const coverage = await auditTranscriptForViewedProxies(conversationId, [task.proxy], viewedProxySet);
-    const parse = async (text) => {
-      const raw = await extractNamedArtifact(text, { filename: transportName, artifactType: "source_chunk_understanding", resultDir });
-      if (!raw) return { data: null, validation: { ok: false, errors: [`Không tìm thấy ${transportName} trong output.`], warnings: [] } };
-      const data = MapReduce.normalizeChunkUnderstanding(raw, task);
-      return { data, validation: MapReduce.validateChunkUnderstanding(data, task) };
-    };
-    const failureMessageOf = () => (outcome.ok ? "" : describeAgyFailure(outcome.kind, outcome.error));
+    record.coverage = { complete: coverage.isComplete, viewedProxyFiles: coverage.viewedProxyFiles };
+    const failureText = outcome.ok ? "" : `${describeAgyFailure(outcome.kind, outcome.error)}${outcome.error?.stats?.streamInterrupted ? " AGY báo \"The stream was interrupted\" (lỗi phía máy chủ)." : ""} `;
     if (!coverage.isComplete) {
-      const kind = outcome.ok ? "coverage" : outcome.kind;
-      const message = `${failureMessageOf() ? `${failureMessageOf()} ` : ""}AGY chưa xem video ${task.proxy.filename} bằng view_file; JSON (nếu có) bị từ chối, không ghi cache.`;
-      this.emitLog(onProgress, 30, `[PHASE_A] MAP ${task.chunkId} FAILED (${kind}): ${message}`, logs);
-      return finish({ ok: false, failureKind: kind, failureMessage: message.slice(0, 400) });
+      return failChunk(outcome.ok ? "coverage" : outcome.kind, `${failureText}AGY không gọi view_file(${task.proxy.filename}) (đã kiểm tra stream-json và transcript AGY; coverage retry=${record.coverageRetryCount}); JSON (nếu có) bị từ chối, không ghi cache.`);
     }
-    let parsed = await parse(stdout);
-    if (!parsed.validation.ok && conversationId && this.settings.sourceUnderstandingMapSerializationRepair === true && !this.cancelled) {
-      // Opt-in only: a SHORT same-conversation serialization (tools forbidden).
-      // The 2026-10-07 global run showed this does not help when the model turn
-      // itself is failing server-side, so it is off by default.
-      record.serializationRepairUsed = true;
-      this.emitLog(onProgress, 32, `[PHASE_A] MAP ${task.chunkId}: video đã xem nhưng JSON chưa hợp lệ; thử serialize ngắn (${Math.round(timeouts.mapSerializationTimeoutMs / 1000)}s, cấm công cụ).`, logs);
-      const repairPrompt = assertPrintPromptSize([
-        `Return ONLY the ${transportName} transport JSON for ${task.chunkId} now, from what you already watched. Do not call any tool.`,
-        ...parsed.validation.errors.slice(0, 6).map((error) => `- ${error}`)
-      ].join("\n"), `Phase A map ${task.chunkId} repair`);
-      const repair = await this.runAgyOnce({
-        label: `${label} REPAIR`,
-        commandConfig: this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, { packageInfo, timeoutMs: timeouts.mapSerializationTimeoutMs }),
-        prompt: repairPrompt, resultDir, onProgress: chunkProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
-        logBase: `map-${task.chunkId}-repair`,
-        forbiddenTools: ["view_file", "run_command", "grep_search", "find_by_name", "list_dir", "codebase_search"]
-      });
-      const source = repair.ok ? repair.result : repair.error;
-      parsed = await parse(source?.stdout || "");
+
+    const tryParse = async (text) => {
+      const extracted = await extractChunkUnderstanding(text, task, workDir);
+      if (!extracted.data) return { data: null, validation: { ok: false, errors: [`Không tìm thấy chunk understanding (${transportName}) trong output.`], warnings: [] } };
+      const data = MapReduce.normalizeChunkUnderstanding(extracted.data, task);
+      return { data, source: extracted.source, validation: MapReduce.validateChunkUnderstanding(data, task) };
+    };
+    let parsed = await tryParse(lastStdout);
+    if (!parsed.validation.ok && lastStdout !== stdout) parsed = await tryParse(stdout);
+    if (!parsed.validation.ok) {
+      // Deterministic repair of a truncated serialization (no AGY call).
+      const recovered = MapReduce.sanitizeRecoveredChunk(recoverTruncatedUnderstanding(stdout, { marker: "importantEvents", anchors: ['"artifactType"', '"chunkId"', '"importantEvents"'] }));
+      if (recovered && Array.isArray(recovered.importantEvents)) {
+        const data = MapReduce.normalizeChunkUnderstanding(recovered, task);
+        const validation = MapReduce.validateChunkUnderstanding(data, task);
+        if (validation.ok) {
+          parsed = { data, source: "local_truncation_repair", validation };
+          record.serializationRepair = "local_truncation_repair";
+        }
+      }
+    }
+    const repairSetting = this.settings.sourceUnderstandingMapSerializationRepair;
+    const repairAllowed = repairSetting === "always" || (repairSetting !== false && outcome.ok);
+    if (!parsed.validation.ok && conversationId && repairAllowed && !this.cancelled) {
+      // ONE short same-conversation serialization, every tool forbidden. Only
+      // after a CLEAN turn by default: after a server-side stream interruption
+      // the 2026-10-07 global run showed it fails the same way.
+      record.serializationRepair = "same_conversation";
+      this.emitLog(onProgress, 32, `${tag} video đã xem nhưng JSON chưa hợp lệ; serialize ngắn trong cùng hội thoại (${Math.round(timeouts.mapSerializationTimeoutMs / 1000)}s, cấm mọi công cụ).`, logs);
+      try {
+        await this.ensureAntigravityAuth({ label: `${label} REPAIR`, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.mapSerializationTimeoutMs });
+        const repairPrompt = assertPrintPromptSize([
+          `Return ONLY the chunk understanding JSON object for ${task.chunkId} now, from what you already watched. Do not call any tool. Do not view any video, transcript or manifest again.`,
+          ...parsed.validation.errors.slice(0, 6).map((error) => `- ${error}`)
+        ].join("\n"), `Phase A map ${task.chunkId} repair`);
+        const repair = await this.runAgyOnce({
+          label: `${label} REPAIR`,
+          commandConfig: this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, { packageInfo, timeoutMs: timeouts.mapSerializationTimeoutMs }),
+          prompt: repairPrompt, resultDir: workDir, cwd: workDir, onProgress: chunkProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
+          logBase: `${task.chunkId}-repair`,
+          forbiddenTools: ["view_file", "run_command", "grep_search", "find_by_name", "list_dir", "codebase_search", "write_to_file"],
+          toolGuard: ({ toolName }) => `serialization repair: ${toolName || "công cụ"} bị cấm`,
+          activityLabel: "Antigravity đang serialize JSON..."
+        });
+        const source = repair.ok ? repair.result : repair.error;
+        parsed = await tryParse(source?.stdout || "");
+      } catch (error) {
+        if (error.kind === "auth" || error.kind === "auth_ttl") record.serializationRepair = `skipped_${error.kind}`;
+      }
     }
     if (!parsed.validation.ok) {
-      const kind = outcome.ok ? "invalid_json" : outcome.kind;
-      const message = `${failureMessageOf() ? `${failureMessageOf()} ` : ""}Đã xem video chunk nhưng chunk JSON không hợp lệ (${parsed.validation.errors.slice(0, 3).join(" ")}). Chỉ chunk này lỗi; không ghi cache.`;
-      this.emitLog(onProgress, 30, `[PHASE_A] MAP ${task.chunkId} FAILED (${kind}): ${message}`, logs);
-      return finish({ ok: false, failureKind: kind, failureMessage: message.slice(0, 400) });
+      return failChunk(outcome.ok ? "invalid_json" : outcome.kind, `${failureText}Đã xem video chunk nhưng chunk JSON không hợp lệ (${parsed.validation.errors.slice(0, 3).join(" ")}). Chỉ chunk này lỗi; không ghi cache.`);
     }
+    // Host writes the result (the model never has to name the file).
+    await writeJsonAtomic(path.join(workDir, transportName), parsed.data);
     const savedPath = await MapReduce.saveChunkUnderstanding({
       cacheDir,
       task,
@@ -2518,22 +2818,29 @@ class ManualAntigravityStage1Service {
         model: this.settings.antigravityModel || "",
         durationMs: Date.now() - startedAt,
         agyProcessCount: metrics.agyProcessCount,
-        videoViewFileCount: metrics.viewFileVideoCount
+        videoViewFileCount: metrics.viewFileVideoCount,
+        outputSource: parsed.source || null,
+        serializationRepair: record.serializationRepair
       }
     });
-    this.emitLog(onProgress, 36, `[PHASE_A] MAP ${task.chunkId} DONE: ${parsed.data.importantEvents.length} sự kiện, view_file video=${metrics.viewFileVideoCount}, ${((Date.now() - startedAt) / 1000).toFixed(1)}s. JSON đã kiểm tra và lưu cache: ${savedPath}`, logs);
     record.cachePath = savedPath;
-    return finish({ ok: true, warnings: parsed.validation.warnings }, parsed.data);
+    const result = finish({ ok: true, outputSource: parsed.source || null, eventCount: parsed.data.importantEvents.length, warnings: parsed.validation.warnings }, parsed.data);
+    await writeDiagnostics();
+    this.emitLog(onProgress, 36, `${tag} OK · ${metrics.viewFileVideoCount} video view · ${parsed.data.importantEvents.length} events · cache written (${((Date.now() - startedAt) / 1000).toFixed(1)}s)`, logs);
+    return result;
   }
 
   async runReducer({ chunks, pass1Dir, packageInfo, resultDir, schemaPath, videoDurationSec, timeouts, onProgress, logs, diagnostics, metrics }) {
     const label = "PHASE_A_REDUCE";
     const overhead = MapReduce.buildReducePrompt({ reducerInput: "", videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors: ["x".repeat(900)] }).length;
-    const { text: reducerInput, overBudget } = MapReduce.renderReducerInputWithinBudget(chunks, MAX_PRINT_PROMPT_CHARS - overhead - 200);
+    const budget = MAX_PRINT_PROMPT_CHARS - overhead - 200;
+    let { text: reducerInput, overBudget } = MapReduce.renderReducerInputWithinBudget(chunks, budget);
     diagnostics.reduce.inputChars = reducerInput.length;
-    const inputDir = path.join(resultDir, "phase-a-input");
-    await fs.mkdir(inputDir, { recursive: true });
-    await fs.writeFile(path.join(inputDir, "reducer-input.txt"), reducerInput, "utf8");
+    // Isolated reducer workspace (cwd, logs, input) — never shared with a map chunk.
+    const workDir = path.join(resultDir, "reduce");
+    await fs.mkdir(workDir, { recursive: true });
+    diagnostics.reduce.workDir = workDir;
+    await fs.writeFile(path.join(workDir, "reducer-input.txt"), reducerInput, "utf8");
     if (overBudget) {
       const error = new Error(`[${label}] FAILED: ${chunks.length} chunk understanding quá lớn cho prompt reducer (${reducerInput.length} ký tự).`);
       error.kind = "reduce_input_too_large";
@@ -2551,29 +2858,40 @@ class ManualAntigravityStage1Service {
       percent: Math.min(45, Math.max(41, Math.round(41 + (Number(item.percent) - 18) * 0.05))),
       message: `[REDUCE] ${String(item.message || "")}`.slice(0, 220)
     });
-    this.emitLog(onProgress, 41, `[PHASE_A] REDUCE START (text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
+    this.emitLog(onProgress, 41, `[REDUCE] START (text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
     let errors = [];
     let capacityRetries = 0;
     let repairs = 0;
+    let promptBlockRetries = 0;
     for (;;) {
-      await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs });
+      await this.ensureAntigravityAuth({ label, diagnostics, onProgress, logs, stageTimeoutMs: timeouts.reduceTimeoutMs });
       const prompt = assertPrintPromptSize(MapReduce.buildReducePrompt({
         reducerInput, videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors
       }), "Phase A reduce");
       const outcome = await this.runAgyOnce({
         label,
         commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs: timeouts.reduceTimeoutMs }),
-        prompt, resultDir, onProgress: reduceProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
-        logBase: "phaseA-reduce", toolGuard
+        prompt, resultDir: workDir, cwd: workDir, onProgress: reduceProgress, expectedProxyList: [], viewedProxySet: new Set(), metrics, logs,
+        logBase: "reduce", toolGuard, activityLabel: "Antigravity đang tổng hợp (text-only)..."
       });
       if (!outcome.ok) {
         diagnostics.reduce.failureKinds.push(outcome.kind);
+        if (outcome.kind === "prompt_blocked" && promptBlockRetries < 1 && !this.cancelled) {
+          // Same policy filter as map chunk-001: drop verbatim dialogue quotes (the
+          // likely trigger) and retry once, still text-only.
+          promptBlockRetries += 1;
+          diagnostics.reduce.promptBlockRetryCount = promptBlockRetries;
+          ({ text: reducerInput, overBudget } = MapReduce.renderReducerInputWithinBudget(chunks, budget, { includeDialogue: false }));
+          await fs.writeFile(path.join(workDir, "reducer-input-no-dialogue.txt"), reducerInput, "utf8");
+          this.emitLog(onProgress, 42, "[REDUCE] RETRY: AGY từ chối prompt (policy filter, model không chạy). Chạy lại một lần không kèm trích dẫn thoại.", logs);
+          continue;
+        }
         if (outcome.kind === "capacity" && capacityRetries < 2 && !this.cancelled) {
           const delayMs = this.capacityRetryDelayMs(capacityRetries);
           capacityRetries += 1;
           diagnostics.reduce.retryCount += 1;
           metrics.retryCount += 1;
-          this.emitLog(onProgress, 42, `[${label}] 503/UNAVAILABLE. Reducer chỉ dùng văn bản; thử lại sau ${Math.round(delayMs / 1000)}s (${capacityRetries}/2)...`, logs);
+          this.emitLog(onProgress, 42, `[REDUCE] RETRY: 503/UNAVAILABLE. Reducer chỉ dùng văn bản; thử lại sau ${Math.round(delayMs / 1000)}s (${capacityRetries}/2)...`, logs);
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           continue;
         }
@@ -2581,7 +2899,7 @@ class ManualAntigravityStage1Service {
         error.kind = outcome.kind === "forbidden_tool" ? "reduce_forbidden_tool" : outcome.kind;
         throw error;
       }
-      const raw = await extractNamedArtifact(outcome.result.stdout, { filename: "source-understanding.json", artifactType: "source_understanding", resultDir });
+      const raw = await extractNamedArtifact(outcome.result.stdout, { filename: "source-understanding.json", artifactType: "source_understanding", resultDir: workDir });
       const parsed = this.normalizeUnderstanding(raw, videoDurationSec);
       const groundingErrors = parsed.validation.ok ? MapReduce.validateReducerGrounding(parsed.data, chunks) : [];
       if (parsed.validation.ok && !groundingErrors.length) {
@@ -2593,7 +2911,7 @@ class ManualAntigravityStage1Service {
         repairs += 1;
         diagnostics.reduce.retryCount += 1;
         metrics.retryCount += 1;
-        this.emitLog(onProgress, 43, `[${label}] JSON chưa hợp lệ (${errors.slice(0, 2).join(" ")}). Chạy lại reducer text-only một lần (không có video).`, logs);
+        this.emitLog(onProgress, 43, `[REDUCE] RETRY: JSON chưa hợp lệ (${errors.slice(0, 2).join(" ")}). Chạy lại reducer text-only một lần (không có video).`, logs);
         continue;
       }
       const error = new Error(`[${label}] FAILED: source-understanding từ reducer không hợp lệ (${errors.slice(0, 4).join(" ")}).`);
@@ -2669,7 +2987,12 @@ class ManualAntigravityStage1Service {
     return { plan: locked, videoViews: videoViews.size };
   }
 
-  async run({ packageDir, onProgress } = {}) {
+  /**
+   * stopAfter: "source_understanding" runs only Phase A (map/reduce or cache)
+   * and returns its diagnostics — used by the Stage 1 diagnostic benchmark so
+   * a Phase A investigation never runs the series plan / Phase B.
+   */
+  async run({ packageDir, onProgress, stopAfter = null } = {}) {
     const stage1StartedAt = Date.now();
     this.cancelled = false;
     const logs = [];
@@ -2899,6 +3222,11 @@ class ManualAntigravityStage1Service {
         this.emitLog(onProgress, 46, `[PHASE_A] DONE: ${phaseA.coverage.totalViewed}/${expectedProxyList.length} proxy, ${phaseAMetrics.agyProcessCount} tiến trình AGY. Đã lưu cache: ${saved.path}`, logs);
       }
       Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics));
+    }
+
+    if (stopAfter === "source_understanding") {
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
+      return { resultDir, coverage, timing, sourceUnderstanding: { cacheHit: timing.sourceUnderstanding.cacheHit, cachePath: timing.sourceUnderstanding.cachePath, cacheKey: understandingKey }, stoppedAfter: "source_understanding" };
     }
 
     // Phase B inputs are files (command-line length limit); the persistent

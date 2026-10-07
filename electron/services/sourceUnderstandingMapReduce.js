@@ -20,7 +20,7 @@ const fs = require("fs/promises");
 const path = require("path");
 
 const CHUNK_SCHEMA_VERSION = 1;
-const MAP_PROMPT_VERSION = 1;
+const MAP_PROMPT_VERSION = 2; // v2: root-object output, 3-8 events, strict first tool
 const REDUCE_PROMPT_VERSION = 1;
 const DEFAULT_HANDLE_SEC = 4;
 const MAX_CHUNK_EVENTS = 15;
@@ -146,29 +146,45 @@ const CHUNK_SCHEMA_EXAMPLE = {
   openStateAtEnd: ""
 };
 
-function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0 }) {
+function chunkTransportExample(task) {
+  return { ...CHUNK_SCHEMA_EXAMPLE, chunkId: task.chunkId, sourceStartSec: task.sourceStartSec, sourceEndSec: task.sourceEndSec };
+}
+
+/**
+ * contextText  -> the chunk's compact text context is inlined (default).
+ * contextPath  -> the context is a chunk-local file read with ONE view_file in
+ *                 the same first response (used when the inline prompt is too
+ *                 long or was rejected by the prompt policy filter).
+ * strictCoverage -> the targeted coverage retry after a turn that answered
+ *                 without calling view_file on the chunk video.
+ */
+function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0, strictCoverage = false }) {
   const inline = Boolean(contextText);
+  const videoCall = `view_file("${task.proxy.absolutePath}")`;
   return [
     `You are a Phase A MAP worker of RecapTool Studio. Understand ONLY source interval ${task.sourceStartSec.toFixed(2)}-${task.sourceEndSec.toFixed(2)}s (${task.chunkId}). Editorial-neutral: no scripts, hooks, titles or narration.`,
     "",
+    ...(strictCoverage
+      ? [`MANDATORY: your FIRST tool action must be ${videoCall}. A previous attempt answered without watching the video and was rejected. Any answer before that call is rejected again.`, ""]
+      : []),
     "STEP 1 - your first response makes exactly these tool calls and nothing else:",
-    `  1. view_file("${task.proxy.absolutePath}")`,
+    `  1. ${videoCall}`,
     ...(inline ? [] : [`  2. view_file("${contextPath}", StartLine=1, EndLine=${Math.max(1, contextLineCount)})`]),
     "Watching the video with view_file is mandatory (audited). Never extract frames with Python/OpenCV/FFmpeg. Do not open any other file, do not list directories, do not run commands. Do not view the video twice.",
     "Burned-in SOURCE timestamps on the frames are absolute; local player time is not.",
     "",
     "STEP 2 - your second response returns the JSON below. No further tool calls.",
-    "- importantEvents: 3-10 meaningful story events for this interval (more only if the interval is genuinely dense, never more than 15). Never one per scene; merge scenes that carry the same beat.",
-    "- Each event: exact SOURCE range inside this interval, sceneIds, eventType, one-sentence summary, ≤3 short visualFacts, ≤3 dialogueFacts (exact quote, SOURCE second, speaker), importance and viralValue 0-100.",
+    "- importantEvents: 3-8 meaningful story events for this interval (never more than 12). Never one per scene; merge scenes that carry the same beat.",
+    "- Each event: exact SOURCE range inside this interval, sceneIds, eventType, one-sentence summary, at most 2 short visualFacts, at most 2 dialogueFacts (short exact quote, SOURCE second, speaker), importance and viralValue 0-100.",
     "- Mark continuesFromPreviousChunk / continuesIntoNextChunk when an event is cut by the interval boundary.",
-    "- openStateAtStart: what is already in progress when the interval begins. openStateAtEnd: what is unresolved when it ends.",
-    "- candidateMoments: at most 6 (hook|confrontation|interrogation|climax|resolution|context) with exact SOURCE ranges.",
-    "- Only facts visible in the frames or audible / present in the transcript below. Never invent names, charges, outcomes or motives.",
-    "- Keep the JSON under ~1,500 words.",
+    "- openStateAtStart: what is already in progress when the interval begins. openStateAtEnd: what is unresolved when it ends. One sentence each.",
+    "- candidateMoments: at most 5 (hook|confrontation|interrogation|climax|resolution|context) with exact SOURCE ranges.",
+    "- Only facts visible in the frames or audible / present in the transcript. Never invent names, charges, outcomes or motives. Do not copy the transcript.",
+    "- Keep the JSON under ~900 words.",
     "",
     ...(inline ? ["TEXT CONTEXT FOR THIS INTERVAL (already complete; do not open any file for it):", contextText.trim(), ""] : []),
-    "TRANSPORT (exactly one JSON object, no prose, no Markdown):",
-    JSON.stringify({ artifacts: [{ filename: `chunk-understanding-${task.chunkId}.json`, script: { ...CHUNK_SCHEMA_EXAMPLE, chunkId: task.chunkId, sourceStartSec: task.sourceStartSec, sourceEndSec: task.sourceEndSec } }], notes: "" })
+    "OUTPUT: exactly one JSON object with this shape (the root object itself; no wrapper, no prose, no Markdown):",
+    JSON.stringify(chunkTransportExample(task))
   ].join("\n");
 }
 
@@ -217,6 +233,29 @@ function normalizeChunkUnderstanding(data, task) {
     sourceEndSec: task.sourceEndSec,
     openStateAtStart: typeof data.openStateAtStart === "string" ? data.openStateAtStart : ""
   };
+}
+
+/**
+ * A truncated chunk serialization can end inside its last list item. Keep
+ * only complete events/candidates (valid range + summary), default missing
+ * containers; nothing is invented and the result must still validate.
+ */
+function sanitizeRecoveredChunk(data) {
+  if (!data || typeof data !== "object") return data;
+  const validRange = (item) => Number.isFinite(num(item?.sourceStartSec)) && Number.isFinite(num(item?.sourceEndSec)) && num(item.sourceEndSec) > num(item.sourceStartSec);
+  const recovery = { truncatedSerialization: true, droppedIncompleteItems: 0, defaultedFields: [] };
+  const result = { ...data };
+  const events = Array.isArray(result.importantEvents) ? result.importantEvents : [];
+  result.importantEvents = events.filter((event) => validRange(event) && typeof event.summary === "string" && event.summary.trim());
+  recovery.droppedIncompleteItems += events.length - result.importantEvents.length;
+  const candidates = Array.isArray(result.candidateMoments) ? result.candidateMoments : [];
+  if (!Array.isArray(result.candidateMoments)) recovery.defaultedFields.push("candidateMoments");
+  result.candidateMoments = candidates.filter(validRange);
+  recovery.droppedIncompleteItems += candidates.length - result.candidateMoments.length;
+  if (!Array.isArray(result.charactersSeen)) { result.charactersSeen = []; recovery.defaultedFields.push("charactersSeen"); }
+  if (typeof result.openStateAtEnd !== "string") { result.openStateAtEnd = ""; recovery.defaultedFields.push("openStateAtEnd"); }
+  result.hostRecovery = recovery;
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +351,7 @@ function clip(text, max) {
 }
 
 /** Compact, line-based rendering of all chunk understandings for the reducer prompt. */
-function renderReducerInput(chunks = [], { summaryMax = 220, factMax = 3, quoteMax = 140 } = {}) {
+function renderReducerInput(chunks = [], { summaryMax = 220, factMax = 3, quoteMax = 140, includeDialogue = true } = {}) {
   const lines = [];
   for (const { task, data } of chunks) {
     lines.push(`=== ${task.chunkId} SOURCE ${task.sourceStartSec.toFixed(2)}-${task.sourceEndSec.toFixed(2)}s ===`);
@@ -322,7 +361,7 @@ function renderReducerInput(chunks = [], { summaryMax = 220, factMax = 3, quoteM
     if (characters.length) lines.push(`charactersSeen: ${characters.join("; ")}`);
     lines.push("events:");
     for (const event of data.importantEvents || []) {
-      const dialogue = (event.dialogueFacts || []).slice(0, factMax).map((fact) => (
+      const dialogue = (includeDialogue ? (event.dialogueFacts || []) : []).slice(0, factMax).map((fact) => (
         typeof fact === "string" ? `"${clip(fact, quoteMax)}"` : `${num(fact.sourceSec, 0).toFixed(1)}s ${clip(fact.speaker, 30)}: "${clip(fact.quote, quoteMax)}"`
       ));
       const visual = (event.visualFacts || []).slice(0, factMax).map((fact) => clip(fact, 120));
@@ -343,18 +382,20 @@ function renderReducerInput(chunks = [], { summaryMax = 220, factMax = 3, quoteM
   return lines.join("\n");
 }
 
-function renderReducerInputWithinBudget(chunks, maxChars) {
+function renderReducerInputWithinBudget(chunks, maxChars, { includeDialogue = true } = {}) {
   const levels = [
     { summaryMax: 220, factMax: 3, quoteMax: 140 },
     { summaryMax: 180, factMax: 2, quoteMax: 110 },
     { summaryMax: 140, factMax: 1, quoteMax: 90 },
     { summaryMax: 110, factMax: 1, quoteMax: 70 }
   ];
-  for (const level of levels) {
+  for (const base of levels) {
+    const level = { ...base, includeDialogue };
     const text = renderReducerInput(chunks, level);
     if (text.length <= maxChars) return { text, level };
   }
-  return { text: renderReducerInput(chunks, levels[levels.length - 1]), level: levels[levels.length - 1], overBudget: true };
+  const last = { ...levels[levels.length - 1], includeDialogue };
+  return { text: renderReducerInput(chunks, last), level: last, overBudget: true };
 }
 
 function buildReducePrompt({ reducerInput, videoDurationSec = 0, chunkCount = 0, schemaExample, errors = [] }) {
@@ -426,6 +467,8 @@ module.exports = {
   buildMapPrompt,
   validateChunkUnderstanding,
   normalizeChunkUnderstanding,
+  sanitizeRecoveredChunk,
+  MAP_PROMPT_VERSION_CURRENT: MAP_PROMPT_VERSION,
   computeChunkKey,
   chunkCachePath,
   loadChunkUnderstanding,

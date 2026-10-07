@@ -234,8 +234,9 @@ function fullSourceViewCalls(calls) {
   const runE3 = await runStage1(packD.packageDir);
   assert.strictEqual(runE3.result.timing.sourceUnderstanding.cacheStatus, "invalid");
 
-  // E4: the map returns unparseable output -> that chunk fails clearly, NO cache written
-  // (no same-conversation serialization by default; no reducer without valid chunks).
+  // E4: the map returns unparseable output after a CLEAN turn -> deterministic
+  // extraction fails -> ONE short same-conversation serialization (tools
+  // forbidden) -> still invalid -> that chunk fails clearly, NO cache written.
   await fs.rm(cacheFileD);
   await fs.rm(path.join(cacheDirD, "chunk-understanding"), { recursive: true, force: true });
   const brokenRespond = (kind, prompt) => {
@@ -247,7 +248,9 @@ function fullSourceViewCalls(calls) {
   const runE4 = await runStage1(packD.packageDir, { respond: brokenRespond });
   assert(runE4.error, "unparseable map output must fail");
   assert(runE4.error.message.startsWith("[PHASE_A] FAILED"), runE4.error.message);
-  assert.deepStrictEqual(runE4.calls.map((call) => call.kind), ["map"], "only the failed chunk; no reducer, no rewatch");
+  assert.deepStrictEqual(runE4.calls.map((call) => call.kind), ["map", "map_repair"], "one short serialization repair, no reducer, no rewatch");
+  assert(runE4.calls[1].resumed, "the repair resumes the map conversation");
+  assert.strictEqual(runE4.calls[1].emittedViews, 0);
   assert.strictEqual(await exists(cacheFileD), false, "no fake cache may be written after a parse failure");
   assert.deepStrictEqual(await fs.readdir(path.join(cacheDirD, "chunk-understanding")).catch(() => []), [], "no chunk cache after a parse failure");
 

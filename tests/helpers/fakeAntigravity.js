@@ -138,6 +138,7 @@ function reduceDurationFromPrompt(prompt = "") {
 function classifyPrompt(prompt = "") {
   if (prompt.includes("You are a Phase A MAP worker")) return "map";
   if (prompt.includes("You are the Phase A REDUCER")) return "reduce";
+  if (prompt.includes("Return ONLY the chunk understanding JSON object")) return "map_repair";
   if (prompt.includes("Phase A (Source Understanding)")) return "phase_a";
   if (prompt.includes("You have already inspected 100% of the required source proxy videos.")) return "phase_a_repair";
   if (prompt.includes("MANDATORY VIDEO COVERAGE GATE FAILED")) return "phase_a_coverage_retry";
@@ -156,7 +157,8 @@ function classifyPrompt(prompt = "") {
  *   envelope?: object, rawResult?: string,
  *   omitResult?: boolean,          // e.g. print timeout before serialization
  *   extraEvents?: object[],        // additional raw stream events (before the result)
- *   stderr?: string, exitCode?: number
+ *   stderr?: string, exitCode?: number,
+ *   resultObject?: object         // raw AGY result object (status/error/response/usage)
  * }
  * Lines are emitted one by one; a kill() stops emission immediately, which is
  * how the real CLI behaves when the host terminates it.
@@ -202,7 +204,9 @@ function createPhaseAwareSpawn({ calls, respond }) {
         }
       }));
       for (const event of response.extraEvents || []) lines.push(JSON.stringify(event));
-      if (!response.omitResult) {
+      if (response.resultObject) {
+        lines.push(JSON.stringify({ event: "result", result: response.resultObject }));
+      } else if (!response.omitResult) {
         lines.push(JSON.stringify({
           event: "result",
           result: response.rawResult !== undefined ? response.rawResult : JSON.stringify(response.envelope || {})

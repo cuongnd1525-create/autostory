@@ -119,7 +119,8 @@ async function globalCacheFiles(cacheDir) {
   assert.deepStrictEqual(MapReduce.sliceTranscriptForRange(cues, 239.25, 480.5, 4).map((cue) => cue.text), ["b", "c", "d"]);
   assert.deepStrictEqual(MapReduce.sliceScenesForRange([{ sceneId: "s1", startSec: 0, endSec: 100 }, { sceneId: "s2", startSec: 400, endSec: 500 }], 239.25, 300, 4).map((scene) => scene.sceneId), []);
   assert.deepStrictEqual(MapReduce.sliceActionCandidatesForRange([{ sourceStartSec: 236, sourceEndSec: 238 }, { sourceStartSec: 600, sourceEndSec: 610 }], 239.25, 480.5, 4).length, 1);
-  assert.strictEqual(Stage1.resolveMapConcurrency({}), 2, "default map concurrency is 2");
+  assert.strictEqual(Stage1.resolveMapConcurrency({}), 1, "safe default map concurrency is 1 until a live AGY run proves 2 stable");
+  assert.strictEqual(Stage1.resolveMapConcurrency({ sourceUnderstandingMapConcurrency: 2 }), 2);
   assert.strictEqual(Stage1.resolveMapConcurrency({ sourceUnderstandingMapConcurrency: 99 }), 4, "concurrency is bounded");
   assert.strictEqual(Stage1.resolveSourceUnderstandingArchitecture({}), "chunked_map_reduce", "map/reduce is the normal Phase A");
   const timeouts = MapReduce.resolveMapReduceTimeouts({}, { chunkDurationSec: 291 });
@@ -128,7 +129,7 @@ async function globalCacheFiles(cacheDir) {
 
   // ------------------------------------------------ Test 1: 3 chunks cold
   const fixture = await createPackage();
-  const cold = await run(fixture);
+  const cold = await run(fixture, undefined, { sourceUnderstandingMapConcurrency: 2 });
   assert.ifError(cold.error);
   assert.deepStrictEqual(cold.kinds, ["map", "map", "map", "reduce", "phase_b"], "3 map processes, 1 reducer, then Phase B");
   assert.deepStrictEqual([...cold.mapChunkIds].sort(), ["chunk-001", "chunk-002", "chunk-003"]);
@@ -177,8 +178,8 @@ async function globalCacheFiles(cacheDir) {
   assert(!/\.mp4/i.test(reducePrompt) && !reducePrompt.includes("line 1 ") && !MARKERS.some((marker) => reducePrompt.includes(marker)), "reducer: no video, no full transcript");
   assert(reducePrompt.includes("chunk-001") && reducePrompt.includes("chunk-003"));
   // Chunk-specific local inputs exist for traceability.
-  const chunkInput = path.join(fixture.root, "01-ANTIGRAVITY-RESULT", "phase-a-input", "chunk-002");
-  for (const name of ["chunk-002-transcript.srt", "chunk-002-scenes.json", "chunk-002-actions.json"]) {
+  const chunkInput = path.join(fixture.root, "01-ANTIGRAVITY-RESULT", "map", "chunk-002");
+  for (const name of ["chunk-002-transcript.srt", "chunk-002-scenes.json", "chunk-002-actions.json", "chunk-002-context.txt", "prompt-attempt1.txt", "antigravity-output-chunk-002-attempt1.log", "chunk-understanding-chunk-002.json", "diagnostics.json"]) {
     await fs.access(path.join(chunkInput, name));
   }
   assert(cold.messages.some((message) => message.startsWith("[PHASE_A] DONE (map/reduce)")));
@@ -210,7 +211,7 @@ async function globalCacheFiles(cacheDir) {
   const chunks3 = partial.timing.sourceUnderstanding.map.chunks;
   assert.deepStrictEqual(chunks3.map((chunk) => chunk.cacheHit), [true, false, true]);
   assert.strictEqual(chunks3[1].cacheStatus, "invalid");
-  assert(partial.messages.some((message) => message.includes("MAP chunk-002 CACHE INVALID")));
+  assert(partial.messages.some((message) => message.includes("[MAP chunk-002] CACHE INVALID")));
 
   // ------------------------------------------------ Test 4: chunk 2 AGY timeout
   const fixture4 = await createPackage();
@@ -232,8 +233,8 @@ async function globalCacheFiles(cacheDir) {
   assert.strictEqual((await globalCacheFiles(fixture4.cacheDir)).length, 0);
   // Honest logging: no success message after a timeout.
   assert(!failed4.messages.some((message) => /đã tạo xong dữ liệu phân tích/i.test(message)), "no misleading success log after a timeout");
-  assert(failed4.messages.some((message) => message.includes("MAP chunk-002 FAILED (print_timeout)")), "a timeout says timeout");
-  assert(!failed4.messages.some((message) => message.includes("MAP chunk-002 DONE")));
+  assert(failed4.messages.some((message) => message.includes("[MAP chunk-002] FAILED (print_timeout)")), "a timeout says timeout");
+  assert(!failed4.messages.some((message) => message.startsWith("[MAP chunk-002] OK")));
   const retry4 = await run(fixture4);
   assert.ifError(retry4.error);
   assert.deepStrictEqual(retry4.mapChunkIds, ["chunk-002"], "retry reruns ONLY chunk 2 (chunks 1 and 3 are not rewatched)");
@@ -286,9 +287,9 @@ async function globalCacheFiles(cacheDir) {
   assert(failed7.error && failed7.error.message.includes("chunk-003"));
   assert.strictEqual(failed7.timing.sourceUnderstanding.map.chunks[2].failureKind, "forbidden_tool");
 
-  // ------------------------------------------------ concurrency 1 is honoured
+  // ------------------------------------------------ default concurrency (1) is honoured
   const fixture8 = await createPackage();
-  const serial = await run(fixture8, undefined, { sourceUnderstandingMapConcurrency: 1 });
+  const serial = await run(fixture8);
   assert.ifError(serial.error);
   assert.strictEqual(serial.live.maxActive, 1);
   assert.deepStrictEqual(serial.mapChunkIds, ["chunk-001", "chunk-002", "chunk-003"]);

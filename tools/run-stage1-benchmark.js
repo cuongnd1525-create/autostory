@@ -14,6 +14,11 @@
 //          understanding caches of this source)  --warm-only (skip run 1)
 //          --concurrency=N (sourceUnderstandingMapConcurrency, default from config or 2)
 //          --global (legacy global_single_pass Phase A, for comparison only)
+//          --phase-a-only (map/reduce diagnostics only: no series plan, no Phase B)
+//
+// Diagnostic sequence (2026-10-07):
+//   node tools/run-stage1-benchmark.js <pack> --cold --phase-a-only --concurrency=1
+//   node tools/run-stage1-benchmark.js <pack> --cold --phase-a-only --concurrency=2   (only if the first is 3/3 + reducer OK)
 // Env: BENCH_CONFIG = path to the app config.json (defaults to the app's).
 
 const fs = require("fs/promises");
@@ -38,7 +43,22 @@ function pickChunk(chunk = {}) {
     outputTokens: chunk.outputTokens ?? null,
     retryCount: chunk.retryCount ?? 0,
     promptChars: chunk.promptChars ?? null,
-    failureKind: chunk.failureKind || null
+    contextMode: chunk.contextMode || null,
+    runIds: chunk.runIds || [],
+    pids: chunk.pids || [],
+    conversationIds: chunk.conversationIds || [],
+    startedAt: chunk.startedAt || null,
+    endedAt: chunk.endedAt || null,
+    terminationReasons: chunk.terminationReasons || [],
+    streamInterrupted: chunk.streamInterrupted || false,
+    promptBlocked: chunk.promptBlocked || false,
+    promptBlockRetryCount: chunk.promptBlockRetryCount || 0,
+    coverageRetryCount: chunk.coverageRetryCount || 0,
+    coverage: chunk.coverage || null,
+    serializationRepair: chunk.serializationRepair || null,
+    eventCount: chunk.eventCount ?? null,
+    failureKind: chunk.failureKind || null,
+    failureMessage: chunk.failureMessage || null
   };
 }
 
@@ -65,6 +85,8 @@ function pick(su = {}) {
       agyProcessCount: su.reduce.agyProcessCount,
       videoViewFileCount: su.reduce.videoViewFileCount,
       retryCount: su.reduce.retryCount,
+      promptBlockRetryCount: su.reduce.promptBlockRetryCount || 0,
+      attempts: (su.reduce.attempts || []).map((attempt) => ({ runId: attempt.runId, pid: attempt.pid, ok: attempt.ok, kind: attempt.kind || null, durationMs: attempt.durationMs, terminationReason: attempt.terminationReason, streamInterrupted: attempt.streamInterrupted })),
       inputChars: su.reduce.inputChars,
       failureKinds: su.reduce.failureKinds
     } : null,
@@ -98,9 +120,13 @@ async function runOnce(label, settings, packageDir) {
   try {
     await service.run({
       packageDir,
+      stopAfter: process.argv.includes("--phase-a-only") ? "source_understanding" : null,
       onProgress: (item) => {
         const message = String(item.message || "");
-        if (/^\[(SOURCE_UNDERSTANDING|PHASE_A|PHASE_B|SERIES_PLAN|PHASE_A_REDUCE)[\] ]/.test(message)) {
+        const hostStatus = /^\[(SOURCE_UNDERSTANDING|PHASE_A|PHASE_B|SERIES_PLAN|PHASE_A_REDUCE)[\] ]/.test(message)
+          || /^\[(MAP chunk-\d+|REDUCE)\] (START|OK|FAILED|RETRY|CACHE)/.test(message)
+          || /\] AUTH:/.test(message);
+        if (hostStatus) {
           messages.push(message);
           console.log(`[${label}] ${message}`);
         }
@@ -149,7 +175,14 @@ async function runOnce(label, settings, packageDir) {
   const runs = [];
   if (!process.argv.includes("--warm-only")) runs.push(await runOnce("RUN1", settings, packageDir));
   runs.push(await runOnce("RUN2", settings, packageDir));
-  const report = { packageDir, model: settings.antigravityModel || "", createdAt: new Date().toISOString(), runs };
+  const report = {
+    packageDir,
+    model: settings.antigravityModel || "",
+    mapConcurrency: settings.sourceUnderstandingMapConcurrency ?? "default(1)",
+    phaseAOnly: process.argv.includes("--phase-a-only"),
+    createdAt: new Date().toISOString(),
+    runs
+  };
   const outPath = path.join(__dirname, `stage1-benchmark-${Date.now()}.json`);
   await fs.writeFile(outPath, JSON.stringify(report, null, 2), "utf8");
   console.log(JSON.stringify(runs.map(({ messages, ...rest }) => rest), null, 2));
@@ -160,8 +193,10 @@ async function runOnce(label, settings, packageDir) {
       + ` | series plan ${((item.seriesPlanMs || 0) / 1000).toFixed(1)}s | Phase B ${((item.phaseBMs || 0) / 1000).toFixed(1)}s`);
     console.log(`  view_file video=${su.viewFileCount ?? 0} AGY processes=${su.agyProcessCount ?? 0} chunk cache hit/miss=${su.map?.cacheHits ?? "-"}/${su.map?.cacheMisses ?? "-"} global cache=${su.cacheHit ? "HIT" : "MISS"} max concurrent maps=${su.map?.maxConcurrentAgyProcesses ?? "-"}`);
     for (const chunk of su.map?.chunks || []) {
-      console.log(`  ${chunk.chunkId} [${chunk.range}] ${chunk.cacheHit ? "HIT" : chunk.failureKind ? `FAIL ${chunk.failureKind}` : "RAN"} ${((chunk.durationMs || 0) / 1000).toFixed(1)}s agy=${((chunk.agyRuntimeMs || 0) / 1000).toFixed(1)}s view_file=${chunk.viewFileCount} turns=${chunk.agentTurns} tokens in/out=${chunk.inputTokens ?? "-"}/${chunk.outputTokens ?? "-"} retries=${chunk.retryCount}`);
+      console.log(`  ${chunk.chunkId} [${chunk.range}] ${chunk.cacheHit ? "HIT" : chunk.failureKind ? `FAIL ${chunk.failureKind}` : "OK"} ${((chunk.durationMs || 0) / 1000).toFixed(1)}s agy=${((chunk.agyRuntimeMs || 0) / 1000).toFixed(1)}s view_file=${chunk.viewFileCount} events=${chunk.eventCount ?? "-"} turns=${chunk.agentTurns} tokens in/out=${chunk.inputTokens ?? "-"}/${chunk.outputTokens ?? "-"}`
+        + ` pid=${(chunk.pids || []).join(",") || "-"} end=${(chunk.terminationReasons || []).join(",") || "-"} streamInterrupted=${chunk.streamInterrupted} promptBlockRetry=${chunk.promptBlockRetryCount} coverageRetry=${chunk.coverageRetryCount} repair=${chunk.serializationRepair || "none"} ${chunk.startedAt || ""}→${chunk.endedAt || ""}`);
     }
+    if (su.reduce) console.log(`  reduce ${su.reduce.cacheHit ? "HIT" : ""} ${((su.reduce.durationMs || 0) / 1000).toFixed(1)}s processes=${su.reduce.agyProcessCount} video view_file=${su.reduce.videoViewFileCount} failures=${(su.reduce.failureKinds || []).join(",") || "-"}`);
   }
   console.log(`report: ${outPath}`);
 })().catch((error) => {
