@@ -17,7 +17,7 @@ const path = require("path");
 const { PassThrough, Writable } = require("stream");
 
 const Stage1 = require("../electron/services/manualAntigravityStage1Service");
-const { createPhaseAwareSpawn, defaultResponder, mapTaskFromPrompt, buildChunkUnderstanding } = require("./helpers/fakeAntigravity");
+const { createPhaseAwareSpawn, defaultResponder, mapTaskFromPrompt, mapSerializeTaskFromPrompt, buildChunkUnderstanding } = require("./helpers/fakeAntigravity");
 
 const DURATION = 771.901;
 const CHUNKS = [[0, 239.25], [239.25, 480.5], [480.5, 771.901]];
@@ -220,21 +220,14 @@ const happy = defaultResponder({ durationSec: DURATION });
 const BLOCKED = { resultObject: { status: "SUCCESS", response: "The prompt could not be submitted. The prompt contains sensitive words that violate Google's [Generative AI Prohibited Use policy](https://policies.google.com/terms/generative-ai/use-policy). Try rephrasing the prompt.\n", usage: { input_tokens: 0, output_tokens: 0, total_tokens: 0 } } };
 
 async function mapRecoveryTests() {
-  // --- chunk-001 prompt rejected by the policy filter -> one retry with file context; other chunks untouched.
+  // --- chunk-001 video-only prompt rejected -> retry only that video turn; context stays in serialize turn.
   {
     const fixture = await createPackage();
     let blocked = 0;
     const respond = (kind, prompt, call) => {
-      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-001" && prompt.includes("TEXT CONTEXT FOR THIS INTERVAL")) {
+      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-001" && blocked === 0) {
         blocked += 1;
         return BLOCKED;
-      }
-      if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-001") {
-        const task = mapTaskFromPrompt(prompt);
-        const contextFile = [...prompt.matchAll(/view_file\("([^"]+-context\.txt)"/g)].map((match) => match[1]);
-        assert.strictEqual(contextFile.length, 1, "retry reads the chunk-local context file");
-        assert(contextFile[0].includes(path.join("map", "chunk-001")), "context file lives in the chunk workspace");
-        return { viewFiles: [task.proxy, contextFile[0]], envelope: { artifacts: [{ filename: "x.json", script: buildChunkUnderstanding("chunk-001", task.startSec, task.endSec) }] } };
       }
       return happy(kind, prompt, call);
     };
@@ -242,14 +235,17 @@ async function mapRecoveryTests() {
     assert.ifError(run.error);
     assert.strictEqual(blocked, 1);
     const mapChunks = run.calls.filter((call) => call.kind === "map").map(run.chunkOf);
-    assert.deepStrictEqual(mapChunks.filter((id) => id === "chunk-001").length, 2, "chunk-001: blocked attempt + one file-context retry");
+    assert.deepStrictEqual(mapChunks.filter((id) => id === "chunk-001").length, 2, "chunk-001: blocked video turn + one video-only retry");
     assert.deepStrictEqual(mapChunks.filter((id) => id !== "chunk-001").sort(), ["chunk-002", "chunk-003"], "other chunks ran once");
+    assert.strictEqual(run.calls.filter((call) => call.kind === "map_serialize").length, 3, "each completed video gets one serialization turn");
+    const chunk1Serialize = run.calls.find((call) => call.kind === "map_serialize" && mapSerializeTaskFromPrompt(call.prompt)?.chunkId === "chunk-001");
+    assert(chunk1Serialize && chunk1Serialize.prompt.includes("chunk-001-context.txt"), "context is read only during serialization");
     const chunk1 = run.su.map.chunks[0];
     assert.strictEqual(chunk1.promptBlockRetryCount, 1);
     assert.strictEqual(chunk1.promptBlocked, true);
     assert.strictEqual(chunk1.contextMode, "file");
     assert.strictEqual(chunk1.attempts[0].kind, "prompt_blocked", "classified as prompt_blocked, not coverage");
-    assert(run.messages.some((message) => message.startsWith("[MAP chunk-001] RETRY: AGY từ chối prompt")));
+    assert(run.messages.some((message) => message.startsWith("[MAP chunk-001] RETRY: AGY từ chối prompt video-only")));
     assert(!run.calls.some((call) => call.kind === "phase_b" || call.kind === "series_plan"), "stopAfter=source_understanding runs Phase A only");
     // Per-chunk workspaces: distinct cwd for every concurrent process, reducer separate.
     const cwds = run.calls.map((call) => call.options.cwd);
@@ -383,7 +379,7 @@ async function mapRecoveryTests() {
   // --- auth TTL guard: token shorter than map timeout + 120 s -> fail before ANY AGY process.
   {
     const fixture = await createPackage();
-    const run = await runPhaseA(fixture, happy, { authProbe: async () => ({ expiresAt: new Date(Date.now() + 5 * 60000), expiredFlag: false }) });
+    const run = await runPhaseA(fixture, happy, { authProbe: async () => ({ expiresAt: new Date(Date.now() + 4 * 60000), expiredFlag: false }) });
     assert(run.error);
     assert.strictEqual(run.error.kind, "auth_ttl");
     assert.strictEqual(run.calls.length, 0, "no AGY process, no view_file");
