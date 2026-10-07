@@ -51,6 +51,7 @@ function controlledSpawn(registry) {
 }
 
 const viewEvent = (conversation, index, file) => ({ event: "step_update", step_update: { conversation_id: conversation, step_index: index, state: "DONE", step_type: "tool", tool_name: "view_file", tool_info: { name: "view_file", parameters: { AbsolutePath: file } } } });
+const activeViewEvent = (conversation, index, file) => ({ event: "step_update", step_update: { conversation_id: conversation, step_index: index, state: "ACTIVE", step_type: "tool", tool_name: "view_file", tool_info: { name: "view_file", parameters: { AbsolutePath: file } } } });
 const resultEvent = (conversation, payload) => ({ event: "result", result: { conversation_id: conversation, status: "SUCCESS", response: JSON.stringify(payload), usage: { total_tokens: 10 } } });
 const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
 const settle = (promise) => promise.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }));
@@ -124,6 +125,42 @@ async function processIsolationTests() {
   assert.strictEqual(r1.value.stats.viewFileVideoCount, 1);
   assert.strictEqual(r2.value.stats.viewFileVideoCount, 1);
   assert.notStrictEqual(r1.value.stats.runId, r2.value.stats.runId);
+
+  // ACTIVE is not completed coverage. This is the live regression that made
+  // "đang xem proxy (1/1)" look like a completed view even when AGY later timed out.
+  const viewedActive = new Set();
+  const activeRun = settle(service2.runCli({
+    command: "agy", args: ["--print=ACTIVE_ONLY"], prompt: "ACTIVE_ONLY", cwd: os.tmpdir(), timeoutMs: 60000,
+    expectedProxyList: [proxy1], viewedProxySet: viewedActive
+  }));
+  await tick();
+  const activeChild = children.get("ACTIVE_ONLY");
+  activeChild.line(activeViewEvent("c-active", 1, proxy1.absolutePath));
+  await tick();
+  assert.strictEqual(Stage1.validateVideoCoverage([proxy1], viewedActive).isComplete, false, "ACTIVE view_file must not count as coverage");
+  activeChild.line(resultEvent("c-active", {}));
+  activeChild.close(0);
+  const activeDone = await activeRun;
+  assert(activeDone.ok);
+  assert.strictEqual(activeDone.value.stats.viewFileVideoCount, 0, "ACTIVE-only view is not counted as completed");
+
+  // Once DONE arrives, a video-only MAP turn can be handed off immediately
+  // instead of waiting minutes for an unnecessary synthesis response.
+  const viewedHandoff = new Set();
+  const handoffRun = settle(service2.runCli({
+    command: "agy", args: ["--print=HANDOFF"], prompt: "HANDOFF", cwd: os.tmpdir(), timeoutMs: 60000,
+    expectedProxyList: [proxy1], viewedProxySet: viewedHandoff,
+    handoffOnVideoCoverage: true, videoCoverageHandoffGraceMs: 5
+  }));
+  await tick();
+  const handoffChild = children.get("HANDOFF");
+  handoffChild.line(activeViewEvent("c-handoff", 1, proxy1.absolutePath));
+  handoffChild.line(viewEvent("c-handoff", 1, proxy1.absolutePath));
+  const handoffDone = await handoffRun;
+  assert(handoffDone.ok, "DONE coverage handoff resolves cleanly");
+  assert.strictEqual(handoffChild.killed, true, "host terminates only the completed video-view turn");
+  assert.strictEqual(handoffDone.value.stats.terminationReason, "video_coverage_handoff");
+  assert.strictEqual(Stage1.validateVideoCoverage([proxy1], viewedHandoff).isComplete, true);
 
   // Real AGY transcript.jsonl double-encodes tool args; the auditor must still see the view.
   const transcriptDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-transcript-"));
