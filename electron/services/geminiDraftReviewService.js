@@ -860,7 +860,7 @@ ${independentReviewOptionRules(variant)}
     : `ONE-SCENE-PER-SEGMENT TIMESTAMP GATE - HIGHEST PRIORITY:
 - Every revisedScript segment must satisfy scene.startSec <= sourceStartSec < sourceEndSec <= scene.endSec for exactly one sceneId.
 - Never cross a scene-manifest boundary in one JSON segment. Split a logical beat at every boundary, preserve macroBlockId/sourceRunId/actionSequenceId and source order, and divide voiceover into non-duplicated complete phrases.
-- Recalculate all output startSec/endSec values from zero after splitting. A cross-scene segment is an invalid revisedScript.`;
+- Do not return output timeline fields (startSec/endSec/outputStartSec/outputEndSec); the local tool derives them after splitting. A cross-scene segment is an invalid revisedScript.`;
   const mandatoryReviewMethod = isDiyStoryRemix
     ? `MANDATORY REVIEW METHOD - DIY STORY REMIX:
 1. Watch the complete draft and judge the first 3 seconds by visual curiosity and transformation stakes.
@@ -868,7 +868,7 @@ ${independentReviewOptionRules(variant)}
 3. After the Hook, return clearly to the initial state and preserve the physical dependency order of the complete build.
 4. Remove dead time, but never cut a meaningful operation before the visible state change becomes understandable.
 5. Rewrite or move any voice line that names an object, material, tool, operation or result not visible in its assigned beat.
-6. Keep startSec/endSec continuous from zero and recalculate them from source duration and playbackSpeed. The local tool reflows output timestamps and is authoritative.
+6. Do not calculate or return startSec/endSec/outputStartSec/outputEndSec or durations. The local tool derives the output timeline from sourceStartSec/sourceEndSec and playbackSpeed.
 7. Do not use blank padding, freeze frames or unrelated repeated footage.`
     : isIndependent
     ? `MANDATORY REVIEW METHOD - THREE INDEPENDENT TIKTOK SCRIPTS (RUTHLESS VIRAL RETENTION CRITIC):
@@ -905,7 +905,7 @@ CRITICAL RETENTION CHECKS:
 4. KILL THE DEAD AIR: remove pauses, silences, or non-essential dialogue longer than 0.5 seconds.
 5. PLATFORM SAFETY: Do not show a gunshot visibly hitting a person; cut before impact or use a safe reaction shot.
 6. DYNAMIC CAPTIONS: Put 1-2 verified high-impact words in caption_emphasis_words when appropriate.
-7. Keep startSec/endSec continuous from zero and recalculate them from source duration and playbackSpeed. The local tool reflows output timestamps and is authoritative.
+7. Do not calculate or return startSec/endSec/outputStartSec/outputEndSec or durations. The local tool derives the output timeline from sourceStartSec/sourceEndSec and playbackSpeed.
 8. Do not use blank padding or freeze frames to reach 60.5 seconds.`;
   const reviewRubric = isDiyStoryRemix
     ? `REVIEW RUBRIC (0-100):
@@ -963,7 +963,7 @@ PRIMARY GOAL:
 Create a revised script that is more coherent, more emotionally compelling, and better aligned with the actual pictures and audio while remaining fully source-grounded. The final duration must remain at least 60.5 seconds. ${isIndependent ? "This is an independent re-edit, not a patch: replace the complete V1 structure whenever a different source selection tells a stronger verified story." : ""}
 
 OUTPUT TIMELINE IS DERIVED, NOT EDITORIAL:
-- Choose verified sourceStartSec/sourceEndSec and playbackSpeed. Keep provisional output timestamps contiguous from zero.
+- Choose verified sourceStartSec/sourceEndSec (and playbackSpeed only for a justified speed change; default 1). Do not return output timestamps.
 - The local tool will reflow them and its calculation is authoritative.
 
 ${timestampGate}
@@ -1226,7 +1226,6 @@ REQUIRED ROOT SCHEMA:
         "macroBlockId": "macro_hook_01",
         "sourceStartSec": 0,
         "sourceEndSec": 5,
-        ${isIndependent ? "" : '"startSec": 0,\n        "endSec": 5,\n        "outputStartSec": 0,\n        "outputEndSec": 5,'}
         "playbackSpeed": 1,
         "scene_type": "Hook_Original_Audio",
         "storyFunction": "${isDiyStoryRemix ? "hook|setup|process|obstacle|fix|payoff" : "hook|context|escalation|climax|consequence"}",
@@ -1263,8 +1262,27 @@ REQUIRED ROOT SCHEMA:
   }
 }
 
-The revisedScript.segments array must contain the complete final script, not a patch and not only changed segments. Preserve stable segment IDs whenever possible. id and segmentId must be identical. ${isIndependent ? "Do not return derived output timeline fields; the tool compiles them." : "startSec/outputStartSec and endSec/outputEndSec must contain identical values."} visual_layout and caption_emphasis_words are required for every segment. visual_layout must be exactly one of fullscreen, split_screen_911, or blur_censored; never return the pipe-separated schema example as a literal value. caption_emphasis_words must contain zero to two exact words or short phrases that also appear in action_notes.`;
+The revisedScript.segments array must contain the complete final script, not a patch and not only changed segments. Preserve stable segment IDs whenever possible. id and segmentId must be identical. Do not return derived output timeline fields (startSec/endSec/outputStartSec/outputEndSec); the tool compiles them. visual_layout and caption_emphasis_words are required for every segment. visual_layout must be exactly one of fullscreen, split_screen_911, or blur_censored; never return the pipe-separated schema example as a literal value. caption_emphasis_words must contain zero to two exact words or short phrases that also appear in action_notes.`;
 }
+
+const {
+  planReviewEvidenceReel,
+  buildReviewEvidenceReel,
+  buildEvidenceReelPromptBlock
+} = require("./reviewEvidenceReelService");
+
+async function loadSourceUnderstandingForPack(manualPack) {
+  if (!manualPack) return null;
+  const runInfo = await readJsonIfAvailable(path.join(manualPack, "01-ANTIGRAVITY-RESULT", "antigravity-run-info.json"));
+  const cachePath = runInfo?.sourceUnderstanding?.cachePath;
+  if (!cachePath) return null;
+  const envelope = await readJsonIfAvailable(cachePath);
+  return envelope?.artifactType === "source_understanding_cache" ? envelope.data : null;
+}
+
+// Sources up to this length are reviewed against the complete proxy (full
+// coverage costs no more than an evidence reel would).
+const FULL_PROXY_REVIEW_MAX_SEC = 360;
 
 class GeminiDraftReviewService {
   constructor(projectStore) {
@@ -1272,6 +1290,7 @@ class GeminiDraftReviewService {
   }
 
   async createPackage({ workspaceRoot, projectId, settings = {} }) {
+    const packageStartedAt = Date.now();
     const project = await this.projectStore.getProject(workspaceRoot, projectId);
     if (project.mode !== "highlight_cut") {
       throw new Error("Gói Gemini Draft Review hiện chỉ hỗ trợ Highlight Cut.");
@@ -1312,8 +1331,9 @@ class GeminiDraftReviewService {
     ]);
     const proxyChunksManifest = await readJsonIfAvailable(proxyChunksManifestPath);
     const allProxyChunks = Array.isArray(proxyChunksManifest?.chunks) ? proxyChunksManifest.chunks : [];
-    const selectedProxyChunks = selectReviewProxyChunks(proxyChunksManifest, variant.segments, 6);
-    const sourceProxy = selectedProxyChunks.length ? "" : await existingFile([
+    // Full proxy with burned sceneId + SOURCE timestamps (for chunked packages it
+    // lives in the persistent cache as analysis-proxy-<key>.mp4).
+    const fullProxyPath = await existingFile([
       pass1Dir && path.join(pass1Dir, "analysis-proxy.mp4"),
       manualPack && path.join(manualPack, "analysis-proxy.mp4"),
       manualPackageInfo?.proxyPath,
@@ -1322,6 +1342,82 @@ class GeminiDraftReviewService {
       path.join(analysisDir, "auto-story", "overview-v1.mp4"),
       path.join(analysisDir, "analysis-proxy.mp4")
     ]);
+    const sceneManifestForReel = await readJsonIfAvailable(await existingFile([
+      pass1Dir && path.join(pass1Dir, "scene-manifest.json"),
+      manualPack && path.join(manualPack, "scene-manifest.json"),
+      project.analysis?.artifacts?.sceneManifestPath,
+      project.artifacts?.sceneManifestPath
+    ]));
+    const sourceDurationSec = safeNumber(sceneManifestForReel?.videoDurationSec, safeNumber(proxyChunksManifest?.sourceDurationSec, 0));
+    // Evidence selection: complete proxy for short sources; otherwise a real
+    // evidence reel; whole proxy chunks only as a controlled fallback.
+    let evidenceMode = "none";
+    let evidenceReel = null;
+    let evidenceReelWarning = "";
+    let sourceProxy = "";
+    let selectedProxyChunks = [];
+    const useFullProxy = Boolean(fullProxyPath) && (!allProxyChunks.length) && (!sourceDurationSec || sourceDurationSec <= FULL_PROXY_REVIEW_MAX_SEC);
+    if (useFullProxy) {
+      sourceProxy = fullProxyPath;
+      evidenceMode = "full_proxy";
+    } else if (fullProxyPath || project.sourceVideoPath) {
+      try {
+        const hookCandidatesData = await readJsonIfAvailable(await existingFile([
+          manualPackageInfo?.hookCandidatesPath,
+          pass1Dir && path.join(pass1Dir, "hook-candidates.json")
+        ]));
+        const actionCandidatesData = await readJsonIfAvailable(await existingFile([
+          manualPackageInfo?.actionCandidatesPath,
+          pass1Dir && path.join(pass1Dir, "action-candidates.json")
+        ]));
+        // Semantic candidates from the persisted Phase A source understanding
+        // (when Stage 1 ran with Antigravity) outrank motion/audio radar candidates.
+        const understanding = await loadSourceUnderstandingForPack(manualPack);
+        const understandingHooks = (Array.isArray(understanding?.hookCandidates) ? understanding.hookCandidates : [])
+          .slice()
+          .sort((left, right) => safeNumber(right.strength, 0) - safeNumber(left.strength, 0));
+        const understandingReplacements = [
+          ...(Array.isArray(understanding?.climaxCandidates) ? understanding.climaxCandidates : []),
+          ...(Array.isArray(understanding?.consequenceCandidates) ? understanding.consequenceCandidates : []),
+          ...(Array.isArray(understanding?.interrogationCandidates) ? understanding.interrogationCandidates : [])
+        ].map((item) => ({ ...item, actionPriorityScore: 100 }));
+        const plan = planReviewEvidenceReel({
+          segments: variant.segments || [],
+          hookCandidates: [
+            ...understandingHooks,
+            ...(Array.isArray(hookCandidatesData?.topCandidates) ? hookCandidatesData.topCandidates : [])
+          ],
+          actionCandidates: [
+            ...understandingReplacements,
+            ...(Array.isArray(actionCandidatesData?.candidates) ? actionCandidatesData.candidates : [])
+          ],
+          sourceDurationSec,
+          options: settings.reviewEvidenceReel || {}
+        });
+        evidenceReel = await buildReviewEvidenceReel({
+          sourcePath: fullProxyPath || project.sourceVideoPath,
+          outputDir: uploadDir,
+          plan,
+          settings,
+          sourceVideo: path.basename(project.sourceVideoPath || ""),
+          sourceDurationSec,
+          sourceHasBurnedTimestamps: Boolean(fullProxyPath)
+        });
+        evidenceMode = "evidence_reel";
+      } catch (error) {
+        evidenceReel = null;
+        evidenceReelWarning = `Không tạo được review-evidence-reel.mp4 (${error.message}); dùng proxy chunk dự phòng.`;
+      }
+    }
+    if (!evidenceReel && !sourceProxy) {
+      selectedProxyChunks = selectReviewProxyChunks(proxyChunksManifest, variant.segments, 6);
+      if (selectedProxyChunks.length) {
+        evidenceMode = "proxy_chunks_fallback";
+      } else if (fullProxyPath) {
+        sourceProxy = fullProxyPath;
+        evidenceMode = "full_proxy_fallback";
+      }
+    }
     const manifestPath = await existingFile([
       pass1Dir && path.join(pass1Dir, "scene-manifest.json"),
       manualPack && path.join(manualPack, "scene-manifest.json"),
@@ -1406,7 +1502,9 @@ class GeminiDraftReviewService {
       fs.writeFile(timelinePath, JSON.stringify(draftTimeline, null, 2), "utf8")
     ]);
     const sourceProxyFiles = [];
-    if (sourceProxy) {
+    if (evidenceReel) {
+      sourceProxyFiles.push(path.basename(evidenceReel.reelPath));
+    } else if (sourceProxy) {
       await linkOrCopy(sourceProxy, path.join(uploadDir, "analysis-proxy.mp4"));
       sourceProxyFiles.push("analysis-proxy.mp4");
     } else if (selectedProxyChunks.length) {
@@ -1430,9 +1528,9 @@ class GeminiDraftReviewService {
     if (transcriptPath && !embedTranscriptInContext) {
       await linkOrCopy(transcriptPath, path.join(uploadDir, "source-transcript.srt"));
     }
-    const sourceCoverageComplete = Boolean(sourceProxy)
-      || (allProxyChunks.length > 0 && selectedProxyChunks.length === allProxyChunks.length);
-    const selectedProxyManifest = selectedProxyChunks.length ? {
+    const sourceCoverageComplete = !evidenceReel && (Boolean(sourceProxy)
+      || (allProxyChunks.length > 0 && selectedProxyChunks.length === allProxyChunks.length));
+    const selectedProxyManifest = evidenceReel ? evidenceReel.manifest : selectedProxyChunks.length ? {
       ...proxyChunksManifest,
       reviewSelectionOnly: !sourceCoverageComplete,
       sourceCoverageComplete,
@@ -1458,7 +1556,7 @@ class GeminiDraftReviewService {
       semanticDialogueCandidates,
       reviewTarget
     }), null, 2), "utf8");
-    await fs.writeFile(promptPath, buildReviewPrompt({
+    const reviewPromptText = buildReviewPrompt({
       variant: {
         ...variant,
         reviewTarget,
@@ -1472,7 +1570,20 @@ class GeminiDraftReviewService {
       sourceProxyFiles,
       hasTranscript: Boolean(transcriptPath),
       sourceCoverageComplete
-    }), "utf8");
+    });
+    await fs.writeFile(
+      promptPath,
+      evidenceReel ? `${reviewPromptText}\n\n${buildEvidenceReelPromptBlock(evidenceReel.manifest)}` : reviewPromptText,
+      "utf8"
+    );
+    const ffprobe = new FfmpegService(settings);
+    const draftDurationSec = safeNumber((await ffprobe.probeVideo(draftTarget).catch(() => null))?.duration, safeNumber(draftTimeline.totalOutputDurationSec, 0));
+    const sourceEvidenceSec = evidenceReel
+      ? safeNumber(evidenceReel.manifest.reelDurationSec, 0)
+      : sourceProxy
+        ? safeNumber((await ffprobe.probeVideo(sourceProxy).catch(() => null))?.duration, sourceDurationSec)
+        : selectedProxyChunks.reduce((sum, chunk) => sum + safeNumber(chunk.durationSec, safeNumber(chunk.sourceEndSec) - safeNumber(chunk.sourceStartSec)), 0);
+    const reviewInputVideoDurationSec = Number((draftDurationSec + sourceEvidenceSec + safeNumber(hookAuditMedia?.durationSec, 0)).toFixed(3));
     const uploadFiles = (await fs.readdir(uploadDir, { withFileTypes: true }))
       .filter((entry) => entry.isFile())
       .map((entry) => entry.name)
@@ -1501,6 +1612,17 @@ class GeminiDraftReviewService {
       sourceProxyFiles,
       proxyChunkCount: sourceProxyFiles.length,
       sourceCoverageComplete,
+      evidenceMode,
+      evidenceReelPath: evidenceReel?.reelPath || "",
+      evidenceReelManifestPath: evidenceReel?.manifestPath || "",
+      evidenceReelWarning,
+      inputVideo: {
+        draftDurationSec: Number(draftDurationSec.toFixed(3)),
+        sourceEvidenceSec: Number(sourceEvidenceSec.toFixed(3)),
+        hookAuditionSec: safeNumber(hookAuditMedia?.durationSec, 0),
+        totalSec: reviewInputVideoDurationSec
+      },
+      packageMs: Date.now() - packageStartedAt,
       hookAuditMedia,
       transcriptIncluded: Boolean(transcriptPath),
       transcriptEmbeddedInContext: embedTranscriptInContext,
@@ -1556,7 +1678,11 @@ class GeminiDraftReviewService {
       variantId: variant.id,
       revision,
       reviewTarget,
-      segmentCount: draftTimeline.segments.length
+      segmentCount: draftTimeline.segments.length,
+      evidenceMode,
+      evidenceReelWarning,
+      reviewInputVideoDurationSec,
+      packageMs: Date.now() - packageStartedAt
     };
   }
 }

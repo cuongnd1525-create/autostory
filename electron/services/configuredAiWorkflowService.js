@@ -5,6 +5,7 @@ const GeminiService = require("./geminiService");
 const VertexAiService = require("./vertexAiService");
 const ManualAntigravityStage1Service = require("./manualAntigravityStage1Service");
 const { inspectGeminiJsonFiles } = require("./geminiJsonArtifactService");
+const { mergeVariantTiming } = require("./pipelineTimingService");
 
 const STAGE1_RESULT_DIR = "01-CONFIGURED-AI-RESULT";
 const DRAFT_RESULT_DIR = "02-CONFIGURED-AI-RESULT";
@@ -264,6 +265,7 @@ class ConfiguredAiWorkflowService {
         onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" }),
         progressStep: "configured_ai_draft_review"
       });
+      this.lastAgyStats = result.stats || null;
       return result.stdout;
     } catch (error) {
       const reviewPath = path.join(folder, "gemini-draft-review.json");
@@ -412,6 +414,9 @@ class ConfiguredAiWorkflowService {
     }
 
     let vertexRun = null;
+    const aiStartedAt = Date.now();
+    const reusedExistingReview = Boolean(review);
+    this.lastAgyStats = null;
     if (!review) {
       const transportPrompt = buildDraftTransportPrompt(promptText, inputDir, { resultDir });
       vertexRun = descriptor.provider === "vertex_ai"
@@ -461,6 +466,32 @@ class ConfiguredAiWorkflowService {
     if (expectedBinding && actualBinding !== expectedBinding) {
       throw new Error("AI trả về reviewBindingId không khớp Draft V1 hiện tại.");
     }
+    const aiMs = reusedExistingReview ? 0 : Date.now() - aiStartedAt;
+    const reviewTiming = {
+      packageMs: Number(info.packageMs) || 0,
+      aiMs,
+      inputVideoDurationSec: Number(info.inputVideo?.totalSec) || 0,
+      draftDurationSec: Number(info.inputVideo?.draftDurationSec) || 0,
+      sourceEvidenceSec: Number(info.inputVideo?.sourceEvidenceSec) || 0,
+      evidenceMode: info.evidenceMode || "",
+      reusedExistingReview,
+      revision: info.revision,
+      agy: this.lastAgyStats ? {
+        processCount: 1,
+        agentTurns: this.lastAgyStats.agentTurns,
+        viewFileVideoCount: this.lastAgyStats.viewFileVideoCount,
+        videoFilesViewed: this.lastAgyStats.videoFilesViewed,
+        inputTokens: this.lastAgyStats.inputTokens,
+        outputTokens: this.lastAgyStats.outputTokens,
+        cacheReadTokens: this.lastAgyStats.cacheReadTokens
+      } : null
+    };
+    onProgress?.({
+      step: "configured_ai_draft_review",
+      percent: 99,
+      message: `[REVIEW] AI ${(aiMs / 1000).toFixed(1)}s · video AI phải xem ${(reviewTiming.inputVideoDurationSec / 60).toFixed(1)} phút `
+        + `(draft ${reviewTiming.draftDurationSec.toFixed(0)}s + nguồn ${reviewTiming.sourceEvidenceSec.toFixed(0)}s, ${reviewTiming.evidenceMode || "?"})`
+    });
     const resultPath = path.join(resultDir, "gemini-draft-review.json");
     await writeJson(resultPath, review);
     await writeJson(path.join(resultDir, "configured-ai-run-info.json"), {
@@ -473,12 +504,20 @@ class ConfiguredAiWorkflowService {
       reviewBindingId: expectedBinding || "",
       packageDir: inputDir,
       resultPath,
+      reviewTiming,
       usage: vertexRun?.usage || null,
       timings: vertexRun?.timings || null,
       budget: vertexRun?.budget || null
     });
     if (this.projectStore && workspaceRoot) {
       const project = await this.projectStore.getProject(workspaceRoot, projectId);
+      if (project.manualGeminiPackPath) {
+        await mergeVariantTiming(project.manualGeminiPackPath, "review", info.variantId, {
+          ...reviewTiming,
+          provider: descriptor.provider,
+          reviewedAt: new Date().toISOString()
+        });
+      }
       const variants = (project.analysis?.highlightVariants || []).map((variant) => variant.id === info.variantId ? {
         ...variant,
         artifacts: {
@@ -500,6 +539,7 @@ class ConfiguredAiWorkflowService {
       resultPath,
       revision: info.revision,
       variantId: info.variantId,
+      reviewTiming,
       usage: vertexRun?.usage || null,
       timings: vertexRun?.timings || null,
       budget: vertexRun?.budget || null,

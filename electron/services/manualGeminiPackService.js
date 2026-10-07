@@ -1974,7 +1974,7 @@ DIRECT HIGHLIGHT CONTENT RULES:
 - Watch the complete video input described by the VIDEO INPUT CONTRACT below and cross-check scene-manifest.json plus source-transcript.srt when present.
 - Each code block root must be one complete ${independentPrompt ? "story_spine_edit_script with a non-empty narrativeBeats array" : "Highlight Cut script object with a non-empty segments array"}.
 - For every independent story_spine_edit_script, run a final role audit against the actual narrativeBeats array: hook, context, escalation, climax, and payoff must all be present as distinct beats. Never emit a second payoff as a substitute for missing context.
-- sourceStartSec/sourceEndSec refer only to the original source video. ${independentPrompt ? "The local tool derives the output timeline." : "startSec/endSec are the separate contiguous output timeline beginning at zero."}
+- sourceStartSec/sourceEndSec refer only to the original source video. The local tool derives the complete output timeline (startSec/endSec/outputStartSec/outputEndSec, durations and totals). Do not return output timeline fields.
 - Do not create scene-evidence.json or story-blueprint.json. Reason internally, then write the final edit scripts directly from the video.
 - For independent scripts, complete the Semantic Hook Tournament and Viral Moment Inventory required by the editorial prompt before choosing Narrative Beats. Local action-candidate order is never a Hook ranking.
 - VIRAL EDITORIAL RULES (JCS / EWU STYLE):
@@ -2069,6 +2069,8 @@ function buildSceneReferenceAss(scenes) {
   return [...header, ...events, ""].join("\n");
 }
 
+const MANIFEST_OUTPUT_TIMELINE_INSTRUCTION = "Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec. The local tool derives the contiguous output timeline and playback speed from sourceStartSec/sourceEndSec.";
+
 function normalizeManifest({ media, sourceVideoPath, scenes, detector }) {
   return {
     schemaVersion: 1,
@@ -2082,7 +2084,7 @@ function normalizeManifest({ media, sourceVideoPath, scenes, detector }) {
     instructions: {
       timestamps: "All scene startSec/endSec values refer to the original source video.",
       selection: "Gemini must select an existing sceneId and keep source timestamps inside that scene range.",
-      outputTimeline: "The returned JSON must separately provide contiguous output startSec/endSec values beginning at 0."
+      outputTimeline: MANIFEST_OUTPUT_TIMELINE_INSTRUCTION
     },
     scenes: scenes.map((scene, index) => ({
       sceneId: scene.sceneId || `scene_${String(index + 1).padStart(4, "0")}`,
@@ -2242,6 +2244,7 @@ class ManualGeminiPackService {
     if (!sourceVideoPath) {
       throw new Error("Hãy chọn video nguồn trước khi tạo gói Gemini.");
     }
+    const preprocessStartedAt = Date.now();
     const resolvedDestinationRoot = destinationRoot || this.settings.geminiAnalysisRoot;
     if (!resolvedDestinationRoot) {
       throw new Error("Hãy cấu hình thư mục gói phân tích Gemini trong Cài đặt.");
@@ -2405,6 +2408,11 @@ class ManualGeminiPackService {
       await writeJsonAtomic(manifestCachePath, manifest);
       cacheCreated.push("scene manifest");
     }
+    // Cached manifests may carry older instruction text; the scenes are the cached part.
+    manifest.instructions = {
+      ...(manifest.instructions || {}),
+      outputTimeline: MANIFEST_OUTPUT_TIMELINE_INSTRUCTION
+    };
     const manifestPath = path.join(pass1UploadDir, "scene-manifest.json");
     await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf8");
 
@@ -2707,9 +2715,16 @@ class ManualGeminiPackService {
         forceRebuild: Boolean(forceRebuild),
         sourceFingerprint: sourceFingerprint.key,
         cacheDir,
+        proxySchemaVersion: PROXY_SCHEMA_VERSION,
+        sceneKey: cacheKeys.sceneKey,
+        proxyKey: cacheKeys.proxyKey,
+        transcriptKey: cacheKeys.transcriptKey,
         hits: cacheHits,
         misses: cacheMisses,
         created: cacheCreated
+      },
+      timings: {
+        preprocessMs: Date.now() - preprocessStartedAt
       },
       warnings
     }, null, 2), "utf8");
@@ -2741,6 +2756,9 @@ class ManualGeminiPackService {
         cacheDir,
         hits: cacheHits,
         misses: cacheMisses
+      },
+      timings: {
+        preprocessMs: Date.now() - preprocessStartedAt
       },
       warnings
     };
@@ -3141,7 +3159,7 @@ class ManualGeminiPackService {
         ).trim();
       } else {
         cleaned = currentPrompt.replace(
-          /={10,}\s*(?:HOOK CONTRACT|USER-SELECTED HOOK|3-VARIANT NARRATIVE DIFFERENTIATION|CRITICAL MANDATE: DUPLICATE HOOK DIVERGENCE)[\s\S]*?={10,}\s*/gi,
+          /={10,}\s*(?:HOOK CONTRACT|SERIES HOOK CONTRACT|USER-SELECTED HOOK|3-VARIANT NARRATIVE DIFFERENTIATION|CRITICAL MANDATE: DUPLICATE HOOK DIVERGENCE)[\s\S]*?={10,}\s*/gi,
           ""
         ).replace(/\n{3,}/g, "\n\n").trim();
       }

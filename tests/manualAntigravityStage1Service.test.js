@@ -6,6 +6,7 @@ const { EventEmitter } = require("events");
 const { PassThrough, Writable } = require("stream");
 
 const ManualAntigravityStage1Service = require("../electron/services/manualAntigravityStage1Service");
+const { createPhaseAwareSpawn, defaultResponder } = require("./helpers/fakeAntigravity");
 
 function buildScript(scriptId) {
   return {
@@ -52,11 +53,13 @@ async function createPackage() {
   await fs.mkdir(pass1Dir, { recursive: true });
   const promptPath = path.join(pass1Dir, "01-gemini-highlight-scripts-prompt.txt");
   await fs.writeFile(promptPath, "Generate Script 1, Script 3 and Script 4.", "utf8");
-  await fs.writeFile(path.join(pass1Dir, "scene-manifest.json"), JSON.stringify({ scenes: [] }), "utf8");
+  await fs.writeFile(path.join(pass1Dir, "scene-manifest.json"), JSON.stringify({ videoDurationSec: 20, scenes: [] }), "utf8");
+  await fs.writeFile(path.join(pass1Dir, "analysis-proxy.mp4"), "proxy-bytes", "utf8");
   await fs.writeFile(path.join(root, "package-info.json"), JSON.stringify({
     workflow: "manual_gemini_draft_review",
     pass1UploadDir: pass1Dir,
-    promptPath
+    promptPath,
+    cache: { sourceFingerprint: "fp-stage1-test", cacheDir: path.join(root, "source-cache") }
   }), "utf8");
   return { root, pass1Dir };
 }
@@ -77,7 +80,7 @@ async function createPackage() {
     antigravityModel: "test-model",
     antigravityTimeoutMs: 15000
   }, {
-    spawn: createFakeSpawn(envelope, calls)
+    spawn: createPhaseAwareSpawn({ calls, respond: defaultResponder() })
   });
 
   const progress = [];
@@ -93,16 +96,23 @@ async function createPackage() {
   );
   assert.strictEqual(path.basename(result.resultDir), "01-ANTIGRAVITY-RESULT");
   assert.deepStrictEqual(
-    (await fs.readdir(fixture.pass1Dir)).filter(f => f !== 'source-understanding-cache.json').sort(),
+    (await fs.readdir(fixture.pass1Dir)).sort(),
     beforeFiles,
-    "Stage 1 input folder must stay unchanged (ignoring cache file)"
+    "Stage 1 input folder must stay unchanged (the understanding cache lives in the persistent source cache)"
   );
-  assert.strictEqual(calls.length, 2, "Should call runCli twice (Phase A and Phase B)");
+  assert.deepStrictEqual(calls.map((call) => call.kind), ["phase_a", "phase_b"], "cold run: Phase A then Phase B");
   assert.strictEqual(calls[1].options.cwd, result.resultDir, "Phase B must run in result folder");
   const printArg = calls[0].args.find((arg) => arg.startsWith("--print="));
   assert(printArg, "Antigravity prompt must be attached directly to --print");
-  assert(printArg.includes("STAGE_1_INPUT_FOLDER"));
-  assert(printArg.includes("STAGE_1_INPUT_FOLDER"));
+  assert(printArg.includes("analysis-proxy.mp4"), "Phase A must list the proxy to watch");
+  assert(printArg.includes("phase-a-context.txt"), "Phase A reads one compact context file");
+  assert(printArg.includes("ISSUE ALL OF THESE TOOL CALLS AT ONCE"), "Phase A batches every view_file in one response");
+  assert(!printArg.includes("source-transcript.srt\")"), "Phase A must not page through the raw SRT");
+  assert(!printArg.includes("01-gemini-highlight-scripts-prompt.txt"), "Phase A must stay editorial-neutral (no editorial prompt)");
+  const phaseBPrint = calls[1].args.find((arg) => arg.startsWith("--print="));
+  assert(phaseBPrint.includes("HOST-VERIFIED INPUT ACCESS OVERRIDE"), "Phase B must override the STEP 0 proxy gate");
+  assert(phaseBPrint.includes("Do NOT call view_file (or any other tool) on any .mp4 file"));
+  assert(!/view_file\("[^"]+\.mp4"\)/.test(phaseBPrint), "Phase B prompt must not ask to view proxies");
   assert(!calls[0].args.includes("--print"), "bare --print would consume --mode as its prompt");
   assert(calls[0].args.indexOf("--mode") < calls[0].args.indexOf(printArg));
   assert(calls[0].args.includes("accept-edits"));
@@ -411,7 +421,8 @@ async function createPackage() {
   await fs.writeFile(path.join(gatePackageDir, "package-info.json"), JSON.stringify({
     workflow: "manual_gemini_draft_review",
     pass1UploadDir: gatePass1,
-    promptPath: path.join(gatePass1, "01-gemini-highlight-scripts-prompt.txt")
+    promptPath: path.join(gatePass1, "01-gemini-highlight-scripts-prompt.txt"),
+    cache: { sourceFingerprint: "fp-gate-test", cacheDir: path.join(gatePackageDir, "source-cache") }
   }), "utf8");
 
   const missingVideoCalls = [];
@@ -446,7 +457,7 @@ async function createPackage() {
     await gateService.run({ packageDir: gatePackageDir });
   } catch (err) {
     gateFailed = true;
-    assert(err.message.includes("Antigravity vi phạm quy tắc bắt buộc"), "must throw hard gate error");
+    assert(err.message.includes("[PHASE_A] FAILED") && err.message.includes("chưa xem đủ 100% proxy"), "must throw hard gate error");
     assert(err.message.includes("analysis-proxy-chunk-001.mp4"), "must name missing chunk");
   }
   assert.strictEqual(gateFailed, true, "run must fail when video chunks were not viewed");
@@ -489,10 +500,17 @@ async function createPackage() {
     return child;
   };
 
+  assert.strictEqual(
+    (await fs.readdir(path.join(gatePackageDir, "source-cache")).catch(() => [])).length,
+    0,
+    "a failed coverage gate must never write a source-understanding cache"
+  );
+  void fakeViewedSpawn;
+  const successGateCalls = [];
   const successGateService = new ManualAntigravityStage1Service({
     antigravityCommand: "agy",
     antigravityTimeoutMs: 15000
-  }, { spawn: fakeViewedSpawn });
+  }, { spawn: createPhaseAwareSpawn({ calls: successGateCalls, respond: defaultResponder({ scriptIds: [1] }) }) });
 
   const successResult = await successGateService.run({ packageDir: gatePackageDir });
   assert.strictEqual(successResult.coverage.isComplete, true, "coverage must be complete");

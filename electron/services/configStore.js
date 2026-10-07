@@ -59,6 +59,7 @@ class ConfigStore {
       antigravityArgs: process.env.ANTIGRAVITY_ARGS || "",
       antigravityModel: process.env.ANTIGRAVITY_MODEL || "",
       antigravityTimeoutMs: Number(process.env.ANTIGRAVITY_TIMEOUT_MS || 900000),
+      draftRenderConcurrency: Number(process.env.DRAFT_RENDER_CONCURRENCY || 2),
       ytDlpCommand: process.env.YT_DLP_COMMAND || "yt-dlp",
       whisperEngine: process.env.WHISPER_ENGINE || "auto",
       whisperCommand: process.env.WHISPER_COMMAND || "whisper",

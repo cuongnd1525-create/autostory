@@ -6,6 +6,7 @@ function buildVariantHookEntry(variantData = {}, fallbackCandidate = {}) {
   return {
     scriptId: Number(variantData?.scriptId) || 1,
     variantName: variantData?.variantName || "Variant",
+    storyAngle: String(variantData?.storyAngle || ""),
     hookId: c.hookId || c.candidateId || "hook_01",
     title: c.title || c.coreEventDescription || "Selected Hook Event",
     archetype: c.archetype || "Physical Friction / Barricade Suspense",
@@ -152,11 +153,76 @@ function validateHookContract(contract = {}, videoDurationSec = 0) {
   };
 }
 
+const SERIES_PROMPT_PROFILE_PATTERN = /prompt_profile:\s*viral_tiktok_crime_part1\b/i;
+
+function isSeriesHookContract(text = "", contract = {}) {
+  if (SERIES_PROMPT_PROFILE_PATTERN.test(String(text || ""))) return true;
+  const variants = contract?.variants ? Object.values(contract.variants) : [];
+  return variants.some((variant) => /^part_\d/i.test(String(variant?.storyAngle || "")));
+}
+
+function describeAnchor(entry = {}, label = "") {
+  const range = entry.anchorRange || {};
+  const tol = entry.trimmingTolerance || { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 };
+  const start = Number(range.startSec || 0);
+  const end = Number(range.endSec || start);
+  return [
+    `${label}: "${entry.title || entry.coreEventDescription || "Selected Hook"}" (${entry.archetype || "Action"})`,
+    `   - Source Time Range: ${start.toFixed(3)}s - ${end.toFixed(3)}s (~${(end - start).toFixed(1)}s)`,
+    entry.keyDialogue ? `   - Key Dialogue / Quote: "${entry.keyDialogue}"` : "",
+    `   - Editorial Trimming Tolerance: start up to ${Number(tol.startOffsetMaxSec || 0).toFixed(1)}s earlier, end up to ${Number(tol.endOffsetMaxSec || 0).toFixed(1)}s later.`
+  ].filter(Boolean).join("\n");
+}
+
+// Series profiles (Part 1/2/3 of ONE story) must never receive the legacy
+// "3 different stories" differentiation matrix: that matrix makes the Parts
+// diverge into three unrelated edits.
+function buildSeriesHookContractBlock(contract = {}) {
+  const isMulti = Boolean(contract?.isMultiVariant && contract?.variants);
+  const v1 = isMulti ? contract.variants.variant_01 : contract;
+  const v2 = isMulti ? contract.variants.variant_02 : null;
+  const v3 = isMulti ? contract.variants.variant_03 : null;
+  const sameStart = (a, b) => a && b && Math.abs(Number(a.anchorRange?.startSec) - Number(b.anchorRange?.startSec)) < 0.5;
+  const lines = [
+    "================================================================================",
+    "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)",
+    "================================================================================",
+    "Script 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.",
+    "",
+    describeAnchor(v1 || {}, "PART 1 (Script 1) cold-open hook anchor"),
+    "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
+  ];
+  if (v2 && !sameStart(v2, v1)) {
+    lines.push("", describeAnchor(v2, "PART 2 (Script 3) opener anchor"), "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.");
+  }
+  if (v3 && !sameStart(v3, v1) && !sameStart(v3, v2)) {
+    lines.push("", describeAnchor(v3, "PART 3 (Script 4) opener anchor"), "   - Use it as Part 3 Beat 1 only if it belongs to Part 3's scope.");
+  }
+  lines.push(
+    "",
+    "SERIES RULES:",
+    "- PART 1 = The Confrontation, PART 2 = The Interrogation, PART 3 = The Verdict & Arrest, in source chronology.",
+    "- Each Part opens on its own strongest verified moment inside its own scope. Never reuse PART 1's hook footage as another Part's opener (a recap of at most 3s is allowed).",
+    "- Spoiler boundary: PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Only PART 3 delivers the payoff.",
+    "- PART 1 and PART 2 end on verified unresolved cliffhangers that lead into the next Part.",
+    "- When a locked series-plan.json is supplied, it is binding for scope, scene allocation and cliffhangers.",
+    "================================================================================"
+  );
+  return lines.join("\n");
+}
+
 function injectHookContractToPrompt(basePrompt = "", contract = {}) {
   const text = String(basePrompt || "");
   const isMulti = Boolean(contract?.isMultiVariant && contract?.variants);
   const range = contract?.anchorRange;
   const tol = contract?.trimmingTolerance || { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 };
+  if (isSeriesHookContract(text, contract) && (isMulti || range)) {
+    const seriesBlock = buildSeriesHookContractBlock(contract);
+    if (text.includes("DIRECT HIGHLIGHT CONTENT RULES:")) {
+      return text.replace("DIRECT HIGHLIGHT CONTENT RULES:", `DIRECT HIGHLIGHT CONTENT RULES:\n\n${seriesBlock}\n`);
+    }
+    return `${seriesBlock}\n\n${text}`;
+  }
 
   const differentiationMatrix = `
 ================================================================================

@@ -3523,10 +3523,9 @@ ${persona}
 9. VISUAL METADATA: ${overlayRule}
 10. COMPLETE BEATS: Never cut a spoken sentence, decisive action, command-response pair, or immediate reaction in half. Do not assemble a montage of isolated high-score moments.
 11. SOURCE GROUNDING: Every claim must be supported by the selected evidenceId, visual frames, source audio, or transcript. If a detail is not verified, omit it.
-12. TIMELINES: sourceStartSec/sourceEndSec refer only to the original video. startSec/endSec refer only to the output Part and must be continuous from zero.
-    ONE-SCENE-PER-SEGMENT: Every source range must remain inside exactly one selected sceneId. If a logical beat crosses a scene boundary, split it into scene-bounded segments, preserve macroBlockId/sourceRunId/actionSequenceId, divide voiceover without duplication, and recalculate the output Part timeline.
-13. DURATION FORMULA: endSec - startSec = (sourceEndSec - sourceStartSec) / playbackSpeed.
-    OUTPUT TIMELINE IS DERIVED, NOT EDITORIAL: sourceStartSec/sourceEndSec and playbackSpeed are authoritative. Finalize every source trim and speed first, then recalculate every startSec/endSec continuously from zero using at least 3 decimal places. Never preserve old output timestamps after changing a source range or speed. The local tool will reflow the output timeline and its calculation is authoritative.
+12. TIMELINES: sourceStartSec/sourceEndSec refer only to the original video. Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec; the local tool derives the Part timeline.
+    ONE-SCENE-PER-SEGMENT: Every source range must remain inside exactly one selected sceneId. If a logical beat crosses a scene boundary, split it into scene-bounded segments, preserve macroBlockId/sourceRunId/actionSequenceId and divide voiceover without duplication.
+13. DURATION: output duration = (sourceEndSec - sourceStartSec) / playbackSpeed, computed by the local tool. playbackSpeed defaults to 1; set it only for a justified speed change.
 14. AUDIO MODES: original_audio requires voiceover_text="". voiceover_only requires English voiceover_text and means source audio will be ducked to 20% volume.
 15. DURATION GATE: Every Part must be within ${options.minDuration}-${options.maxDuration}s and never below 60.5s. Add relevant complete evidence, never silence, freeze frames, credits, or filler.
 
@@ -3744,6 +3743,12 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
 - Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
 - Every script must follow the exact 8-beat formula and use 9:16 vertical framing with viral green badges.
+- The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
+  * Script 1 / PART 1 - The Confrontation: hook, dispatch/arrival, scene entry, escalation, first confrontation. Ends on a verified unresolved cliffhanger.
+  * Script 3 / PART 2 - The Interrogation: questioning, explanations, lies, contradictions and evidence. Ends on the strongest verified pre-arrest cliffhanger.
+  * Script 4 / PART 3 - The Verdict & Arrest: decision, arrest/charges and the verified consequence (payoff).
+  * PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Never reuse the same footage across Parts except a recap of at most 3 seconds.
+  * When a locked series-plan.json is supplied, its scope, scene allocation and cliffhangers are binding.
 
 ### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
 Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio beats + 4 Narration beats):
@@ -3790,8 +3795,8 @@ Every generated JSON script must include:
   "artifactType": "highlight_cut_script",
   "workflow": "manual_gemini_pro",
   "scriptId": 1,
-  "suggestedTitle": "ABUSIVE MOM'S WORST NIGHTMARE CAME TRUE",
-  "title": "ABUSIVE MOM'S WORST NIGHTMARE CAME TRUE",
+  "suggestedTitle": "<UPPERCASE VIRAL TITLE GROUNDED IN THIS SOURCE>",
+  "title": "<UPPERCASE VIRAL TITLE GROUNDED IN THIS SOURCE>",
   "partBadge": "PART 1",
   "cameraLabel": "CAM 1",
   "titleStyle": "viral_green",
@@ -3901,9 +3906,9 @@ ${voiceBlock}
 
 ### TIMELINE AND DURATION RULES
 1. sourceStartSec/sourceEndSec refer only to the original source timeline.
-2. startSec/endSec refer only to the output timeline and must be continuous from zero.
-3. endSec-startSec=(sourceEndSec-sourceStartSec)/playbackSpeed.
-4. Finalize source ranges and playbackSpeed first, then recalculate the complete output timeline using at least three decimal places.
+2. Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec. The local tool derives the output timeline.
+3. Output duration = (sourceEndSec-sourceStartSec)/playbackSpeed is computed locally; playbackSpeed defaults to 1.
+4. Finalize source ranges (and playbackSpeed only when justified); never return output timeline math.
 5. Keep every source range inside its selected sceneId. Split at scene boundaries when necessary.
 6. Every script must be at least 60.5 seconds. Add only relevant verified footage; never use filler, freezes, repetition, or dead air.
 7. Obey the measured voice word budget for each of the four voiceover_only segments.
@@ -5317,6 +5322,25 @@ async function runManualAntigravityStage1() {
       `;
     }
     (result.warnings || []).forEach((warning) => addLog(warning, "WARNING"));
+    if (result.timing?.sourceUnderstanding) {
+      const su = result.timing.sourceUnderstanding;
+      const sg = result.timing.scriptGeneration || {};
+      const plan = result.timing.seriesPlan;
+      const agyProcesses = Number(su.agyProcessCount || 0) + Number(plan?.agyProcessCount || 0) + Number(sg.agyProcessCount || 0);
+      addLog(
+        `[SOURCE_UNDERSTANDING] ${su.cacheHit ? "CACHE HIT" : `CACHE ${String(su.cacheStatus || "miss").toUpperCase()}`} · `
+        + `[PHASE_A] ${su.phaseASkipped ? "SKIPPED" : `${(Number(su.durationMs || 0) / 1000).toFixed(1)}s`} · `
+        + `view_file video Phase A ${Number(su.videoViewFileCount || 0)}/${Number(su.expectedProxyCount || 0)} proxy · `
+        + `video AI phải xem ${(Number(su.watchedSourceSec || 0) / 60).toFixed(1)} phút`
+      );
+      addLog(
+        `GĐ1 tổng: ${agyProcesses} tiến trình AGY · `
+        + `${plan ? `series plan ${(Number(plan.durationMs || 0) / 1000).toFixed(1)}s · ` : ""}`
+        + `Phase B ${(Number(sg.durationMs || 0) / 1000).toFixed(1)}s, view_file video ${Number(sg.videoViewFileCount || 0)} · `
+        + `tổng GĐ1 ${(Number(result.timing.stage1Ms || 0) / 1000).toFixed(1)}s.`,
+        sg.fullSourceRewatched ? "WARNING" : "INFO"
+      );
+    }
     if (result.usage) {
       addLog(`Vertex AI GĐ1: ${result.usage.model} · ${result.usage.inputTokens || 0} input + ${result.usage.outputTokens || 0} output token · ước tính $${Number(result.usage.estimatedCostUsd || 0).toFixed(4)}.`);
     }

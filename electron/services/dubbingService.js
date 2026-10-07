@@ -1379,6 +1379,97 @@ function getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOpt
   };
 }
 
+/**
+ * Resolves which voice the FAST DRAFT really uses (draftVoiceMode may differ
+ * from the final voice) and the cache identity of that synthesis. Used by
+ * synthesizeFastDraftVoiceDirect and by the segment render cache keys, so a
+ * cache key always describes the audio that was actually rendered.
+ */
+function resolveFastDraftVoicePlan({ project = {}, settings = {}, text = "", outputPath = "voice.mp3", voiceRenderOptions = {} }) {
+  const draftMode = project.draftVoiceMode || "edge_neural";
+  const provider = draftMode === "final"
+    ? (project.voiceProvider || settings.defaultVoiceProvider || "edge_neural")
+    : draftMode === "custom"
+      ? (project.draftVoiceProvider || "edge_neural")
+      : "edge_neural";
+  let voiceId = draftMode === "final"
+    ? (project.voiceId || "")
+    : draftMode === "custom"
+      ? (project.draftVoiceId || "")
+      : "";
+  if (provider === "kokoro" && !/^[ab][fm]_[a-z0-9_]+$/i.test(voiceId)) {
+    voiceId = project.voiceProvider === "kokoro" && /^[ab][fm]_[a-z0-9_]+$/i.test(project.voiceId || "")
+      ? project.voiceId
+      : "af_heart";
+  }
+  if (provider === "edge_neural" && voiceId && !/Neural$/i.test(voiceId)) {
+    voiceId = "";
+  }
+  const draftProject = { ...project, voiceProvider: provider, voiceId };
+  if (provider !== "edge_neural") {
+    draftProject.cloneSourceVoice = draftMode === "final" ? project.cloneSourceVoice : false;
+    draftProject.voiceDesign = {
+      ...(project.voiceDesign || {}),
+      presetProvider: provider,
+      presetVoiceId: voiceId
+    };
+    return {
+      provider,
+      voiceId,
+      draftMode,
+      draftProject,
+      cache: getVoiceCacheInfo({ settings, project: draftProject, text, outputPath, voiceRenderOptions })
+    };
+  }
+  const edgeParams = {
+    text,
+    voiceName: voiceId || "",
+    language: inferFastDraftLanguage(text, project),
+    genreMode: "drama",
+    rate: getEdgeRateWithDelivery(settings.edgeVoiceRate, voiceRenderOptions),
+    pitch: settings.edgeVoicePitchHz,
+    volume: settings.edgeVoiceVolume
+  };
+  const spec = {
+    version: 1,
+    kind: "fast_draft_edge",
+    provider: "edge_neural",
+    text: safeText(text),
+    voiceName: edgeParams.voiceName,
+    language: edgeParams.language,
+    genreMode: edgeParams.genreMode,
+    rate: Number(edgeParams.rate ?? 0),
+    pitch: edgeParams.pitch === undefined || edgeParams.pitch === null || edgeParams.pitch === "" ? null : Number(edgeParams.pitch),
+    volume: edgeParams.volume === undefined || edgeParams.volume === null || edgeParams.volume === "" ? null : Number(edgeParams.volume),
+    deliveryProfile: safeText(voiceRenderOptions.deliveryProfile || "natural"),
+    speechRateMultiplier: safeNumber(voiceRenderOptions.speechRateMultiplier, 1),
+    pauseAfterPhrase: safeText(voiceRenderOptions.pauseAfterPhrase || ""),
+    pauseDurationMs: safeNumber(voiceRenderOptions.pauseDurationMs, 0),
+    emphasisWords: Array.isArray(voiceRenderOptions.emphasisWords) ? voiceRenderOptions.emphasisWords : [],
+    emotionTag: safeText(voiceRenderOptions.emotionTag || ""),
+    prosody: voiceRenderOptions.prosody || null
+  };
+  const hash = crypto.createHash("sha256").update(JSON.stringify(spec)).digest("hex").slice(0, 24);
+  const extension = path.extname(outputPath) || audioExtensionForProvider("edge_neural");
+  const cacheDir = path.join(path.dirname(outputPath), ".voice-cache");
+  return {
+    provider,
+    voiceId,
+    draftMode,
+    draftProject,
+    edgeParams,
+    cache: {
+      cacheDir,
+      cachePath: path.join(cacheDir, `edge_neural-draft-${hash}${extension}`),
+      cacheKey: `edge-draft-${hash}`,
+      provider: "edge_neural",
+      voiceId,
+      language: edgeParams.language,
+      spec
+    }
+  };
+}
+
 function getOmniVoiceVoiceName(project = {}, settings = {}) {
   if (project.cloneSourceVoice) {
     return safeText(project.voiceId || project.voiceDesign?.samplePath || "");
@@ -2445,6 +2536,33 @@ function enforceDeclaredNarratorRanges(parsed, sourceSegments, repairWarnings, j
   }));
 }
 
+const GEMINI_DERIVED_OUTPUT_TIMELINE_FIELDS = [
+  "startSec", "endSec", "outputStartSec", "outputEndSec", "output_start_sec", "output_end_sec"
+];
+
+// manual_gemini_draft_review: Gemini selects source ranges only. Any output
+// timeline it still returns is discarded so it can never influence the
+// locally derived duration/playbackSpeed (normalizeHighlightCutScript would
+// otherwise infer playbackSpeed = sourceDuration / (endSec - startSec)).
+function stripGeminiDerivedOutputTimeline(segments = []) {
+  let stripped = 0;
+  for (const segment of Array.isArray(segments) ? segments : []) {
+    if (!segment || typeof segment !== "object") continue;
+    const hasSourceRange = [segment.sourceStartSec, segment.source_start_sec, segment.inputStartSec, segment.videoStartSec]
+      .some((value) => value !== undefined && value !== null && value !== "")
+      && [segment.sourceEndSec, segment.source_end_sec, segment.inputEndSec, segment.videoEndSec]
+        .some((value) => value !== undefined && value !== null && value !== "");
+    if (!hasSourceRange) continue;
+    for (const field of GEMINI_DERIVED_OUTPUT_TIMELINE_FIELDS) {
+      if (field in segment) {
+        delete segment[field];
+        stripped += 1;
+      }
+    }
+  }
+  return stripped;
+}
+
 function validateManualGeminiScript(rawScript, manifest, jsonPath = "", evidencePayload = null, options = {}) {
   const rawParsed = typeof rawScript === "string"
     ? parseGeminiJsonObject(rawScript, path.basename(jsonPath) || "Story Recut JSON")
@@ -2452,6 +2570,9 @@ function validateManualGeminiScript(rawScript, manifest, jsonPath = "", evidence
   const parsed = unwrapStoryScript(rawParsed);
   const compiledStorySpine = parsed?.story_spine_compiled === true;
   const sourceSegments = Array.isArray(parsed?.segments) ? parsed.segments : [];
+  if (options.deriveOutputTimeline === true) {
+    stripGeminiDerivedOutputTimeline(sourceSegments);
+  }
   if (!sourceSegments.length) {
     if (Array.isArray(rawParsed?.evidence) || Array.isArray(rawParsed?.sceneEvidence)) {
       throw new Error(
@@ -4167,7 +4288,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         scriptInput = validateManualGeminiScript(scriptInput, manualManifest, jsonPath, manualEvidence, {
           preserveSourceNarrator: isStoryRecutWorkflow,
           forceSourceAudioOnly: isStoryRecutWorkflow,
-          independentNarratorPolicy: project.manualGeminiPromptOptions?.profile === "independent"
+          independentNarratorPolicy: project.manualGeminiPromptOptions?.profile === "independent",
+          deriveOutputTimeline: project.analysisWorkflow === "manual_gemini_draft_review"
         });
         if (diyValidationWarnings.length) {
           scriptInput._toolValidationWarnings = [...new Set([
@@ -4801,82 +4923,73 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     return this.synthesizeFastDraftVoiceDirect({ project, settings, text, outputPath, voiceRenderOptions });
   }
   async synthesizeFastDraftVoiceDirect({ project, settings = {}, text, outputPath, voiceRenderOptions = {} }) {
-    const draftMode = project.draftVoiceMode || "edge_neural";
-    const provider = draftMode === "final"
-      ? (project.voiceProvider || settings.defaultVoiceProvider || "edge_neural")
-      : draftMode === "custom"
-        ? (project.draftVoiceProvider || "edge_neural")
-        : "edge_neural";
-    let voiceId = draftMode === "final"
-      ? (project.voiceId || "")
-      : draftMode === "custom"
-        ? (project.draftVoiceId || "")
-        : "";
-        
-    const draftProject = {
-      ...project,
-      voiceProvider: provider,
-      voiceId
-    };
-
-    const cache = getVoiceCacheInfo({ settings, project: draftProject, text, outputPath, voiceRenderOptions });
-    const measuredPath = project.autoStoryVoiceCache?.[cache.cacheKey];
-    if (measuredPath) {
-      try {
-        const stat = await fs.stat(measuredPath);
-        if (stat.size > 512) {
-          if (path.resolve(measuredPath) !== path.resolve(outputPath)) await fs.copyFile(measuredPath, outputPath);
-          return { outputPath, cacheHit: true, provider: cache.provider, voiceId: cache.voiceId };
-        }
-      } catch (_) { /* Recreate missing measured audio using the selected voice. */ }
-    }
-
-    try {
-      const outStat = await fs.stat(outputPath);
-      if (outStat.size > 512) {
-        return { outputPath, cacheHit: true, provider: cache.provider, voiceId: cache.voiceId };
+    if (project.analysisWorkflow === "vertex_auto_story" && project.draftVoiceMode === "final") {
+      const measured = getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOptions });
+      const measuredPath = project.autoStoryVoiceCache?.[measured.cacheKey];
+      if (measuredPath) {
+        try {
+          const stat = await fs.stat(measuredPath);
+          if (stat.size > 512) {
+            if (path.resolve(measuredPath) !== path.resolve(outputPath)) await fs.copyFile(measuredPath, outputPath);
+            return { outputPath, cacheHit: true, provider: measured.provider, voiceId: measured.voiceId, cacheKey: measured.cacheKey };
+          }
+        } catch (_) { /* Recreate missing measured audio using the selected voice. */ }
       }
-    } catch (_) { /* Continue rendering */ }
-    if (provider === "kokoro" && !/^[ab][fm]_[a-z0-9_]+$/i.test(voiceId)) {
-      voiceId = draftProject.voiceProvider === "kokoro" && /^[ab][fm]_[a-z0-9_]+$/i.test(draftProject.voiceId || "")
-        ? draftProject.voiceId
-        : "af_heart";
     }
-    if (provider === "edge_neural" && voiceId && !/Neural$/i.test(voiceId)) {
-      voiceId = "";
-    }
-    if (provider !== "edge_neural") {
-      draftProject.cloneSourceVoice = draftMode === "final" ? project.cloneSourceVoice : false;
-      draftProject.voiceDesign = {
-        ...(project.voiceDesign || {}),
-        presetProvider: provider,
-        presetVoiceId: voiceId
-      };
-      return this.synthesizeDubbingVoice({
+    // NOTE: an existing file at outputPath is never treated as a cache hit. Draft
+    // voice files are named by segment index, so after a V2 text change the old
+    // file at the same path belongs to different text.
+    const plan = resolveFastDraftVoicePlan({ project, settings, text, outputPath, voiceRenderOptions });
+    if (plan.provider !== "edge_neural") {
+      const result = await this.synthesizeDubbingVoice({
         settings,
-        project: draftProject,
+        project: plan.draftProject,
         text,
         outputPath,
         durationSec: Math.max(3, estimateSpeechSeconds(text)),
         voiceRenderOptions
       });
+      return { ...result, provider: plan.provider, voiceId: plan.voiceId };
+    }
+    const cache = plan.cache;
+    const useCache = settings.voiceCacheEnabled !== false;
+    if (useCache) {
+      try {
+        const cacheStat = await fs.stat(cache.cachePath);
+        if (cacheStat.isFile() && cacheStat.size > 512) {
+          if (path.resolve(cache.cachePath) !== path.resolve(outputPath)) await fs.copyFile(cache.cachePath, outputPath);
+          return { outputPath, provider: plan.provider, voiceId: plan.voiceId, cacheHit: true, cacheKey: cache.cacheKey, cachePath: cache.cachePath, voiceRenderSpec: cache.spec };
+        }
+      } catch (_) { /* cache miss */ }
     }
     const edgeTts = new EdgeTtsService();
-    const language = inferFastDraftLanguage(text, project);
-    const edgeRate = getEdgeRateWithDelivery(settings.edgeVoiceRate, voiceRenderOptions);
-    await edgeTts.synthesizeSpeech({
-      text,
-      voiceName: voiceId || "",
+    const edgeResult = await edgeTts.synthesizeSpeech({
+      ...plan.edgeParams,
       outputPath,
-      language,
-      genreMode: "drama",
-      rate: edgeRate,
-      pitch: settings.edgeVoicePitchHz,
-      volume: settings.edgeVoiceVolume,
       retries: 1,
       timeoutMs: 25000
     });
-    return { outputPath, provider, voiceId };
+    // A fallback voice must not be cached under the requested voice's key.
+    if (useCache && !edgeResult?.fallbackUsed) {
+      try {
+        const stat = await fs.stat(outputPath);
+        if (stat.size > 512) {
+          await fs.mkdir(cache.cacheDir, { recursive: true });
+          const tempPath = `${cache.cachePath}.tmp-${process.pid}-${Date.now()}`;
+          await fs.copyFile(outputPath, tempPath);
+          await fs.rename(tempPath, cache.cachePath);
+        }
+      } catch (_) { /* cache write is best effort */ }
+    }
+    return {
+      outputPath,
+      provider: plan.provider,
+      voiceId: plan.voiceId,
+      cacheHit: false,
+      cacheKey: cache.cacheKey,
+      cachePath: cache.cachePath,
+      voiceRenderSpec: { ...cache.spec, resolvedVoiceId: edgeResult?.resolvedVoice || plan.voiceId, fallbackUsed: Boolean(edgeResult?.fallbackUsed) }
+    };
   }
 
   getFastDraftVoiceProvider(project = {}, settings = {}) {
@@ -5067,7 +5180,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         scriptInput = validateManualGeminiScript(scriptInput, manualManifest, jsonPath, manualEvidence, {
           preserveSourceNarrator: isStoryRecutWorkflow,
           forceSourceAudioOnly: isStoryRecutWorkflow,
-          independentNarratorPolicy: safeText(activeVariant.promptProfile).toLowerCase() === "independent"
+          independentNarratorPolicy: safeText(activeVariant.promptProfile).toLowerCase() === "independent",
+          deriveOutputTimeline: project.analysisWorkflow === "manual_gemini_draft_review"
         });
         if (diyValidationWarnings.length) {
           scriptInput._toolValidationWarnings = [...new Set([
@@ -6251,6 +6365,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const draftVoiceExt = audioExtensionForProvider(draftVoiceProvider);
     const blockRuns = new Map(narratedBlockRuns(segments).map((run) => [run.start, run]));
     const blockVoiceReports = [];
+    const renderStartedAt = Date.now();
+    const renderMetrics = {
+      ttsMs: 0,
+      ttsCacheHits: 0,
+      ttsCacheMisses: 0,
+      segmentCacheHits: 0,
+      segmentCacheMisses: 0,
+      segmentCacheLog: []
+    };
     for (let index = 0; index < segments.length; index++) {
       const segment = segments[index];
       const blockRun = blockRuns.get(index);
@@ -6262,7 +6385,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           message: `Đang render khối narrator ${blockRun.blockId} (${blockRun.end - blockRun.start + 1} cảnh)` });
         const block = await this.renderNarratedDeliveryBlock({
           ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat,
-          members: segments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start
+          members: segments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics
         });
         clipPaths.push(block.clipPath);
         blockVoiceReports.push(block.report);
@@ -6292,14 +6415,19 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       let voiceProfile = null;
       let fitPolicy = null;
       let renderDurationSec = durationSec;
+      let voiceResult = null;
       if (voiceText) {
-        await this.synthesizeFastDraftVoice({
+        const ttsStartedAt = Date.now();
+        voiceResult = await this.synthesizeFastDraftVoice({
           project,
           settings,
           text: voiceText,
           outputPath: rawVoicePath,
           voiceRenderOptions: getSegmentVoiceRenderOptions(segment)
         });
+        renderMetrics.ttsMs += Date.now() - ttsStartedAt;
+        if (voiceResult?.cacheHit) renderMetrics.ttsCacheHits += 1;
+        else renderMetrics.ttsCacheMisses += 1;
         rawVoiceMeta = await ffmpeg.probeAudio(rawVoicePath).catch(() => ({ duration: estimateSpeechSeconds(voiceText) }));
         fitPolicy = resolveHighlightVoiceFit(segment, durationSec, rawVoiceMeta.duration);
         renderDurationSec = fitPolicy.renderDurationSec;
@@ -6316,10 +6444,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       }
       let autoClipCache = null;
       if (autoStorySourceStat) {
+        // The key describes only what is rendered: source bytes, source range,
+        // timing, audio treatment and the identity of the DRAFT voice actually
+        // synthesized. It is independent of segment index/variant, so unchanged
+        // beats are reused across variants and V2 revisions.
         const key = crypto.createHash("sha256").update(JSON.stringify({
-          version: 1, source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+          version: 2, source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
           sourceStartSec, sourceDurationSec, durationSec, renderDurationSec, audioMode,
-          voice: voiceText ? getVoiceCacheInfo({ settings, project, text: voiceText, outputPath: rawVoicePath, voiceRenderOptions: getSegmentVoiceRenderOptions(segment) }).spec : null,
+          voice: voiceText ? (voiceResult?.cacheKey || resolveFastDraftVoicePlan({ project, settings, text: voiceText, outputPath: rawVoicePath, voiceRenderOptions: getSegmentVoiceRenderOptions(segment) }).cache.cacheKey) : null,
           sourceVolume: getHighlightAmbientVolume(segment, project), voiceVolume: project.mixer?.voiceVolume ?? 100,
           normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true,
           stretch: project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08
@@ -6336,9 +6468,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
             draftVoiceReports[index] = { ...report, index, sceneId: segment.sceneId || segment.id, fittedVoicePath: autoClipCache.voice };
           }
           clipPaths.push(autoClipCache.clip);
+          renderMetrics.segmentCacheHits += 1;
+          renderMetrics.segmentCacheLog.push(`Beat ${index + 1} HIT`);
           continue;
         } catch (_) { /* Render only the changed or missing source/voice clip. */ }
       }
+      renderMetrics.segmentCacheMisses += 1;
+      renderMetrics.segmentCacheLog.push(`Beat ${index + 1} MISS`);
       await ffmpeg.extractVoiceDrivenClipWithAudio({
         sourcePath: project.sourceVideoPath,
         outputPath: rawClipPath,
@@ -6553,79 +6689,108 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       aiSceneReview: mergeDraftVoiceReview(segment, voiceAlignmentReport.segments[index])
     }));
     const qualityGate = buildProjectQualityGate(updatedSegments, "highlight_cut");
-    const latestProject = await this.projectStore.getProject(workspaceRoot, projectId).catch(() => project);
-    const publishedDraftPath = await publishDraftVideo({
-      settings,
-      project: latestProject,
-      sourcePath: outputPath,
-      mode: "highlight",
-      variant: `${variantMetadata.fileTag}-${activeVariant.label || variantId}`
+    const renderSummary = {
+      durationMs: Date.now() - renderStartedAt,
+      ttsMs: renderMetrics.ttsMs,
+      ttsCacheHits: renderMetrics.ttsCacheHits,
+      ttsCacheMisses: renderMetrics.ttsCacheMisses,
+      segmentCacheHits: renderMetrics.segmentCacheHits,
+      segmentCacheMisses: renderMetrics.segmentCacheMisses,
+      segmentCacheLog: renderMetrics.segmentCacheLog
+    };
+    onProgress?.({
+      projectId,
+      step: "draft",
+      percent: 98,
+      message: `[SEGMENT_CACHE] ${renderSummary.segmentCacheHits} HIT / ${renderSummary.segmentCacheMisses} MISS · [TTS_CACHE] ${renderSummary.ttsCacheHits} HIT / ${renderSummary.ttsCacheMisses} MISS · ${renderMetrics.segmentCacheLog.join(", ")}`.slice(0, 400)
     });
-    const variants = Array.isArray(latestProject.analysis?.highlightVariants) ? latestProject.analysis.highlightVariants : [];
-    const previousWarnings = Array.isArray(latestProject.analysis?.warnings) ? latestProject.analysis.warnings : [];
-    const retainedWarnings = previousWarnings.filter((warning) => {
-      const text = safeText(warning);
-      return !text.startsWith("Draft voice cảnh ") && !text.startsWith("Quality gate:");
-    });
-    const draftVoiceWarnings = voiceAlignmentReport.warnings.map((warning) => (
-      `Draft voice cảnh ${warning.sceneNumber}: ${warning.problem} ${warning.recommendation}`
-    ));
-    const qualityGateWarnings = qualityGate.exportAllowed
-      ? []
-      : [`Quality gate: ${qualityGate.blockedCount}/${qualityGate.totalScenes} cảnh nên duyệt trước khi export. Tool vẫn cho phép export nếu user muốn.`];
-    const autoStoryKey = project.analysisWorkflow === "vertex_auto_story"
-      ? await autoStoryDraftKey(project, { ...activeVariant, segments: updatedSegments }, settings) : undefined;
-    const updatedVariants = variants.map((variant) => variant.id === variantId ? {
-      ...variant,
-      segments: updatedSegments,
-      draftReviewReadiness: buildDraftReviewReadiness(variant, voiceAlignmentReport),
-      artifacts: {
-        ...(variant.artifacts || {}),
-        fastDraftVideoPath: publishedDraftPath,
-        internalFastDraftVideoPath: outputPath,
-        fastDraftBaseVideoPath: undecoratedOutputPath,
-        fastDraftSubtitlePath: subtitlePath,
-        fastDraftSubtitleLanguage: "vi",
-        fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
-        fastDraftVoiceWarningReportPath: voiceWarningReportPath,
-        fastDraftResolvedTimelinePath: resolvedTimelinePath,
-        fastDraftGeminiRewritePromptPath: geminiRewritePromptPath,
-        fastDraftDeliveryBlockReportPath: deliveryBlockReportPath,
-        fastDraftBlockNarrationSubtitlePath: blockNarrationSubtitlePath,
-        fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
-        autoStoryDraftKey: autoStoryKey
-      }
-    } : variant);
-    await this.projectStore.updateProject(workspaceRoot, projectId, {
-      artifacts: {
-        ...(latestProject.artifacts || {}),
-        previewVideoPath: publishedDraftPath,
-        fastDraftVideoPath: publishedDraftPath,
-        internalFastDraftVideoPath: outputPath,
-        fastDraftBaseVideoPath: undecoratedOutputPath,
-        fastDraftSubtitlePath: subtitlePath,
-        fastDraftSubtitleLanguage: "vi",
-        fastDraftSubtitlesArePreviewOnly: true,
-        fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
-        fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
-        previewRenderedAt: voiceAlignmentReport.generatedAt
-      },
-      analysis: {
-        ...(latestProject.analysis || {}),
-        activeVariantId: variantId,
-        qualityGate,
-        warnings: [...retainedWarnings, ...draftVoiceWarnings, ...qualityGateWarnings],
+    let publishedDraftPath = "";
+    // Variant renders may run concurrently: the read-modify-write of project.json
+    // must be serialized or one variant would overwrite the other's artifacts.
+    await this.withProjectWriteLock(workspaceRoot, projectId, async () => {
+      const latestProject = await this.projectStore.getProject(workspaceRoot, projectId).catch(() => project);
+      publishedDraftPath = await publishDraftVideo({
+        settings,
+        project: latestProject,
+        sourcePath: outputPath,
+        mode: "highlight",
+        variant: `${variantMetadata.fileTag}-${activeVariant.label || variantId}`
+      });
+      const variants = Array.isArray(latestProject.analysis?.highlightVariants) ? latestProject.analysis.highlightVariants : [];
+      const previousWarnings = Array.isArray(latestProject.analysis?.warnings) ? latestProject.analysis.warnings : [];
+      const retainedWarnings = previousWarnings.filter((warning) => {
+        const text = safeText(warning);
+        return !text.startsWith("Draft voice cảnh ") && !text.startsWith("Quality gate:");
+      });
+      const draftVoiceWarnings = voiceAlignmentReport.warnings.map((warning) => (
+        `Draft voice cảnh ${warning.sceneNumber}: ${warning.problem} ${warning.recommendation}`
+      ));
+      const qualityGateWarnings = qualityGate.exportAllowed
+        ? []
+        : [`Quality gate: ${qualityGate.blockedCount}/${qualityGate.totalScenes} cảnh nên duyệt trước khi export. Tool vẫn cho phép export nếu user muốn.`];
+      const autoStoryKey = project.analysisWorkflow === "vertex_auto_story"
+        ? await autoStoryDraftKey(project, { ...activeVariant, segments: updatedSegments }, settings) : undefined;
+      const updatedVariants = variants.map((variant) => variant.id === variantId ? {
+        ...variant,
+        segments: updatedSegments,
+        draftReviewReadiness: buildDraftReviewReadiness(variant, voiceAlignmentReport),
         artifacts: {
-          ...(latestProject.analysis?.artifacts || {}),
+          ...(variant.artifacts || {}),
+          fastDraftVideoPath: publishedDraftPath,
+          internalFastDraftVideoPath: outputPath,
+          fastDraftBaseVideoPath: undecoratedOutputPath,
+          fastDraftSubtitlePath: subtitlePath,
+          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
-          fastDraftGeminiRewritePromptPath: geminiRewritePromptPath
+          fastDraftGeminiRewritePromptPath: geminiRewritePromptPath,
+          fastDraftDeliveryBlockReportPath: deliveryBlockReportPath,
+          fastDraftBlockNarrationSubtitlePath: blockNarrationSubtitlePath,
+          fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
+          autoStoryDraftKey: autoStoryKey,
+          fastDraftRenderMetrics: renderSummary
+        }
+      } : variant);
+      await this.projectStore.updateProject(workspaceRoot, projectId, {
+        artifacts: {
+          ...(latestProject.artifacts || {}),
+          previewVideoPath: publishedDraftPath,
+          fastDraftVideoPath: publishedDraftPath,
+          internalFastDraftVideoPath: outputPath,
+          fastDraftBaseVideoPath: undecoratedOutputPath,
+          fastDraftSubtitlePath: subtitlePath,
+          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitlesArePreviewOnly: true,
+          fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
+          fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
+          previewRenderedAt: voiceAlignmentReport.generatedAt
         },
-        highlightVariants: updatedVariants.length ? updatedVariants : latestProject.analysis?.highlightVariants,
-        segments: updatedSegments,
-        scenes: buildHighlightScenes(updatedSegments)
-      }
-    }).catch(() => {});
+        analysis: {
+          ...(latestProject.analysis || {}),
+          activeVariantId: variantId,
+          qualityGate,
+          warnings: [...retainedWarnings, ...draftVoiceWarnings, ...qualityGateWarnings],
+          artifacts: {
+            ...(latestProject.analysis?.artifacts || {}),
+            fastDraftVoiceWarningReportPath: voiceWarningReportPath,
+            fastDraftResolvedTimelinePath: resolvedTimelinePath,
+            fastDraftGeminiRewritePromptPath: geminiRewritePromptPath
+          },
+          highlightVariants: updatedVariants.length ? updatedVariants : latestProject.analysis?.highlightVariants,
+          segments: updatedSegments,
+          scenes: buildHighlightScenes(updatedSegments)
+        }
+      }).catch(() => {});
+    });
+    if (project.manualGeminiPackPath) {
+      await require("./pipelineTimingService").mergeVariantTiming(project.manualGeminiPackPath, "render", variantId, {
+        ...renderSummary,
+        segmentCacheLog: undefined,
+        revision: Math.max(1, Number(activeVariant.revisionNumber || 1)),
+        renderedAt: new Date().toISOString()
+      });
+    }
     await pruneDraftArtifacts(paths.outputDir, `highlight-cut-${variantMetadata.variantTag}-`, 3).catch(() => {});
     return {
       outputPath: publishedDraftPath,
@@ -6639,13 +6804,27 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       resolvedTimelinePath,
       geminiRewritePromptPath,
       deliveryBlockReportPath,
-      deliveryBlocks: blockVoiceReports
+      deliveryBlocks: blockVoiceReports,
+      renderMetrics: renderSummary
     };
+  }
+
+  async withProjectWriteLock(workspaceRoot, projectId, operation) {
+    if (!this.projectWriteLocks) this.projectWriteLocks = new Map();
+    const key = `${path.resolve(String(workspaceRoot || ""))}::${projectId}`;
+    const previous = this.projectWriteLocks.get(key) || Promise.resolve();
+    const next = previous.catch(() => {}).then(operation);
+    this.projectWriteLocks.set(key, next);
+    try {
+      return await next;
+    } finally {
+      if (this.projectWriteLocks.get(key) === next) this.projectWriteLocks.delete(key);
+    }
   }
 
   // AutoStory V5 continuous block primitive. members = the consecutive segments
   // of ONE narrated_story delivery block (first member carries the passage).
-  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex }) {
+  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex, renderMetrics = null }) {
     const lead = members[0];
     const text = safeText(lead.blockNarrationText);
     if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
@@ -6677,7 +6856,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const key = crypto.createHash("sha256").update(JSON.stringify({
         version: 2, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
         pieces: pieces.map((p) => [p.sourceStartSec, p.sourceDurationSec, p.durationSec]), treatment, ambientVolume, duck, voiceVolume, maxStretchRatio,
-        voice: getVoiceCacheInfo({ settings, project, text, outputPath: rawVoicePath, voiceRenderOptions }).spec,
+        voice: resolveFastDraftVoicePlan({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions }).cache.cacheKey,
         normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true
       })).digest("hex");
       const cacheDir = path.join(paths.clipsDir, ".auto-story-cache");
@@ -6686,9 +6865,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       try {
         const cached = JSON.parse(await fs.readFile(cache.report, "utf8"));
         if ((await fs.stat(cache.clip)).size > 512 && cached?.blockId === lead.deliveryBlockId) {
+          if (renderMetrics) {
+            renderMetrics.segmentCacheHits += 1;
+            renderMetrics.segmentCacheLog.push(`Block ${lead.deliveryBlockId} (beats ${startIndex + 1}-${startIndex + members.length}) HIT`);
+          }
           return { clipPath: cache.clip, report: { ...cached, cached: true }, memberReports: memberReportsFor(pieces, cached) };
         }
       } catch (_) { /* render */ }
+    }
+    if (renderMetrics) {
+      renderMetrics.segmentCacheMisses += 1;
+      renderMetrics.segmentCacheLog.push(`Block ${lead.deliveryBlockId} (beats ${startIndex + 1}-${startIndex + members.length}) MISS`);
     }
 
     // 1-4. Extract + normalize every visual range exactly as the per-segment path
@@ -6715,7 +6902,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     await ffmpeg.normalizeMediaDuration({ inputPath: blockVideoPath, outputPath: timedBlockVideoPath, targetDuration: blockTimelineSec });
 
     // 5-6. Synthesize the WHOLE passage once; measure it.
-    await this.synthesizeFastDraftVoice({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions });
+    const ttsStartedAt = Date.now();
+    const blockVoice = await this.synthesizeFastDraftVoice({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions });
+    if (renderMetrics) {
+      renderMetrics.ttsMs += Date.now() - ttsStartedAt;
+      if (blockVoice?.cacheHit) renderMetrics.ttsCacheHits += 1;
+      else renderMetrics.ttsCacheMisses += 1;
+    }
     const rawVoiceMeta = await ffmpeg.probeAudio(rawVoicePath);
     const rawVoiceSec = Number(rawVoiceMeta.duration || 0);
     const fitRatio = rawVoiceSec / Math.max(0.3, blockTimelineSec);
@@ -6821,32 +7014,43 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     };
 
     sendVariantBatch({ message: `Đã xếp hàng ${variantBatch.length} bản nháp Highlight` });
-    for (const [variantIndex, initialVariant] of variants.entries()) {
+    // Bounded concurrency: FFmpeg/TTS contend for CPU and the Edge endpoint, so
+    // never fan out every variant at once. Default 2, configurable 1-3.
+    // Vertex AutoStory keeps its existing serial resource-managed queue.
+    const concurrency = project.analysisWorkflow === "vertex_auto_story" || settings.autoStoryResourceManaged
+      ? 1
+      : Math.max(1, Math.min(3, Math.round(safeNumber(settings.draftRenderConcurrency, 2)) || 2));
+    const variantPercents = variants.map(() => 0);
+    const overallPercent = () => variantPercents.reduce((sum, value) => sum + value, 0) / variants.length;
+    const batchStartedAt = Date.now();
+    const renderVariantAt = async (variantIndex) => {
+      const initialVariant = variants[variantIndex];
       throwIfCancelled(getCancelToken());
-      project = await this.projectStore.getProject(workspaceRoot, projectId);
-      const currentVariants = Array.isArray(project.analysis?.highlightVariants)
-        ? project.analysis.highlightVariants
+      const latest = await this.projectStore.getProject(workspaceRoot, projectId);
+      const currentVariants = Array.isArray(latest.analysis?.highlightVariants)
+        ? latest.analysis.highlightVariants
         : variants;
       const variant = currentVariants.find((item) => item.id === initialVariant.id) || initialVariant;
-      if (reuseCompleted && await canReuseAutoStoryDraft(project, variant, settings)) {
+      if (reuseCompleted && await canReuseAutoStoryDraft(latest, variant, settings)) {
         try {
           await fs.access(variant.artifacts.fastDraftVideoPath);
           variantBatch[variantIndex].status = "done";
           variantBatch[variantIndex].outputPath = variant.artifacts.fastDraftVideoPath;
-          await onVariantReady?.(project);
-          continue;
+          variantPercents[variantIndex] = 100;
+          await onVariantReady?.(latest);
+          return;
         } catch (_) {}
       }
       variantBatch[variantIndex].status = "processing";
       sendVariantBatch({
         index: variantIndex,
-        percent: (variantIndex / variants.length) * 100,
+        percent: overallPercent(),
         message: `Đang render nháp variant ${variantIndex + 1}/${variants.length}: ${variant.label || variant.id}`
       });
       const projectForVariant = {
-        ...project,
+        ...latest,
         analysis: {
-          ...(project.analysis || {}),
+          ...(latest.analysis || {}),
           activeVariantId: variant.id,
           segments: variant.segments || [],
           scenes: buildHighlightScenes(variant.segments || []),
@@ -6854,10 +7058,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         }
       };
       const onVariantProgress = (payload = {}) => {
-        const variantPercent = Math.max(0, Math.min(100, safeNumber(payload.percent, 0)));
+        variantPercents[variantIndex] = Math.max(0, Math.min(100, safeNumber(payload.percent, 0)));
         sendVariantBatch({
           index: variantIndex,
-          percent: ((variantIndex + (variantPercent / 100)) / variants.length) * 100,
+          percent: overallPercent(),
           message: `Nháp ${variantIndex + 1}/${variants.length} · ${payload.message || "Đang xử lý"}`
         });
       };
@@ -6871,6 +7075,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         });
         variantBatch[variantIndex].status = "done";
         variantBatch[variantIndex].outputPath = result.outputPath || "";
+        variantBatch[variantIndex].renderMetrics = result.renderMetrics || null;
         await onVariantReady?.(await this.projectStore.getProject(workspaceRoot, projectId));
       } catch (error) {
         if (getCancelToken()?.cancelled) throw error;
@@ -6882,14 +7087,37 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           error: error.message
         });
       }
+      variantPercents[variantIndex] = 100;
       sendVariantBatch({
         index: variantIndex,
-        percent: ((variantIndex + 1) / variants.length) * 100,
+        percent: overallPercent(),
         message: variantBatch[variantIndex].status === "done"
           ? `Bản nháp variant ${variantIndex + 1}/${variants.length} đã hoàn tất`
           : `Bản nháp variant ${variantIndex + 1}/${variants.length} bị lỗi; tiếp tục variant kế tiếp`
       });
+    };
+    let nextVariantIndex = 0;
+    const workers = Array.from({ length: Math.min(concurrency, variants.length) }, async () => {
+      while (nextVariantIndex < variants.length) {
+        const variantIndex = nextVariantIndex;
+        nextVariantIndex += 1;
+        await renderVariantAt(variantIndex);
+      }
+    });
+    await Promise.all(workers);
+    const batchWallMs = Date.now() - batchStartedAt;
+    if (project.manualGeminiPackPath) {
+      await require("./pipelineTimingService").mergeVariantTiming(project.manualGeminiPackPath, "render", null, {}, {
+        batchWallMs,
+        concurrency
+      });
     }
+    sendVariantBatch({
+      percent: 100,
+      message: `Render ${variants.length} variant (song song ${concurrency}) xong sau ${(batchWallMs / 1000).toFixed(1)}s · `
+        + `segment cache ${variantBatch.reduce((sum, item) => sum + Number(item.renderMetrics?.segmentCacheHits || 0), 0)} HIT / `
+        + `${variantBatch.reduce((sum, item) => sum + Number(item.renderMetrics?.segmentCacheMisses || 0), 0)} MISS`
+    });
 
     project = await this.projectStore.getProject(workspaceRoot, projectId);
     const finalVariants = Array.isArray(project.analysis?.highlightVariants)
@@ -8988,6 +9216,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
 module.exports = DubbingService;
 module.exports.validateManualGeminiScript = validateManualGeminiScript;
+module.exports.stripGeminiDerivedOutputTimeline = stripGeminiDerivedOutputTimeline;
 module.exports.coalesceContiguousOriginalAudioSegments = coalesceContiguousOriginalAudioSegments;
 module.exports.shouldUseStorytimeVoiceBatch = shouldUseStorytimeVoiceBatch;
 module.exports.buildExportFilePath = buildExportFilePath;
@@ -9021,6 +9250,7 @@ module.exports.getSegmentVoiceRenderOptions = getSegmentVoiceRenderOptions;
 module.exports.getEdgeRateWithDelivery = getEdgeRateWithDelivery;
 module.exports.splitTextAfterPhrase = splitTextAfterPhrase;
 module.exports.getVoiceCacheInfo = getVoiceCacheInfo;
+module.exports.resolveFastDraftVoicePlan = resolveFastDraftVoicePlan;
 module.exports.splitSubtitlePhrases = splitSubtitlePhrases;
 module.exports.buildTimedSubtitlePhrases = buildTimedSubtitlePhrases;
 module.exports.buildSrt = buildSrt;

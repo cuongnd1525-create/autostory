@@ -6,6 +6,21 @@ const { spawn } = require("child_process");
 
 const { buildCliEnv } = require("./cliEnv");
 const { inspectGeminiJsonFiles } = require("./geminiJsonArtifactService");
+const {
+  CANDIDATE_FIELDS,
+  SOURCE_UNDERSTANDING_SCHEMA_VERSION,
+  computeSourceUnderstandingKey,
+  validateSourceUnderstanding,
+  loadSourceUnderstanding,
+  saveSourceUnderstanding
+} = require("./sourceUnderstandingService");
+const { resetPipelineTiming } = require("./pipelineTimingService");
+
+// Lazy: manualGeminiPackService is heavy and only needed for legacy packages
+// whose package-info.json predates cache.sourceFingerprint.
+function buildSourceFingerprint(sourceVideoPath) {
+  return require("./manualGeminiPackService").buildSourceFingerprint(sourceVideoPath);
+}
 
 const RESULT_DIR_NAME = "01-ANTIGRAVITY-RESULT";
 const REQUIRED_SCRIPT_IDS = [1, 3, 4, 2, 5];
@@ -437,7 +452,63 @@ async function auditTranscriptForViewedProxies(conversationId, expectedProxyList
   return validateVideoCoverage(expectedProxyList, viewedProxySet);
 }
 
-function buildRetryPrompt({ missingProxies, scriptIds = [1, 3, 4] }) {
+// Windows CreateProcess limits the whole command line to 32,767 characters and
+// agy receives the prompt through --print=<prompt>. Large inputs (source
+// understanding, editorial prompt, series plan) are therefore passed as files
+// that the model reads, never inlined into the command line.
+const MAX_PRINT_PROMPT_CHARS = 24000;
+
+const SERIES_PROFILES = {
+  viral_tiktok_crime_part1: {
+    profile: "viral_tiktok_crime_part1",
+    durationMinSec: 110,
+    durationMaxSec: 125,
+    parts: [
+      {
+        scriptId: 1,
+        partNumber: 1,
+        partBadge: "PART 1",
+        name: "The Confrontation",
+        scope: "Cold-open hook, dispatch/arrival context, scene entry, escalation and the first confrontation. Ends on an unresolved, verified open question (cliffhanger) that makes the viewer need Part 2.",
+        ending: "cliffhanger"
+      },
+      {
+        scriptId: 3,
+        partNumber: 2,
+        partBadge: "PART 2",
+        name: "The Interrogation",
+        scope: "Questioning, explanations, lies, contradictions and evidence that surface after the confrontation. Ends on the strongest verified boiling-point turn BEFORE the arrest/verdict (cliffhanger).",
+        ending: "cliffhanger"
+      },
+      {
+        scriptId: 4,
+        partNumber: 3,
+        partBadge: "PART 3",
+        name: "The Verdict & Arrest",
+        scope: "The officers' decision, arrest/charges and the verified consequence. Delivers the payoff to the central viewer question. Only this Part may reveal the outcome.",
+        ending: "payoff"
+      }
+    ]
+  }
+};
+
+function detectSeriesProfile(promptText = "") {
+  const match = String(promptText).match(/prompt_profile:\s*([a-z0-9_]+)/i);
+  const profile = match ? match[1].toLowerCase() : "";
+  return SERIES_PROFILES[profile] || null;
+}
+
+function assertPrintPromptSize(prompt, label) {
+  if (String(prompt).length > MAX_PRINT_PROMPT_CHARS) {
+    throw new Error(
+      `${label} prompt dài ${String(prompt).length} ký tự, vượt giới hạn an toàn ${MAX_PRINT_PROMPT_CHARS} của dòng lệnh agy trên Windows. `
+      + "Dữ liệu lớn phải được truyền bằng file."
+    );
+  }
+  return prompt;
+}
+
+function buildRetryPrompt({ missingProxies, outputKind = "source_understanding" }) {
   const missingList = missingProxies.map((proxy, idx) => `  ${idx + 1}. view_file("${proxy.absolutePath}")`).join("\n");
   return [
     "================================================================================",
@@ -448,120 +519,666 @@ function buildRetryPrompt({ missingProxies, scriptIds = [1, 3, 4] }) {
     missingList,
     "",
     "Do NOT use Python, OpenCV, or FFmpeg to extract frames. Call `view_file` directly on each .mp4 file.",
-    `After calling \`view_file\` on all missing chunks, return the final JSON envelope containing artifacts for scripts: ${scriptIds.join(", ")}.`,
+    outputKind === "source_understanding"
+      ? "After calling `view_file` on all missing chunks, return the COMPLETE source-understanding envelope again (all scenes from the first to the last second of the source), exactly as specified in the original instructions."
+      : "After calling `view_file` on all missing chunks, return the final JSON envelope requested by the original instructions.",
     "================================================================================"
   ].join("\n");
 }
 
-function buildSourceUnderstandingPrompt({ pass1Dir, promptPath, expectedProxyList = [], packageInfo = null }) {
-  const promptLines = [
-    "You are executing Phase A (Source Understanding) of RecapTool Studio's manual Gemini draft-review workflow.",
-    "Work in READ-ONLY analysis mode. Do not edit, rename, delete, or create anything inside the Stage 1 input folder.",
-    `STAGE_1_INPUT_FOLDER: ${pass1Dir}`,
-    `EDITORIAL_PROMPT_FILE: ${promptPath}`,
-    ""
-  ];
+const SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE = {
+  artifactType: "source_understanding",
+  schemaVersion: 2,
+  videoDurationSec: 0,
+  caseSummary: "",
+  centralConflict: "",
+  centralViewerQuestion: "",
+  characters: [{ id: "c1", nameOrRole: "", description: "" }],
+  storyTimeline: [{
+    eventId: "e01",
+    sourceStartSec: 0,
+    sourceEndSec: 0,
+    sceneIds: ["scene_0001"],
+    eventType: "setup|arrival|confrontation|escalation|interrogation|lie|evidence|climax|arrest|consequence|aftermath|source_narration",
+    summary: "",
+    visualFacts: [""],
+    dialogueFacts: [{ sourceSec: 0, speaker: "", quote: "" }],
+    sourceNarratorPresent: false,
+    storyImportance: 0
+  }],
+  hookCandidates: [{ eventId: "e01", sourceStartSec: 0, sourceEndSec: 0, why: "" }],
+  confrontationCandidates: [{ eventId: "", sourceStartSec: 0, sourceEndSec: 0, why: "" }],
+  interrogationCandidates: [{ eventId: "", sourceStartSec: 0, sourceEndSec: 0, why: "" }],
+  climaxCandidates: [{ eventId: "", sourceStartSec: 0, sourceEndSec: 0, why: "" }],
+  resolutionCandidates: [{ eventId: "", sourceStartSec: 0, sourceEndSec: 0, why: "", verified: true }]
+};
 
-  if (expectedProxyList.length > 0) {
-    promptLines.push(
-      "================================================================================",
-      "CRITICAL MANDATORY REQUIREMENT: 100% DIRECT MULTIMODAL VIDEO INSPECTION",
-      "================================================================================",
-      `You MUST call the \`view_file\` tool directly on ALL ${expectedProxyList.length} proxy video chunk(s) listed below in chronological order:`,
-      ...expectedProxyList.map((proxy, idx) => {
-        const timeRange = proxy.sourceStartSec != null && proxy.sourceEndSec != null
-          ? ` (Source: ${proxy.sourceStartSec}s -> ${proxy.sourceEndSec}s, duration: ${Math.round((proxy.durationSec || (proxy.sourceEndSec - proxy.sourceStartSec)) * 10) / 10}s)`
-          : "";
-        return `  ${idx + 1}. view_file("${proxy.absolutePath}")${timeRange}`;
-      }),
-      "",
-      "STRICT RULES FOR VIDEO INSPECTION:",
-      "1. You must call `view_file` on EVERY SINGLE proxy video listed above. Coverage must be 100%.",
-      "2. PROHIBITED: Do NOT extract frames using Python, OpenCV, or FFmpeg to bypass video viewing.",
-      "3. PROHIBITED: Do NOT rely solely on transcript or manifests without viewing the proxy chunks.",
-      "4. The host application strictly audits your runtime tool calls and logs. If even 1 chunk is missing from your `view_file` calls, your execution will be REJECTED with a fatal error.",
-      "================================================================================",
-      ""
-    );
+function parseSrtForContext(text = "") {
+  // Line-based parser: some SRT exports put a blank line between the timing
+  // line and the cue text, so blank-line block splitting would drop text.
+  const lines = String(text || "").replace(/^\uFEFF/, "").replace(/\r/g, "").split("\n");
+  const toSec = (value) => {
+    const match = String(value).trim().match(/(\d+):(\d+):(\d+)[,.](\d+)/);
+    return match ? Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4]}`) : NaN;
+  };
+  const nextNonEmpty = (index) => {
+    for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      if (lines[cursor].trim()) return lines[cursor];
+    }
+    return "";
+  };
+  const cues = [];
+  let current = null;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    if (line.includes("-->")) {
+      const [startRaw, endRaw] = line.split("-->");
+      current = { start: toSec(startRaw), end: toSec(endRaw), text: "" };
+      if (Number.isFinite(current.start) && Number.isFinite(current.end)) cues.push(current);
+      else current = null;
+      continue;
+    }
+    if (/^\d+$/.test(line) && nextNonEmpty(index).includes("-->")) continue; // cue index
+    if (current) current.text = `${current.text} ${line}`.replace(/\s+/g, " ").trim();
   }
-
-  const contextFiles = [];
-  if (promptPath && fsSync.existsSync(promptPath)) {
-    contextFiles.push({ label: "Editorial Prompt Instructions", path: promptPath });
+  // Drop empty cues and exact consecutive duplicates (YouTube-style rolling
+  // captions repeat the previous line in a ~10 ms cue); no words are lost.
+  const result = [];
+  for (const cue of cues) {
+    if (!cue.text) continue;
+    const previous = result[result.length - 1];
+    if (previous && previous.text === cue.text && cue.start - previous.end <= 0.5) {
+      previous.end = Math.max(previous.end, cue.end);
+      continue;
+    }
+    result.push(cue);
   }
-  const manifestCandidate = packageInfo?.proxyChunksManifestPath || path.join(pass1Dir, "proxy-chunks-manifest.json");
-  if (fsSync.existsSync(manifestCandidate)) {
-    contextFiles.push({ label: "Proxy Chunks Manifest", path: manifestCandidate });
-  }
-  const sceneManifestCandidate = packageInfo?.manifestPath || path.join(pass1Dir, "scene-manifest.json");
-  if (fsSync.existsSync(sceneManifestCandidate)) {
-    contextFiles.push({ label: "Scene Manifest", path: sceneManifestCandidate });
-  }
-  const transcriptCandidate = packageInfo?.transcriptPath || path.join(pass1Dir, "source-transcript.srt");
-  if (fsSync.existsSync(transcriptCandidate)) {
-    contextFiles.push({ label: "Source Transcript (Whisper)", path: transcriptCandidate });
-  }
-  const actionCandidate = packageInfo?.actionCandidatesPath || path.join(pass1Dir, "action-candidates.json");
-  if (fsSync.existsSync(actionCandidate)) {
-    contextFiles.push({ label: "Action Candidates", path: actionCandidate });
-  }
-
-  promptLines.push(
-    "================================================================================",
-    "MANDATORY CONTEXT AND METADATA INSPECTION",
-    "================================================================================",
-    "The following files are available as reference in STAGE_1_INPUT_FOLDER:",
-    ...contextFiles.map((item, idx) => `  ${idx + 1}. ${item.path} (${item.label})`),
-    "STRICT RULE: DO NOT use the `view_file` tool to page through these long text/JSON files unless strictly necessary. Rely on your built-in reading capabilities.",
-    "================================================================================",
-    "",
-    "CRITICAL EXECUTION CONSTRAINTS:",
-    "1. DO NOT run directory listing or shell commands.",
-    "2. IMMEDIATELY after inspecting the proxy video chunks, synthesize the complete story understanding.",
-    "3. You must output EXACTLY ONE file: source-understanding.json.",
-    "   Provide the source understanding following this schema:",
-    "   { videoDurationSec: number, caseSummary: string, scenes: [ { sceneId: string, visualSummary: string, ... } ] }",
-    "",
-    "TRANSPORT OVERRIDE FOR THIS CLI RUN ONLY:",
-    "Return one structured envelope matching the host-provided JSON schema:",
-    JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: { videoDurationSec: 0, caseSummary: "", scenes: [] } }], notes: "" }),
-    "The script object must contain the source understanding data."
-  );
-
-  return promptLines.join("\n");
+  return result;
 }
 
-function buildScriptGenerationPrompt({ promptPath, sourceUnderstandingContent, resultDir, scriptIds = [1, 3, 4] }) {
+/**
+ * Deterministic, compact text context for Phase A. It replaces opening
+ * scene-manifest.json + source-transcript.srt with view_file: the AGY
+ * view_file tool pages long text files (the 3,026-line SRT took 5 calls,
+ * each a full model turn over ~100K tokens of video context). Every
+ * transcript word is kept; only SRT numbering/blank lines are removed and
+ * consecutive cues are merged into lines of at most ~280 characters.
+ */
+function buildPhaseAContext({ sceneManifest = null, transcriptText = "", expectedProxyList = [], videoDurationSec = 0 }) {
+  const lines = [];
+  lines.push(`SOURCE DURATION: ${Number(videoDurationSec || 0).toFixed(3)}s. All times below are absolute SOURCE seconds (the same timestamps burned into the proxy frames).`);
+  lines.push(`PROXY CHUNKS: ${expectedProxyList.map((proxy) => `${proxy.filename} ${Number(proxy.sourceStartSec ?? 0).toFixed(2)}-${Number(proxy.sourceEndSec ?? videoDurationSec).toFixed(2)}s`).join(" | ")}`);
+  const scenes = Array.isArray(sceneManifest?.scenes) ? sceneManifest.scenes : [];
+  lines.push(`SCENE INDEX (${scenes.length} detected scenes; sceneId start-end):`);
+  for (let index = 0; index < scenes.length; index += 6) {
+    lines.push(scenes.slice(index, index + 6)
+      .map((scene) => `${scene.sceneId} ${Number(scene.startSec).toFixed(1)}-${Number(scene.endSec).toFixed(1)}`)
+      .join(" | "));
+  }
+  const cues = parseSrtForContext(transcriptText);
+  lines.push(cues.length
+    ? `TRANSCRIPT (Whisper/SRT, ${cues.length} cues merged; complete text):`
+    : "TRANSCRIPT: not available. Use only audible dialogue from the proxy videos.");
+  let current = null;
+  const flush = () => {
+    if (current) lines.push(`[${current.start.toFixed(1)}-${current.end.toFixed(1)}] ${current.text}`);
+    current = null;
+  };
+  for (const cue of cues) {
+    if (current && current.text.length + cue.text.length + 1 <= 280 && cue.start - current.end <= 2.5) {
+      current.end = cue.end;
+      current.text = `${current.text} ${cue.text}`;
+    } else {
+      flush();
+      current = { ...cue };
+    }
+  }
+  flush();
+  const text = `${lines.join("\n")}\n`;
+  return {
+    text,
+    lineCount: lines.length,
+    cueCount: cues.length,
+    transcriptCharacters: cues.reduce((sum, cue) => sum + cue.text.length, 0)
+  };
+}
+
+function buildSourceUnderstandingPrompt({ expectedProxyList = [], contextPath = "", contextLineCount = 0, videoDurationSec = 0 }) {
+  const viewCalls = [
+    ...expectedProxyList.map((proxy) => `view_file("${proxy.absolutePath}")`),
+    `view_file("${contextPath}", StartLine=1, EndLine=${Math.max(1, contextLineCount)})`
+  ];
+  return [
+    "You are executing Phase A (Source Understanding) of RecapTool Studio's manual Gemini draft-review workflow.",
+    "Goal: a COMPACT SEMANTIC MEMORY of the source story. It is not a scene database (the host already has the scene index), not an edit script, not narration.",
+    "",
+    "STEP 1 - IN YOUR FIRST RESPONSE, ISSUE ALL OF THESE TOOL CALLS AT ONCE (parallel, one response):",
+    ...viewCalls.map((call, index) => `  ${index + 1}. ${call}`),
+    `The ${expectedProxyList.length} .mp4 proxies (source ${Number(videoDurationSec || 0).toFixed(1)}s total) MUST be watched with view_file: coverage is audited and a missing chunk is a fatal rejection. Never extract frames with Python/OpenCV/FFmpeg.`,
+    "The context file already contains the complete transcript and the scene index. Open it exactly once with the line range above.",
+    "Burned-in SOURCE timestamps on the frames are absolute source time; local player time inside a chunk is not.",
+    "",
+    "STEP 2 - IN YOUR SECOND RESPONSE, RETURN THE JSON. No further tool calls:",
+    "- Do NOT call view_file again. Do NOT open scene-manifest.json, source-transcript.srt or any other file. Do NOT list directories or run commands.",
+    "- storyTimeline: 10-30 meaningful story events in chronological order (fewer only for a very simple source). Merge consecutive scenes that carry the same story beat. Never write one event per detected scene.",
+    "- Each event: exact SOURCE range, the sceneIds it spans, eventType, a one-sentence summary, up to 3 short visualFacts, up to 3 dialogueFacts (exact quote + SOURCE second + speaker) and storyImportance 0-100. Mark sourceNarratorPresent when a third-party narrator/TV host speaks.",
+    "- Candidate lists (hook/confrontation/interrogation/climax/resolution): at most 5 each, referencing eventIds with exact SOURCE ranges. resolutionCandidates covers arrest/charges/verdict/consequence; set verified=false when the outcome is only implied.",
+    "- Every fact must be visible in the frames or audible/present in the transcript. Never invent names, charges, outcomes or motives.",
+    "- Keep the whole JSON under ~6,000 words.",
+    "",
+    "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
+    JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE }], notes: "" })
+  ].join("\n");
+}
+
+// Same-conversation serialization continuation (P0-4 Case B). Exact contract:
+// no tool calls, no re-analysis, only serialize what is already in context.
+function buildSourceUnderstandingSerializationPrompt({ errors = [] } = {}) {
+  return [
+    "You have already inspected 100% of the required source proxy videos.",
+    "",
+    "DO NOT call view_file.",
+    "DO NOT read the transcript again.",
+    "DO NOT read any manifests again.",
+    "DO NOT perform additional analysis.",
+    "",
+    "Immediately serialize the source understanding already present in your context into the required JSON schema and return it now.",
+    ...(errors.length ? ["", "The host rejected the previous output for:", ...errors.slice(0, 8).map((error) => `- ${error}`)] : []),
+    "",
+    "Return exactly one JSON object, no prose:",
+    JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: { artifactType: "source_understanding", schemaVersion: 2, storyTimeline: [] } }], notes: "" })
+  ].join("\n");
+}
+
+// Backward-compatible name used by older callers/tests.
+function buildSourceUnderstandingRepairPrompt({ errors = [] } = {}) {
+  return buildSourceUnderstandingSerializationPrompt({ errors });
+}
+
+/**
+ * Best-effort recovery of a JSON object whose serialization was cut off
+ * (print timeout / stream interrupted). Text-only and deterministic: it
+ * closes the open strings/arrays/objects of the LAST "artifactType":
+ * "source_understanding" object found in the agent's response text. The
+ * result is accepted only if it passes the normal schema validation.
+ */
+function recoverTruncatedUnderstanding(stdout = "") {
+  const texts = [];
+  for (const line of String(stdout || "").split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      const result = event.result;
+      const candidates = [result?.response, result?.text, typeof result === "string" ? result : "", event.step_update?.content, event.content];
+      for (const candidate of candidates) {
+        if (typeof candidate === "string" && candidate.includes("source_understanding")) texts.push(candidate);
+      }
+    } catch (_error) { /* not an event */ }
+  }
+  for (const text of texts.reverse()) {
+    const marker = text.lastIndexOf('"artifactType"');
+    if (marker < 0) continue;
+    const start = text.lastIndexOf("{", marker);
+    if (start < 0) continue;
+    const fragment = text.slice(start).replace(/```\s*$/g, "");
+    const stack = [];
+    let inString = false;
+    let escaped = false;
+    let lastSafe = -1;
+    for (let index = 0; index < fragment.length; index += 1) {
+      const char = fragment[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === "\"") inString = false;
+        continue;
+      }
+      if (char === "\"") inString = true;
+      else if (char === "{" || char === "[") stack.push(char);
+      else if (char === "}" || char === "]") {
+        stack.pop();
+        if (!stack.length) return parseJsonCandidate(fragment.slice(0, index + 1));
+      }
+      if (!inString && (char === "," || char === "}" || char === "]")) lastSafe = index;
+    }
+    if (lastSafe < 0) continue;
+    // Cut back to the last complete element and close every open container.
+    let body = fragment.slice(0, lastSafe + 1).replace(/,\s*$/, "");
+    const reopened = [];
+    let quote = false;
+    let esc = false;
+    for (const char of body) {
+      if (quote) {
+        if (esc) esc = false;
+        else if (char === "\\") esc = true;
+        else if (char === "\"") quote = false;
+        continue;
+      }
+      if (char === "\"") quote = true;
+      else if (char === "{" || char === "[") reopened.push(char);
+      else if (char === "}" || char === "]") reopened.pop();
+    }
+    body += reopened.reverse().map((char) => (char === "{" ? "}" : "]")).join("");
+    const parsed = parseJsonCandidate(body);
+    if (parsed && typeof parsed === "object") return parsed;
+  }
+  return null;
+}
+
+/**
+ * A truncated serialization can end inside its last list item. Remove only
+ * incomplete items (no valid source range) and default missing candidate
+ * lists to []. Nothing is invented; the result must still pass validation
+ * (including the truncation guard on storyTimeline coverage).
+ */
+function sanitizeRecoveredUnderstanding(data) {
+  if (!data || typeof data !== "object") return data;
+  const validRange = (item) => {
+    const start = Number(item?.sourceStartSec);
+    const end = Number(item?.sourceEndSec);
+    return Number.isFinite(start) && Number.isFinite(end) && end > start;
+  };
+  const recovery = { truncatedSerialization: true, droppedIncompleteItems: 0, defaultedFields: [] };
+  const result = { ...data };
+  for (const field of ["storyTimeline", ...CANDIDATE_FIELDS]) {
+    if (!Array.isArray(result[field])) {
+      if (field !== "storyTimeline") {
+        result[field] = [];
+        recovery.defaultedFields.push(field);
+      }
+      continue;
+    }
+    const kept = result[field].filter((item) => validRange(item) && (field !== "storyTimeline" || (typeof item.summary === "string" && item.summary.trim())));
+    recovery.droppedIncompleteItems += result[field].length - kept.length;
+    result[field] = kept;
+  }
+  if (!Array.isArray(result.characters)) {
+    result.characters = [];
+    recovery.defaultedFields.push("characters");
+  }
+  result.hostRecovery = recovery;
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// AGY failure classification. Only STRUCTURED error information is used:
+// the AGY_ERROR line on stderr, the final "result" event's error/status, the
+// tail of stderr, and kinds set by runCli itself (timeouts, cancel, forbidden
+// tool). Never the whole stdout stream: a 44-minute stream contains numbers
+// such as "duration_seconds":503.9 that previously matched /503/ and turned a
+// print timeout into a "server busy" full Phase A restart.
+// ---------------------------------------------------------------------------
+function extractAgyErrorInfo(error = {}) {
+  const parts = [];
+  let status = "";
+  let code = null;
+  let retryable = null;
+  for (const line of String(error.stderr || "").split(/\r?\n/)) {
+    const match = line.match(/AGY_ERROR:\s*(\{.*\})\s*$/);
+    if (!match) continue;
+    try {
+      const info = JSON.parse(match[1]);
+      status = info.status || status;
+      code = Number(info.error_code) || code;
+      retryable = typeof info.retryable === "boolean" ? info.retryable : retryable;
+      parts.push(info.short_error || "");
+    } catch (_error) { /* malformed */ }
+  }
+  for (const line of String(error.stdout || "").split(/\r?\n/).reverse()) {
+    const trimmed = line.trim();
+    if (!trimmed.includes("\"event\":\"result\"") && !trimmed.includes("\"event\": \"result\"")) continue;
+    try {
+      const event = JSON.parse(trimmed);
+      if (event.result?.status === "ERROR" || event.result?.error) parts.push(String(event.result.error || ""));
+    } catch (_error) { /* ignore */ }
+    break;
+  }
+  const stderrTail = String(error.stderr || "").split(/\r?\n/).filter(Boolean).slice(-6).join("\n");
+  parts.push(stderrTail);
+  return { status, code, retryable, text: parts.filter(Boolean).join("\n") };
+}
+
+function classifyAgyFailure(error = {}) {
+  if (error.kind) return error.kind;
+  const info = extractAgyErrorInfo(error);
+  const text = `${info.status} ${info.code || ""} ${info.text}`;
+  if (info.code === 401 || /\bUNAUTHENTICATED\b|\b401\b|not logged into Antigravity|invalid authentication credentials/i.test(text)) return "auth";
+  if (info.code === 503 || info.code === 429 || /\bUNAVAILABLE\b|\bRESOURCE_EXHAUSTED\b|No capacity available|high traffic|\(code 503\)|\(code 429\)/i.test(text)) return "capacity";
+  if (/\[agy\] print timeout after/i.test(text)) return "print_timeout";
+  return "cli_error";
+}
+
+function describeAgyFailure(kind, error) {
+  switch (kind) {
+    case "auth":
+      return "Antigravity từ chối xác thực (401 UNAUTHENTICATED). Token đăng nhập đã hết hạn hoặc không hợp lệ: mở Antigravity để đăng nhập/làm mới rồi chạy lại.";
+    case "capacity":
+      return "Máy chủ AI tạm hết dung lượng (503/UNAVAILABLE).";
+    case "print_timeout":
+    case "hard_timeout":
+      return `AGY hết thời gian chờ của giai đoạn (${error?.message || "print timeout"}).`;
+    case "inactivity_timeout":
+      return `AGY không phản hồi (${error?.message || "inactivity"}).`;
+    case "forbidden_tool":
+      return `AGY gọi công cụ bị cấm trong bước này (${error?.message || ""}); tiến trình đã bị dừng.`;
+    case "cancelled":
+      return "Đã dừng theo yêu cầu.";
+    default:
+      return error?.message || "AGY lỗi.";
+  }
+}
+
+/**
+ * Phase-specific timeouts. Phase A now only watches the proxies once, reads
+ * one context file and serializes a compact memory (two model turns), so it
+ * must not reuse the legacy "video analysis + script generation" formula
+ * (proxyChunkCount*480s + 1200s = 44 min for three chunks).
+ */
+function resolvePhaseTimeoutMs(phase, settings = {}, { sourceDurationSec = 0 } = {}) {
+  const configured = (key) => {
+    const value = Number(settings[key]);
+    return Number.isFinite(value) && value > 0 ? Math.max(60000, value) : 0;
+  };
+  if (phase === "phase_a") {
+    const minutes = Math.max(1, Number(sourceDurationSec || 0) / 60);
+    return configured("antigravityPhaseATimeoutMs") || Math.round(Math.min(1200000, Math.max(420000, 300000 + minutes * 20000)));
+  }
+  if (phase === "phase_a_serialization") return configured("antigravitySerializationTimeoutMs") || 240000;
+  if (phase === "series_plan") return configured("antigravitySeriesPlanTimeoutMs") || 360000;
+  if (phase === "phase_b") return configured("antigravityPhaseBTimeoutMs") || 900000;
+  return resolveAntigravityTimeoutMs(settings.antigravityTimeoutMs);
+}
+
+const KEYRING_EXPIRY_PATTERN = /keyringAuth: loaded token, expiry=(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.\d+)? ([+-]\d{2})(\d{2})\S* \S+ expired=(true|false)/;
+
+function parseKeyringExpiry(logText = "") {
+  let found = null;
+  for (const line of String(logText || "").split(/\r?\n/)) {
+    const match = line.match(KEYRING_EXPIRY_PATTERN);
+    if (match) found = match;
+  }
+  if (!found) return null;
+  const expiresAt = new Date(`${found[1]}T${found[2]}${found[3]}:${found[4]}`);
+  if (Number.isNaN(expiresAt.getTime())) return null;
+  return { expiresAt, expiredFlag: found[5] === "true" };
+}
+
+/** Reads the token expiry the AGY CLI logged after `startedAtMs` (warmup). */
+async function readAntigravityTokenExpiry({ startedAtMs = 0, logDir = path.join(os.homedir(), ".gemini", "antigravity-cli", "log") } = {}) {
+  try {
+    const entries = await fs.readdir(logDir);
+    const candidates = [];
+    for (const name of entries.filter((item) => /^cli-.*\.log$/.test(item))) {
+      const stat = await fs.stat(path.join(logDir, name)).catch(() => null);
+      if (stat && stat.mtimeMs >= startedAtMs - 2000) candidates.push({ name, mtimeMs: stat.mtimeMs });
+    }
+    candidates.sort((left, right) => right.mtimeMs - left.mtimeMs);
+    for (const candidate of candidates) {
+      const parsed = parseKeyringExpiry(await fs.readFile(path.join(logDir, candidate.name), "utf8"));
+      if (parsed) return { ...parsed, logFile: candidate.name };
+    }
+  } catch (_error) { /* no log dir */ }
+  return null;
+}
+
+function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
+  return [
+    "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
+    "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
+    `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
+    ...(hookContractPath ? [`HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`] : []),
+    ...(sceneManifestPath ? [`SCENE_MANIFEST (legal source boundaries): ${sceneManifestPath}`] : []),
+    ...(transcriptPath ? [`SOURCE_TRANSCRIPT (exact spoken lines): ${transcriptPath}`] : []),
+    "",
+    `Plan ONE continuous true-crime story told as a ${series.parts.length}-part series (profile ${series.profile}, every Part ${series.durationMinSec}-${series.durationMaxSec}s). The Parts are chapters of the SAME story with ONE central viewer question, not ${series.parts.length} separate stories.`,
+    ...series.parts.map((part) => `- Script ${part.scriptId} = ${part.partBadge} "${part.name}": ${part.scope}`),
+    "",
+    "RULES:",
+    "- Lock the central viewer question and the hook promise. Part 1 opens on the hook; Parts 2-3 pay it off progressively.",
+    "- sceneAllocation: give each Part its own chronological SOURCE ranges. A range may appear in two Parts only if listed in sharedRanges with a reason (e.g. a 'previously on' recap of at most 8s). No other duplicates.",
+    "- Spoiler boundaries: Part 1 and Part 2 must not include or narrate the arrest, charges, verdict or final consequence. Put those ranges in Part 3 payoffRanges.",
+    "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
+    "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed).",
+    "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
+    `- All ranges must lie within 0-${Number(videoDurationSec || 0).toFixed(3)}s.`,
+    "",
+    "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
+    JSON.stringify({
+      artifacts: [{
+        filename: "series-plan.json",
+        script: {
+          artifactType: "series_plan",
+          schemaVersion: 1,
+          profile: series.profile,
+          centralViewerQuestion: "",
+          hookPromise: "",
+          parts: series.parts.map((part) => ({
+            scriptId: part.scriptId,
+            partNumber: part.partNumber,
+            partBadge: part.partBadge,
+            scope: "",
+            hookRange: { sourceStartSec: 0, sourceEndSec: 0 },
+            sceneAllocation: [{ sourceStartSec: 0, sourceEndSec: 0, purpose: "" }],
+            mustNotReveal: [""],
+            ...(part.ending === "payoff"
+              ? { payoff: "", payoffRanges: [{ sourceStartSec: 0, sourceEndSec: 0 }] }
+              : { cliffhanger: "", cliffhangerRange: { sourceStartSec: 0, sourceEndSec: 0 } })
+          })),
+          sharedRanges: [],
+          duplicatePrevention: ""
+        }
+      }],
+      notes: ""
+    })
+  ].join("\n");
+}
+
+function buildScriptGenerationPrompt({
+  promptPath,
+  understandingPath,
+  seriesPlanPath = "",
+  sceneManifestPath = "",
+  transcriptPath = "",
+  hookContractPath = "",
+  actionCandidatesPath = "",
+  resultDir,
+  scriptIds = [1, 3, 4],
+  coverageSummary = ""
+}) {
   return [
     "You are executing Phase B (Script Generation) of RecapTool Studio's manual Gemini draft-review workflow.",
-    "Work in READ-ONLY analysis mode.",
-    `EDITORIAL_PROMPT_FILE: ${promptPath}`,
+    "Work in READ-ONLY analysis mode. Do not run shell commands or list directories.",
+    "",
+    "INPUT FILES (open each with view_file; they are text/JSON):",
+    `1. EDITORIAL_PROMPT_FILE (all editorial, timing, narrator, hook, schema and safety rules): ${promptPath}`,
+    `2. SOURCE_UNDERSTANDING (host-verified multimodal understanding of the complete source video): ${understandingPath}`,
+    ...(seriesPlanPath ? [`3. LOCKED_SERIES_PLAN (binding; already validated by the host): ${seriesPlanPath}`] : []),
+    ...(sceneManifestPath ? [`- scene-manifest.json: ${sceneManifestPath}`] : []),
+    ...(transcriptPath ? [`- source-transcript.srt: ${transcriptPath}`] : []),
+    ...(hookContractPath ? [`- hook-contract.json: ${hookContractPath}`] : []),
+    ...(actionCandidatesPath ? [`- action-candidates.json: ${actionCandidatesPath}`] : []),
     `RESULT_FOLDER_FOR_THE_HOST_APP: ${resultDir}`,
     "",
     "================================================================================",
-    "SOURCE UNDERSTANDING",
+    "HOST-VERIFIED INPUT ACCESS OVERRIDE (SUPERSEDES 'STEP 0 - VERIFIED INPUT ACCESS GATE' FOR THIS PHASE ONLY)",
     "================================================================================",
-    "The following is the complete source understanding of the video:",
-    "```json",
-    sourceUnderstandingContent,
-    "```",
+    `- The proxy video chunks were inspected 100% through multimodal view_file in Phase A and audited by the host (${coverageSummary || "complete coverage"}).`,
+    "- SOURCE_UNDERSTANDING is the verified video input for this phase. Do NOT call view_file (or any other tool) on any .mp4 file. Do NOT return gemini_input_access_failure because the proxies are not re-opened.",
+    "- In inputAccessAudit use accessMode=\"structured_locked\" and list source-understanding.json with role \"evidence\" plus the text files you opened.",
+    "- If a fact cannot be verified from SOURCE_UNDERSTANDING or the transcript, leave it out. Never guess.",
     "",
-    "================================================================================",
-    "PROHIBITED TOOLS",
-    "================================================================================",
-    "EXPLICITLY FORBIDDEN: Do NOT use `view_file` in this Phase.",
-    "You already have the full source understanding provided to you.",
+    ...(seriesPlanPath ? [
+      "SERIES LOCK (HIGHEST EDITORIAL PRIORITY):",
+      "- Each Script is the Part assigned to it in LOCKED_SERIES_PLAN. Use only that Part's sceneAllocation/hookRange (plus declared sharedRanges).",
+      "- Respect mustNotReveal and spoiler boundaries; Part 1/2 end on their planned cliffhanger, Part 3 delivers the planned payoff.",
+      "- Ignore any '3-VARIANT NARRATIVE DIFFERENTIATION MATRIX' or 'DUPLICATE HOOK DIVERGENCE' text: the Parts are chapters of ONE story.",
+      ""
+    ] : []),
+    "TIMELINE RULE: return only sceneId, sourceStartSec, sourceEndSec, audio_mode and voiceover_text (plus the editorial metadata the prompt asks for). Do NOT return startSec/endSec/outputStartSec/outputEndSec/duration; the local compiler derives the output timeline and playback speed.",
     "",
-    "CRITICAL EXECUTION CONSTRAINTS:",
-    "1. Follow every editorial, timing, narrator, hook, schema, and safety rule from the editorial prompt.",
-    `2. Generate exactly these requested independent scripts in order: ${scriptIds.join(", ")}. Each script must exactly follow the root schema in the editorial prompt.`,
-    "3. Also include series-plan.json as requested.",
+    `Generate exactly these scripts in order: ${scriptIds.join(", ")}. Each must follow the root schema of the editorial prompt.`,
+    "This is a one-turn headless execution: do not stop at a plan, do not ask for approval.",
     "",
-    "TRANSPORT OVERRIDE FOR THIS CLI RUN ONLY:",
-    "Return one structured envelope matching the host-provided JSON schema:",
-    JSON.stringify({ artifacts: [{ filename: "series-plan.json", script: {} }, ...scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id } }))], notes: "" }),
-    "The script objects themselves must exactly follow the schemas."
+    "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
+    JSON.stringify({ artifacts: scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id } })), notes: "" })
   ].join("\n");
+}
+
+function overlapSec(a, b) {
+  return Math.max(0, Math.min(a.end, b.end) - Math.max(a.start, b.start));
+}
+
+function toRange(item) {
+  const start = Number(item?.sourceStartSec ?? item?.startSec);
+  const end = Number(item?.sourceEndSec ?? item?.endSec);
+  return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
+}
+
+function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
+  const errors = [];
+  const warnings = [];
+  if (!plan || typeof plan !== "object") return { ok: false, errors: ["series-plan không phải object."], warnings };
+  if (plan.artifactType !== "series_plan") errors.push('artifactType phải là "series_plan".');
+  for (const field of ["centralViewerQuestion", "hookPromise"]) {
+    if (typeof plan[field] !== "string" || !plan[field].trim()) errors.push(`${field} trống.`);
+  }
+  const parts = Array.isArray(plan.parts) ? plan.parts : [];
+  const duration = Number(videoDurationSec) || Infinity;
+  const allocations = new Map();
+  for (const expected of series.parts) {
+    const part = parts.find((item) => Number(item?.scriptId) === expected.scriptId);
+    if (!part) { errors.push(`Thiếu Part cho Script ${expected.scriptId}.`); continue; }
+    if (Number(part.partNumber) !== expected.partNumber) errors.push(`Script ${expected.scriptId} phải là partNumber ${expected.partNumber}.`);
+    const ranges = (Array.isArray(part.sceneAllocation) ? part.sceneAllocation : []).map(toRange);
+    if (!ranges.length || ranges.some((range) => !range)) errors.push(`Script ${expected.scriptId}: sceneAllocation trống hoặc sai range.`);
+    if (ranges.some((range) => range && (range.start < 0 || range.end > duration + 1))) errors.push(`Script ${expected.scriptId}: sceneAllocation vượt thời lượng nguồn.`);
+    if (expected.ending === "cliffhanger" && !(typeof part.cliffhanger === "string" && part.cliffhanger.trim())) {
+      errors.push(`Script ${expected.scriptId}: thiếu cliffhanger.`);
+    }
+    if (expected.ending === "payoff") {
+      if (!(typeof part.payoff === "string" && part.payoff.trim())) errors.push(`Script ${expected.scriptId}: thiếu payoff.`);
+      const payoffRanges = (Array.isArray(part.payoffRanges) ? part.payoffRanges : []).map(toRange).filter(Boolean);
+      if (!payoffRanges.length) errors.push(`Script ${expected.scriptId}: thiếu payoffRanges.`);
+    }
+    allocations.set(expected.scriptId, { part, ranges: ranges.filter(Boolean) });
+  }
+  const shared = (Array.isArray(plan.sharedRanges) ? plan.sharedRanges : []).map(toRange).filter(Boolean);
+  const scriptIds = [...allocations.keys()];
+  for (let i = 0; i < scriptIds.length; i += 1) {
+    for (let j = i + 1; j < scriptIds.length; j += 1) {
+      const left = allocations.get(scriptIds[i]).ranges;
+      const right = allocations.get(scriptIds[j]).ranges;
+      let duplicated = 0;
+      for (const a of left) {
+        for (const b of right) {
+          const overlap = overlapSec(a, b);
+          if (!overlap) continue;
+          const intersection = { start: Math.max(a.start, b.start), end: Math.min(a.end, b.end) };
+          const declared = shared.reduce((sum, range) => sum + overlapSec(range, intersection), 0);
+          duplicated += Math.max(0, overlap - declared);
+        }
+      }
+      if (duplicated > 3) errors.push(`Script ${scriptIds[i]} và Script ${scriptIds[j]} trùng ${duplicated.toFixed(1)}s nguồn ngoài sharedRanges.`);
+    }
+  }
+  const payoffPart = series.parts.find((part) => part.ending === "payoff");
+  const payoffRanges = payoffPart
+    ? (allocations.get(payoffPart.scriptId)?.part?.payoffRanges || []).map(toRange).filter(Boolean)
+    : [];
+  for (const part of series.parts.filter((item) => item.ending === "cliffhanger")) {
+    const leaked = (allocations.get(part.scriptId)?.ranges || [])
+      .reduce((sum, range) => sum + payoffRanges.reduce((inner, payoff) => inner + overlapSec(range, payoff), 0), 0);
+    if (leaked > 1) errors.push(`Script ${part.scriptId} dùng ${leaked.toFixed(1)}s thuộc payoff của Part 3 (spoiler).`);
+  }
+  return { ok: errors.length === 0, errors, warnings };
+}
+
+/** Post-generation adherence check of each script against its locked Part. */
+function evaluateScriptsAgainstSeriesPlan(scripts = [], plan = null) {
+  const warnings = [];
+  const report = [];
+  if (!plan?.parts) return { warnings, report };
+  const shared = (plan.sharedRanges || []).map(toRange).filter(Boolean);
+  for (const script of scripts) {
+    const part = plan.parts.find((item) => Number(item.scriptId) === Number(script.scriptId));
+    if (!part) continue;
+    const allowed = [
+      ...(part.sceneAllocation || []).map(toRange),
+      toRange(part.hookRange || {}),
+      ...(part.payoffRanges || []).map(toRange),
+      ...shared
+    ].filter(Boolean);
+    const items = Array.isArray(script.segments) ? script.segments : (Array.isArray(script.narrativeBeats) ? script.narrativeBeats : []);
+    let total = 0;
+    let inside = 0;
+    for (const item of items) {
+      const range = toRange(item);
+      if (!range) continue;
+      total += range.end - range.start;
+      // 2s tolerance on each side for editorial trimming.
+      inside += allowed.reduce((sum, allowedRange) => sum + overlapSec(range, { start: allowedRange.start - 2, end: allowedRange.end + 2 }), 0);
+    }
+    const adherence = total > 0 ? Math.min(1, inside / total) : 0;
+    report.push({ scriptId: Number(script.scriptId), partNumber: Number(part.partNumber), adherence: Number(adherence.toFixed(3)) });
+    if (adherence < 0.8) {
+      warnings.push(`Script ${script.scriptId} (${part.partBadge || `PART ${part.partNumber}`}) chỉ ${(adherence * 100).toFixed(0)}% thời lượng nằm trong phạm vi Part đã khóa trong series-plan.json.`);
+    }
+  }
+  return { warnings, report };
+}
+
+function findObjectDeep(value, predicate, seen = new Set(), depth = 0) {
+  if (depth > 12) return null;
+  let parsed = value;
+  if (typeof value === "string") {
+    parsed = parseJsonCandidate(value);
+    if (!parsed) {
+      const lines = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).reverse();
+      for (const line of lines) {
+        const candidate = parseJsonCandidate(line);
+        if (!candidate) continue;
+        const nested = findObjectDeep(candidate, predicate, seen, depth + 1);
+        if (nested) return nested;
+      }
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || seen.has(parsed)) return null;
+  seen.add(parsed);
+  if (!Array.isArray(parsed) && predicate(parsed)) return parsed;
+  for (const nestedValue of Object.values(parsed)) {
+    if (nestedValue == null) continue;
+    if (typeof nestedValue === "string" && !/[{[]/.test(nestedValue)) continue;
+    const nested = findObjectDeep(nestedValue, predicate, seen, depth + 1);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+async function extractNamedArtifact(stdout, { filename, artifactType, resultDir }) {
+  const fromEnvelope = (() => {
+    // Prefer the latest result: scan stream lines from the end.
+    const lines = String(stdout || "").split(/\r?\n/).filter(Boolean).reverse();
+    for (const line of lines) {
+      const envelope = findArtifactEnvelope(line);
+      const artifact = envelope?.artifacts?.find((item) => item?.filename === filename);
+      if (artifact?.script && typeof artifact.script === "object") return artifact.script;
+    }
+    const envelope = findArtifactEnvelope(stdout);
+    return envelope?.artifacts?.find((item) => item?.filename === filename)?.script || null;
+  })();
+  if (fromEnvelope) return fromEnvelope;
+  const deep = findObjectDeep(stdout, (object) => object.artifactType === artifactType);
+  if (deep) return deep;
+  if (resultDir) {
+    try {
+      const parsed = parseJsonCandidate(await fs.readFile(path.join(resultDir, filename), "utf8"));
+      if (parsed && typeof parsed === "object") return parsed.artifacts?.[0]?.script || parsed;
+    } catch (_error) { /* not written by the agent */ }
+  }
+  return null;
 }
 
 function buildAgentPrompt({ pass1Dir, promptPath, resultDir, scriptIds = [1, 3, 4], expectedProxyList = [], packageInfo = null }) {
@@ -672,6 +1289,7 @@ class ManualAntigravityStage1Service {
   constructor(settings = {}, dependencies = {}) {
     this.settings = settings;
     this.spawnImpl = dependencies.spawn || spawn;
+    this.authProbe = dependencies.authProbe || null;
     this.activeChild = null;
     this.cancelled = false;
   }
@@ -806,9 +1424,12 @@ class ManualAntigravityStage1Service {
     onProgress,
     progressStep = "antigravity_stage1",
     expectedProxyList = [],
-    viewedProxySet = new Set()
+    viewedProxySet = new Set(),
+    forbiddenTools = []
   }) {
     return new Promise((resolve, reject) => {
+      let forbiddenToolError = null;
+      let failureKind = "";
       const stdoutChunks = [];
       const stderrChunks = [];
       let stdoutBuffer = "";
@@ -817,6 +1438,50 @@ class ManualAntigravityStage1Service {
       let lastActivityTime = Date.now();
       let currentPercent = 18;
       let conversationId = null;
+      const stats = {
+        agentTurns: 0,
+        toolCalls: 0,
+        viewFileVideoCount: 0,
+        viewFileTextCount: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        thinkingTokens: 0,
+        cacheReadTokens: 0,
+        modelSeconds: 0,
+        videoFilesViewed: [],
+        fileReads: {},
+        usageReported: false
+      };
+      const countedSteps = new Set();
+      const recordStep = (su) => {
+        if (su.state === "ACTIVE") return;
+        const stepKey = su.step_index ?? `anon-${countedSteps.size}`;
+        if (countedSteps.has(stepKey)) return;
+        countedSteps.add(stepKey);
+        if (su.step_type === "agent_response") {
+          stats.agentTurns += 1;
+          stats.inputTokens += Number(su.usage?.input_tokens) || 0;
+          stats.outputTokens += Number(su.usage?.output_tokens) || 0;
+          stats.thinkingTokens += Number(su.usage?.thinking_tokens) || 0;
+          stats.cacheReadTokens += Number(su.usage?.cache_read_tokens) || 0;
+          if (su.usage) stats.usageReported = true;
+          stats.modelSeconds += Number(su.duration_seconds) || 0;
+        } else if (su.step_type === "tool") {
+          stats.toolCalls += 1;
+          const toolName = su.tool_name || su.tool_info?.name || "";
+          if (toolName === "view_file") {
+            const file = String(su.tool_info?.parameters?.AbsolutePath || "");
+            const fileKey = path.basename(file.replace(/\\/g, "/")).toLowerCase();
+            if (fileKey) stats.fileReads[fileKey] = (stats.fileReads[fileKey] || 0) + 1;
+            if (/\.(mp4|mov|webm|m4v)$/i.test(file)) {
+              stats.viewFileVideoCount += 1;
+              stats.videoFilesViewed.push(path.basename(file));
+            } else {
+              stats.viewFileTextCount += 1;
+            }
+          }
+        }
+      };
 
       const child = this.spawnImpl(command, args, {
         cwd,
@@ -838,17 +1503,25 @@ class ManualAntigravityStage1Service {
       const inactivityLimitMs = Math.min(timeoutMs, 600000);
       const hardTimeoutMs = timeoutMs + 30000;
 
+      const rejectWith = (message, kind, extra = {}) => {
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
+        const error = new Error(message);
+        Object.assign(error, { kind, stats, stdout, stderr, conversationId, viewedProxySet, ...extra });
+        reject(error);
+      };
+
       const hardTimer = setTimeout(() => {
-        this.terminateActiveChild();
-        finish(() => reject(new Error(`Antigravity timed out after ${Math.round(timeoutMs / 1000)}s.`)));
+        this.terminateActiveChild({ asCancel: false });
+        finish(() => rejectWith(`Antigravity timed out after ${Math.round(timeoutMs / 1000)}s.`, "hard_timeout"));
       }, hardTimeoutMs);
 
       const heartbeatInterval = setInterval(() => {
         if (settled) return;
         const idleMs = Date.now() - lastActivityTime;
         if (idleMs >= inactivityLimitMs) {
-          this.terminateActiveChild();
-          finish(() => reject(new Error(`Antigravity không có phản hồi trong ${Math.round(idleMs / 1000)}s (quá thời gian chờ hoạt động).`)));
+          this.terminateActiveChild({ asCancel: false });
+          finish(() => rejectWith(`Antigravity không có phản hồi trong ${Math.round(idleMs / 1000)}s (quá thời gian chờ hoạt động).`, "inactivity_timeout"));
         }
       }, 5000);
 
@@ -881,6 +1554,16 @@ class ManualAntigravityStage1Service {
 
             if (event.event === "step_update" && event.step_update) {
               const su = event.step_update;
+              recordStep(su);
+              if (su.step_type === "tool" && forbiddenTools.length && !forbiddenToolError) {
+                const toolName = su.tool_name || su.tool_info?.name || "";
+                const file = String(su.tool_info?.parameters?.AbsolutePath || "");
+                if (forbiddenTools.includes(toolName) || (forbiddenTools.includes("view_file:video") && toolName === "view_file" && /\.(mp4|mov|webm|m4v)$/i.test(file))) {
+                  forbiddenToolError = `${toolName}${file ? ` ${path.basename(file.replace(/\\/g, "/"))}` : ""}`;
+                  failureKind = "forbidden_tool";
+                  this.terminateActiveChild({ asCancel: false });
+                }
+              }
               if (su.step_type === "tool") {
                 const toolName = su.tool_name || su.tool_info?.name || "công cụ";
                 const paramFile = su.tool_info?.parameters?.AbsolutePath
@@ -937,14 +1620,22 @@ class ManualAntigravityStage1Service {
         if (message) emitProgress(currentPercent, message);
       });
 
-      child.on("error", (error) => finish(() => reject(error)));
+      child.on("error", (error) => finish(() => {
+        error.kind = error.kind || "spawn_error";
+        error.stats = stats;
+        reject(error);
+      }));
       child.on("close", (code) => finish(() => {
         const stdout = Buffer.concat(stdoutChunks).toString("utf8");
         const stderr = Buffer.concat(stderrChunks).toString("utf8");
         const combined = `${stdout}\n${stderr}`;
 
+        if (forbiddenToolError) {
+          rejectWith(`Forbidden tool call: ${forbiddenToolError}`, "forbidden_tool");
+          return;
+        }
         if (this.cancelled) {
-          reject(new Error("Đã dừng phân tích GĐ1 bằng Antigravity."));
+          rejectWith("Đã dừng phân tích GĐ1 bằng Antigravity.", "cancelled");
           return;
         }
         
@@ -956,40 +1647,35 @@ class ManualAntigravityStage1Service {
         if (combined.includes("[agy] print timeout after")) {
           if (validEnvelope && validEnvelope.artifacts && validEnvelope.artifacts.length > 0) {
             // Partial output contains valid scripts, so accept it!
-            resolve({ stdout, stderr, conversationId, viewedProxySet });
+            resolve({ stdout, stderr, conversationId, viewedProxySet, stats });
             return;
           }
           const timeoutMatch = combined.match(/\[agy\] print timeout after (\S+)/i);
           const limitStr = timeoutMatch ? timeoutMatch[1] : `${Math.round(timeoutMs / 1000)}s`;
-          const error = new Error(`Antigravity timed out after ${limitStr}.`);
-          error.stdout = stdout;
-          error.stderr = stderr;
-          reject(error);
+          rejectWith(`Antigravity timed out after ${limitStr} ([agy] print timeout).`, "print_timeout");
           return;
         }
         
         if (code !== 0) {
           if (validEnvelope && validEnvelope.artifacts && validEnvelope.artifacts.length > 0) {
-            resolve({ stdout, stderr, conversationId, viewedProxySet });
+            resolve({ stdout, stderr, conversationId, viewedProxySet, stats });
             return;
           }
-          const error = new Error(`agy exited with code ${code}: ${stderr || stdout}`);
-          error.stdout = stdout;
-          error.stderr = stderr;
-          reject(error);
+          const stderrTail = String(stderr || "").split(/\r?\n/).filter(Boolean).slice(-6).join("\n");
+          rejectWith(`agy exited with code ${code}: ${stderrTail || "(no stderr)"}`, "");
           return;
         }
         
-        resolve({ stdout, stderr, conversationId, viewedProxySet });
+        resolve({ stdout, stderr, conversationId, viewedProxySet, stats });
       }));
       child.stdin.end();
     });
   }
 
-  terminateActiveChild() {
+  terminateActiveChild({ asCancel = true } = {}) {
     const child = this.activeChild;
     if (!child) return false;
-    this.cancelled = true;
+    if (asCancel) this.cancelled = true;
     if (process.platform === "win32" && child.pid) {
       try {
         spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
@@ -1006,7 +1692,361 @@ class ManualAntigravityStage1Service {
     return this.terminateActiveChild();
   }
 
+  emitLog(onProgress, percent, message, logs) {
+    logs?.push(`${new Date().toISOString()} ${message}`);
+    onProgress?.({ step: "antigravity_stage1", percent, message });
+  }
+
+  /**
+   * Credentials preflight before EVERY new AGY process. The AGY CLI loads the
+   * OAuth token from the OS keyring and does not refresh it itself (real logs:
+   * "keyringAuth: loaded token, expiry=09:44:35" at 08:50 and again at 09:35;
+   * the 09:35 retry then failed with 401 at 09:45). The warmup (`agy models`)
+   * makes the CLI log the expiry; we read it so an expired token fails fast
+   * with an explicit authentication error instead of after a long video turn.
+   */
+  async ensureAntigravityAuth({ label, diagnostics = null, onProgress, logs }) {
+    let probe = null;
+    if (this.authProbe) {
+      probe = await this.authProbe({ label });
+    } else if (this.spawnImpl === spawn) {
+      const startedAtMs = Date.now();
+      const commandParts = splitArgs(this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy");
+      await new Promise((resolve) => {
+        try {
+          const warmup = spawn(commandParts[0] || "agy", [...commandParts.slice(1), "models"], { windowsHide: true, env: buildCliEnv() });
+          warmup.on("close", resolve);
+          warmup.on("error", resolve);
+          setTimeout(() => { try { warmup.kill(); } catch (_) {} resolve(); }, 8000);
+        } catch (_error) {
+          resolve();
+        }
+      });
+      probe = await readAntigravityTokenExpiry({ startedAtMs });
+    }
+    const now = Date.now();
+    const expiresAtMs = probe?.expiresAt instanceof Date ? probe.expiresAt.getTime() : null;
+    const remainingSec = expiresAtMs ? Math.round((expiresAtMs - now) / 1000) : null;
+    const record = {
+      label,
+      checkedAt: new Date(now).toISOString(),
+      tokenExpiresAt: expiresAtMs ? new Date(expiresAtMs).toISOString() : null,
+      tokenRemainingSec: remainingSec
+    };
+    if (diagnostics) diagnostics.authChecks.push(record);
+    if (probe?.expiredFlag === true || (remainingSec !== null && remainingSec < 60)) {
+      const error = new Error(
+        `[${label}] AUTH: token đăng nhập Antigravity ${remainingSec !== null && remainingSec > 0 ? `chỉ còn ${remainingSec}s` : "đã hết hạn"}`
+        + `${record.tokenExpiresAt ? ` (hết hạn ${record.tokenExpiresAt})` : ""}. Mở Antigravity để đăng nhập/làm mới token rồi chạy lại. Không xem lại video nguồn.`
+      );
+      error.kind = "auth";
+      throw error;
+    }
+    if (remainingSec !== null) {
+      this.emitLog(onProgress, 12, `[${label}] AUTH: token còn ${Math.round(remainingSec / 60)} phút (hết hạn ${record.tokenExpiresAt}).`, logs);
+    }
+    return record;
+  }
+
+  /**
+   * Runs ONE agy process (fresh or resumed). Never retries by itself: the
+   * caller decides per failure kind. Every attempt's stdout/stderr is kept in
+   * its own log file (previously a retry overwrote the first attempt's log).
+   */
+  async runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList = [], viewedProxySet = new Set(), metrics, logs, logBase, forbiddenTools = [] }) {
+    metrics.agyProcessCount += 1;
+    const attemptIndex = metrics.agyProcessCount;
+    const startedAt = Date.now();
+    const writeAttemptLogs = async (stdout, stderr) => {
+      await fs.writeFile(path.join(resultDir, `antigravity-output-${logBase}-attempt${attemptIndex}.log`), stdout || "", "utf8").catch(() => {});
+      if (stderr) await fs.writeFile(path.join(resultDir, `antigravity-stderr-${logBase}-attempt${attemptIndex}.log`), stderr, "utf8").catch(() => {});
+    };
+    try {
+      const result = await this.runCli({
+        ...commandConfig,
+        prompt,
+        cwd: resultDir,
+        onProgress,
+        progressStep: "antigravity_stage1",
+        expectedProxyList,
+        viewedProxySet,
+        forbiddenTools
+      });
+      accumulateStats(metrics, result.stats);
+      metrics.attempts.push({ label, attempt: attemptIndex, ok: true, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: result.stats?.viewFileVideoCount || 0 });
+      await writeAttemptLogs(result.stdout, result.stderr);
+      return { ok: true, result };
+    } catch (error) {
+      accumulateStats(metrics, error.stats);
+      const kind = classifyAgyFailure(error);
+      metrics.attempts.push({ label, attempt: attemptIndex, ok: false, kind, durationMs: Date.now() - startedAt, resumed: commandConfig.args.includes("--conversation"), videoViews: error.stats?.viewFileVideoCount || 0, message: String(error.message || "").slice(0, 300) });
+      await writeAttemptLogs(error.stdout, error.stderr || error.message);
+      return { ok: false, error, kind };
+    }
+  }
+
+  /**
+   * Text-only phases (series plan, Phase B). Capacity errors may be retried
+   * with a fresh process (no video is involved); auth and timeouts are not.
+   */
+  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
+    const maxCapacityRetries = 2;
+    for (let attempt = 0; ; attempt += 1) {
+      await this.ensureAntigravityAuth({ label, onProgress, logs });
+      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
+      if (outcome.ok) return outcome.result;
+      if (outcome.kind === "capacity" && attempt < maxCapacityRetries && !this.cancelled) {
+        const delaySec = (attempt + 1) * 8;
+        metrics.retryCount += 1;
+        this.emitLog(onProgress, 15, `[${label}] 503/UNAVAILABLE: máy chủ AI hết dung lượng. Thử lại sau ${delaySec}s (${attempt + 1}/${maxCapacityRetries})...`, logs);
+        await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+        continue;
+      }
+      const error = new Error(`[${label}] ${describeAgyFailure(outcome.kind, outcome.error)}`);
+      Object.assign(error, { kind: outcome.kind, stdout: outcome.error.stdout, stderr: outcome.error.stderr, cause: outcome.error });
+      throw error;
+    }
+  }
+
+  /**
+   * Phase A: watch every proxy ONCE, read ONE compact context file, serialize
+   * a compact semantic memory. Recovery never restarts multimodal inspection
+   * once any proxy has been viewed:
+   *   - capacity error before any video view  -> fresh retry (nothing watched yet)
+   *   - auth (401)                             -> fail immediately
+   *   - timeout / bad JSON with coverage=100%  -> Case A (partial stdout),
+   *     Case B (same-conversation serialization, tools forbidden),
+   *     Case C (local text-only truncation repair), else explicit failure
+   *   - incomplete coverage after a clean turn -> resume same conversation for
+   *     the missing chunks only
+   */
+  async runPhaseA({ pass1Dir, packageInfo, resultDir, schemaPath, expectedProxyList, videoDurationSec, inputPaths, onProgress, metrics, logs, diagnostics }) {
+    const phaseAInputDir = path.join(resultDir, "phase-a-input");
+    await fs.mkdir(phaseAInputDir, { recursive: true });
+    let sceneManifest = null;
+    try { sceneManifest = JSON.parse(await fs.readFile(inputPaths.sceneManifestPath, "utf8")); } catch (_error) { sceneManifest = null; }
+    const transcriptText = inputPaths.transcriptPath ? await fs.readFile(inputPaths.transcriptPath, "utf8").catch(() => "") : "";
+    const context = buildPhaseAContext({ sceneManifest, transcriptText, expectedProxyList, videoDurationSec });
+    const contextPath = path.join(phaseAInputDir, "phase-a-context.txt");
+    await fs.writeFile(contextPath, context.text, "utf8");
+    diagnostics.contextFile = { path: contextPath, lines: context.lineCount, transcriptCues: context.cueCount, bytes: Buffer.byteLength(context.text, "utf8") };
+
+    const timeoutMs = resolvePhaseTimeoutMs("phase_a", this.settings, { sourceDurationSec: videoDurationSec });
+    diagnostics.timeoutMs = timeoutMs;
+    const promptA = assertPrintPromptSize(
+      buildSourceUnderstandingPrompt({ expectedProxyList, contextPath, contextLineCount: context.lineCount, videoDurationSec }),
+      "Phase A"
+    );
+    const commandConfigA = this.buildCommand(promptA, schemaPath, pass1Dir, { packageInfo, timeoutMs });
+    const viewedProxySet = new Set();
+    let conversationId = null;
+    let stdoutA = "";
+    let mainOutcome = null;
+    const maxCapacityRetries = 2;
+
+    for (let attempt = 0; ; attempt += 1) {
+      await this.ensureAntigravityAuth({ label: "PHASE_A", diagnostics, onProgress, logs });
+      const viewedBefore = viewedProxySet.size;
+      mainOutcome = await this.runAgyOnce({
+        label: "PHASE_A", commandConfig: commandConfigA, prompt: promptA, resultDir, onProgress,
+        expectedProxyList, viewedProxySet, metrics, logs, logBase: "phaseA"
+      });
+      const source = mainOutcome.ok ? mainOutcome.result : mainOutcome.error;
+      conversationId = source?.conversationId || conversationId;
+      stdoutA += `${stdoutA ? "\n--- PHASE_A ATTEMPT ---\n" : ""}${source?.stdout || ""}`;
+      if (mainOutcome.ok) break;
+      diagnostics.failureKinds.push(mainOutcome.kind);
+      if (mainOutcome.kind === "auth") {
+        const error = new Error(`[PHASE_A] ${describeAgyFailure("auth", mainOutcome.error)}`);
+        error.kind = "auth";
+        throw error;
+      }
+      if (["print_timeout", "hard_timeout", "inactivity_timeout"].includes(mainOutcome.kind)) diagnostics.timeoutOccurred = true;
+      const watchedInThisAttempt = viewedProxySet.size > viewedBefore || Number(source?.stats?.viewFileVideoCount || 0) > 0;
+      if (mainOutcome.kind === "capacity" && !watchedInThisAttempt && viewedProxySet.size === 0 && attempt < maxCapacityRetries && !this.cancelled) {
+        const delaySec = (attempt + 1) * 8;
+        diagnostics.freshRetryBeforeAnyVideoCount += 1;
+        this.emitLog(onProgress, 15, `[PHASE_A] 503/UNAVAILABLE trước khi xem video nào. Thử lại tiến trình mới sau ${delaySec}s (${attempt + 1}/${maxCapacityRetries})...`, logs);
+        await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
+        continue;
+      }
+      // Any other failure (timeout, capacity after videos were viewed, CLI
+      // error): NO fresh multimodal restart. Recovery below works only from
+      // what this conversation already produced.
+      this.emitLog(onProgress, 40, `[PHASE_A] ${describeAgyFailure(mainOutcome.kind, mainOutcome.error)} Không khởi động lại việc xem video; chuyển sang khôi phục từ hội thoại hiện tại.`, logs);
+      break;
+    }
+    if (mainOutcome.ok === false && mainOutcome.kind === "cancelled") throw mainOutcome.error;
+
+    let coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
+    // Missing chunks after a CLEAN turn: ask the same conversation for those chunks only.
+    for (let attempt = 1; mainOutcome.ok && !coverage.isComplete && attempt <= 2 && conversationId; attempt += 1) {
+      this.emitLog(onProgress, Math.min(40, 20 + attempt * 10), `[PHASE_A] Chưa xem đủ proxy (${coverage.coveragePercent}%). Yêu cầu xem phần thiếu trong cùng hội thoại (${attempt}/2)...`, logs);
+      await this.ensureAntigravityAuth({ label: "PHASE_A_COVERAGE", diagnostics, onProgress, logs });
+      const retryPrompt = assertPrintPromptSize(buildRetryPrompt({ missingProxies: coverage.missingProxies, outputKind: "source_understanding" }), "Phase A coverage");
+      const outcome = await this.runAgyOnce({
+        label: "PHASE_A_COVERAGE", commandConfig: this.buildRetryCommand(conversationId, retryPrompt, pass1Dir, { packageInfo, timeoutMs }),
+        prompt: retryPrompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase: "phaseA-coverage"
+      });
+      const source = outcome.ok ? outcome.result : outcome.error;
+      stdoutA += `\n--- PHASE_A_COVERAGE ---\n${source?.stdout || ""}`;
+      conversationId = source?.conversationId || conversationId;
+      if (!outcome.ok) {
+        diagnostics.failureKinds.push(outcome.kind);
+        if (outcome.kind === "auth") {
+          const error = new Error(`[PHASE_A] ${describeAgyFailure("auth", outcome.error)}`);
+          error.kind = "auth";
+          throw error;
+        }
+        break;
+      }
+      coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
+    }
+    await fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), stdoutA, "utf8");
+    diagnostics.coverage = { viewed: coverage.totalViewed, expected: coverage.totalExpected, percent: coverage.coveragePercent };
+    if (!coverage.isComplete) {
+      const gateError = new Error(
+        `[PHASE_A] FAILED: Antigravity chưa xem đủ 100% proxy video qua multimodal view_file(). `
+        + `Đạt ${coverage.totalViewed}/${coverage.totalExpected} chunks (${coverage.coveragePercent}%). `
+        + `Thiếu: [${coverage.missingProxyFiles.join(", ")}]. `
+        + `${diagnostics.timeoutOccurred ? "Phase A đã hết thời gian; không tự động xem lại toàn bộ video. " : ""}Không lưu cache, kịch bản bị từ chối.`
+      );
+      gateError.coverage = coverage;
+      gateError.kind = diagnostics.timeoutOccurred ? "print_timeout" : "coverage";
+      throw gateError;
+    }
+
+    // Coverage is 100% from here on: no new multimodal inspection may start.
+    const parseFrom = async (text) => {
+      const data = await extractNamedArtifact(text, { filename: "source-understanding.json", artifactType: "source_understanding", resultDir });
+      return this.normalizeUnderstanding(data, videoDurationSec);
+    };
+    // Case A: the (possibly partial) stdout already contains a valid artifact.
+    let parsed = await parseFrom(stdoutA);
+    if (!parsed.validation.ok && conversationId) {
+      // Case B: same conversation, serialization only, tools forbidden.
+      diagnostics.serializationRepairUsed = "same_conversation";
+      this.emitLog(onProgress, 44, `[PHASE_A] Coverage 100% nhưng chưa có JSON hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu serialize trong cùng hội thoại (cấm view_file).`, logs);
+      try {
+        await this.ensureAntigravityAuth({ label: "PHASE_A_SERIALIZE", diagnostics, onProgress, logs });
+        const serializationPrompt = buildSourceUnderstandingSerializationPrompt({ errors: parsed.validation.errors });
+        const serializationTimeoutMs = resolvePhaseTimeoutMs("phase_a_serialization", this.settings);
+        const viewsBefore = metrics.viewFileVideoCount;
+        const outcome = await this.runAgyOnce({
+          label: "PHASE_A_SERIALIZE",
+          commandConfig: this.buildRetryCommand(conversationId, assertPrintPromptSize(serializationPrompt, "Phase A serialization"), pass1Dir, { packageInfo, timeoutMs: serializationTimeoutMs }),
+          prompt: serializationPrompt, resultDir, onProgress, expectedProxyList, viewedProxySet: new Set(), metrics, logs,
+          logBase: "phaseA-serialize",
+          forbiddenTools: ["view_file", "run_command", "grep_search", "find_by_name", "list_dir", "codebase_search"]
+        });
+        diagnostics.serializationVideoViews = metrics.viewFileVideoCount - viewsBefore;
+        const source = outcome.ok ? outcome.result : outcome.error;
+        stdoutA += `\n--- PHASE_A_SERIALIZE ---\n${source?.stdout || ""}`;
+        await fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), stdoutA, "utf8");
+        if (!outcome.ok) diagnostics.failureKinds.push(outcome.kind);
+        if (!outcome.ok && outcome.kind === "auth") {
+          const error = new Error(`[PHASE_A] ${describeAgyFailure("auth", outcome.error)}`);
+          error.kind = "auth";
+          throw error;
+        }
+        parsed = await parseFrom(source?.stdout || "");
+      } catch (error) {
+        if (error.kind === "auth") throw error;
+        diagnostics.failureKinds.push(error.kind || "serialization_error");
+      }
+    }
+    if (!parsed.validation.ok) {
+      // Case C: deterministic text-only repair of a truncated serialization.
+      const recovered = this.normalizeUnderstanding(sanitizeRecoveredUnderstanding(recoverTruncatedUnderstanding(stdoutA)), videoDurationSec);
+      if (recovered.validation.ok) {
+        diagnostics.serializationRepairUsed = diagnostics.serializationRepairUsed
+          ? `${diagnostics.serializationRepairUsed}+local_truncation_repair`
+          : "local_truncation_repair";
+        parsed = recovered;
+      }
+    }
+    if (!parsed.validation.ok) {
+      const error = new Error(
+        `[PHASE_A] FAILED: đã xem đủ 100% proxy nhưng không khôi phục được source-understanding hợp lệ `
+        + `(${parsed.validation.errors.slice(0, 4).join(" ")}). Không tự động xem lại video, không ghi cache. Xem log tại ${resultDir}.`
+      );
+      error.kind = "serialization";
+      error.validation = parsed.validation;
+      throw error;
+    }
+    return { data: parsed.data, coverage, conversationId, warnings: parsed.validation.warnings };
+  }
+
+  normalizeUnderstanding(data, videoDurationSec) {
+    if (!data || typeof data !== "object") {
+      return { data: null, validation: { ok: false, errors: ["Không tìm thấy source-understanding.json trong output."], warnings: [] } };
+    }
+    const normalized = {
+      ...data,
+      artifactType: data.artifactType || (Array.isArray(data.storyTimeline) ? "source_understanding" : data.artifactType),
+      schemaVersion: SOURCE_UNDERSTANDING_SCHEMA_VERSION,
+      videoDurationSec: Number(data.videoDurationSec) || videoDurationSec
+    };
+    return { data: normalized, validation: validateSourceUnderstanding(normalized, { videoDurationSec }) };
+  }
+
+  async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics, logs }) {
+    const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
+      series,
+      understandingPath,
+      hookContractPath: inputPaths.hookContractPath,
+      transcriptPath: inputPaths.transcriptPath,
+      sceneManifestPath: inputPaths.sceneManifestPath,
+      videoDurationSec
+    }), "Series plan");
+    const commandConfig = this.buildCommand(prompt, schemaPath, pass1Dir, {
+      packageInfo,
+      timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
+    });
+    const videoViews = new Set();
+    const result = await this.runAgyPhase({
+      label: "SERIES_PLAN", commandConfig, prompt, resultDir, onProgress,
+      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan"
+    });
+    let stdout = result.stdout || "";
+    let conversationId = result.conversationId;
+    const parse = async () => {
+      const plan = await extractNamedArtifact(stdout, { filename: "series-plan.json", artifactType: "series_plan", resultDir });
+      const normalized = plan ? { ...plan, artifactType: plan.artifactType || "series_plan", profile: series.profile } : null;
+      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec }) };
+    };
+    let parsed = await parse();
+    if (!parsed.validation.ok && conversationId) {
+      metrics.retryCount += 1;
+      this.emitLog(onProgress, 56, `[SERIES_PLAN] Plan chưa hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu sửa trong cùng hội thoại...`, logs);
+      const repairPrompt = [
+        "Your series plan was rejected by the host validator:",
+        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
+        "Return the COMPLETE corrected series-plan envelope now, exactly one JSON object, no prose. Do not open any .mp4 file."
+      ].join("\n");
+      const retryConfig = this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, {
+        packageInfo,
+        timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
+      });
+      const retry = await this.runAgyPhase({
+        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt, resultDir, onProgress,
+        expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-retry"
+      });
+      stdout += `\n--- SERIES_PLAN_REPAIR ---\n${retry.stdout || ""}`;
+      conversationId = retry.conversationId || conversationId;
+      parsed = await parse();
+    }
+    await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan.log"), stdout, "utf8");
+    if (!parsed.validation.ok) {
+      throw new Error(`[SERIES_PLAN] FAILED: series-plan.json không hợp lệ (${parsed.validation.errors.slice(0, 4).join(" ")}). Không sinh kịch bản khi plan chưa khóa.`);
+    }
+    const locked = { ...parsed.plan, lockedAt: new Date().toISOString(), lockedBy: "host_validator" };
+    return { plan: locked, videoViews: videoViews.size };
+  }
+
   async run({ packageDir, onProgress } = {}) {
+    const stage1StartedAt = Date.now();
+    const logs = [];
     const resolvedPackageDir = path.resolve(String(packageDir || ""));
     if (!packageDir) throw new Error("Hãy tạo gói phân tích GĐ1 trước khi chạy Antigravity.");
     const packageInfo = await readPackageInfo(resolvedPackageDir);
@@ -1022,278 +2062,328 @@ class ManualAntigravityStage1Service {
     await fs.access(promptPath);
     const promptText = await fs.readFile(promptPath, "utf8");
     const requestedScriptIds = getRequestedScriptIds(promptText);
+    const series = detectSeriesProfile(promptText);
     const resultDir = path.join(resolvedPackageDir, RESULT_DIR_NAME);
     await fs.mkdir(resultDir, { recursive: true });
-    // Clean up all existing files in resultDir so Antigravity starts with a pristine workspace
+    // Clean up all existing files in resultDir so Antigravity starts with a pristine workspace.
+    // The persistent source understanding does NOT live here (see sourceUnderstandingService).
     try {
       const existingResultFiles = await fs.readdir(resultDir);
-      await Promise.all(
-        existingResultFiles.map((file) => fs.rm(path.join(resultDir, file), { recursive: true, force: true }))
-      );
+      await Promise.all(existingResultFiles.map((file) => fs.rm(path.join(resultDir, file), { recursive: true, force: true })));
     } catch (_err) {}
     const schemaPath = path.join(resultDir, "antigravity-output-schema.json");
     await writeJsonAtomic(schemaPath, buildOutputSchema(requestedScriptIds));
 
-    // 1. Discover all expected proxy files
     const expectedProxyList = await getExpectedProxyList(pass1Dir, packageInfo);
-    const viewedProxySet = new Set();
-
-    let coverage = {
-      isComplete: true,
-      coveragePercent: 100,
-      totalViewed: 0,
-      totalExpected: expectedProxyList.length,
-      expectedProxyFiles: expectedProxyList.map((p) => p.filename),
-      viewedProxyFiles: [],
-      missingProxyFiles: []
+    if (!expectedProxyList.length) {
+      throw new Error("Gói GĐ1 không có proxy video nào để AI xem. Hãy bấm Tạo gói lại.");
+    }
+    const inputPaths = {
+      sceneManifestPath: [packageInfo.manifestPath, path.join(pass1Dir, "scene-manifest.json")].find((item) => item && fsSync.existsSync(item)) || "",
+      transcriptPath: [packageInfo.transcriptPath, path.join(pass1Dir, "source-transcript.srt")].find((item) => item && fsSync.existsSync(item)) || "",
+      hookContractPath: [packageInfo.hookContractPath, path.join(pass1Dir, "hook-contract.json")].find((item) => item && fsSync.existsSync(item)) || "",
+      actionCandidatesPath: [packageInfo.actionCandidatesPath, path.join(pass1Dir, "action-candidates.json")].find((item) => item && fsSync.existsSync(item)) || ""
     };
-    
-    let sourceUnderstandingMs = 0;
-    let scriptGenerationMs = 0;
-    
-    const sourceUnderstandingCachePath = path.join(pass1Dir, "source-understanding-cache.json");
-    let hasSourceUnderstandingCache = false;
+    let videoDurationSec = 0;
     try {
-      await fs.access(sourceUnderstandingCachePath);
-      hasSourceUnderstandingCache = true;
-    } catch (_) {}
-
-    // -------------------------------------------------------------------------
-    // PHASE A: Source Understanding (with Multimodal Video View)
-    // -------------------------------------------------------------------------
-    if (hasSourceUnderstandingCache) {
-      onProgress?.({ step: "antigravity_stage1", percent: 18, message: "CACHE HIT: Bỏ qua Phase A (Source Understanding)" });
-      // If we skip Phase A, we assume coverage is conceptually met.
-      coverage.isComplete = true;
-      coverage.coveragePercent = 100;
-    } else {
-      const startPhaseA = Date.now();
-      onProgress?.({ step: "antigravity_stage1", percent: 8, message: "Đang mở gói GĐ1 ở chế độ chỉ đọc" });
-      onProgress?.({ step: "antigravity_stage1", percent: 18, message: "Phase A: Đang phân tích prompt, transcript, manifest và proxy" });
-
-      const promptA = buildSourceUnderstandingPrompt({ pass1Dir, promptPath, expectedProxyList, packageInfo });
-      const commandConfigA = this.buildCommand(promptA, schemaPath, pass1Dir, { packageInfo });
-
-      // Preflight token warmup: Ensures fresh 60-min OAuth credentials
-      if (this.spawnImpl === spawn) {
-        try {
-          await new Promise((resolve) => {
-            const warmup = spawn(commandConfigA.command, ["models"], { windowsHide: true, env: buildCliEnv() });
-            warmup.on("close", resolve); warmup.on("error", resolve);
-            setTimeout(() => { try { warmup.kill(); } catch (_) {} resolve(); }, 8000);
-          });
-        } catch (_) {}
-      }
-
-      let cliResultA;
-      const maxServerRetries = 2;
-      for (let serverAttempt = 0; serverAttempt <= maxServerRetries; serverAttempt += 1) {
-        try {
-          cliResultA = await this.runCli({
-            ...commandConfigA,
-            prompt: promptA,
-            cwd: resultDir,
-            onProgress,
-            progressStep: "antigravity_stage1",
-            expectedProxyList,
-            viewedProxySet
-          });
-          break;
-        } catch (error) {
-          const errorText = `${error.message || ""} ${error.stderr || ""} ${error.stdout || ""}`;
-          const isServerUnavailable = /503|UNAVAILABLE|No capacity available|high traffic/i.test(errorText);
-          if (isServerUnavailable && serverAttempt < maxServerRetries && !this.cancelled) {
-            const delaySec = (serverAttempt + 1) * 8;
-            onProgress?.({
-              step: "antigravity_stage1",
-              percent: 15,
-              message: `Máy chủ AI tạm bận. Đang thử lại Phase A sau ${delaySec}s (${serverAttempt + 1}/${maxServerRetries})...`
-            });
-            await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
-            continue;
-          }
-          await Promise.all([
-            fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), error.stdout || "", "utf8"),
-            fs.writeFile(path.join(resultDir, "antigravity-stderr-phaseA.log"), error.stderr || error.message || "", "utf8")
-          ]);
-          throw error;
-        }
-      }
-
-      let conversationId = cliResultA.conversationId;
-      let accumulatedStdoutA = cliResultA.stdout || "";
-      let accumulatedStderrA = cliResultA.stderr || "";
-
-      // Audit coverage
-      coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
-
-      // Retry loop if coverage < 100%
-      const maxRetries = 2;
-      let retryAttempt = 0;
-      while (!coverage.isComplete && retryAttempt < maxRetries && conversationId) {
-        retryAttempt += 1;
-        const missingCount = coverage.missingProxies.length;
-        onProgress?.({
-          step: "antigravity_stage1",
-          percent: Math.min(40, 20 + retryAttempt * 10),
-          message: `Chưa xem đủ proxy video (${coverage.coveragePercent}%). Đang yêu cầu xem tiếp (thử ${retryAttempt}/${maxRetries})...`
-        });
-
-        const retryPrompt = buildRetryPrompt({ missingProxies: coverage.missingProxies, scriptIds: requestedScriptIds });
-        const retryConfig = this.buildRetryCommand(conversationId, retryPrompt, pass1Dir, { packageInfo });
-
-        try {
-          const retryResult = await this.runCli({
-            ...retryConfig,
-            prompt: retryPrompt,
-            cwd: resultDir,
-            onProgress,
-            progressStep: "antigravity_stage1",
-            expectedProxyList,
-            viewedProxySet
-          });
-          accumulatedStdoutA += `\n--- RETRY ${retryAttempt} ---\n${retryResult.stdout || ""}`;
-          if (retryResult.stderr) accumulatedStderrA += `\n--- RETRY ${retryAttempt} ---\n${retryResult.stderr}`;
-          if (retryResult.conversationId) conversationId = retryResult.conversationId;
-        } catch (retryError) {
-          accumulatedStdoutA += `\n--- RETRY ${retryAttempt} ERROR ---\n${retryError.stdout || ""}`;
-          accumulatedStderrA += `\n--- RETRY ${retryAttempt} ERROR ---\n${retryError.stderr || retryError.message || ""}`;
-          break;
-        }
-
-        coverage = await auditTranscriptForViewedProxies(conversationId, expectedProxyList, viewedProxySet);
-      }
-
-      await fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), accumulatedStdoutA, "utf8");
-      if (accumulatedStderrA) {
-        await fs.writeFile(path.join(resultDir, "antigravity-stderr-phaseA.log"), accumulatedStderrA, "utf8");
-      }
-
-      // Hard Validation Gate for Phase A
-      if (!coverage.isComplete) {
-        const missingNames = coverage.missingProxyFiles.join(", ");
-        const gateError = new Error(
-          `Antigravity vi phạm quy tắc bắt buộc: Chưa xem đủ 100% proxy video qua multimodal view_file(). ` +
-          `Đạt: ${coverage.totalViewed}/${coverage.totalExpected} chunks (${coverage.coveragePercent}%). ` +
-          `Các file còn thiếu: [${missingNames}]. Kịch bản bị từ chối.`
-        );
-        gateError.coverage = coverage;
-        throw gateError;
-      }
-
-      // Extract source-understanding.json
-      let envA = findArtifactEnvelope(accumulatedStdoutA);
-      let suData = envA?.artifacts?.find(a => a.filename === "source-understanding.json")?.script;
-      if (!suData) {
-        const parsed = parseJsonCandidate(accumulatedStdoutA);
-        if (parsed?.artifacts?.length) {
-          suData = parsed.artifacts.find(a => a.filename === "source-understanding.json")?.script;
-        }
-      }
-      if (suData) {
-        await writeJsonAtomic(sourceUnderstandingCachePath, suData);
-      } else {
-         await fs.writeFile(sourceUnderstandingCachePath, JSON.stringify({ raw: true, notes: "Could not parse Phase A cleanly" }), "utf8");
-      }
-
-      sourceUnderstandingMs = Date.now() - startPhaseA;
+      videoDurationSec = Number(JSON.parse(await fs.readFile(inputPaths.sceneManifestPath, "utf8")).videoDurationSec) || 0;
+    } catch (_error) {
+      videoDurationSec = Number(expectedProxyList.at(-1)?.sourceEndSec) || 0;
     }
 
-    // -------------------------------------------------------------------------
-    // PHASE B: Script Generation
-    // -------------------------------------------------------------------------
-    const startPhaseB = Date.now();
-    onProgress?.({ step: "antigravity_stage1", percent: 50, message: "Phase B: Đang sinh kịch bản..." });
-    let sourceUnderstandingContent = "{}";
-    try {
-      sourceUnderstandingContent = await fs.readFile(sourceUnderstandingCachePath, "utf8");
-    } catch (_) {}
-    
-    const promptB = buildScriptGenerationPrompt({ promptPath, sourceUnderstandingContent, resultDir, scriptIds: requestedScriptIds });
-    // Do not pass expectedProxyList so tool validation is bypassed for Phase B
-    const commandConfigB = this.buildCommand(promptB, schemaPath, pass1Dir, { packageInfo });
+    // ---------------------------------------------------------------------
+    // Persistent source-understanding cache (survives package rebuilds).
+    // ---------------------------------------------------------------------
+    const sourceFingerprint = packageInfo.cache?.sourceFingerprint
+      || (packageInfo.sourceVideoPath ? (await buildSourceFingerprint(packageInfo.sourceVideoPath)).key : "");
+    if (!sourceFingerprint) throw new Error("package-info.json thiếu sourceFingerprint và sourceVideoPath. Hãy bấm Tạo gói lại.");
+    const cacheDir = packageInfo.cache?.cacheDir
+      || path.join(this.settings.workspaceRoot || path.dirname(resolvedPackageDir), ".cineviral", "cache", "gemini-analysis", sourceFingerprint);
+    const { key: understandingKey, components: understandingComponents } = await computeSourceUnderstandingKey({
+      sourceFingerprint,
+      expectedProxyList,
+      sceneManifestPath: inputPaths.sceneManifestPath,
+      transcriptPath: inputPaths.transcriptPath,
+      proxySchemaVersion: packageInfo.cache?.proxySchemaVersion
+    });
+    const expectedProxyFiles = expectedProxyList.map((proxy) => proxy.filename);
+    const watchedSourceSec = Number(expectedProxyList.reduce((sum, proxy) => (
+      sum + Math.max(0, Number(proxy.sourceEndSec ?? 0) - Number(proxy.sourceStartSec ?? 0))
+    ), 0).toFixed(3)) || videoDurationSec;
 
+    const phaseAMetrics = newMetrics();
+    const phaseADiagnostics = {
+      authChecks: [],
+      failureKinds: [],
+      timeoutOccurred: false,
+      serializationRepairUsed: false,
+      serializationVideoViews: 0,
+      freshRetryBeforeAnyVideoCount: 0,
+      coverage: null,
+      contextFile: null,
+      timeoutMs: null
+    };
+    const timing = {
+      artifactType: "pipeline_timing",
+      schemaVersion: 1,
+      packageDir: resolvedPackageDir,
+      model: this.settings.antigravityModel || "",
+      preprocessMs: Number(packageInfo.timings?.preprocessMs) || 0,
+      sourceUnderstanding: {
+        cacheHit: false,
+        cacheStatus: "miss",
+        cacheKey: understandingKey,
+        cachePath: "",
+        durationMs: 0,
+        agyProcessCount: 0,
+        viewFileCount: 0,
+        videoViewFileCount: 0,
+        expectedProxyCount: expectedProxyList.length,
+        viewedProxyCount: 0,
+        watchedSourceSec: 0,
+        retryCount: 0,
+        phaseASkipped: false,
+        proxyCount: expectedProxyList.length,
+        sourceVideoDurationSec: Number(Number(videoDurationSec || 0).toFixed(3))
+      },
+      seriesPlan: null,
+      scriptGeneration: { durationMs: 0, agyProcessCount: 0 }
+    };
+
+    const loaded = await loadSourceUnderstanding({
+      cacheDir,
+      key: understandingKey,
+      components: understandingComponents,
+      expectedProxyFiles,
+      videoDurationSec
+    });
+    let understanding;
+    let coverage;
+    if (loaded.status === "hit") {
+      understanding = loaded.data;
+      const cachedCoverage = loaded.envelope.phaseA?.coverage || {};
+      coverage = {
+        isComplete: true,
+        coveragePercent: 100,
+        totalExpected: expectedProxyList.length,
+        totalViewed: expectedProxyList.length,
+        expectedProxyFiles,
+        viewedProxyFiles: cachedCoverage.viewedProxyFiles || expectedProxyFiles,
+        missingProxyFiles: [],
+        source: "source_understanding_cache",
+        verifiedAt: loaded.envelope.createdAt,
+        verifiedConversationId: loaded.envelope.phaseA?.conversationId || null
+      };
+      Object.assign(timing.sourceUnderstanding, {
+        cacheHit: true,
+        cacheStatus: "hit",
+        cachePath: loaded.path,
+        phaseASkipped: true,
+        viewedProxyCount: 0,
+        watchedSourceSec: 0
+      });
+      this.emitLog(onProgress, 18, `[SOURCE_UNDERSTANDING] CACHE HIT key=${understandingKey} (${loaded.path})`, logs);
+      this.emitLog(onProgress, 19, `[PHASE_A] SKIPPED: dùng lại understanding đã xác minh lúc ${loaded.envelope.createdAt}; 0 view_file video toàn nguồn.`, logs);
+    } else {
+      timing.sourceUnderstanding.cacheStatus = loaded.status;
+      this.emitLog(
+        onProgress,
+        8,
+        loaded.status === "invalid"
+          ? `[SOURCE_UNDERSTANDING] CACHE INVALID (${loaded.reason}) → bỏ qua file cache, chạy lại Phase A.`
+          : `[SOURCE_UNDERSTANDING] CACHE MISS key=${understandingKey}`,
+        logs
+      );
+      this.emitLog(onProgress, 10, `[PHASE_A] START: AI xem ${expectedProxyList.length} proxy (~${(watchedSourceSec / 60).toFixed(1)} phút nguồn).`, logs);
+      const phaseAStartedAt = Date.now();
+      let phaseA;
+      try {
+        phaseA = await this.runPhaseA({
+          pass1Dir, packageInfo, resultDir, schemaPath, expectedProxyList, videoDurationSec, inputPaths,
+          onProgress, metrics: phaseAMetrics, logs, diagnostics: phaseADiagnostics
+        });
+      } catch (error) {
+        Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics), {
+          durationMs: Date.now() - phaseAStartedAt,
+          failed: true,
+          failureKind: error.kind || classifyAgyFailure(error),
+          failureMessage: String(error.message || "").slice(0, 600)
+        });
+        this.emitLog(onProgress, 40, `[PHASE_A] FAILED (${timing.sourceUnderstanding.failureKind}) sau ${(timing.sourceUnderstanding.durationMs / 1000).toFixed(1)}s; view_file video=${timing.sourceUnderstanding.viewFileCount}, tiến trình AGY=${phaseAMetrics.agyProcessCount}, restart toàn bộ=0.`, logs);
+        await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+        throw error;
+      }
+      understanding = phaseA.data;
+      coverage = { ...phaseA.coverage, source: "phase_a_live" };
+      const saved = await saveSourceUnderstanding({
+        cacheDir,
+        key: understandingKey,
+        components: understandingComponents,
+        data: understanding,
+        phaseA: {
+          conversationId: phaseA.conversationId || null,
+          model: this.settings.antigravityModel || "",
+          videoDurationSec,
+          coverage: {
+            isComplete: phaseA.coverage.isComplete,
+            expectedProxyFiles: phaseA.coverage.expectedProxyFiles,
+            viewedProxyFiles: phaseA.coverage.viewedProxyFiles
+          },
+          durationMs: Date.now() - phaseAStartedAt
+        }
+      });
+      Object.assign(timing.sourceUnderstanding, {
+        cachePath: saved.path,
+        durationMs: Date.now() - phaseAStartedAt,
+        viewedProxyCount: phaseA.coverage.totalViewed,
+        watchedSourceSec
+      });
+      (phaseA.warnings || []).forEach((warning) => logs.push(`[PHASE_A] warning: ${warning}`));
+      this.emitLog(onProgress, 46, `[PHASE_A] DONE: ${phaseA.coverage.totalViewed}/${expectedProxyList.length} proxy, ${phaseAMetrics.agyProcessCount} tiến trình AGY. Đã lưu cache: ${saved.path}`, logs);
+    }
+    Object.assign(timing.sourceUnderstanding, summarizePhaseA(phaseAMetrics, phaseADiagnostics));
+
+    // Phase B inputs are files (command-line length limit); the persistent
+    // understanding is copied next to the run so the agent can read it.
+    const phaseBInputDir = path.join(resultDir, "phase-b-input");
+    await fs.mkdir(phaseBInputDir, { recursive: true });
+    const understandingPath = path.join(phaseBInputDir, "source-understanding.json");
+    await writeJsonAtomic(understandingPath, understanding);
+    const coverageSummary = `${coverage.viewedProxyFiles.length}/${expectedProxyList.length} proxy chunks, ${coverage.source}${coverage.verifiedAt ? ` verified ${coverage.verifiedAt}` : ""}`;
+
+    // ---------------------------------------------------------------------
+    // Phase B1: lock the series plan before any Part is written.
+    // ---------------------------------------------------------------------
+    let seriesPlan = null;
+    let seriesPlanPath = "";
+    if (series) {
+      const planMetrics = newMetrics();
+      const planStartedAt = Date.now();
+      this.emitLog(onProgress, 50, `[SERIES_PLAN] START: khóa kế hoạch ${series.parts.length} Part (${series.profile}) trước khi viết kịch bản.`, logs);
+      const planned = await this.runSeriesPlan({
+        series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs
+      });
+      seriesPlan = planned.plan;
+      seriesPlanPath = path.join(resultDir, "series-plan.json");
+      await writeJsonAtomic(seriesPlanPath, seriesPlan);
+      await writeJsonAtomic(path.join(phaseBInputDir, "series-plan.json"), seriesPlan);
+      timing.seriesPlan = {
+        durationMs: Date.now() - planStartedAt,
+        agyProcessCount: planMetrics.agyProcessCount,
+        retryCount: planMetrics.retryCount,
+        videoViewFileCount: planMetrics.viewFileVideoCount,
+        tokens: tokenSummary(planMetrics),
+        path: seriesPlanPath
+      };
+      this.emitLog(onProgress, 58, `[SERIES_PLAN] LOCKED: ${seriesPlanPath}`, logs);
+    }
+
+    // ---------------------------------------------------------------------
+    // Phase B2: script generation from the verified understanding (text only).
+    // ---------------------------------------------------------------------
+    const phaseBMetrics = newMetrics();
+    const startPhaseB = Date.now();
+    this.emitLog(onProgress, 60, "[PHASE_B] START: sinh kịch bản từ source-understanding (không xem lại toàn bộ video).", logs);
+    const promptB = assertPrintPromptSize(buildScriptGenerationPrompt({
+      promptPath,
+      understandingPath,
+      seriesPlanPath: seriesPlan ? path.join(phaseBInputDir, "series-plan.json") : "",
+      sceneManifestPath: inputPaths.sceneManifestPath,
+      transcriptPath: inputPaths.transcriptPath,
+      hookContractPath: inputPaths.hookContractPath,
+      actionCandidatesPath: inputPaths.actionCandidatesPath,
+      resultDir,
+      scriptIds: requestedScriptIds,
+      coverageSummary
+    }), "Phase B");
+    const commandConfigB = this.buildCommand(promptB, schemaPath, pass1Dir, {
+      packageInfo,
+      timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
+    });
+    // Phase B video views are tracked (not expected): a silent full-source rewatch must be visible.
+    const phaseBVideoViews = new Set();
     let cliResultB;
     try {
-      cliResultB = await this.runCli({
-        ...commandConfigB,
-        prompt: promptB,
-        cwd: resultDir,
-        onProgress,
-        progressStep: "antigravity_stage1",
-        expectedProxyList: [], // Bypass coverage check in Phase B
-        viewedProxySet: new Set()
+      cliResultB = await this.runAgyPhase({
+        label: "PHASE_B", commandConfig: commandConfigB, prompt: promptB, resultDir, onProgress,
+        expectedProxyList: [], viewedProxySet: phaseBVideoViews, metrics: phaseBMetrics, logs, logBase: "phaseB"
       });
     } catch (error) {
-       await Promise.all([
-         fs.writeFile(path.join(resultDir, "antigravity-output-phaseB.log"), error.stdout || "", "utf8"),
-         fs.writeFile(path.join(resultDir, "antigravity-stderr-phaseB.log"), error.stderr || error.message || "", "utf8")
-       ]);
-       throw error;
+      timing.scriptGeneration = {
+        durationMs: Date.now() - startPhaseB,
+        agyProcessCount: phaseBMetrics.agyProcessCount,
+        failed: true,
+        failureKind: error.kind || null,
+        failureMessage: String(error.message || "").slice(0, 600),
+        timeoutMs: commandConfigB.timeoutMs,
+        attempts: phaseBMetrics.attempts,
+        tokens: tokenSummary(phaseBMetrics)
+      };
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+      throw error;
     }
 
-    let accumulatedStdout = cliResultB.stdout || "";
-    let accumulatedStderr = cliResultB.stderr || "";
-    let conversationId = cliResultB.conversationId;
-
+    const accumulatedStdout = cliResultB.stdout || "";
+    const accumulatedStderr = cliResultB.stderr || "";
+    const conversationId = cliResultB.conversationId;
     await fs.writeFile(path.join(resultDir, "antigravity-output.log"), accumulatedStdout, "utf8");
-    if (accumulatedStderr) {
-      await fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), accumulatedStderr, "utf8");
+    if (accumulatedStderr) await fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), accumulatedStderr, "utf8");
+    const phaseBProxyViews = expectedProxyList.filter((proxy) => (
+      phaseBVideoViews.has(proxy.filename) || phaseBVideoViews.has(proxy.absolutePath)
+    )).length;
+    timing.scriptGeneration = {
+      durationMs: Date.now() - startPhaseB,
+      agyProcessCount: phaseBMetrics.agyProcessCount,
+      retryCount: phaseBMetrics.retryCount,
+      viewFileCount: phaseBMetrics.viewFileTextCount + phaseBMetrics.viewFileVideoCount,
+      videoViewFileCount: phaseBMetrics.viewFileVideoCount,
+      sourceProxyViewCount: phaseBProxyViews,
+      fullSourceRewatched: phaseBProxyViews === expectedProxyList.length,
+      transcriptReadCount: Object.entries(phaseBMetrics.fileReads).filter(([name]) => /transcript|\.srt$/i.test(name)).reduce((sum, [, count]) => sum + count, 0),
+      manifestReadCount: Object.entries(phaseBMetrics.fileReads).filter(([name]) => /manifest/i.test(name)).reduce((sum, [, count]) => sum + count, 0),
+      agentTurnCount: phaseBMetrics.agentTurns,
+      timeoutMs: commandConfigB.timeoutMs,
+      attempts: phaseBMetrics.attempts,
+      tokens: tokenSummary(phaseBMetrics)
+    };
+    if (phaseBMetrics.viewFileVideoCount > 0) {
+      this.emitLog(onProgress, 80, `[PHASE_B] WARNING: Phase B đã mở ${phaseBMetrics.viewFileVideoCount} file video (${phaseBProxyViews}/${expectedProxyList.length} proxy nguồn) dù đã có understanding.`, logs);
+    } else {
+      this.emitLog(onProgress, 80, "[PHASE_B] DONE: 0 view_file video.", logs);
     }
-
-    scriptGenerationMs = Date.now() - startPhaseB;
-
-    // Timing Report
-    await writeJsonAtomic(path.join(resultDir, "timing-report.json"), { sourceUnderstandingMs, scriptGenerationMs });
 
     onProgress?.({ step: "antigravity_stage1", percent: 82, message: "Đang tách và kiểm tra các JSON variant" });
 
     let envelope = findArtifactEnvelope(accumulatedStdout);
     if (!envelope?.artifacts?.length) {
-      const envPath = path.join(resultDir, "result-envelope.json");
       try {
-        const raw = await fs.readFile(envPath, "utf8");
-        const parsed = parseJsonCandidate(raw);
+        const parsed = parseJsonCandidate(await fs.readFile(path.join(resultDir, "result-envelope.json"), "utf8"));
         if (parsed?.artifacts?.length) envelope = parsed;
       } catch (_) {}
     }
     if (!envelope?.artifacts?.length) {
       try {
-        const existingEntries = await fs.readdir(resultDir);
-        const scriptFiles = existingEntries.filter((f) => /^script-\d+\.json$/i.test(f));
-        if (scriptFiles.length > 0) {
-          const artifacts = [];
-          for (const f of scriptFiles) {
-            try {
-              const content = await fs.readFile(path.join(resultDir, f), "utf8");
-              const scriptObj = parseJsonCandidate(content);
-              if (scriptObj) {
-                artifacts.push({ filename: f, script: scriptObj });
-              }
-            } catch (_) {}
-          }
-          if (artifacts.length > 0) {
-            envelope = { artifacts };
-          }
+        const scriptFiles = (await fs.readdir(resultDir)).filter((f) => /^script-\d+\.json$/i.test(f));
+        const artifacts = [];
+        for (const f of scriptFiles) {
+          try {
+            const scriptObj = parseJsonCandidate(await fs.readFile(path.join(resultDir, f), "utf8"));
+            if (scriptObj) artifacts.push({ filename: f, script: scriptObj });
+          } catch (_) {}
         }
+        if (artifacts.length) envelope = { artifacts };
       } catch (_) {}
     }
     if (!envelope?.artifacts?.length) {
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
       throw new Error(`Antigravity không trả về artifacts JSON hợp lệ. Xem log tại ${resultDir}.`);
     }
 
-    const seriesPlan = envelope.artifacts.find(a => a.filename === "series-plan.json");
-    if (seriesPlan && seriesPlan.script) {
-      await writeJsonAtomic(path.join(resultDir, "series-plan.json"), seriesPlan.script);
-    }
-
-    const scriptArtifacts = envelope.artifacts.filter(a => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
-    
+    const scriptArtifacts = envelope.artifacts.filter((a) => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
     const normalized = scriptArtifacts.map(normalizeArtifact);
     const deduplicated = new Map();
     for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
     const files = [];
-    
     for (const scriptId of requestedScriptIds) {
       const artifact = deduplicated.get(scriptId);
       if (!artifact) continue;
@@ -1313,11 +2403,20 @@ class ManualAntigravityStage1Service {
     for (const inspection of inspections.filter((item) => !item.validJson || !acceptedScriptTypes.has(item.type) || item.segmentCount < 1)) {
       warnings.push(`${path.basename(inspection.filePath)} không đạt schema variant: ${inspection.error || inspection.type}.`);
     }
+    let seriesAdherence = null;
+    if (seriesPlan) {
+      seriesAdherence = evaluateScriptsAgainstSeriesPlan([...deduplicated.values()].map((item) => item.script), seriesPlan);
+      warnings.push(...seriesAdherence.warnings);
+    }
+    if (timing.scriptGeneration.fullSourceRewatched) {
+      warnings.push(`Phase B đã xem lại toàn bộ ${expectedProxyList.length} proxy nguồn dù đã có source understanding.`);
+    }
+    await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
     if (!validFiles.length) {
       throw new Error(`Không có JSON variant hợp lệ. Xem kết quả tại ${resultDir}.`);
     }
     await writeJsonAtomic(path.join(resultDir, "antigravity-run-info.json"), {
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAt: new Date().toISOString(),
       provider: "antigravity_cli",
       packageDir: resolvedPackageDir,
@@ -1325,17 +2424,131 @@ class ManualAntigravityStage1Service {
       promptPath,
       model: this.settings.antigravityModel || "",
       conversationId: conversationId || null,
+      sourceUnderstanding: {
+        cacheHit: timing.sourceUnderstanding.cacheHit,
+        cacheKey: understandingKey,
+        cachePath: timing.sourceUnderstanding.cachePath,
+        keyComponents: understandingComponents
+      },
       expectedProxyFiles: coverage.expectedProxyFiles,
       viewedProxyFiles: coverage.viewedProxyFiles,
       missingProxyFiles: coverage.missingProxyFiles,
       videoCoveragePercent: coverage.coveragePercent,
       directMultimodalCoverage: coverage.isComplete,
+      coverageSource: coverage.source,
+      seriesPlanPath: seriesPlanPath || null,
+      seriesAdherence: seriesAdherence?.report || null,
       validFiles,
       warnings
     });
     onProgress?.({ step: "antigravity_stage1", percent: 100, message: `Đã tạo ${validFiles.length} JSON variant hợp lệ` });
-    return { resultDir, files, validFiles, inspections, warnings, coverage };
+    return {
+      resultDir,
+      files,
+      validFiles,
+      inspections,
+      warnings,
+      coverage,
+      seriesPlanPath,
+      timing,
+      sourceUnderstanding: {
+        cacheHit: timing.sourceUnderstanding.cacheHit,
+        cachePath: timing.sourceUnderstanding.cachePath,
+        cacheKey: understandingKey
+      }
+    };
   }
+
+  async writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }) {
+    timing.stage1Ms = Date.now() - stage1StartedAt;
+    const report = await resetPipelineTiming(resolvedPackageDir, { ...timing, logs }).catch(() => null);
+    await writeJsonAtomic(path.join(resultDir, "timing-report.json"), report || { ...timing, logs });
+    return report;
+  }
+}
+
+function newMetrics() {
+  return {
+    agyProcessCount: 0,
+    retryCount: 0,
+    attempts: [],
+    fileReads: {},
+    usageReported: false,
+    agentTurns: 0,
+    toolCalls: 0,
+    viewFileVideoCount: 0,
+    viewFileTextCount: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    thinkingTokens: 0,
+    cacheReadTokens: 0,
+    modelSeconds: 0
+  };
+}
+
+function accumulateStats(metrics, stats) {
+  if (!stats) return;
+  for (const [name, count] of Object.entries(stats.fileReads || {})) {
+    metrics.fileReads[name] = (metrics.fileReads[name] || 0) + count;
+  }
+  if (stats.usageReported) metrics.usageReported = true;
+  for (const key of ["agentTurns", "toolCalls", "viewFileVideoCount", "viewFileTextCount", "inputTokens", "outputTokens", "thinkingTokens", "cacheReadTokens", "modelSeconds"]) {
+    metrics[key] += Number(stats[key]) || 0;
+  }
+}
+
+function summarizePhaseA(metrics, diagnostics = {}) {
+  const reads = metrics.fileReads || {};
+  const sumReads = (predicate) => Object.entries(reads).filter(([name]) => predicate(name)).reduce((sum, [, count]) => sum + count, 0);
+  const videoReads = Object.entries(reads).filter(([name]) => /\.(mp4|mov|webm|m4v)$/i.test(name));
+  const phaseAAttempts = (metrics.attempts || []).filter((attempt) => attempt.label === "PHASE_A");
+  // A "full multimodal restart" is a fresh Phase A process started after an
+  // earlier Phase A process had already viewed at least one proxy.
+  let fullMultimodalRestartCount = 0;
+  let videosViewedSoFar = 0;
+  for (const attempt of phaseAAttempts) {
+    if (videosViewedSoFar > 0) fullMultimodalRestartCount += 1;
+    videosViewedSoFar += Number(attempt.videoViews || 0);
+  }
+  return {
+    agyProcessCount: metrics.agyProcessCount,
+    viewFileCount: metrics.viewFileVideoCount,
+    videoViewFileCount: metrics.viewFileVideoCount,
+    textViewFileCount: metrics.viewFileTextCount,
+    duplicateVideoViewCount: videoReads.reduce((sum, [, count]) => sum + Math.max(0, count - 1), 0),
+    transcriptReadCount: sumReads((name) => /transcript|\.srt$/i.test(name)),
+    manifestReadCount: sumReads((name) => /manifest/i.test(name)),
+    contextReadCount: sumReads((name) => name === "phase-a-context.txt"),
+    agentTurnCount: metrics.agentTurns,
+    timeoutOccurred: Boolean(diagnostics.timeoutOccurred),
+    serializationRepairUsed: diagnostics.serializationRepairUsed || false,
+    serializationVideoViews: diagnostics.serializationVideoViews || 0,
+    fullMultimodalRestartCount,
+    freshRetryBeforeAnyVideoCount: diagnostics.freshRetryBeforeAnyVideoCount || 0,
+    retryCount: metrics.retryCount,
+    inputTokens: metrics.usageReported ? metrics.inputTokens : null,
+    outputTokens: metrics.usageReported ? metrics.outputTokens : null,
+    thinkingTokens: metrics.usageReported ? metrics.thinkingTokens : null,
+    cacheReadTokens: metrics.usageReported ? metrics.cacheReadTokens : null,
+    modelSeconds: metrics.usageReported ? Number(metrics.modelSeconds.toFixed(1)) : null,
+    timeoutMs: diagnostics.timeoutMs || null,
+    contextFile: diagnostics.contextFile || null,
+    failureKinds: diagnostics.failureKinds || [],
+    authChecks: diagnostics.authChecks || [],
+    attempts: metrics.attempts || []
+  };
+}
+
+function tokenSummary(metrics) {
+  return {
+    agentTurns: metrics.agentTurns,
+    toolCalls: metrics.toolCalls,
+    inputTokens: metrics.inputTokens,
+    outputTokens: metrics.outputTokens,
+    thinkingTokens: metrics.thinkingTokens,
+    cacheReadTokens: metrics.cacheReadTokens,
+    modelSeconds: Number(metrics.modelSeconds.toFixed(1))
+  };
 }
 
 ManualAntigravityStage1Service.RESULT_DIR_NAME = RESULT_DIR_NAME;
@@ -1351,6 +2564,18 @@ ManualAntigravityStage1Service.buildAgentPrompt = buildAgentPrompt;
 ManualAntigravityStage1Service.buildRetryPrompt = buildRetryPrompt;
 ManualAntigravityStage1Service.buildSourceUnderstandingPrompt = buildSourceUnderstandingPrompt;
 ManualAntigravityStage1Service.buildScriptGenerationPrompt = buildScriptGenerationPrompt;
+ManualAntigravityStage1Service.buildSeriesPlanPrompt = buildSeriesPlanPrompt;
+ManualAntigravityStage1Service.validateSeriesPlan = validateSeriesPlan;
+ManualAntigravityStage1Service.evaluateScriptsAgainstSeriesPlan = evaluateScriptsAgainstSeriesPlan;
+ManualAntigravityStage1Service.detectSeriesProfile = detectSeriesProfile;
+ManualAntigravityStage1Service.SERIES_PROFILES = SERIES_PROFILES;
+ManualAntigravityStage1Service.MAX_PRINT_PROMPT_CHARS = MAX_PRINT_PROMPT_CHARS;
+ManualAntigravityStage1Service.classifyAgyFailure = classifyAgyFailure;
+ManualAntigravityStage1Service.resolvePhaseTimeoutMs = resolvePhaseTimeoutMs;
+ManualAntigravityStage1Service.buildPhaseAContext = buildPhaseAContext;
+ManualAntigravityStage1Service.parseKeyringExpiry = parseKeyringExpiry;
+ManualAntigravityStage1Service.recoverTruncatedUnderstanding = recoverTruncatedUnderstanding;
+ManualAntigravityStage1Service.buildSourceUnderstandingSerializationPrompt = buildSourceUnderstandingSerializationPrompt;
 
 module.exports = ManualAntigravityStage1Service;
 module.exports.resolveAntigravityTimeoutMs = resolveAntigravityTimeoutMs;

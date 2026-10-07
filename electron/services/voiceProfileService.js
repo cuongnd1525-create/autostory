@@ -118,7 +118,7 @@ class VoiceProfileService {
   async writeStore(workspaceRoot, store) {
     const profilePath = this.getProfilePath(workspaceRoot);
     await fs.mkdir(path.dirname(profilePath), { recursive: true });
-    const tempPath = `${profilePath}.${process.pid}.${Date.now()}.tmp`;
+    const tempPath = `${profilePath}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
     await fs.writeFile(tempPath, JSON.stringify({ ...store, version: 2 }, null, 2), "utf8");
     try {
       await fs.rename(tempPath, profilePath);
@@ -146,7 +146,16 @@ class VoiceProfileService {
     };
   }
 
-  async recordSample(workspaceRoot, identityPayload, { text, measuredDurationSec, segmentDurationSec = 0, source = "tts" } = {}) {
+  async recordSample(workspaceRoot, identityPayload, options = {}) {
+    // Serialize read-modify-write of the shared profile store: concurrent
+    // variant renders would otherwise drop samples or collide on temp files.
+    const previousWrite = this.recordQueue || Promise.resolve();
+    const operation = previousWrite.catch(() => {}).then(() => this.recordSampleUnlocked(workspaceRoot, identityPayload, options));
+    this.recordQueue = operation;
+    return operation;
+  }
+
+  async recordSampleUnlocked(workspaceRoot, identityPayload, { text, measuredDurationSec, segmentDurationSec = 0, source = "tts" } = {}) {
     const wordCount = countWords(text);
     const duration = Number(measuredDurationSec || 0);
     if (wordCount < 2 || !Number.isFinite(duration) || duration <= 0.25) {
