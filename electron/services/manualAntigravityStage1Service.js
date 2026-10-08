@@ -48,32 +48,20 @@ function hasArg(args, ...names) {
   return args.some((arg) => names.includes(arg) || names.some((name) => arg.startsWith(`${name}=`)));
 }
 
-const ANTIGRAVITY_MODEL_MAP = {
-  "gemini 3.8 flash (high)": "gemini-3.8-flash-high",
-  "gemini 3.8 flash (medium)": "gemini-3.8-flash-medium",
-  "gemini 3.8 flash (low)": "gemini-3.8-flash-low",
-  "gemini 3.7 flash (high)": "gemini-3.7-flash-high",
-  "gemini 3.7 flash (medium)": "gemini-3.7-flash-medium",
-  "gemini 3.7 flash (low)": "gemini-3.7-flash-low",
-  "gemini 3.6 flash (high)": "gemini-3.6-flash-high",
-  "gemini 3.6 flash (medium)": "gemini-3.6-flash-medium",
-  "gemini 3.6 flash (low)": "gemini-3.6-flash-low",
-  "gemini 3.1 pro (high)": "gemini-3.1-pro-high",
-  "gemini 3.1 pro (low)": "gemini-3.1-pro-low",
-  "claude sonnet 4.6 (thinking)": "claude-sonnet-4-6",
-  "claude opus 4.6 (thinking)": "claude-opus-4-6-thinking",
-  "gpt-oss 120b (medium)": "gpt-oss-120b-medium"
-};
+// Model list + reasoning levels: src/antigravityModelCatalog.js (shared with
+// the settings UI). agy encodes reasoning in the model name; a bare family name
+// ("Gemini 3.7 Flash", as typed in the old free-text field) is completed with
+// the selected reasoning level instead of sending `--effort`, which agy
+// rejects for every listed model (real run 2026-10-08 09:20, 9/9 maps failed).
+const AntigravityModelCatalog = require("../../src/antigravityModelCatalog");
 
-function normalizeAntigravityModel(model) {
-  const text = String(model || "").trim();
-  if (!text) return "";
-  const lower = text.toLowerCase();
-  return ANTIGRAVITY_MODEL_MAP[lower] || text;
+function normalizeAntigravityModel(model, reasoning = "high") {
+  return AntigravityModelCatalog.normalizeModel(model, reasoning || "high");
 }
 
 function modelSupportsEffortFlag(model) {
   if (!model) return true;
+  if (AntigravityModelCatalog.parseModel(model).known) return false;
   const lower = String(model).trim().toLowerCase();
   if (/\((?:high|medium|low|thinking)\)/i.test(lower)) return false;
   if (/-(?:high|medium|low|thinking)$/i.test(lower)) return false;
@@ -1438,21 +1426,22 @@ class ManualAntigravityStage1Service {
     let args = [...commandParts.slice(1), ...splitArgs(this.settings.antigravityArgs || process.env.ANTIGRAVITY_ARGS || "")];
     const rawConfiguredModel = String(this.settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "").trim();
     const rawOverrideModel = String(options.modelOverride || "").trim();
-    const requestedModel = normalizeAntigravityModel(rawOverrideModel || rawConfiguredModel);
+    const reasoning = this.settings.antigravityReasoning || "high";
+    const requestedModel = normalizeAntigravityModel(rawOverrideModel || rawConfiguredModel, reasoning);
 
     // Normalize any existing --model flag in args. A stage-specific override
     // wins over antigravityArgs / the globally selected model.
     let activeModel = requestedModel;
     for (let index = 0; index < args.length; index += 1) {
       if (args[index] === "--model" && args[index + 1]) {
-        const norm = rawOverrideModel ? requestedModel : normalizeAntigravityModel(args[index + 1]);
+        const norm = rawOverrideModel ? requestedModel : normalizeAntigravityModel(args[index + 1], reasoning);
         args[index + 1] = norm;
         activeModel = norm;
         break;
       }
       if (args[index].startsWith("--model=")) {
         const val = args[index].slice("--model=".length);
-        const norm = rawOverrideModel ? requestedModel : normalizeAntigravityModel(val);
+        const norm = rawOverrideModel ? requestedModel : normalizeAntigravityModel(val, reasoning);
         args[index] = `--model=${norm}`;
         activeModel = norm;
         break;
@@ -1476,6 +1465,9 @@ class ManualAntigravityStage1Service {
     // tool is auto-denied and the CLI returns an empty successful response.
     if (!hasArg(args, "--dangerously-skip-permissions")) args.push("--dangerously-skip-permissions");
 
+    // Never ADD --effort: agy rejects it for every model in its list (the
+    // reasoning level is part of the model name). Only an explicit --effort in
+    // antigravityArgs survives, and only for a model that accepts it.
     const supportsEffort = modelSupportsEffortFlag(activeModel);
     if (!supportsEffort) {
       const cleaned = [];
@@ -1488,8 +1480,6 @@ class ManualAntigravityStage1Service {
         cleaned.push(args[index]);
       }
       args = cleaned;
-    } else if (!hasArg(args, "--effort")) {
-      args.push("--effort", "high");
     }
 
     if (!hasArg(args, "--output-format")) args.push("--output-format", "stream-json");
@@ -2302,6 +2292,7 @@ class ManualAntigravityStage1Service {
       || this.settings.antigravityModel
       || process.env.ANTIGRAVITY_MODEL
       || ""
+      , this.settings.antigravityReasoning
     );
     const reduceModel = normalizeAntigravityModel(
       this.settings.antigravityReduceModel
@@ -2311,6 +2302,7 @@ class ManualAntigravityStage1Service {
       || this.settings.antigravityModel
       || process.env.ANTIGRAVITY_MODEL
       || ""
+      , this.settings.antigravityReasoning
     );
     const chunkKeys = tasks.map((task) => MapReduce.computeChunkKey({
       task,
@@ -2601,6 +2593,7 @@ class ManualAntigravityStage1Service {
       || this.settings.antigravityModel
       || process.env.ANTIGRAVITY_MODEL
       || ""
+      , this.settings.antigravityReasoning
     );
     const record = {
       chunkId: task.chunkId,
@@ -2901,6 +2894,7 @@ class ManualAntigravityStage1Service {
       || this.settings.antigravityModel
       || process.env.ANTIGRAVITY_MODEL
       || ""
+      , this.settings.antigravityReasoning
     );
     // Isolated reducer workspace (cwd, logs, input) — never shared with a map chunk.
     const workDir = path.join(resultDir, "reduce");

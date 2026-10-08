@@ -58,6 +58,7 @@ class ConfigStore {
       antigravityCommand: process.env.ANTIGRAVITY_COMMAND || "agy",
       antigravityArgs: process.env.ANTIGRAVITY_ARGS || "",
       antigravityModel: process.env.ANTIGRAVITY_MODEL || "",
+      antigravityReasoning: process.env.ANTIGRAVITY_REASONING || "high",
       antigravityTimeoutMs: Number(process.env.ANTIGRAVITY_TIMEOUT_MS || 900000),
       draftRenderConcurrency: Number(process.env.DRAFT_RENDER_CONCURRENCY || 2),
       ytDlpCommand: process.env.YT_DLP_COMMAND || "yt-dlp",
@@ -183,6 +184,24 @@ class ConfigStore {
         this.cache.antigravityTimeoutMs = 900000;
         await this.persist(this.cache);
       }
+      // Free-text agy model values from the old settings field (e.g. "Gemini 3.7
+      // Flash", which agy rejected together with --effort) become the exact
+      // agy model value for the selected reasoning level.
+      const AntigravityModelCatalog = require("../../src/antigravityModelCatalog");
+      let agyModelChanged = false;
+      for (const key of ["antigravityModel", "antigravityMapModel", "antigravityReduceModel"]) {
+        const raw = String(this.cache[key] || "").trim();
+        if (!raw) continue;
+        const parsedModel = AntigravityModelCatalog.parseModel(raw, this.cache.antigravityReasoning || "high");
+        if (!parsedModel.known) continue;
+        if (key === "antigravityModel" && parsedModel.reasoning) this.cache.antigravityReasoning = parsedModel.reasoning;
+        const normalized = AntigravityModelCatalog.resolveModel(parsedModel.familyId, parsedModel.reasoning);
+        if (normalized !== raw) {
+          this.cache[key] = normalized;
+          agyModelChanged = true;
+        }
+      }
+      if (agyModelChanged) await this.persist(this.cache);
     } catch (_error) {
       this.cache = this.getDefaultSettings();
       await this.persist(this.cache);

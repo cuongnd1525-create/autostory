@@ -727,7 +727,7 @@ class AntigravityCliProvider {
     this.commandArgs = commandParts.slice(1);
     this.argsTemplate = settings.antigravityArgs || process.env.ANTIGRAVITY_ARGS || "";
     const { normalizeAntigravityModel } = require("./manualAntigravityStage1Service");
-    this.model = normalizeAntigravityModel(settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "");
+    this.model = normalizeAntigravityModel(settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "", settings.antigravityReasoning);
     const rawTimeout = Number(settings.antigravityTimeoutMs || process.env.ANTIGRAVITY_TIMEOUT_MS || 900000);
     this.timeoutMs = Math.max(15000, rawTimeout === 300000 ? 900000 : rawTimeout);
   }

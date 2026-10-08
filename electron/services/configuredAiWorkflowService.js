@@ -32,7 +32,7 @@ function providerDescriptor(settings = {}) {
     };
   }
   if (provider === "antigravity_cli") {
-    const model = ManualAntigravityStage1Service.normalizeAntigravityModel?.(settings.antigravityModel)
+    const model = ManualAntigravityStage1Service.normalizeAntigravityModel?.(settings.antigravityModel, settings.antigravityReasoning)
       || settings.antigravityModel
       || "mặc định CLI";
     return { provider, label: "Antigravity", model };

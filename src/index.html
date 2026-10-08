@@ -2331,7 +2331,8 @@
                 <h4>Antigravity CLI</h4>
                 <div class="settings-fields">
                   <label>Lệnh Antigravity<input id="antigravity-command" type="text" placeholder="agy" /></label>
-                  <label>Mô hình Antigravity<input id="antigravity-model" type="text" placeholder="Tùy chọn" /></label>
+                  <label>Mô hình Antigravity<select id="antigravity-model"></select></label>
+                  <label>Mức suy luận (reasoning)<select id="antigravity-reasoning"></select></label>
                   <label class="settings-field-wide">Tham số Antigravity<input id="antigravity-args" type="text" placeholder="Tùy chọn, prompt được gửi qua stdin. Dùng {prompt} nếu cần." /></label>
                   <label>Thời gian chờ (ms)<input id="antigravity-timeout-ms" type="number" min="15000" step="1000" /></label>
                 </div>
@@ -2456,6 +2457,7 @@
 
     <script src="./productionQueueUi.js"></script>
     <script src="./previewLog.js"></script>
+    <script src="./antigravityModelCatalog.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

@@ -590,6 +590,7 @@ function queryElements() {
     antigravityCommand: $("antigravity-command"),
     antigravityArgs: $("antigravity-args"),
     antigravityModel: $("antigravity-model"),
+    antigravityReasoning: $("antigravity-reasoning"),
     antigravityTimeoutMs: $("antigravity-timeout-ms"),
     whisperEngine: $("whisper-engine"),
     whisperCommand: $("whisper-command"),
@@ -2221,7 +2222,7 @@ function getConfiguredAiUiInfo(settings = null) {
     return {
       provider,
       label: "Antigravity",
-      model: effectiveSettings.antigravityModel || "model mặc định CLI",
+      model: (window.AntigravityModelCatalog?.displayName(effectiveSettings.antigravityModel) || effectiveSettings.antigravityModel) || "model mặc định CLI",
       supported: true
     };
   }
@@ -7119,7 +7120,7 @@ function fillSettings(settings) {
   el.vertexTimeoutMs.value = settings.vertexTimeoutMs || 900000;
   el.antigravityCommand.value = settings.antigravityCommand || "agy";
   el.antigravityArgs.value = settings.antigravityArgs || "";
-  el.antigravityModel.value = settings.antigravityModel || "";
+  fillAntigravityModelSelects(settings.antigravityModel || "", settings.antigravityReasoning || "high");
   el.antigravityTimeoutMs.value = settings.antigravityTimeoutMs || 300000;
   el.whisperEngine.value = settings.whisperEngine || "auto";
   el.whisperCommand.value = settings.whisperCommand || "whisper";
@@ -7170,6 +7171,73 @@ function fillSettings(settings) {
   applyVoiceSetupState(settings.lastVoiceSetup || {});
 }
 
+// Antigravity model + reasoning are chosen from agy's own model list
+// (src/antigravityModelCatalog.js); the saved antigravityModel is the exact
+// value passed to `agy --model` (reasoning is part of agy's model name).
+const LEGACY_AGY_MODEL_PREFIX = "legacy:";
+
+function fillAntigravityReasoningSelect(familyId, preferred) {
+  const catalog = window.AntigravityModelCatalog;
+  const select = el.antigravityReasoning;
+  if (!select || !catalog) return;
+  const family = catalog.findFamily(familyId);
+  select.innerHTML = "";
+  if (!family) {
+    const option = document.createElement("option");
+    option.value = "";
+    option.textContent = familyId ? "Theo giá trị đã lưu" : "Theo mặc định của agy";
+    select.appendChild(option);
+    select.disabled = true;
+    return;
+  }
+  for (const level of family.reasoning) {
+    const option = document.createElement("option");
+    option.value = level;
+    option.textContent = catalog.REASONING_LABELS[level] || level;
+    select.appendChild(option);
+  }
+  select.disabled = family.reasoning.length < 2;
+  select.value = family.reasoning.includes(preferred) ? preferred : (family.reasoning.includes("high") ? "high" : family.reasoning[0]);
+}
+
+function fillAntigravityModelSelects(savedModel, savedReasoning) {
+  const catalog = window.AntigravityModelCatalog;
+  const select = el.antigravityModel;
+  if (!select || !catalog) return;
+  const parsed = catalog.parseModel(savedModel, savedReasoning || "high");
+  select.innerHTML = "";
+  const addOption = (value, label) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = label;
+    select.appendChild(option);
+  };
+  addOption("", "Mặc định của agy CLI");
+  for (const family of catalog.FAMILIES) addOption(family.id, family.label);
+  if (!parsed.known) {
+    // Keep a value agy does not list (e.g. typed earlier) visible instead of silently dropping it.
+    addOption(LEGACY_AGY_MODEL_PREFIX + parsed.raw, `${parsed.raw} (không có trong danh sách agy)`);
+    select.value = LEGACY_AGY_MODEL_PREFIX + parsed.raw;
+    fillAntigravityReasoningSelect(select.value, "");
+    return;
+  }
+  select.value = parsed.familyId;
+  fillAntigravityReasoningSelect(parsed.familyId, parsed.reasoning || savedReasoning);
+}
+
+function readAntigravityModelSelects() {
+  const catalog = window.AntigravityModelCatalog;
+  const familyValue = el.antigravityModel?.value || "";
+  if (familyValue.startsWith(LEGACY_AGY_MODEL_PREFIX)) {
+    return { antigravityModel: familyValue.slice(LEGACY_AGY_MODEL_PREFIX.length), antigravityReasoning: state.settings?.antigravityReasoning || "high" };
+  }
+  const reasoning = el.antigravityReasoning?.value || "high";
+  return {
+    antigravityModel: catalog ? catalog.resolveModel(familyValue, reasoning) : familyValue,
+    antigravityReasoning: reasoning
+  };
+}
+
 function readSettings() {
   return {
     ...state.settings,
@@ -7197,7 +7265,7 @@ function readSettings() {
     ollamaVisionModel: el.ollamaVisionModel.value || "gemma4",
     antigravityCommand: el.antigravityCommand.value.trim() || "agy",
     antigravityArgs: el.antigravityArgs.value.trim(),
-    antigravityModel: el.antigravityModel.value.trim(),
+    ...readAntigravityModelSelects(),
     antigravityTimeoutMs: Number(el.antigravityTimeoutMs.value || 300000),
     whisperEngine: el.whisperEngine.value || "auto",
     whisperCommand: el.whisperCommand.value.trim() || "whisper",
@@ -11056,6 +11124,7 @@ function bindEvents() {
     }
   });
   el.aiProvider.addEventListener("change", syncAiProviderSettingsUi);
+  el.antigravityModel?.addEventListener("change", () => fillAntigravityReasoningSelect(el.antigravityModel.value, el.antigravityReasoning?.value || "high"));
   el.loadProject.addEventListener("click", loadSelectedProject);
   el.backToSetup.addEventListener("click", openBackSetupModal);
   el.cancelBackSetup.addEventListener("click", () => el.backSetupModal.classList.add("hidden"));

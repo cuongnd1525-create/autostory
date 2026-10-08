@@ -155,7 +155,7 @@ async function createPackage() {
     antigravityModel: "Claude Sonnet 4.6 (Thinking)"
   });
   const claudeCmd = claudeService.buildCommand("test", "schema.json", fixture.pass1Dir);
-  assert(claudeCmd.args.includes("claude-sonnet-4-6"));
+  assert(claudeCmd.args.includes("Claude Sonnet 4.6 (Thinking)"), "Claude uses agy's own listed model name");
   assert(!claudeCmd.args.includes("--effort"), "--effort must not be passed to Claude models");
 
   const argsWithConflictService = new ManualAntigravityStage1Service({
@@ -171,7 +171,18 @@ async function createPackage() {
     antigravityModel: ""
   });
   const defaultCmd = defaultModelService.buildCommand("test", "schema.json", fixture.pass1Dir);
-  assert(defaultCmd.args.includes("--effort"), "--effort high should be passed for default model");
+  assert(!defaultCmd.args.includes("--effort"), "--effort is never added: agy encodes reasoning in the model name");
+  assert(!defaultCmd.args.includes("--model"), "empty selection = agy's default model");
+
+  // Real run 2026-10-08 09:20: the old free-text field held "Gemini 3.7 Flash";
+  // the host added --effort high and agy rejected all 9 map processes.
+  const bareFamilyCmd = new ManualAntigravityStage1Service({ antigravityCommand: "agy", antigravityModel: "Gemini 3.7 Flash" })
+    .buildCommand("test", "schema.json", fixture.pass1Dir);
+  assert(bareFamilyCmd.args.includes("gemini-3.7-flash-high"), "bare family name gets the selected reasoning level");
+  assert(!bareFamilyCmd.args.includes("--effort"), "no --effort for a bare family name");
+  const lowCmd = new ManualAntigravityStage1Service({ antigravityCommand: "agy", antigravityModel: "Gemini 3.7 Flash", antigravityReasoning: "low" })
+    .buildCommand("test", "schema.json", fixture.pass1Dir);
+  assert(lowCmd.args.includes("gemini-3.7-flash-low"), "reasoning setting is applied to a bare family name");
 
   const parsed = ManualAntigravityStage1Service.findArtifactEnvelope(JSON.stringify({
     result: `\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\``
