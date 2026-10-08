@@ -4481,7 +4481,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           sum + safeNumber(segment.duration, 0), 0);
         if (outputSec < 109.95 || outputSec > 125.05) {
           script.warnings.push(
-            "TikTok Viral Bodycam Part " + partNumber + ": output " + outputSec.toFixed(1) +
+            "TikTok Viral Bodycam Part " + (script.partNumber || scriptInput.part_number || "?") + ": output " + outputSec.toFixed(1) +
             "s nằm ngoài mục tiêu 110-125s. Đây là V1 cần review/rebuild từ bằng chứng nguồn; " +
             "không chèn cảnh chờ, im lặng hoặc cảnh không liên quan chỉ để đủ thời lượng."
           );
