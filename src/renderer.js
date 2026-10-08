@@ -1535,7 +1535,13 @@ function syncProjectSettingsControls(project = state.currentProject) {
 
 function getSuggestedTopCaption(project = state.currentProject) {
   const analysis = project?.analysis || {};
-  const firstVariant = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants[0] : null;
+  const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
+  const firstVariant = variants[0] || null;
+  const activeVariant = variants.find(v => v.id === analysis.activeVariantId) || firstVariant;
+  if (activeVariant?.promptProfile === "viral_tiktok_crime_part1") {
+    const title = String(activeVariant.topHeader || activeVariant.title || "").trim();
+    if (title) return title.replace(/\s+/g, " ").slice(0, 180);
+  }
   return String(
     analysis.sharedTopBannerText
     || analysis.shared_top_banner_text
