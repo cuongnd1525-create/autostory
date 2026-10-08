@@ -478,7 +478,8 @@ class ConfiguredAiWorkflowService {
     if (isBodycamPart) {
       const verdict = BodycamGate.checkReview(review, {
         durationSec: Number(info.inputVideo?.draftDurationSec || reviewContext.draftTimeline?.totalOutputDurationSec || 0),
-        scriptId: reviewContext.script.scriptId
+        scriptId: reviewContext.script.scriptId,
+        audioQa
       });
       const qualityAuditPath = path.join(resultDir, "bodycam-quality-gate.json");
       await writeJson(qualityAuditPath, { ...verdict, audioQa, reviewedAt: new Date().toISOString() });
