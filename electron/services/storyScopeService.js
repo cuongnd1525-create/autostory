@@ -396,8 +396,60 @@ function alternateScopes(selection, chosenId, opts) {
     .map(r => ({ ...r.normalizedScope, windowNormalization: r.normalization }));
 }
 
+// Escalation after a real MP4 critic proves that the chosen scope was wrong.
+// Require a DIFFERENT, valid mini-story; never recycle the failed selection as a PASS.
+async function rebuildStoryScope(engine, model, { failedScope, critique, scriptId = 1, pass = 1, root = null, write = null, emit = () => {} } = {}) {
+  const cfg = engine.config || {};
+  const opts = {
+    durationSec: engine.duration || model.durationSec,
+    targetDurationMinSec: cfg.targetDurationMinSec || 65,
+    maxScopeReelSec: cfg.maxScopeReelSec || DEFAULT_MAX_SCOPE_REEL_SEC,
+    paddingSec: cfg.scopeReelPaddingSec ?? DEFAULT_REEL_PADDING_SEC,
+    model,
+    maxReelFiles: cfg.maxReelFiles || undefined
+  };
+  const selection = await engine.ask('v5-story-scope-rebuild-' + scriptId + '-' + pass, {
+    model: modelForScope(model),
+    previousStoryScope: failedScope,
+    failedVideoReview: {
+      summary: critique?.summary || '',
+      observedStory: critique?.observedStory || '',
+      issues: (critique?.issues || []).filter(i => i.severity === 'blocking').slice(0, 20)
+    },
+    targetDurationMinSec: cfg.targetDurationMinSec || 65,
+    targetDurationMaxSec: cfg.targetDurationMaxSec || 90,
+    maxScopeReelSec: opts.maxScopeReelSec,
+    storyMode: cfg.storyMode || 'serialized_part'
+  }, schemas.storyScopeSelection, instruction +
+    '\n\nREBUILD AFTER RENDERED MP4 FAILED: The previous Story Scope demonstrably assembled unrelated material. Select a DIFFERENT central conflict with its own complete hook, evidence and ending. Do not relabel or recycle the failed scope. Treat the previous review as evidence of what NOT to cut. Only return source-grounded story scopes.', [],
+    validateSelectionShape, 'auto_story_edit', {});
+  const candidateScopes = [
+    chosenScope(selection),
+    ...(selection.candidates || [])
+  ].filter(Boolean).filter(s => s.storyScopeId !== failedScope?.storyScopeId);
+  let replacement = null;
+  for (const s of candidateScopes) {
+    const report = validateStoryScope(s, opts);
+    if (report.valid) {
+      replacement = {
+        ...report.normalizedScope, contract: SCOPE_CONTRACT_VERSION,
+        targetDurationMinSec: cfg.targetDurationMinSec || 65,
+        targetDurationMaxSec: cfg.targetDurationMaxSec || 90,
+        windowNormalization: report.normalization
+      };
+      break;
+    }
+  }
+  if (write && root) await write(require('path').join(root, 'story-scope-rebuild-' + scriptId + '-' + pass + '.json'),
+    { failedStoryScopeId: failedScope?.storyScopeId, selection, replacement });
+  if (!replacement) throw new StoryError('STORY_SCOPE_INVALID',
+    'MP4 failed its Story Scope, and AI did not provide a different validated scope. Manual review required.');
+  emit('design', '[Scope] Rebuilt a different mini-story after failed MP4: ' + replacement.storyScopeId);
+  return replacement;
+}
+
 module.exports = {
   SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC, SCOPE_LIMITS, normalizeScopeWindows, limitsText,
   schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
-  chosenScope, alternateScopes, modelForScope
+  chosenScope, alternateScopes, modelForScope, rebuildStoryScope
 };
