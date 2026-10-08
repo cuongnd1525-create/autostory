@@ -7803,30 +7803,27 @@ function switchRightTab(_tabName = "log") {
 function updateVariantHubProgress(payload = {}) {
   if (!el.variantHubCards) return;
   const queue = state.variantExportQueue || [];
-  const processingIdx = queue.findIndex((item) => item.status === "processing" || item.status === "rendering");
-  const activeIdx = typeof payload.variantBatch?.activeIndex === "number"
-    ? payload.variantBatch.activeIndex
-    : (processingIdx >= 0 ? processingIdx : (state.variantProgress?.activeIndex ?? 0));
-
-  const card = el.variantHubCards.children[activeIdx];
-  if (!card) return;
-
-  const queueItem = queue[activeIdx] || null;
-  const variantPct = Math.max(0, Math.min(100, Number(queueItem?.percent ?? 0)));
-  const localMessage = String(queueItem?.message || payload.message || "")
+  const stripPrefix = (text) => String(text || "")
     .replace(/^Nháp\s+\d+\/\d+\s*·\s*/i, "")
     .replace(/^Variant\s+\d+\/\d+\s*·\s*/i, "")
     .trim();
-
-  const bar = card.querySelector(".variant-card-progress-bar");
-  const pctText = card.querySelector(".progress-pct-text");
-  const stepText = card.querySelector(".progress-step-text");
-
-  if (bar) bar.style.width = `${variantPct}%`;
-  if (pctText) pctText.textContent = `${Math.round(variantPct)}%`;
-  if (stepText && localMessage) {
-    stepText.textContent = localMessage;
-    stepText.title = localMessage;
+  // Update EVERY running card, located by variant id (not by queue position:
+  // a single-variant render has a one-item queue for, e.g., variant #2).
+  const running = queue.filter((item) => ["processing", "rendering", "reviewing"].includes(item.status));
+  for (const queueItem of running) {
+    const card = [...el.variantHubCards.children].find((node) => node.dataset?.highlightVariant === queueItem.id);
+    if (!card) continue;
+    const variantPct = Math.max(0, Math.min(100, Number(queueItem.percent ?? 0)));
+    const localMessage = stripPrefix(queueItem.message || (running.length === 1 ? payload.message : ""));
+    const bar = card.querySelector(".variant-card-progress-bar");
+    const pctText = card.querySelector(".progress-pct-text");
+    const stepText = card.querySelector(".progress-step-text");
+    if (bar) bar.style.width = `${variantPct}%`;
+    if (pctText) pctText.textContent = `${Math.round(variantPct)}%`;
+    if (stepText && localMessage) {
+      stepText.textContent = localMessage;
+      stepText.title = localMessage;
+    }
   }
 }
 
@@ -12511,6 +12508,14 @@ async function bootstrap() {
     }
     if (Array.isArray(payload.variantBatch?.items)) {
       setVariantExportQueue(payload.variantBatch.items);
+    } else if (typeof payload.percent === "number" && state.variantExportQueue?.length) {
+      // Single-variant renders (Render nháp nhanh / one-variant export) send plain
+      // progress without a variantBatch: that percent IS the running variant's.
+      const running = state.variantExportQueue.filter((item) => ["processing", "rendering"].includes(item.status));
+      if (running.length === 1) {
+        running[0].percent = Math.max(Number(running[0].percent || 0), Math.max(0, Math.min(100, Number(payload.percent))));
+        if (payload.message) running[0].message = payload.message;
+      }
     }
     if (payload.variantBatch || state.variantExportQueue?.length) {
       state.variantProgress = {

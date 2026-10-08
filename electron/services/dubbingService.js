@@ -7827,6 +7827,11 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       index,
       label: variant.label || variant.id || `Variant ${index + 1}`,
       status: "waiting",
+      // Per-variant progress for the Variant Hub card (it reads item.percent);
+      // previously only the overall percent was sent, so every card sat at 0%.
+      percent: 0,
+      message: "Đang chờ",
+      updatedAt: "",
       error: ""
     }));
     const failures = [];
@@ -7849,6 +7854,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     });
     for (const [variantIndex, variant] of variants.entries()) {
       variantBatch[variantIndex].status = "processing";
+      variantBatch[variantIndex].percent = 0;
+      variantBatch[variantIndex].message = `Đang xử lý variant ${variantIndex + 1}/${variants.length}`;
+      variantBatch[variantIndex].updatedAt = new Date().toISOString();
       sendVariantBatch({
         index: variantIndex,
         percent: (variantIndex / variants.length) * 100,
@@ -7867,6 +7875,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const onVariantProgress = (payload = {}) => {
         const variantPercent = Math.max(0, Math.min(100, safeNumber(payload.percent, 0)));
         const overallPercent = ((variantIndex + (variantPercent / 100)) / variants.length) * 100;
+        variantBatch[variantIndex].percent = Math.max(variantBatch[variantIndex].percent || 0, Math.round(variantPercent));
+        variantBatch[variantIndex].message = payload.message || "Đang xử lý";
+        variantBatch[variantIndex].updatedAt = new Date().toISOString();
         sendVariantBatch({
           index: variantIndex,
           percent: overallPercent,
@@ -7882,15 +7893,19 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           project: projectForVariant
         });
         variantBatch[variantIndex].status = "done";
+        variantBatch[variantIndex].message = `Variant ${variantIndex + 1}/${variants.length} đã hoàn tất`;
       } catch (error) {
         variantBatch[variantIndex].status = "failed";
         variantBatch[variantIndex].error = error.message;
+        variantBatch[variantIndex].message = `Variant ${variantIndex + 1}/${variants.length} bị lỗi`;
         failures.push({
           variantId: variant.id,
           label: variant.label || variant.id,
           error: error.message
         });
       }
+      variantBatch[variantIndex].percent = 100;
+      variantBatch[variantIndex].updatedAt = new Date().toISOString();
       sendVariantBatch({
         index: variantIndex,
         percent: ((variantIndex + 1) / variants.length) * 100,
