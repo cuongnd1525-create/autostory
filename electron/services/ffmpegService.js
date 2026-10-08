@@ -483,7 +483,7 @@ class FfmpegService {
       "-filter_complex",
       [
         "[0:a]volume=0.40,aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[bg_raw]",
-        "[1:a]volume=1.10,aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[vo]",
+        "[1:a]volume=1.10,aresample=async=1:first_pts=0,aformat=channel_layouts=mono,pan=stereo|c0=c0|c1=c0[vo]",
         "[vo]asplit=2[vo_sc][vo_mix]",
         "[bg_raw][vo_sc]sidechaincompress=threshold=-30dB:ratio=10:attack=8:release=260:makeup=1[bg]",
         "[bg][vo_mix]amix=inputs=2:duration=first:weights='1.0 1.0':normalize=0[a]"
@@ -512,7 +512,7 @@ class FfmpegService {
       "-i",
       audioPath,
       "-filter_complex",
-      `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`,
+      `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=mono,pan=stereo|c0=c0|c1=c0${limiter ? ",alimiter=limit=0.95" : ""}[a]`,
       "-map",
       "0:v:0",
       "-map",
@@ -533,6 +533,12 @@ class FfmpegService {
   // ffmpeg ends that filter input early (measured 0.05-0.27s short) and -shortest then
   // truncates the copied video to it. Opt-in (continuous narrated blocks) so existing
   // per-segment output is byte-for-byte unchanged.
+  // Voice level (2026-10-08 "TTS nghe bình thường khi nghe thử nhưng rất bé
+  // sau render"): measured on the real filters, the plain mix lost 6 dB of
+  // voice (amix normalize=1 divides every input by the input count) and every
+  // stereo mix lost another 3 dB (aformat upmix of the mono TTS puts it at
+  // -3 dB per channel). Now: amix normalize=0 and a lossless mono->stereo pan,
+  // so the voice reaches the video at the level it was synthesized/normalized.
   async mixVideoAudioWithVoice({ videoPath, voicePath, outputPath, sourceVolume = 0.22, voiceVolume = 1.0, limiter = true, duck = false, separateAmbientInput = false }) {
     const safeSourceVolume = Math.max(0, Number(sourceVolume) || 0);
     const safeVoiceVolume = Math.max(0, Number(voiceVolume) || 0);
@@ -551,7 +557,7 @@ class FfmpegService {
         "-filter_complex",
         [
           `${bed}volume=${safeSourceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[bg_raw]`,
-          `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[vo]`,
+          `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=mono,pan=stereo|c0=c0|c1=c0[vo]`,
           `[vo]asplit=2[vo_sc][vo_mix]`,
           `[bg_raw][vo_sc]sidechaincompress=threshold=-30dB:ratio=10:attack=8:release=260:makeup=1[bg]`,
           `[bg][vo_mix]amix=inputs=2:duration=first:weights='1.0 1.0':normalize=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`
@@ -568,7 +574,7 @@ class FfmpegService {
       voicePath,
       ...bedInput,
       "-filter_complex",
-      `${bed}volume=${safeSourceVolume.toFixed(3)}[bg];[1:a]volume=${safeVoiceVolume.toFixed(3)}[vo];[bg][vo]amix=inputs=2:duration=first:dropout_transition=0,aresample=async=1:first_pts=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`,
+      `${bed}volume=${safeSourceVolume.toFixed(3)},aformat=channel_layouts=stereo[bg];[1:a]volume=${safeVoiceVolume.toFixed(3)},aformat=channel_layouts=mono,pan=stereo|c0=c0|c1=c0[vo];[bg][vo]amix=inputs=2:duration=first:dropout_transition=0:normalize=0,aresample=async=1:first_pts=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`,
       "-map",
       "0:v:0",
       "-map",
@@ -896,7 +902,7 @@ class FfmpegService {
       "-filter_complex",
       [
         `[0:a]volume=${sourceAudioVolume},afade=t=in:st=0:d=0.06,afade=t=out:st=${formatSeconds(Math.max(0, Number(targetDuration) - 0.22))}:d=0.22,aformat=channel_layouts=stereo[bg_raw]`,
-        `[1:a]volume=1.12,afade=t=in:st=0:d=0.04,afade=t=out:st=${formatSeconds(fadeOutStart)}:d=0.18,apad=pad_dur=0.2,atrim=0:${formatSeconds(targetDuration)},aformat=channel_layouts=stereo[vo]`,
+        `[1:a]volume=1.12,afade=t=in:st=0:d=0.04,afade=t=out:st=${formatSeconds(fadeOutStart)}:d=0.18,apad=pad_dur=0.2,atrim=0:${formatSeconds(targetDuration)},aformat=channel_layouts=mono,pan=stereo|c0=c0|c1=c0[vo]`,
         `[vo]asplit=2[vo_sc][vo_mix]`,
         `[bg_raw][vo_sc]sidechaincompress=threshold=-24dB:ratio=4:attack=5:release=50[bg]`,
         "[bg][vo_mix]amix=inputs=2:duration=first:weights='1.0 1.0':normalize=0[a]"

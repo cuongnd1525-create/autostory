@@ -1256,7 +1256,7 @@ async function autoStoryDraftKey(project, variant, settings) {
   const source = await fs.stat(project.sourceVideoPath);
   const subtitles = project.subtitleSourcePath ? await fs.stat(project.subtitleSourcePath).catch(() => null) : null;
   return crypto.createHash("sha256").update(JSON.stringify({
-    version: 3, source: [project.sourceVideoPath, source.size, source.mtimeMs],
+    version: 4, source: [project.sourceVideoPath, source.size, source.mtimeMs], // v4: voice mix level fix
     subtitles: [project.subtitleSourcePath, subtitles?.size, subtitles?.mtimeMs], title: variant.title,
     decoration: effective.videoDecoration, mask: effective.sourceSubtitleMask, mixer: effective.mixer,
     subtitleStyle: project.subtitleStyle, draftVoiceMode: project.draftVoiceMode,
@@ -6578,7 +6578,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         // synthesized. It is independent of segment index/variant, so unchanged
         // beats are reused across variants and V2 revisions.
         const key = crypto.createHash("sha256").update(JSON.stringify({
-          version: 2, source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+          // v3: voice mix level fix (amix normalize=0 + lossless mono->stereo); v2 clips have -6/-9 dB voice.
+          version: 3, source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
           sourceStartSec, sourceDurationSec, durationSec, renderDurationSec, audioMode,
           voice: voiceText ? (voiceResult?.cacheKey || resolveFastDraftVoicePlan({ project, settings, text: voiceText, outputPath: rawVoicePath, voiceRenderOptions: getSegmentVoiceRenderOptions(segment) }).cache.cacheKey) : null,
           sourceVolume: getHighlightAmbientVolume(segment, project), voiceVolume: project.mixer?.voiceVolume ?? 100,
@@ -6987,7 +6988,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     let cache = null;
     if (autoStorySourceStat) {
       const key = crypto.createHash("sha256").update(JSON.stringify({
-        version: 2, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+        version: 3, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
         pieces: pieces.map((p) => [p.sourceStartSec, p.sourceDurationSec, p.durationSec]), treatment, ambientVolume, duck, voiceVolume, maxStretchRatio,
         voice: resolveFastDraftVoicePlan({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions }).cache.cacheKey,
         normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true
