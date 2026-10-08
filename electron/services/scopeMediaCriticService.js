@@ -41,6 +41,14 @@ const responseSchema = object({
   observedStory: { type: 'string' },
   coldViewerCanFollow: { type: 'boolean' },
   coldViewerNotes: { type: 'string' },
+  presentationQuality: object({
+    primaryActionVisibleAtPhoneSize: { type: 'boolean' },
+    captionsReadable: { type: 'boolean' },
+    dialogueIntelligible: { type: 'boolean' },
+    narratorPresent: { type: 'boolean' },
+    narratorSoundsNatural: { type: 'boolean' },
+    notes: { type: 'string' }
+  }),
   hookPromiseResolved: { type: 'boolean' },
   hookPromiseEvidence: object({ payoffOutputSec: { type: 'number' }, observedPayoff: { type: 'string' } }),
   observationWindows: {
@@ -118,7 +126,7 @@ function buildPrompt(spine, timeline, durationSec, delivery = null) {
     const b = spine.beats[i] || {};
     return `- ${t.outputStartSec.toFixed(1)}-${t.outputEndSec.toFixed(1)}s [${b.beatId}] ${b.scopeMembership || ''} ${b.audioMode || ''}: intended "${String(b.newInformation || b.whyNecessaryNow || '').slice(0, 160)}"`;
   }).join('\n');
-  return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS only: scope, causal flow, dialogue function, hook, ending. Ignore captions, fonts, framing, blur, music, colour and FPS.
+  return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS first: scope, causal flow, dialogue function, hook, ending. Separately report presentation quality. Do not fail story coherence for stylistic preferences.
 
 INTENDED STORY SCOPE
 - Central conflict: ${scope.centralConflict || ''}
@@ -148,7 +156,8 @@ Answer from what you actually SEE and HEAR:
 7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
 8. HOOK PROMISE: hookPromiseResolved true ONLY if the actual video pays off its opening promise, or ends with a clearly named in-scope forward consequence. A suspenseful cold-open from the future that is never explained is NOT a payoff. Supply hookPromiseEvidence.payoffOutputSec (0 when missing) and observedPayoff describing what is really seen/heard.
 9. CONTINUOUS MP4 REVIEW: observationWindows must cover EVERY output second from 0 to the exact MP4 duration without gaps. Divide the video into consecutive 5-8 second windows (last may be shorter). For each window report observed action and new information, meaningfulProgress (not just different camera/angle), causalConnectionClear and unexplainedAudioGap (true only for silence that harms comprehension, not intentional suspense). All output-time windows are mandatory. Do not infer evidence from the EDL; inspect the actual video. A long repetitive stretch must be marked without progress.
-10. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
+10. PRESENTATION QA (separate from story editing): inspect the rendered MP4 on a phone-sized view. For presentationQuality assess whether important action is large enough to SEE, captions (if needed for comprehension) are readable, key spoken dialogue intelligible, and actual TTS narrator (if present) sounds naturally paced rather than robotic. If no narrator set narratorPresent=false and narratorSoundsNatural=true. Report factual problems, not aesthetic preference, in notes. These findings are PUBLISH warnings and must not prompt changing unrelated story footage.
+11. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
 Return JSON only.`;
 }
 
@@ -180,6 +189,9 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   if (deliveryAware && !Array.isArray(raw.transitions)) return invalid("Critic field 'transitions' must list the rendered video's transitions.");
   if (deliveryAware && typeof raw.finalSeconds?.subjectClearlyVisible !== 'boolean') return invalid("Critic field 'finalSeconds.subjectClearlyVisible' must be boolean (inspect the last 3-5 seconds visually).");
   if (deliveryAware && typeof raw.openingCuriosity?.createsCuriosity !== 'boolean') return invalid("Critic field 'openingCuriosity.createsCuriosity' must be boolean.");
+  if (deliveryAware && (!raw.presentationQuality ||
+    ['primaryActionVisibleAtPhoneSize', 'captionsReadable', 'dialogueIntelligible', 'narratorPresent', 'narratorSoundsNatural']
+      .some(k => typeof raw.presentationQuality[k] !== 'boolean'))) return invalid('Missing presentationQuality facts.');
   if (deliveryAware && typeof raw.hookPromiseResolved !== 'boolean') return invalid('Missing hookPromiseResolved.');
   if (deliveryAware && (!raw.hookPromiseEvidence || !Number.isFinite(Number(raw.hookPromiseEvidence.payoffOutputSec)) ||
     !String(raw.hookPromiseEvidence.observedPayoff || '').trim())) return invalid('Missing observed hook payoff evidence.');
@@ -276,6 +288,14 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && verdict.finalFootageUsable
     && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false
     && (!deliveryAware || raw.hookPromiseResolved) && blocking.length === 0;
+  const presentation = raw.presentationQuality || null;
+  const presentationIssues = [];
+  if (deliveryAware && presentation) {
+    if (!presentation.primaryActionVisibleAtPhoneSize) presentationIssues.push('Key action too small or obscured on a phone.');
+    if (!presentation.captionsReadable) presentationIssues.push('Important dialogue/captions not readable on phone.');
+    if (!presentation.dialogueIntelligible) presentationIssues.push('Spoken evidence not intelligible.');
+    if (presentation.narratorPresent && !presentation.narratorSoundsNatural) presentationIssues.push('Narrator sounds robotic or unnaturally paced.');
+  }
   const weakRegions = blocking.map(x => ({ type: x.type, outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds, reason: x.whyItFails, evidence: x.evidence,
     ...(DELIVERY_ISSUES.has(x.type) ? { deliveryIssue: true } : {}) }));
   return {
@@ -285,6 +305,7 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     finalFootageUsableReported: raw.finalFootageUsable, finalSeconds: raw.finalSeconds || null,
     openingCuriosity: raw.openingCuriosity || null, transitions,
     hookPromiseResolved: raw.hookPromiseResolved ?? null, hookPromiseEvidence: raw.hookPromiseEvidence || null,
+    presentationQuality: presentation, presentationIssues, publishReady: isCompliant && presentationIssues.length === 0,
     observationWindows: Array.isArray(raw.observationWindows) ? raw.observationWindows : [],
     observedStory: raw.observedStory || '', summary: raw.summary || '', issues, weakRegions,
     coldViewerCanFollow: verdict.coldViewerCanFollow, coldViewerCanFollowReported: typeof raw.coldViewerCanFollow === 'boolean' ? raw.coldViewerCanFollow : null, coldViewerNotes: raw.coldViewerNotes || '',
