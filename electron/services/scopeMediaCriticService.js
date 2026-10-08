@@ -206,6 +206,39 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     if (e <= s) e = Math.min(durationSec, s + 0.5);
     issues.push({ ...it, outputStartSec: s, outputEndSec: e, beatIds: beatsInRegion(timeline, s, e) });
   }
+  // Independently derive actionable failures from the mandatory FULL video timeline.
+  if (deliveryAware) {
+    let stalled = null;
+    for (const w of raw.observationWindows) {
+      const start = Number(w.windowStartSec), end = Number(w.windowEndSec);
+      if (!w.causalConnectionClear) {
+        issues.push({ type: 'causal_break', severity: 'blocking', outputStartSec: start, outputEndSec: end,
+          evidence: w.observedAction, whyItFails: 'Cold viewer cannot follow this section.', beatIds: beatsInRegion(timeline, start, end) });
+      }
+      if (w.unexplainedAudioGap && end - start >= 3) {
+        issues.push({ type: 'audio_gap_unexplained', severity: 'blocking', outputStartSec: start, outputEndSec: end,
+          evidence: w.observedAction, whyItFails: 'Unexplained audio absence damages comprehension.', beatIds: beatsInRegion(timeline, start, end) });
+      }
+      if (!w.meaningfulProgress) stalled ??= start;
+      else if (stalled !== null) {
+        if (start - stalled >= 10) issues.push({ type: 'low_value_stretch', severity: 'blocking',
+          outputStartSec: stalled, outputEndSec: start, evidence: 'Consecutive observed windows without meaningful progress.',
+          whyItFails: 'Extended stalled passage loses momentum.', beatIds: beatsInRegion(timeline, stalled, start) });
+        stalled = null;
+      }
+    }
+    if (stalled !== null && durationSec - stalled >= 10) {
+      issues.push({ type: 'low_value_stretch', severity: 'blocking', outputStartSec: stalled, outputEndSec: durationSec,
+        evidence: 'Video ends in a prolonged stalled passage.', whyItFails: 'Closing passage does not progress the story.',
+        beatIds: beatsInRegion(timeline, stalled, durationSec) });
+    }
+    if (!raw.hookPromiseResolved) {
+      const start = Math.max(0, durationSec - 12);
+      issues.push({ type: 'hook_promise_unresolved', severity: 'blocking', outputStartSec: start, outputEndSec: durationSec,
+        evidence: raw.hookPromiseEvidence.observedPayoff, whyItFails: 'The rendered video never fulfills the opening promise.',
+        beatIds: beatsInRegion(timeline, start, durationSec) });
+    }
+  }
   // A false verdict with no matching issue still needs a repairable region.
   const lastBeat = timeline[timeline.length - 1];
   const tail = lastBeat ? [lastBeat.outputStartSec, lastBeat.outputEndSec] : [Math.max(0, durationSec - 5), durationSec];
@@ -241,7 +274,8 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   }
   const blocking = issues.filter(x => x.severity === 'blocking');
   const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && verdict.finalFootageUsable
-    && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false && blocking.length === 0;
+    && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false
+    && (!deliveryAware || raw.hookPromiseResolved) && blocking.length === 0;
   const weakRegions = blocking.map(x => ({ type: x.type, outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds, reason: x.whyItFails, evidence: x.evidence,
     ...(DELIVERY_ISSUES.has(x.type) ? { deliveryIssue: true } : {}) }));
   return {
@@ -250,6 +284,8 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     endingIsConsequence: raw.endingIsConsequenceOfCentralConflict, finalFootageUsable: verdict.finalFootageUsable,
     finalFootageUsableReported: raw.finalFootageUsable, finalSeconds: raw.finalSeconds || null,
     openingCuriosity: raw.openingCuriosity || null, transitions,
+    hookPromiseResolved: raw.hookPromiseResolved ?? null, hookPromiseEvidence: raw.hookPromiseEvidence || null,
+    observationWindows: Array.isArray(raw.observationWindows) ? raw.observationWindows : [],
     observedStory: raw.observedStory || '', summary: raw.summary || '', issues, weakRegions,
     coldViewerCanFollow: verdict.coldViewerCanFollow, coldViewerCanFollowReported: typeof raw.coldViewerCanFollow === 'boolean' ? raw.coldViewerCanFollow : null, coldViewerNotes: raw.coldViewerNotes || '',
     deliveryIssues: issues.filter(x => DELIVERY_ISSUES.has(x.type)),
@@ -259,7 +295,7 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   };
 }
 
-async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null } = {}) {
+async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null, runReview = null } = {}) {
   if (!aiService || !mp4Path || !actualMp4DurationSec) throw new Error('Scope media critic requires aiService, mp4Path, and actualMp4DurationSec');
   const timeline = outputTimeline(spine, script);
   const delivery = deliveryTimeline(spine, script, timeline);
@@ -268,7 +304,9 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   const prompt = buildPrompt(spine, timeline, actualMp4DurationSec, delivery);
   let raw;
   try {
-    raw = await aiService.generateJsonFromFiles({ filePaths: [mp4Path], prompt, responseSchema, taskType: 'analysis' });
+    const args = { filePaths: [mp4Path], prompt, responseSchema, taskType: 'auto_story_review', videoFps: 2,
+      maxOutputTokens: 12000, temperature: 0 };
+    raw = typeof runReview === 'function' ? await runReview(args) : await aiService.generateJsonFromFiles(args);
   } catch (error) {
     return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${error.message}`, issues: [], weakWindows: [], weakRegions: [] };
   }
@@ -281,4 +319,4 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   return out;
 }
 
-module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, responseSchema, outputTimeline, deliveryTimeline, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
+module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, responseSchema, validateObservationCoverage, outputTimeline, deliveryTimeline, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
