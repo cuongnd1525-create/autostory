@@ -9,6 +9,11 @@ function chooseRepairStrategy(critic = {}, durationSec = 0) {
       critic.centralQuestionActiveThroughout === false) {
     return { mode: 'edl_rebuild', reason: 'The hook, central question or ending fails at whole-story level.' };
   }
+  // A targeted repair cannot safely lock unaffected beats if the critic has not
+  // mapped an actual blocking region back to any EDL beat.
+  if (blocking.some(i => !Array.isArray(i.beatIds) || !i.beatIds.length)) {
+    return { mode: 'edl_rebuild', reason: 'Blocking MP4 finding cannot be mapped to any editable EDL beat.' };
+  }
   const totalBadSeconds = blocking.reduce((sum, i) =>
     sum + Math.max(0, Math.min(durationSec, Number(i.outputEndSec) || 0) -
       Math.max(0, Number(i.outputStartSec) || 0)), 0);
