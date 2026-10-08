@@ -4,6 +4,7 @@ const path = require("path");
 const GeminiService = require("./geminiService");
 const VertexAiService = require("./vertexAiService");
 const ManualAntigravityStage1Service = require("./manualAntigravityStage1Service");
+const BodycamGate = require("./bodycamQualityGate");
 const { inspectGeminiJsonFiles } = require("./geminiJsonArtifactService");
 const { mergeVariantTiming } = require("./pipelineTimingService");
 
@@ -388,6 +389,11 @@ class ConfiguredAiWorkflowService {
     const promptPath = path.join(inputDir, "gemini-draft-review-prompt.txt");
     const promptText = await fs.readFile(promptPath, "utf8");
     const files = (await listPackageFiles(inputDir)).filter((file) => file !== promptPath);
+    const reviewContext = await readJson(path.join(inputDir, "review-context.json"), "review-context.json");
+    const isBodycamPart = reviewContext?.script?.prompt_profile === BodycamGate.PROFILE;
+    const audioQa = isBodycamPart
+      ? await BodycamGate.detectSilence(this.settings.ffmpegPath || "ffmpeg", info.draftPath || path.join(inputDir, "draft-v" + info.revision + ".mp4"))
+      : null;
     const resultDir = path.join(packageRoot, DRAFT_RESULT_DIR);
     await fs.mkdir(resultDir, { recursive: true });
     onProgress?.({ step: "configured_ai_draft_review", percent: 5, message: `Đang chuẩn bị Draft V${info.revision} cho ${descriptor.label}` });
@@ -418,7 +424,9 @@ class ConfiguredAiWorkflowService {
     const reusedExistingReview = Boolean(review);
     this.lastAgyStats = null;
     if (!review) {
-      const transportPrompt = buildDraftTransportPrompt(promptText, inputDir, { resultDir });
+      const transportPrompt = buildDraftTransportPrompt(promptText, inputDir, { resultDir })
+        + (isBodycamPart ? "\\n\\nLOCAL AUDIO SIGNAL EVIDENCE (machine-measured; silence may be intentional; cross-check against picture and dialogue):\\n"
+          + JSON.stringify(audioQa) : "");
       vertexRun = descriptor.provider === "vertex_ai"
         ? await this.runVertex({
             files,
@@ -465,6 +473,23 @@ class ConfiguredAiWorkflowService {
     const actualBinding = review.reviewTarget?.reviewBindingId || review.review_target?.reviewBindingId;
     if (expectedBinding && actualBinding !== expectedBinding) {
       throw new Error("AI trả về reviewBindingId không khớp Draft V1 hiện tại.");
+    }
+    if (isBodycamPart) {
+      const verdict = BodycamGate.checkReview(review, {
+        durationSec: Number(info.inputVideo?.draftDurationSec || reviewContext.draftTimeline?.totalOutputDurationSec || 0),
+        scriptId: reviewContext.script.scriptId
+      });
+      const qualityAuditPath = path.join(resultDir, "bodycam-quality-gate.json");
+      await writeJson(qualityAuditPath, { ...verdict, audioQa, reviewedAt: new Date().toISOString() });
+      onProgress?.({ step: "configured_ai_draft_review", percent: 98,
+        message: verdict.passed ? "Bodycam MP4 quality gate passed" : "Bodycam quality gate failed: " + verdict.errors.join("; ") });
+      if (!verdict.passed) {
+        const error = new Error("Antigravity Bodycam V2 không đạt Hard Quality Gate: "
+          + verdict.errors.slice(0, 5).join("; ") + ". Xem " + qualityAuditPath
+          + ". Review phải được tạo lại; tool không coi bản lỗi là đạt.");
+        error.code = "BODYCAM_QUALITY_GATE_FAILED";
+        throw error;
+      }
     }
     const aiMs = reusedExistingReview ? 0 : Date.now() - aiStartedAt;
     const reviewTiming = {
