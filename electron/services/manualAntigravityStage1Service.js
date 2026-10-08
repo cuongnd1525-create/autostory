@@ -2,6 +2,7 @@ const fs = require("fs/promises");
 const fsSync = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("node:crypto");
 const { spawn } = require("child_process");
 
 const { buildCliEnv } = require("./cliEnv");
@@ -1123,7 +1124,8 @@ function toRange(item) {
 function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
   const errors = [];
   const warnings = [];
-  if (!plan || typeof plan !== "object") return { ok: false, errors: ["series-plan không phải object."], warnings };
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return { ok: false, errors: ["series-plan không phải object."], warnings };
+  if (plan.profile && plan.profile !== series.profile) errors.push("series-plan dùng sai profile.");
   if (plan.artifactType !== "series_plan") errors.push('artifactType phải là "series_plan".');
   for (const field of ["centralViewerQuestion", "hookPromise"]) {
     if (typeof plan[field] !== "string" || !plan[field].trim()) errors.push(`${field} trống.`);
@@ -3043,12 +3045,19 @@ class ManualAntigravityStage1Service {
 
   async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics, logs }) {
     const lockedPlanPath = path.join(resultDir, "series-plan.json");
-    // This file belongs to the exact analysis pack, never another source.
+    const signature = crypto.createHash("sha256")
+      .update(await fs.readFile(understandingPath))
+      .update(String(series.profile) + ":" + videoDurationSec)
+      .update(inputPaths.hookContractPath
+        ? await fs.readFile(inputPaths.hookContractPath).catch(() => Buffer.from(""))
+        : Buffer.from(""))
+      .digest("hex");
+    // Cache only when source understanding AND user-selected Hook are unchanged.
     // Reuse only a previously host-validated, profile-matching plan.
     try {
       const saved = JSON.parse(await fs.readFile(lockedPlanPath, "utf8"));
       const verified = validateSeriesPlan(saved, { series, videoDurationSec });
-      if (verified.ok && saved.lockedBy === "host_validator") {
+      if (verified.ok && saved.lockedBy === "host_validator" && saved.sourceSignature === signature) {
         this.emitLog(onProgress, 57, "[SERIES_PLAN] CACHE HIT: kế hoạch 3 Part đã được host xác minh; không gọi lại AGY.", logs);
         return { plan: saved, videoViews: 0, cacheHit: true };
       }
@@ -3067,7 +3076,7 @@ class ManualAntigravityStage1Service {
     const videoViews = new Set();
     const allowedInputs = new Set(
       [understandingPath, inputPaths.hookContractPath, inputPaths.transcriptPath,
-       inputPaths.sceneManifestPath].filter(Boolean)
+       inputPaths.sceneManifestPath, schemaPath].filter(Boolean)
         .map((name) => path.basename(String(name).replace(/\\/g, "/")).toLowerCase())
     );
     const toolGuard = ({ toolName, file }) => {
@@ -3135,7 +3144,8 @@ class ManualAntigravityStage1Service {
         "antigravity-output-seriesPlan-fresh-retry.log. Không sinh kịch bản khi plan chưa khóa.");
     }
     const locked = { ...plan, artifactType: "series_plan", profile: series.profile,
-      lockedAt: new Date().toISOString(), lockedBy: "host_validator" };
+      lockedAt: new Date().toISOString(), lockedBy: "host_validator",
+      sourceSignature: signature };
     return { plan: locked, videoViews: videoViews.size, cacheHit: false };
   }
 
@@ -3717,6 +3727,7 @@ ManualAntigravityStage1Service.buildSourceUnderstandingPrompt = buildSourceUnder
 ManualAntigravityStage1Service.buildScriptGenerationPrompt = buildScriptGenerationPrompt;
 ManualAntigravityStage1Service.buildSeriesPlanPrompt = buildSeriesPlanPrompt;
 ManualAntigravityStage1Service.validateSeriesPlan = validateSeriesPlan;
+ManualAntigravityStage1Service.extractNamedArtifact = extractNamedArtifact;
 ManualAntigravityStage1Service.evaluateScriptsAgainstSeriesPlan = evaluateScriptsAgainstSeriesPlan;
 ManualAntigravityStage1Service.detectSeriesProfile = detectSeriesProfile;
 ManualAntigravityStage1Service.SERIES_PROFILES = SERIES_PROFILES;
