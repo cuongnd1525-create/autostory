@@ -2428,7 +2428,7 @@ function writeSetupDraft() {
     autoStoryOutputCount: el.autoStoryOutputCount?.value || "2",
     autoStoryNarrationStyle: el.autoStoryNarrationStyle?.value || "investigative",
     autoStoryAudioBalance: el.autoStoryAudioBalance?.value || "balanced",
-    autoStoryEngineVersion: el.autoStoryEngineVersion?.value || "2",
+    autoStoryEngineVersion: el.autoStoryEngineVersion?.value || "4",
     sourceVideoPath: el.sourceVideoPath?.value || "",
     sourceDownloadUrl: el.sourceDownloadUrl?.value || "",
     sourceKind: el.sourceVideoPath?.dataset.sourceKind || "",
@@ -2533,7 +2533,7 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (el.autoStoryOutputCount) el.autoStoryOutputCount.value = draft.autoStoryOutputCount || "2";
   if (el.autoStoryNarrationStyle) el.autoStoryNarrationStyle.value = draft.autoStoryNarrationStyle || "investigative";
   if (el.autoStoryAudioBalance) el.autoStoryAudioBalance.value = draft.autoStoryAudioBalance || "balanced";
-  if (el.autoStoryEngineVersion) { el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || "2"; updateAutoStoryEngineHint(); }
+  if (el.autoStoryEngineVersion) { el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || "4"; updateAutoStoryEngineHint(); }
   if (draft.sourceVideoPath && el.sourceVideoPath) el.sourceVideoPath.value = draft.sourceVideoPath;
   if (draft.sourceDownloadUrl && el.sourceDownloadUrl) el.sourceDownloadUrl.value = draft.sourceDownloadUrl;
   if (el.sourceVideoPath) {
@@ -7034,7 +7034,8 @@ function updateReview() {
   if (el.reviewAutoStory) {
     const min = Math.max(65, Number(el.autoStoryTargetMin?.value || 65));
     const max = Math.max(min, Number(el.autoStoryTargetMax?.value || 90));
-    const engineLabel = Number(el.autoStoryEngineVersion?.value) === 3 ? "V3 Story Model" : "V2 Legacy";
+    const engineVersion = Number(el.autoStoryEngineVersion?.value);
+    const engineLabel = engineVersion === 4 ? "V4 Story Scope + Media Director" : engineVersion === 3 ? "V3 Story Model" : "V2 Legacy";
     el.reviewAutoStory.textContent = `${engineLabel} · ${Number(el.autoStoryOutputCount?.value || 2)} video · ${min}-${max}s · ${el.autoStoryNarrationStyle?.options[el.autoStoryNarrationStyle.selectedIndex]?.textContent || "Điều tra"}`;
   }
   if (isRecap) {
@@ -7318,10 +7319,12 @@ function renderProjectPicker() {
 
 function updateAutoStoryEngineHint() {
   if (!el.autoStoryEngineHint) return;
-  const v3 = Number(el.autoStoryEngineVersion?.value) === 3;
-  el.autoStoryEngineHint.textContent = v3
-    ? "V3: hiểu toàn bộ nguồn một lần (Source Story Model), thiết kế story beats, kiểm tra narrator (grounding/spoiler) và duck âm gốc thay vì tắt. Nên đặt số kịch bản = 1 khi test lần đầu."
-    : "V2: pipeline production hiện tại (ổn định). Chọn V3 để dùng story-model mới.";
+  const version = Number(el.autoStoryEngineVersion?.value);
+  el.autoStoryEngineHint.textContent = version === 4
+    ? "V4: Story Scope → Media-Grounded Editorial Director → dựng MP4 → Scope Media Critic → sửa có mục tiêu. Nên thử một output trước."
+    : version === 3
+    ? "V3: Source Story Model, thiết kế story beats theo văn bản và kiểm tra narrator; giữ đường chạy cũ."
+    : "V2: pipeline legacy, giữ tương thích project cũ.";
 }
 
 function readProjectPayload() {
@@ -7386,8 +7389,8 @@ function readProjectPayload() {
       }
       : null,
     // AutoStory engine version at PROJECT ROOT (the live service checks project.autoStoryContractVersion).
-    // Only set for an explicit V3 selection; V2/legacy leaves it undefined → existing behavior preserved.
-    autoStoryContractVersion: isAutoStoryMode(setupMode) && Number(el.autoStoryEngineVersion?.value) === 3 ? 3 : undefined,
+    // Persist explicit V2/V3/V4 selection; never silently upgrade existing projects.
+    autoStoryContractVersion: isAutoStoryMode(setupMode) ? ([2, 3, 4].includes(Number(el.autoStoryEngineVersion?.value)) ? Number(el.autoStoryEngineVersion.value) : 4) : undefined,
     manualGeminiPackPath: isManualGeminiWorkflowMode(setupMode) ? (el.manualGeminiPackPath?.value || "") : "",
     manualGeminiPromptOptions: isManualGeminiProMode(setupMode)
       ? readManualGeminiPromptOptions()
@@ -11426,8 +11429,8 @@ function bindEvents() {
     });
   });
   el.autoStoryEngineVersion?.addEventListener("change", () => {
-    // Convenience for the first V3 test: prefer a single output unless the user changed it.
-    if (Number(el.autoStoryEngineVersion.value) === 3 && el.autoStoryOutputCount && el.autoStoryOutputCount.value === "2") {
+    // Keep early V3/V4 trials inexpensive while preserving explicit later edits.
+    if ([3, 4].includes(Number(el.autoStoryEngineVersion.value)) && el.autoStoryOutputCount && el.autoStoryOutputCount.value === "2") {
       el.autoStoryOutputCount.value = "1";
     }
     updateAutoStoryEngineHint();
