@@ -26,7 +26,9 @@ const ISSUE_TYPES = [
   'narration_overwrites_evidence', // narration talks over / paraphrases a moment that should speak for itself
   'weak_narrator_to_raw_handoff',  // the narrator does not set up why the next real moment matters
   'weak_raw_to_narrator_handoff',  // coming out of a real moment, the narrator does not connect it forward
-  'opening_lacks_curiosity'        // the first seconds give a cold viewer no reason to keep watching
+  'opening_lacks_curiosity',       // the first seconds give a cold viewer no reason to keep watching
+  'hook_promise_unresolved',       // a hook must lead to an observed payoff
+  'audio_gap_unexplained'          // unintentional long silent stretch
 ];
 const DELIVERY_ISSUES = new Set(ISSUE_TYPES.slice(ISSUE_TYPES.indexOf('unbridged_perspective_shift')));
 
@@ -39,6 +41,16 @@ const responseSchema = object({
   observedStory: { type: 'string' },
   coldViewerCanFollow: { type: 'boolean' },
   coldViewerNotes: { type: 'string' },
+  hookPromiseResolved: { type: 'boolean' },
+  hookPromiseEvidence: object({ payoffOutputSec: { type: 'number' }, observedPayoff: { type: 'string' } }),
+  observationWindows: {
+    type: 'array', items: object({
+      windowStartSec: { type: 'number' }, windowEndSec: { type: 'number' },
+      observedAction: { type: 'string' }, observedNewInformation: { type: 'string' },
+      meaningfulProgress: { type: 'boolean' }, causalConnectionClear: { type: 'boolean' },
+      unexplainedAudioGap: { type: 'boolean' }
+    })
+  },
   // Delivery pass: explicit, visual judgments (not inferred from the transcript).
   openingCuriosity: object({ firstSecondsDescription: { type: 'string' }, createsCuriosity: { type: 'boolean' } }),
   transitions: {
@@ -111,6 +123,7 @@ function buildPrompt(spine, timeline, durationSec, delivery = null) {
 INTENDED STORY SCOPE
 - Central conflict: ${scope.centralConflict || ''}
 - Central viewer question: ${scope.centralViewerQuestion || ''}
+- Opening promise: ${spine.hookPromise || ''}
 - Scope boundary: ${scope.explicitScopeBoundary ? `${scope.explicitScopeBoundary.startSec}-${scope.explicitScopeBoundary.endSec}s of the source — ${scope.explicitScopeBoundary.rationale || ''}` : ''}
 - Deliberately out of scope: ${(scope.outOfScopeBranches || []).map(b => b.description).join(' | ')}
 - Must be withheld until the end: ${(scope.mustWithhold || []).join(' | ')}
@@ -133,8 +146,27 @@ Answer from what you actually SEE and HEAR:
    coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? It cannot be true while a listed transition is not understood. coldViewerNotes: where that breaks, if anywhere.
    openingCuriosity: describe the first seconds (firstSecondsDescription) and judge whether they create immediate curiosity for a cold viewer (createsCuriosity).
 7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
-8. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
+8. HOOK PROMISE: hookPromiseResolved true ONLY if the actual video pays off its opening promise, or ends with a clearly named in-scope forward consequence. A suspenseful cold-open from the future that is never explained is NOT a payoff. Supply hookPromiseEvidence.payoffOutputSec (0 when missing) and observedPayoff describing what is really seen/heard.
+9. CONTINUOUS MP4 REVIEW: observationWindows must cover EVERY output second from 0 to the exact MP4 duration without gaps. Divide the video into consecutive 5-8 second windows (last may be shorter). For each window report observed action and new information, meaningfulProgress (not just different camera/angle), causalConnectionClear and unexplainedAudioGap (true only for silence that harms comprehension, not intentional suspense). All output-time windows are mandatory. Do not infer evidence from the EDL; inspect the actual video. A long repetitive stretch must be marked without progress.
+10. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
 Return JSON only.`;
+}
+
+function validateObservationCoverage(windows, durationSec) {
+  if (!Array.isArray(windows) || !windows.length) return 'Critic omitted observationWindows.';
+  let cursor = 0;
+  for (let i = 0; i < windows.length; i++) {
+    const w = windows[i], s = Number(w?.windowStartSec), e = Number(w?.windowEndSec);
+    if (!Number.isFinite(s) || !Number.isFinite(e) || Math.abs(s - cursor) > 0.65 || e <= s || e - s > 9.5) {
+      return 'observationWindows[' + i + '] has a gap, overlap, invalid range, or exceeds 9.5s.';
+    }
+    if (!String(w.observedAction || '').trim() || !String(w.observedNewInformation || '').trim() ||
+      typeof w.meaningfulProgress !== 'boolean' || typeof w.causalConnectionClear !== 'boolean' ||
+      typeof w.unexplainedAudioGap !== 'boolean') return 'observationWindows[' + i + '] lacks observations/verdicts.';
+    cursor = e;
+  }
+  if (Math.abs(cursor - durationSec) > 0.65) return 'observationWindows do not reach the actual MP4 ending.';
+  return null;
 }
 
 function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }) {
@@ -148,6 +180,13 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   if (deliveryAware && !Array.isArray(raw.transitions)) return invalid("Critic field 'transitions' must list the rendered video's transitions.");
   if (deliveryAware && typeof raw.finalSeconds?.subjectClearlyVisible !== 'boolean') return invalid("Critic field 'finalSeconds.subjectClearlyVisible' must be boolean (inspect the last 3-5 seconds visually).");
   if (deliveryAware && typeof raw.openingCuriosity?.createsCuriosity !== 'boolean') return invalid("Critic field 'openingCuriosity.createsCuriosity' must be boolean.");
+  if (deliveryAware && typeof raw.hookPromiseResolved !== 'boolean') return invalid('Missing hookPromiseResolved.');
+  if (deliveryAware && (!raw.hookPromiseEvidence || !Number.isFinite(Number(raw.hookPromiseEvidence.payoffOutputSec)) ||
+    !String(raw.hookPromiseEvidence.observedPayoff || '').trim())) return invalid('Missing observed hook payoff evidence.');
+  if (deliveryAware && raw.hookPromiseResolved && (raw.hookPromiseEvidence.payoffOutputSec < 0 ||
+    raw.hookPromiseEvidence.payoffOutputSec > durationSec + 0.65)) return invalid('Hook payoff timestamp outside rendered MP4.');
+  const coverageFailure = deliveryAware ? validateObservationCoverage(raw.observationWindows, durationSec) : null;
+  if (coverageFailure) return invalid(coverageFailure);
   // Visual evidence wins over story resolution: an ending whose picture is not
   // clearly visible is unusable, and a cold viewer cannot follow past a transition
   // the critic itself says is not understood.
