@@ -126,6 +126,23 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     errors.push("Ending đã audit không nằm trong đoạn cuối V1.");
   }
   if (audit.endingUsable!==true) errors.push("Ending hình/âm thanh chưa đủ rõ.");
+  if (audit.headlineMatchesHook!==true) errors.push("Headline chưa được đối chiếu với Hook thật của Part.");
+  const sourceEvents=Array.isArray(source.storyTimeline)?source.storyTimeline:[];
+  const indexedEvents=sourceEvents.filter(e=>txt(e.eventId));
+  if(indexedEvents.length) {
+    for(const [field,time] of [
+      ["hookEventId",num(audit.hookSourceSec)],
+      ["payoffEventId",payoff],
+      ["endingEventId",ending]
+    ]) {
+      const idValue=txt(audit[field]);
+      const event=indexedEvents.find(e=>txt(e.eventId)===idValue);
+      const eventRange=range(event);
+      if(!event || !Number.isFinite(time) ||
+         !(eventRange.start-3<=time && time<=eventRange.end+3))
+        errors.push("Không chứng minh được "+field+"="+idValue+" tại nguồn "+time+"s.");
+    }
+  }
   const weak = Array.isArray(audit.weakSourceRanges)?audit.weakSourceRanges:[];
   for (const w of weak) {
     const wr=range(w);
@@ -133,7 +150,7 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
   }
   // When Phase A explicitly knows a selected long interval contains an
   // obstructed view, warn AI for reinspection rather than fabricate visuals.
-  for(const ev of Array.isArray(source.storyTimeline)?source.storyTimeline:[]){
+  for(const ev of sourceEvents){
     const desc=[ev.summary,...(ev.visualFacts||[])].filter(Boolean).join(" ");
     const er=range(ev);
     if (/camera (?:is |was )?(?:blocked|obstructed)|lens (?:covered|blocked)|no usable visuals|black screen/i.test(desc) &&
@@ -141,6 +158,13 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
       const extendsFirst3 = first && er.start<first.start+3 && er.end>first.start;
       if(extendsFirst3) errors.push("Hook che camera/mất hình theo nguồn: "+er.start+"-"+er.end+"s.");
       else warnings.push("Source có mô tả khung hình che khuất: "+er.start+"-"+er.end+"s.");
+    }
+    if(/\b(?:stationary|static|idle|waiting|parked patrol car|dashboard camera|routine paperwork)\b/i.test(desc)) {
+      const hasCriticalExchange=(ev.dialogueFacts||[]).some(d => txt(d.quote).length>20);
+      const lowValue=Number(ev.storyImportance||ev.viralValue||0)<7;
+      const selectedLong=selected.some(r=>overlaps(er,r)&&r.end-r.start>=16);
+      if(selectedLong && lowValue && !hasCriticalExchange)
+        errors.push("Source tĩnh/ít thông tin bị giữ quá lâu: "+er.start+"-"+er.end+"s.");
     }
   }
   const result={passed:errors.length===0,scriptId:id,seconds:Number(seconds.toFixed(2)),
