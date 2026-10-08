@@ -897,6 +897,20 @@ function directorAudit(id, verdict, extra = {}) {
   return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, ...verdict, ...extra };
 }
 
+// Editorial compliance is NOT equivalent to publish readiness. A coherent story
+// can still have unreadable footage, weak captions or unnatural synthesized voice.
+function directorApprovedAudit(id, critique, repairPasses = 0, metrics = {}) {
+  const publishReady = critique.publishReady !== false;
+  return directorAudit(id, { needsUserReview: !publishReady,
+    status: publishReady ? 'PUBLISH_READY' : 'PRESENTATION_QA_FAILED', publishReady }, {
+    repairPasses,
+    finalCheck: { complete: true, verdict: publishReady ? 'PASS' : 'FAIL',
+      issues: publishReady ? [] : (critique.presentationIssues || []).map(reason => ({ reason })) },
+    presentationQuality: critique.presentationQuality || null,
+    metrics: { ...metrics, publishReady }
+  });
+}
+
 // Review loop for director-owned EDLs: render -> scope critic -> director repair (<=2).
 async function auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine, script, ai }) {
   const { workspaceRoot, projectId, onProgress, onDraft, signal } = opts;
@@ -925,7 +939,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
   if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
   if (critique.isCompliant) {
-    const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
+    const audit = directorApprovedAudit(id, critique, 0, summarize(critique));
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
   }
@@ -1001,7 +1015,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
         await fs.writeFile(record, JSON.stringify(audit, null, 2)).catch(() => {});
         const e = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`); e.code = 'PERSIST_ACCEPTED_EDL_FAILED'; e.audit = audit; throw e;
       }
-      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
+      const audit = directorApprovedAudit(id, critique, pass, summarize(critique));
       await fs.writeFile(record, JSON.stringify(audit, null, 2));
       return audit;
     }
