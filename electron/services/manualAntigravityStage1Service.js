@@ -681,6 +681,7 @@ function buildSourceUnderstandingPrompt({ expectedProxyList = [], contextPath = 
     "- Every fact must be visible in the frames or audible/present in the transcript. Never invent names, charges, outcomes or motives.",
     "- Keep the whole JSON under ~6,000 words.",
     "",
+    "FINAL ANSWER CONTRACT: Respond with the full envelope JSON immediately after reading required evidence. No code exploration, planning tools, self-debugging, narrative prose or Markdown fences.",
     "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
     JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE }], notes: "" })
   ].join("\n");
@@ -1006,6 +1007,9 @@ async function readAntigravityTokenExpiry({ startedAtMs = 0, logDir = path.join(
 function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
   return [
     "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
+    "ROLE: editorial planner producing ONLY JSON data, NOT a coding or software development agent.",
+    "Do NOT inspect the app, repository, JavaScript files, tests, or CLI code; do NOT use manage_task, shell, grep_search, find_by_name, or directory listing. Do not troubleshoot the application.",
+    "ONLY read the listed source-understanding / hook-contract / scene-manifest / transcript files using view_file as necessary.",
     "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
     `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
     ...(hookContractPath ? [`HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`] : []),
@@ -1018,7 +1022,7 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
     "RULES:",
     "- Lock the central viewer question and the hook promise. Part 1 opens on the hook; Parts 2-3 pay it off progressively.",
     "- sceneAllocation: give each Part its own chronological SOURCE ranges. A range may appear in two Parts only if listed in sharedRanges with a reason (e.g. a 'previously on' recap of at most 8s). No other duplicates.",
-    "- Spoiler boundaries: Part 1 and Part 2 must not include or narrate the arrest, charges, verdict or final consequence. Put those ranges in Part 3 payoffRanges.",
+    "- Spoiler boundaries: Part 1 and Part 2 must not spoil the actual final verified outcome. Put verified final outcome footage in Part 3 payoffRanges, which may show medical treatment, investigation or rescue, NOT necessarily arrest/charges/verdict.",
     "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
     "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed).",
     "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
@@ -1250,7 +1254,25 @@ async function extractNamedArtifact(stdout, { filename, artifactType, resultDir 
     return envelope?.artifacts?.find((item) => item?.filename === filename)?.script || null;
   })();
   if (fromEnvelope) return fromEnvelope;
-  const deep = findObjectDeep(stdout, (object) => object.artifactType === artifactType);
+  // AGY stream-json often puts the real final JSON in result.response/text or
+  // per-turn text_delta, NOT in a JSON envelope that parses as raw stdout.
+  // Recover the named artifact from those fields before retrying the model.
+  for (const agentText of collectAgentTexts(stdout).reverse()) {
+    const envelope = findArtifactEnvelope(agentText);
+    const found = envelope?.artifacts?.find((item) => item?.filename === filename);
+    if (found?.script && typeof found.script === "object" && !Array.isArray(found.script)) return found.script;
+    const direct = findObjectDeep(agentText, (object) =>
+      object.artifactType === artifactType ||
+      (artifactType === "series_plan" && Array.isArray(object.parts) &&
+       typeof object.centralViewerQuestion === "string" && typeof object.hookPromise === "string")
+    );
+    if (direct) return direct;
+  }
+  const deep = findObjectDeep(stdout, (object) =>
+    object.artifactType === artifactType ||
+    (artifactType === "series_plan" && Array.isArray(object.parts) &&
+     typeof object.centralViewerQuestion === "string" && typeof object.hookPromise === "string")
+  );
   if (deep) return deep;
   if (resultDir) {
     try {
@@ -2068,11 +2090,11 @@ class ManualAntigravityStage1Service {
    * Text-only phases (series plan, Phase B). Capacity errors may be retried
    * with a fresh process (no video is involved); auth and timeouts are not.
    */
-  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
+  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard = null, forbiddenTools = [] }) {
     const maxCapacityRetries = 2;
     for (let attempt = 0; ; attempt += 1) {
       await this.ensureAntigravityAuth({ label, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs });
-      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
+      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard, forbiddenTools });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && attempt < maxCapacityRetries && !this.cancelled) {
         const delaySec = (attempt + 1) * 8;
