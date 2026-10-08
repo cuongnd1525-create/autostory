@@ -30,6 +30,21 @@ If branch exists locally, use `git switch feat/antigravity-bodycam-review-qualit
 - Listen to narrator as heard: prompt/QA now flags robotic voice but does not change TTS model/voice engine automatically.
 - Inspect 9:16 face/framing and captions by watching rendered MP4; quality flags detect issues, but there is not yet an automatic crop engine or TikTok caption restyler.
 
+## Troubleshooting: `SERIES_PLAN_REPAIR` timeout
+
+If Stage 1 reports `series-plan không phải object` followed by `[agy] print timeout after 6m0s`, it failed **before** script generation, not during rendering/review. The old retry kept the same AGY conversation and sometimes started browsing `renderer.js` / `manualAntigravityStage1Service.js` via `manage_task`.
+
+Branch fix:
+- Recovers JSON envelopes from AGY stream-json `result.response` or fragmented `text_delta`.
+- Uses text-only listed evidence files from an isolated `phase-b-input` work directory, with no app code or script schema inspection.
+- A malformed first plan gets exactly one **fresh** generation (not a resumed conversation), bounded to 180s and with CLI `--print-timeout` enforced.
+- Preserves `antigravity-output-seriesPlan-initial.log` and `antigravity-output-seriesPlan-fresh-retry.log`.
+- A validated `series-plan.json` is cached only for the same source understanding, Hook, transcript, manifest and three-Part configuration.
+
+After pulling, rerun Stage 1 using the **same analysis pack**; the validated Source Understanding cache is preserved. If it still fails, send the new `antigravity-output-seriesPlan-initial.log`, `antigravity-output-seriesPlan-fresh-retry.log`, and the final status. Do not delete the Phase A / video caches as a first response.
+
+Run `node tests/antigravitySeriesPlanRecovery.test.js` to check stream JSON extraction, a clean retry, restricted input-tool access and cache invalidation.
+
 ## Artifacts
 - `gemini-draft-review.json`: revised script and per-window `bodycamQualityAudit`
 - `bodycam-quality-gate.json`: local structural/media-coverage verdict; accepts a **candidate script**, not a final published video
