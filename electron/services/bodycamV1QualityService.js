@@ -107,6 +107,10 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
   if (!txt(audit.centralViewerQuestion) || !txt(audit.hookPromise)) {
     errors.push("Thiếu v1EditorialAudit.centralViewerQuestion/hookPromise.");
   }
+  if (seriesPlan?.centralViewerQuestion && txt(audit.centralViewerQuestion).toLowerCase() !==
+      txt(seriesPlan.centralViewerQuestion).toLowerCase()) {
+    errors.push("V1 lệch câu hỏi trung tâm đã khóa trong series-plan.json.");
+  }
   if (audit.first3SecClear !== true) errors.push("Hook 0-3s chưa được xác nhận đủ rõ cho người xem mới.");
   const first = selected[0];
   if (first && audit.hookSourceSec!=null) {
@@ -128,6 +132,14 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     const events=Array.isArray(source.storyTimeline)?source.storyTimeline:[];
     if (!events.some(e=>{let r=range(e);return r.start<=payoff&&payoff<=r.end;}))
       errors.push("Cảnh hứa cho Part sau không khớp storyTimeline của source.");
+    const nextId=id===1?3:id===3?4:null;
+    const next=seriesPlan?.parts?.find(p=>Number(p.scriptId)===nextId);
+    if(nextId && next){
+      const targetRanges=[...(next.sceneAllocation||[]),...(next.payoffRanges||[])]
+        .map(range).filter(r=>r.end>r.start);
+      if(!targetRanges.some(r=>r.start-2<=payoff&&payoff<=r.end+2))
+        errors.push("Open loop hứa cho Part sau nhưng payoff không nằm trong sceneAllocation Part "+nextId+".");
+    }
   }
   const ending=num(audit.endingSourceSec);
   const last=selected[selected.length-1];
