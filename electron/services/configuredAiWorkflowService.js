@@ -376,7 +376,7 @@ class ConfiguredAiWorkflowService {
     };
   }
 
-  async runDraftReview({ workspaceRoot, projectId, packageDir, onProgress } = {}) {
+  async runDraftReview({ workspaceRoot, projectId, packageDir, onProgress, qualityRetry = 0, gateFeedback = "" } = {}) {
     const descriptor = providerDescriptor(this.settings);
     const runDescriptor = descriptor.provider === "vertex_ai"
       ? { ...descriptor, model: descriptor.qualityModel || descriptor.model }
@@ -425,6 +425,7 @@ class ConfiguredAiWorkflowService {
     this.lastAgyStats = null;
     if (!review) {
       const transportPrompt = buildDraftTransportPrompt(promptText, inputDir, { resultDir })
+        + (gateFeedback ? "\n\nREQUIRED CORRECTION FROM FAILED LOCAL QUALITY GATE:\n" + gateFeedback + "\nRegenerate the ENTIRE corrected JSON and actually inspect every required MP4 window.\n" : "")
         + (isBodycamPart ? "\\n\\nLOCAL AUDIO SIGNAL EVIDENCE (machine-measured; silence may be intentional; cross-check against picture and dialogue):\\n"
           + JSON.stringify(audioQa) : "");
       vertexRun = descriptor.provider === "vertex_ai"
@@ -498,6 +499,12 @@ class ConfiguredAiWorkflowService {
               await fs.rm(candidatePath, { force: true });
             }
           } catch (_) { /* Never mask the quality-gate failure with cleanup errors. */ }
+        }
+        if (qualityRetry < 1) {
+          onProgress?.({ step: "configured_ai_draft_review", percent: 10,
+            message: "Quality gate thất bại; Antigravity tự review/sửa lại một lượt theo lỗi thực tế." });
+          return this.runDraftReview({ workspaceRoot, projectId, packageDir, onProgress,
+            qualityRetry: qualityRetry + 1, gateFeedback: verdict.errors.join("; ") });
         }
         const error = new Error("Antigravity Bodycam V2 không đạt Hard Quality Gate: "
           + verdict.errors.slice(0, 5).join("; ") + ". Xem " + qualityAuditPath
