@@ -7150,12 +7150,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     };
 
     sendVariantBatch({ message: `Đã xếp hàng ${variantBatch.length} bản nháp Highlight` });
-    // Bounded concurrency: FFmpeg/TTS contend for CPU and the Edge endpoint, so
-    // never fan out every variant at once. Default 2, configurable 1-3.
-    // Vertex AutoStory keeps its existing serial resource-managed queue.
-    const concurrency = project.analysisWorkflow === "vertex_auto_story" || settings.autoStoryResourceManaged
-      ? 1
-      : Math.max(1, Math.min(3, Math.round(safeNumber(settings.draftRenderConcurrency, 2)) || 2));
+    // Variants render ONE AT A TIME. Parallel draft renders (2 workers) left
+    // variant 1 stuck at 19% while variants 2/3 finished and the batch bar
+    // froze at 73% (real run 2026-10-08): concurrent renders share the TTS
+    // engine, FFmpeg/CPU and project state. Sequential is the only mode;
+    // the old draftRenderConcurrency setting is intentionally ignored.
+    const concurrency = 1;
     const variantPercents = variants.map(() => 0);
     const overallPercent = () => variantPercents.reduce((sum, value) => sum + value, 0) / variants.length;
     const batchStartedAt = Date.now();
@@ -7268,7 +7268,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }
     sendVariantBatch({
       percent: 100,
-      message: `Render ${variants.length} variant (song song ${concurrency}) xong sau ${(batchWallMs / 1000).toFixed(1)}s · `
+      message: `Render lần lượt ${variants.length} variant xong sau ${(batchWallMs / 1000).toFixed(1)}s · `
         + `segment cache ${variantBatch.reduce((sum, item) => sum + Number(item.renderMetrics?.segmentCacheHits || 0), 0)} HIT / `
         + `${variantBatch.reduce((sum, item) => sum + Number(item.renderMetrics?.segmentCacheMisses || 0), 0)} MISS`
     });

@@ -60,7 +60,7 @@ class ConfigStore {
       antigravityModel: process.env.ANTIGRAVITY_MODEL || "",
       antigravityReasoning: process.env.ANTIGRAVITY_REASONING || "high",
       antigravityTimeoutMs: Number(process.env.ANTIGRAVITY_TIMEOUT_MS || 900000),
-      draftRenderConcurrency: Number(process.env.DRAFT_RENDER_CONCURRENCY || 2),
+      draftRenderConcurrency: 1, // variant drafts always render sequentially (see dubbingService)
       ytDlpCommand: process.env.YT_DLP_COMMAND || "yt-dlp",
       whisperEngine: process.env.WHISPER_ENGINE || "auto",
       whisperCommand: process.env.WHISPER_COMMAND || "whisper",

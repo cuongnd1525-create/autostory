@@ -128,9 +128,19 @@ async function main() {
   const coldV1 = saved.analysis.highlightVariants[0].artifacts.fastDraftRenderMetrics;
   const coldV2 = saved.analysis.highlightVariants[1].artifacts.fastDraftRenderMetrics;
   // Variants share identical source ranges/voice text: variant_02 reuses many of variant_01's
-  // beats only if it runs after them; with concurrency both may miss. Total hits+misses = 10.
+  // beats because it renders after them. Total hits+misses = 10.
   assert.strictEqual(coldV1.segmentCacheHits + coldV1.segmentCacheMisses + coldV2.segmentCacheHits + coldV2.segmentCacheMisses, 10);
-  assert(progress.some((item) => /song song 2/.test(item.message || "")), "batch must report the concurrency used");
+  // Real run 2026-10-08: parallel renders left variant 1 stuck at 19% (batch bar 73%).
+  // Variants must render one at a time even if an old config still says 2.
+  const batchEvents = progress.filter((item) => item.variantBatch);
+  assert(batchEvents.length > 0);
+  for (const item of batchEvents) {
+    const processing = item.variantBatch.items.filter((entry) => entry.status === "processing");
+    assert(processing.length <= 1, `at most one variant renders at a time (${processing.map((entry) => entry.id).join(",")})`);
+  }
+  const firstV2 = batchEvents.findIndex((item) => item.variantBatch.items[1].status === "processing");
+  assert(firstV2 > 0 && batchEvents[firstV2].variantBatch.items[0].status === "done", "variant 2 starts only after variant 1 is done");
+  assert(progress.some((item) => /Render lần lượt 2 variant xong/.test(item.message || "")), "batch reports sequential rendering");
 
   // V2 of variant_01: change only beat 4's narration.
   saved = await store.getProject(workspaceRoot, created.id);
