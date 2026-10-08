@@ -30,6 +30,7 @@ const { validateEdlQuality } = require('./edlQualityValidator');
 const StoryScope = require('./storyScopeService');
 const Director = require('./editorialDirectorService');
 const ScopeCritic = require('./scopeMediaCriticService');
+const RepairPolicy = require('./autoStoryRepairPolicy');
 const Delivery = require('./deliveryBlockService');
 const BlockNarration = require('./blockNarrationService');
 
@@ -940,10 +941,25 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     signal?.throwIfAborted();
     try {
     const emitProgress = (st, msg, pct) => onProgress?.({ stage: st, message: msg, percent: pct });
-    const repaired = await Director.repairEdl(engine, { model, spine: current, critique, weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id });
+    const strategy = RepairPolicy.chooseRepairStrategy(critique, duration);
+    onProgress?.({ stage: 'reviewing', message: 'Script ' + id + ': ' + strategy.mode + ' — ' + strategy.reason });
+    let repaired;
+    if (strategy.mode === 'targeted') {
+      repaired = await Director.repairEdl(engine, { model, spine: current, critique,
+        weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id });
+    } else {
+      const scope = strategy.mode === 'scope_rebuild'
+        ? await StoryScope.rebuildStoryScope(engine, model, {
+          failedScope: current.storyScope, critique, scriptId: id, pass, root, write, emit: emitProgress
+        }) : current.storyScope;
+      const redesigned = await Director.directEdl(engine, { model, scope, root, write, emit: emitProgress, scriptId: id });
+      repaired = { ...redesigned, request: { scope, currentEdl: current, weakRegions: critique.weakRegions || [],
+        reel: redesigned.reel, evidenceFiles: (redesigned.evidence || []).map(x => x.file) } };
+    }
     await fs.writeFile(path.join(root, `repair-${pass}-request-${id}.json`), JSON.stringify({
       storyScopeId: repaired.request.scope?.storyScopeId, weakRegions: repaired.request.weakRegions,
-      criticSummary: critique.summary, reelRanges: repaired.request.reel.ranges, evidenceFiles: repaired.request.evidenceFiles.map(f => path.basename(f || ''))
+      criticSummary: critique.summary, repairMode: strategy.mode, repairReason: strategy.reason,
+      reelRanges: repaired.request.reel.ranges, evidenceFiles: repaired.request.evidenceFiles.map(f => path.basename(f || ''))
     }, null, 2));
     current = { ...repaired.spine, scriptId: id };
     await fs.writeFile(path.join(root, `repair-${pass}-story-spine-${id}.json`), JSON.stringify(current, null, 2));
