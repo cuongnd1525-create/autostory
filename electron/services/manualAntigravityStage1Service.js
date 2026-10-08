@@ -3042,57 +3042,101 @@ class ManualAntigravityStage1Service {
   }
 
   async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics, logs }) {
-    const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
-      series,
-      understandingPath,
+    const lockedPlanPath = path.join(resultDir, "series-plan.json");
+    // This file belongs to the exact analysis pack, never another source.
+    // Reuse only a previously host-validated, profile-matching plan.
+    try {
+      const saved = JSON.parse(await fs.readFile(lockedPlanPath, "utf8"));
+      const verified = validateSeriesPlan(saved, { series, videoDurationSec });
+      if (verified.ok && saved.lockedBy === "host_validator") {
+        this.emitLog(onProgress, 57, "[SERIES_PLAN] CACHE HIT: kế hoạch 3 Part đã được host xác minh; không gọi lại AGY.", logs);
+        return { plan: saved, videoViews: 0, cacheHit: true };
+      }
+    } catch (_error) { /* No valid plan to reuse. */ }
+    // Stale agent-written files must not masquerade as output from the next attempt.
+    await fs.rm(lockedPlanPath, { force: true }).catch(() => {});
+
+    const inputs = {
+      series, understandingPath,
       hookContractPath: inputPaths.hookContractPath,
       transcriptPath: inputPaths.transcriptPath,
       sceneManifestPath: inputPaths.sceneManifestPath,
       videoDurationSec
-    }), "Series plan");
-    const commandConfig = this.buildCommand(prompt, schemaPath, pass1Dir, {
-      packageInfo,
-      timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
-    });
-    const videoViews = new Set();
-    const result = await this.runAgyPhase({
-      label: "SERIES_PLAN", commandConfig, prompt, resultDir, onProgress,
-      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan"
-    });
-    let stdout = result.stdout || "";
-    let conversationId = result.conversationId;
-    const parse = async () => {
-      const plan = await extractNamedArtifact(stdout, { filename: "series-plan.json", artifactType: "series_plan", resultDir });
-      const normalized = plan ? { ...plan, artifactType: plan.artifactType || "series_plan", profile: series.profile } : null;
-      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec }) };
     };
-    let parsed = await parse();
-    if (!parsed.validation.ok && conversationId) {
+    const prompt = assertPrintPromptSize(buildSeriesPlanPrompt(inputs), "Series plan");
+    const videoViews = new Set();
+    const allowedInputs = new Set(
+      [understandingPath, inputPaths.hookContractPath, inputPaths.transcriptPath,
+       inputPaths.sceneManifestPath].filter(Boolean)
+        .map((name) => path.basename(String(name).replace(/\\/g, "/")).toLowerCase())
+    );
+    const toolGuard = ({ toolName, file }) => {
+      // AGY once attempted to debug RecapTool's own renderer.js and called
+      // manage_task repeatedly during a pure data-planning retry (6m timeout).
+      // Permit only the explicitly supplied source JSON/SRT documents.
+      if (toolName !== "view_file") return "Series Plan chỉ cho phép view_file các file nguồn đã liệt kê";
+      const basename = path.basename(String(file || "").replace(/\\/g, "/")).toLowerCase();
+      if (!basename || !allowedInputs.has(basename)) {
+        return "Không nằm trong các đầu vào series plan: " + (basename || "(empty)");
+      }
+      return null;
+    };
+    const makeConfig = (text, timeoutMs) => this.buildCommand(text, schemaPath, pass1Dir, {
+      packageInfo, timeoutMs
+    });
+    const started = await this.runAgyPhase({
+      label: "SERIES_PLAN",
+      commandConfig: makeConfig(prompt, resolvePhaseTimeoutMs("series_plan", this.settings)),
+      prompt, resultDir, onProgress, expectedProxyList: [],
+      viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan",
+      toolGuard
+    });
+    let stdout = started.stdout || "";
+    // Always write the original response BEFORE attempting a repair.
+    await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan-initial.log"), stdout, "utf8");
+    let plan = await extractNamedArtifact(stdout, {
+      filename: "series-plan.json", artifactType: "series_plan", resultDir: ""
+    });
+    let validation = validateSeriesPlan(plan, { series, videoDurationSec });
+    if (!validation.ok) {
       metrics.retryCount += 1;
-      this.emitLog(onProgress, 56, `[SERIES_PLAN] Plan chưa hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu sửa trong cùng hội thoại...`, logs);
-      const repairPrompt = [
-        "Your series plan was rejected by the host validator:",
-        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
-        "Return the COMPLETE corrected series-plan envelope now, exactly one JSON object, no prose. Do not open any .mp4 file."
-      ].join("\n");
-      const retryConfig = this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, {
-        packageInfo,
-        timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
-      });
+      this.emitLog(onProgress, 54,
+        "[SERIES_PLAN] JSON chưa đạt: " + validation.errors.slice(0, 3).join(" ") +
+        " Thử tạo lại bằng hội thoại AGY MỚI, chỉ đọc dữ liệu nguồn; không resume phiên cũ.", logs);
+      const repairPrompt = assertPrintPromptSize([
+        "FRESH DATA-ONLY SERIES PLAN GENERATION. NOT a coding task.",
+        "The host found problems in the previous JSON:",
+        ...validation.errors.slice(0, 10).map((error) => "- " + error),
+        "Do not inspect project source code or troubleshoot the application.",
+        "Return ONE complete JSON envelope for series-plan.json as your final answer.",
+        "",
+        buildSeriesPlanPrompt(inputs)
+      ].join("\n"), "Series plan clean retry");
+      const retryTimeout = Math.min(180000, resolvePhaseTimeoutMs("series_plan", this.settings));
       const retry = await this.runAgyPhase({
-        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt, resultDir, onProgress,
-        expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-retry"
+        label: "SERIES_PLAN_RETRY_FRESH",
+        commandConfig: makeConfig(repairPrompt, retryTimeout),
+        prompt: repairPrompt, resultDir, onProgress, expectedProxyList: [],
+        viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-fresh-retry",
+        toolGuard
       });
-      stdout += `\n--- SERIES_PLAN_REPAIR ---\n${retry.stdout || ""}`;
-      conversationId = retry.conversationId || conversationId;
-      parsed = await parse();
+      stdout = retry.stdout || "";
+      await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan-fresh-retry.log"), stdout, "utf8");
+      plan = await extractNamedArtifact(stdout, {
+        filename: "series-plan.json", artifactType: "series_plan", resultDir: ""
+      });
+      validation = validateSeriesPlan(plan, { series, videoDurationSec });
     }
     await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan.log"), stdout, "utf8");
-    if (!parsed.validation.ok) {
-      throw new Error(`[SERIES_PLAN] FAILED: series-plan.json không hợp lệ (${parsed.validation.errors.slice(0, 4).join(" ")}). Không sinh kịch bản khi plan chưa khóa.`);
+    if (!validation.ok) {
+      throw new Error("[SERIES_PLAN] FAILED: JSON không hợp lệ sau 2 lượt độc lập (" +
+        validation.errors.slice(0, 5).join(" ") +
+        "). Giữ nguyên cache hiểu video; xem antigravity-output-seriesPlan-initial.log và " +
+        "antigravity-output-seriesPlan-fresh-retry.log. Không sinh kịch bản khi plan chưa khóa.");
     }
-    const locked = { ...parsed.plan, lockedAt: new Date().toISOString(), lockedBy: "host_validator" };
-    return { plan: locked, videoViews: videoViews.size };
+    const locked = { ...plan, artifactType: "series_plan", profile: series.profile,
+      lockedAt: new Date().toISOString(), lockedBy: "host_validator" };
+    return { plan: locked, videoViews: videoViews.size, cacheHit: false };
   }
 
   /**
