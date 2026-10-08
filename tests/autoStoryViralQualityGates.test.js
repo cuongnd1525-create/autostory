@@ -25,6 +25,8 @@ function validCritique() {
     coldViewerCanFollow: true, coldViewerNotes: '',
     openingCuriosity: { firstSecondsDescription: 'Confrontation', createsCuriosity: true },
     transitions: [], finalSeconds: { visualDescription: 'Clearly visible driver', subjectClearlyVisible: true },
+    presentationQuality: { primaryActionVisibleAtPhoneSize: true, captionsReadable: true,
+      dialogueIntelligible: true, narratorPresent: true, narratorSoundsNatural: true, notes: 'Clear.' },
     hookPromiseResolved: true,
     hookPromiseEvidence: { payoffOutputSec: 11, observedPayoff: 'The officer reveals the result.' },
     observationWindows: observedWindows(), issues: [], observedStory: 'A dispute is resolved.',
@@ -56,6 +58,11 @@ async function main() {
   assert.ok(normalize(stalled).issues.some(i => i.type === 'low_value_stretch'));
   const silent = validCritique(); silent.observationWindows[1].unexplainedAudioGap = true;
   assert.ok(normalize(silent).issues.some(i => i.type === 'audio_gap_unexplained'));
+  const phone = validCritique(); phone.presentationQuality.primaryActionVisibleAtPhoneSize = false;
+  assert.equal(normalize(phone).isCompliant, true, 'Small framing does not change editorial story verdict');
+  assert.equal(normalize(phone).publishReady, false, 'Small framing blocks publish-ready');
+  const robotic = validCritique(); robotic.presentationQuality.narratorSoundsNatural = false;
+  assert.equal(normalize(robotic).publishReady, false, 'Robotic narration needs attention');
   const masked = validCritique(); masked.finalSeconds.subjectClearlyVisible = false;
   assert.equal(normalize(masked).isCompliant, false);
 
