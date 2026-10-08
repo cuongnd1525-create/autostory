@@ -1111,7 +1111,7 @@ function buildScriptGenerationPrompt({
     ...(seriesPlanPath ? [
       "V1 QUALITY CONTRACT (EDITORIAL PRE-RENDER GATE, HIGH PRIORITY):",
       "- The host will REJECT your V1 scripts if the first 3 seconds are unclear, source ranges do not substantiate the Hook and its verified payoff/Part open-loop, the ending is unwatchable, raw and tool narration do not form eight connected alternating beats, or filler was used just to reach duration.",
-      "- For each script add top-level v1EditorialAudit = {centralViewerQuestion:string,hookPromise:string,first3SecClear:true,hookSourceSec:number,payoffSourceSec:number,payoffWithinPart:boolean,verifiedNextPartOpenLoop:boolean,endingSourceSec:number,endingUsable:true,weakSourceRanges:[{sourceStartSec:number,sourceEndSec:number,reason:string}]}. These are SOURCE timestamps, never output timestamps.",
+      "- For each script add top-level v1EditorialAudit = {centralViewerQuestion:string,hookPromise:string,first3SecClear:true,headlineMatchesHook:true,hookSourceSec:number,hookEventId:string,payoffSourceSec:number,payoffEventId:string,payoffWithinPart:boolean,verifiedNextPartOpenLoop:boolean,endingSourceSec:number,endingEventId:string,endingUsable:true,weakSourceRanges:[{sourceStartSec:number,sourceEndSec:number,reason:string}]}. These are SOURCE timestamps, never output timestamps.",
       "- Hook: prefer clear conflict, verified stakes, readable face/reaction and intelligible audio. Do not open on a hand/vest obscuring the lens, a routine police approach, slow walking or repetitive commands. The first 3s must identify at least two of person/conflict/stakes.",
       "- Visual progress: Remove idle patrol-car/police vehicle shots, generic sirens, black/blocked camera, repeated static wide shots and procedural waiting unless each actually adds necessary new evidence or a reaction. Never stretch to 110 seconds by padding.",
       "- Hook -> 1 brief rewind/context -> connected escalation -> specific payoff/open loop must be obvious to someone who has never seen the original. Explain source time/location jumps in short natural English VO, including daylight/night or hospital/roadside switches.",
@@ -1124,9 +1124,10 @@ function buildScriptGenerationPrompt({
     "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
     JSON.stringify({ artifacts: scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id, ...(seriesPlanPath ? {
       v1EditorialAudit: { centralViewerQuestion:"", hookPromise:"", first3SecClear:false,
-        hookSourceSec:0, payoffSourceSec:0, payoffWithinPart:false,
-        verifiedNextPartOpenLoop:false, endingSourceSec:0, endingUsable:false,
-        weakSourceRanges:[] }
+        headlineMatchesHook:false,hookSourceSec:0,hookEventId:"",
+        payoffSourceSec:0,payoffEventId:"",payoffWithinPart:false,
+        verifiedNextPartOpenLoop:false,endingSourceSec:0,endingEventId:"",
+        endingUsable:false,weakSourceRanges:[] }
     } : {}) } })), notes: "" })
   ].join("\n");
 }
