@@ -4361,6 +4361,37 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           + "Hãy mở project gốc và dùng Import JSON thay thế; tool sẽ tự nhận diện review V2 và kiểm tra đúng revision."
         );
       }
+      if (project.manualGeminiPromptOptions?.profile === "viral_tiktok_crime_part1") {
+        // A V1 from a manually copied/stale JSON must pass the SAME pre-render
+        // source gate as the automatic Stage1 output, even if the user skipped
+        // the usual Auto Mode import path.
+        const V1Gate = require("./bodycamV1QualityService");
+        const artifactDir = path.dirname(jsonPath);
+        const understandingFile = path.join(artifactDir, "phase-b-input", "source-understanding.json");
+        const planFile = path.join(artifactDir, "series-plan.json");
+        let sourceUnderstanding = null;
+        let lockedPlan = null;
+        try {
+          sourceUnderstanding = JSON.parse(await fs.readFile(understandingFile, "utf8"));
+          lockedPlan = JSON.parse(await fs.readFile(planFile, "utf8"));
+        } catch (_) {
+          throw new Error("Bodycam V1 chưa có source-understanding.json/series-plan.json đã xác minh. "
+            + "Hãy tạo Script V1 bằng Auto Mode Antigravity Stage1, không import JSON tự do không có bằng chứng nguồn.");
+        }
+        if (lockedPlan.lockedBy !== "host_validator" ||
+            lockedPlan.profile !== "viral_tiktok_crime_part1") {
+          throw new Error("Series Plan chưa được host khóa hoặc dùng sai Bodycam profile.");
+        }
+        const verdict = V1Gate.inspectScript(parsedArtifact, {
+          source: sourceUnderstanding, seriesPlan: lockedPlan, videoDurationSec: media.duration
+        });
+        if (!verdict.passed) {
+          await this.projectStore.writeJson(path.join(artifactDir, "bodycam-v1-import-rejected.json"),
+            { generatedAt: new Date().toISOString(), jsonPath, ...verdict });
+          throw new Error("Bodycam V1 bị chặn trước render: " + verdict.errors.slice(0, 5).join("; ") +
+            ". Xem bodycam-v1-import-rejected.json; cần chạy lại GĐ1 để AI tự rebuild kịch bản.");
+        }
+      }
       if (isDiyStoryRemixWorkflow && safeText(parsedArtifact?.workflow) !== "diy_story_remix") {
         throw new Error(`File ${path.basename(jsonPath)} thiếu workflow="diy_story_remix".`);
       }
@@ -4529,6 +4560,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           voiceProfile: importVoiceProfileContext?.profile || null
         })
         : null;
+      if (configuredPromptOptions.profile === "viral_tiktok_crime_part1" &&
+          viralPreflight && viralPreflight.score < 65) {
+        await this.projectStore.writeJson(path.join(path.dirname(jsonPath), "bodycam-v1-score-rejected.json"),
+          { generatedAt: new Date().toISOString(), scriptId: script.scriptId,
+            score: viralPreflight.score, issues: viralPreflight.issues, metrics: viralPreflight.metrics });
+        throw new Error(`Bodycam V1 score ${viralPreflight.score}/100 quá thấp (<65). ` +
+          "Tool không dựng video V1 yếu. Xem bodycam-v1-score-rejected.json và chạy lại GĐ1.");
+      }
       if (viralPreflight?.issues?.length) {
         script.warnings.push(
           `Viral readiness ${viralPreflight.score}/100 (${viralPreflight.grade}): ${viralPreflight.issues.join(" ")}`
