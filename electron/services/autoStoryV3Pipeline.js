@@ -966,9 +966,19 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
       repaired = await Director.repairEdl(engine, { model, spine: current, critique,
         weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id });
     } else {
+      let usedByOtherScripts = [];
+      if (strategy.mode === 'scope_rebuild') {
+        try {
+          const previous = JSON.parse(await fs.readFile(path.join(root, 'story-spine.json'), 'utf8'));
+          usedByOtherScripts = (previous.spines || [])
+            .filter(s => Number(s.scriptId) !== id)
+            .map(s => s.storyScope?.storyScopeId).filter(Boolean);
+        } catch (_) { /* Existing scope cache may not be present. */ }
+      }
       const scope = strategy.mode === 'scope_rebuild'
         ? await StoryScope.rebuildStoryScope(engine, model, {
-          failedScope: current.storyScope, critique, scriptId: id, pass, root, write, emit: emitProgress
+          failedScope: current.storyScope, critique, scriptId: id, pass, avoidScopeIds: usedByOtherScripts,
+          root, write, emit: emitProgress
         }) : current.storyScope;
       const redesigned = await Director.directEdl(engine, { model, scope, root, write, emit: emitProgress, scriptId: id });
       repaired = { ...redesigned, request: { scope, currentEdl: current, weakRegions: critique.weakRegions || [],
