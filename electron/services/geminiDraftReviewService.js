@@ -829,7 +829,7 @@ function buildReviewPrompt({
 - Ending must be understandable and visually/audibly usable for the final 3-5 seconds, with either a within-Part payoff or truthful grounded cliffhanger. Obscured/black camera, unrelated scene switch or unexplained silence does not qualify.
 - Headline must match THIS Part's actual Hook and central conflict. When UI decoration carries a misleading shared title, flag it for user adjustment rather than claiming the revised JSON automatically changed an already-rendered banner.
 - Target 110–125 seconds of actual output only with VERIFIED meaningful source material; never pad footage to reach duration. Clearly report if this source cannot support the requested profile.
-- Wrong Hook, broken causal story, missing payoff or unusable ending requires reviewDecision="rebuild", not narration/caption polish.
+- Wrong Hook, broken causal story, missing payoff or unusable ending requires a FULL revisedScript restructuring; mark review.issues actions replace_scene/remove_segment as needed. Do not limit the repair to narrator/caption polish.
 - Review coverage may be partial: do not claim an omitted source moment was inspected unless its proxy is truly supplied.`
     : "";
   const diyStoryReviewRules = isDiyStoryRemix
@@ -975,7 +975,7 @@ ${hasTranscript ? "- Transcript: use review-context.json.transcriptInput.locatio
 ${semanticDialogueAuditRules({ hasTranscript, transcriptInputName })}
 
 PRIMARY GOAL:
-Create a revised script that is more coherent, more emotionally compelling, and better aligned with the actual pictures and audio while remaining fully source-grounded. The final duration must remain at least 60.5 seconds. ${isIndependent ? "This is an independent re-edit, not a patch: replace the complete V1 structure whenever a different source selection tells a stronger verified story." : ""}
+Create a revised script that is more coherent, more emotionally compelling, and better aligned with the actual pictures and audio while remaining fully source-grounded. ${isViralBodycamPart1 ? "For this selected Bodycam Part profile, target 110–125 seconds of meaningful actual output; 60.5 seconds is NOT the chosen duration." : "The final duration must remain at least 60.5 seconds."} ${isIndependent ? "This is an independent re-edit, not a patch: replace the complete V1 structure whenever a different source selection tells a stronger verified story." : ""}
 
 OUTPUT TIMELINE IS DERIVED, NOT EDITORIAL:
 - Choose verified sourceStartSec/sourceEndSec (and playbackSpeed only for a justified speed change; default 1). Do not return output timestamps.
@@ -1046,7 +1046,7 @@ ${mandatoryReviewMethod}
 
 SOURCE GROUNDING AND VOICE FIT - STILL MANDATORY:
 - Identify every concrete issue by segmentId and rendered output timestamp.
-- ${isIndependent ? "Write a fresh story_blueprint from the strongest verified source evidence. Do not preserve the V1 blueprint when its premise, causal chain, Hook, or payoff is weak." : "Preserve the complete story_blueprint from review-context.json -> script unless the revised segment order genuinely requires updating it."} revisedScript must always contain a non-empty story_blueprint.macroBlocks array.
+- ${(isIndependent || isViralBodycamPart1) ? "Write a fresh story_blueprint from the strongest verified source evidence. Do not preserve the V1 blueprint when its premise, causal chain, Hook, or payoff is weak." : "Preserve the complete story_blueprint from review-context.json -> script unless the revised segment order genuinely requires updating it."} revisedScript must always contain a non-empty story_blueprint.macroBlocks array.
 - For independent scripts, rebuild narrative_contract before choosing the final timeline. State the exact promise made by the revised Hook, the primary audience question, the victim/person/object/hazard at stake, and the locked evidence that resolves it. A later arrest, interview, surrender, charge, or sentence does not resolve an earlier victim-safety or physical-hazard question.
 - Every narrative_contract.mandatoryResolution.evidenceId must appear in revisedScript before timelinePhase="later_outcome". If V1 skipped that payoff, V2 must structurally rebuild the timeline rather than polish V1 wording.
 - Macro-block count, source-jump count, narrator frequency, and audio ratios are descriptive references only. Never preserve weak footage, omit climax/payoff evidence, or add filler merely to meet a number.
