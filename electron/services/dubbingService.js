@@ -4476,6 +4476,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
+      if (configuredPromptOptions.profile === "viral_tiktok_crime_part1") {
+        const outputSec = (script.segments || []).reduce((sum, segment) =>
+          sum + safeNumber(segment.duration, 0), 0);
+        if (outputSec < 109.95 || outputSec > 125.05) {
+          script.warnings.push(
+            "TikTok Viral Bodycam Part " + partNumber + ": output " + outputSec.toFixed(1) +
+            "s nằm ngoài mục tiêu 110-125s. Đây là V1 cần review/rebuild từ bằng chứng nguồn; " +
+            "không chèn cảnh chờ, im lặng hoặc cảnh không liên quan chỉ để đủ thời lượng."
+          );
+        }
+      }
       if (configuredPromptOptions.profile === "independent") {
         const importedScriptId = safeNumber(
           scriptInput.scriptId ?? scriptInput.script_id,
