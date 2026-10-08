@@ -143,6 +143,46 @@ async function globalCacheFiles(cacheDir) {
   assert(timeouts.mapChunkTimeoutMs >= 240000 && timeouts.mapChunkTimeoutMs <= 480000, "bounded per-chunk timeout, not chunkCount*8min+20min");
   assert.strictEqual(timeouts.reduceTimeoutMs, 240000);
 
+  // ------------------------------------------------ reducer input budget (real 2026-10-08 failure)
+  // 9 chunks / 25 min source / 43 events failed with reduce_input_too_large
+  // (25,143 chars) before any AGY call. Same density must fit the budget,
+  // keep every event id/range and use the explained compact notation.
+  {
+    const longText = (label, size) => `${label} ${"detail ".repeat(Math.ceil(size / 7))}`.slice(0, size);
+    const realistic = Array.from({ length: 9 }, (_, index) => {
+      const start = index * 167.4;
+      const end = index === 8 ? 1506.9 : (index + 1) * 167.4;
+      const data = buildChunkUnderstanding(`chunk-00${index + 1}`, start, end, index % 2 ? 4 : 6);
+      data.openStateAtStart = longText("start state", 230);
+      data.openStateAtEnd = longText("end state", 230);
+      data.charactersSeen = Array.from({ length: 4 }, (_, character) => ({ id: `c${index}${character}`, nameOrRole: `Person ${index}-${character}`, description: longText("description", 110) }));
+      data.importantEvents.forEach((event, eventIndex) => {
+        event.sceneIds = [0, 1, 2].map((offset) => `scene_${String(index * 10 + eventIndex * 3 + offset + 1).padStart(4, "0")}`);
+        event.summary = longText("summary", 260);
+        event.visualFacts = [longText("visual", 140), longText("visual", 140)];
+        event.dialogueFacts = [{ sourceSec: event.sourceStartSec + 1, speaker: "Deputy", quote: longText("quote", 150) }];
+        event.continuesFromPreviousChunk = eventIndex === 0 && index > 0;
+        event.continuesIntoNextChunk = eventIndex === data.importantEvents.length - 1 && index < 8;
+      });
+      data.candidateMoments = Array.from({ length: 4 }, (_, candidate) => ({ ...data.candidateMoments[0], type: "hook", reason: longText(`reason ${candidate}`, 150) }));
+      return { task: { chunkId: data.chunkId, sourceStartSec: start, sourceEndSec: end }, data };
+    });
+    const budget = Stage1.MAX_PRINT_PROMPT_CHARS - 4494 - 200;
+    const rendered = MapReduce.renderReducerInputWithinBudget(realistic, budget);
+    assert(!rendered.overBudget, `9 dense chunks must fit the reducer budget (${rendered.text.length}/${budget})`);
+    for (const { data } of realistic) {
+      for (const event of data.importantEvents) {
+        assert(rendered.text.includes(`${data.chunkId}/${event.eventId} [${event.sourceStartSec.toFixed(1)}-${event.sourceEndSec.toFixed(1)}]`), "every event id and range survives compaction");
+      }
+    }
+    assert(rendered.text.includes("scene_0001..scene_0003"), "contiguous sceneIds use the explained range notation");
+    assert.strictEqual((rendered.text.match(/CHARACTERS \(all chunks\)/g) || []).length, 1, "characters listed once globally");
+    assert.deepStrictEqual(MapReduce.compactSceneIds(["scene_0004", "scene_0005", "scene_0009"]), "scene_0004..scene_0005,scene_0009");
+    const prompt = MapReduce.buildReducePrompt({ reducerInput: rendered.text, videoDurationSec: 1506.9, chunkCount: 9, schemaExample: {}, errors: [] });
+    assert(prompt.includes("scene_0012..scene_0015 = every sceneId") && prompt.includes("CONT> followed by CONT<"), "reducer prompt explains the notation");
+    assert(MapReduce.renderReducerInputWithinBudget(realistic, 6000).overBudget, "an impossible budget still fails explicitly");
+  }
+
   // ------------------------------------------------ Test 1: 3 chunks cold
   const fixture = await createPackage();
   const cold = await run(fixture, undefined, { sourceUnderstandingMapConcurrency: 2 });

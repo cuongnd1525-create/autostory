@@ -21,7 +21,7 @@ const path = require("path");
 
 const CHUNK_SCHEMA_VERSION = 1;
 const MAP_PROMPT_VERSION = 3; // v3: durable file-first output + stdout fallback after mandatory video view
-const REDUCE_PROMPT_VERSION = 2; // v2: durable file-first output + stdout fallback
+const REDUCE_PROMPT_VERSION = 3; // v3: compact reducer input (global characters, scene ranges, short flags)
 const DEFAULT_HANDLE_SEC = 4;
 const MAX_CHUNK_EVENTS = 15;
 const CANDIDATE_TYPES = ["hook", "confrontation", "interrogation", "climax", "resolution", "context"];
@@ -358,51 +358,111 @@ function clip(text, max) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-/** Compact, line-based rendering of all chunk understandings for the reducer prompt. */
-function renderReducerInput(chunks = [], { summaryMax = 220, factMax = 3, quoteMax = 140, includeDialogue = true } = {}) {
+/** "scene_0012,scene_0013,scene_0014" -> "scene_0012..scene_0014" (lossless, explained in the prompt). */
+function compactSceneIds(sceneIds = []) {
+  const parsed = sceneIds.map((id) => {
+    const match = String(id).match(/^(.*?)(\d+)$/);
+    return match ? { id: String(id), prefix: match[1], number: Number(match[2]), width: match[2].length } : { id: String(id), prefix: null };
+  });
+  const parts = [];
+  for (let index = 0; index < parsed.length; index += 1) {
+    const first = parsed[index];
+    let last = first;
+    while (
+      first.prefix !== null
+      && index + 1 < parsed.length
+      && parsed[index + 1].prefix === first.prefix
+      && parsed[index + 1].number === last.number + 1
+    ) {
+      index += 1;
+      last = parsed[index];
+    }
+    parts.push(last === first ? first.id : `${first.id}..${last.id}`);
+  }
+  return parts.join(",");
+}
+
+/**
+ * Compact, line-based rendering of all chunk understandings for the reducer
+ * prompt. Characters are listed once globally (they repeat in every chunk),
+ * scene lists use ranges and flags are short; the notation is explained in
+ * the reducer prompt. Lossy knobs (summary/fact/quote lengths, visual and
+ * dialogue facts, candidate reasons) are reduced level by level.
+ */
+function renderReducerInput(chunks = [], {
+  summaryMax = 220,
+  factMax = 3,
+  quoteMax = 140,
+  includeDialogue = true,
+  visualMax = 120,
+  visualCount = factMax,
+  candidateReasonMax = 160,
+  candidatesPerChunk = 6,
+  openStateMax = 300,
+  characterDescMax = 80
+} = {}) {
   const lines = [];
+  const characters = new Map();
+  for (const { data } of chunks) {
+    for (const item of data.charactersSeen || []) {
+      const name = clip(item.nameOrRole || item.id, 60);
+      const key = name.toLowerCase();
+      if (!name || characters.has(key)) continue;
+      characters.set(key, characterDescMax > 0 && item.description ? `${name} (${clip(item.description, characterDescMax)})` : name);
+    }
+  }
+  if (characters.size) lines.push(`CHARACTERS (all chunks): ${[...characters.values()].join("; ")}`);
   for (const { task, data } of chunks) {
     lines.push(`=== ${task.chunkId} SOURCE ${task.sourceStartSec.toFixed(2)}-${task.sourceEndSec.toFixed(2)}s ===`);
-    if (data.openStateAtStart) lines.push(`openStateAtStart: ${clip(data.openStateAtStart, 300)}`);
-    lines.push(`openStateAtEnd: ${clip(data.openStateAtEnd, 300)}`);
-    const characters = (data.charactersSeen || []).map((item) => `${clip(item.nameOrRole || item.id, 60)}${item.description ? ` (${clip(item.description, 80)})` : ""}`);
-    if (characters.length) lines.push(`charactersSeen: ${characters.join("; ")}`);
-    lines.push("events:");
+    if (data.openStateAtStart) lines.push(`start: ${clip(data.openStateAtStart, openStateMax)}`);
+    lines.push(`end: ${clip(data.openStateAtEnd, openStateMax)}`);
+    const seen = (data.charactersSeen || []).map((item) => clip(item.nameOrRole || item.id, 60)).filter(Boolean);
+    if (seen.length) lines.push(`seen: ${seen.join("; ")}`);
     for (const event of data.importantEvents || []) {
       const dialogue = (includeDialogue ? (event.dialogueFacts || []) : []).slice(0, factMax).map((fact) => (
         typeof fact === "string" ? `"${clip(fact, quoteMax)}"` : `${num(fact.sourceSec, 0).toFixed(1)}s ${clip(fact.speaker, 30)}: "${clip(fact.quote, quoteMax)}"`
       ));
-      const visual = (event.visualFacts || []).slice(0, factMax).map((fact) => clip(fact, 120));
+      const visual = (event.visualFacts || []).slice(0, visualCount).map((fact) => clip(fact, visualMax));
+      const flags = `${event.continuesFromPreviousChunk ? "CONT< " : ""}${event.continuesIntoNextChunk ? "CONT> " : ""}${event.sourceNarratorPresent ? "NARR " : ""}`;
       lines.push([
-        `- ${task.chunkId}/${event.eventId || "e"} [${num(event.sourceStartSec).toFixed(1)}-${num(event.sourceEndSec).toFixed(1)}]`,
-        `scenes ${(event.sceneIds || []).join(",") || "-"}`,
-        `${event.eventType || "event"}`,
-        `imp ${num(event.importance, 0)} viral ${num(event.viralValue, 0)}`,
-        `${event.continuesFromPreviousChunk ? "CONT_FROM_PREV " : ""}${event.continuesIntoNextChunk ? "CONT_INTO_NEXT " : ""}${clip(event.summary, summaryMax)}`,
-        visual.length ? `visual: ${visual.join("; ")}` : "",
-        dialogue.length ? `dialogue: ${dialogue.join("; ")}` : "",
-        event.sourceNarratorPresent ? "SOURCE_NARRATOR" : ""
+        `- ${task.chunkId}/${event.eventId || "e"} [${num(event.sourceStartSec).toFixed(1)}-${num(event.sourceEndSec).toFixed(1)}] ${compactSceneIds(event.sceneIds || []) || "-"}`,
+        `${event.eventType || "event"} i${num(event.importance, 0)} v${num(event.viralValue, 0)}`,
+        `${flags}${clip(event.summary, summaryMax)}`,
+        visual.length ? `vis: ${visual.join("; ")}` : "",
+        dialogue.length ? `say: ${dialogue.join("; ")}` : ""
       ].filter(Boolean).join(" | "));
     }
-    const candidates = (data.candidateMoments || []).map((item) => `- ${item.type || "context"} [${num(item.sourceStartSec).toFixed(1)}-${num(item.sourceEndSec).toFixed(1)}] scenes ${(item.sceneIds || []).join(",") || "-"} | ${clip(item.reason, 160)}`);
-    if (candidates.length) lines.push("candidates:", ...candidates);
+    const candidates = (data.candidateMoments || []).slice(0, candidatesPerChunk).map((item) => (
+      `* ${item.type || "context"} [${num(item.sourceStartSec).toFixed(1)}-${num(item.sourceEndSec).toFixed(1)}] ${compactSceneIds(item.sceneIds || []) || "-"}${candidateReasonMax > 0 && item.reason ? ` | ${clip(item.reason, candidateReasonMax)}` : ""}`
+    ));
+    lines.push(...candidates);
   }
   return lines.join("\n");
 }
 
+const REDUCER_INPUT_LEVELS = [
+  { summaryMax: 220, factMax: 3, quoteMax: 140, visualMax: 120, candidateReasonMax: 160, openStateMax: 300, characterDescMax: 80 },
+  { summaryMax: 180, factMax: 2, quoteMax: 110, visualMax: 100, candidateReasonMax: 120, openStateMax: 240, characterDescMax: 60 },
+  { summaryMax: 140, factMax: 1, quoteMax: 90, visualMax: 90, candidateReasonMax: 100, openStateMax: 200, characterDescMax: 50 },
+  { summaryMax: 120, factMax: 1, quoteMax: 70, visualMax: 70, candidateReasonMax: 80, openStateMax: 160, characterDescMax: 40 },
+  { summaryMax: 110, factMax: 1, quoteMax: 60, visualCount: 0, candidateReasonMax: 60, openStateMax: 140, characterDescMax: 30 },
+  { summaryMax: 90, factMax: 0, quoteMax: 0, visualCount: 0, candidateReasonMax: 40, openStateMax: 110, characterDescMax: 0 },
+  { summaryMax: 70, factMax: 0, quoteMax: 0, visualCount: 0, candidateReasonMax: 0, candidatesPerChunk: 3, openStateMax: 80, characterDescMax: 0 }
+];
+
+/**
+ * Picks the richest level that fits the prompt budget. The real 2026-10-08
+ * run (9 chunks, 25 min source, 43 events) produced 25,143 chars at the old
+ * last level and failed before any AGY call; the compact notation and the
+ * extra levels keep 9+ chunks inline (the reducer stays text-only, no files).
+ */
 function renderReducerInputWithinBudget(chunks, maxChars, { includeDialogue = true } = {}) {
-  const levels = [
-    { summaryMax: 220, factMax: 3, quoteMax: 140 },
-    { summaryMax: 180, factMax: 2, quoteMax: 110 },
-    { summaryMax: 140, factMax: 1, quoteMax: 90 },
-    { summaryMax: 110, factMax: 1, quoteMax: 70 }
-  ];
-  for (const base of levels) {
-    const level = { ...base, includeDialogue };
+  for (const [index, base] of REDUCER_INPUT_LEVELS.entries()) {
+    const level = { ...base, includeDialogue, levelIndex: index + 1 };
     const text = renderReducerInput(chunks, level);
     if (text.length <= maxChars) return { text, level };
   }
-  const last = { ...levels[levels.length - 1], includeDialogue };
+  const last = { ...REDUCER_INPUT_LEVELS[REDUCER_INPUT_LEVELS.length - 1], includeDialogue, levelIndex: REDUCER_INPUT_LEVELS.length };
   return { text: renderReducerInput(chunks, last), level: last, overBudget: true };
 }
 
@@ -413,14 +473,15 @@ function buildReducePrompt({ reducerInput, videoDurationSec = 0, chunkCount = 0,
       ? ["Do NOT call view_file or any analysis/search tool. The ONLY permitted tool is one write_to_file call to the exact output path given below. Everything you need is already in this prompt."]
       : ["Do NOT call any tool. Do NOT call view_file. Everything you need is already in this prompt."]),
     `Merge the ${chunkCount} chronological chunk understandings of ONE source video (${num(videoDurationSec, 0).toFixed(1)}s) into one global source understanding:`,
+    "Input notation: scene_0012..scene_0015 = every sceneId from scene_0012 to scene_0015 inclusive (write them out individually in your output). CONT< = event continues from the previous chunk, CONT> = continues into the next chunk, NARR = third-party narrator speaks. i = importance, v = viralValue (0-100). vis = visual facts, say = dialogue facts. Lines starting with * are candidate moments. CHARACTERS lists everyone once; seen = who appears in that chunk.",
     "- caseSummary, centralConflict, centralViewerQuestion for the whole story.",
     "- characters: merge the same person seen in several chunks into one entry.",
-    "- storyTimeline: 10-30 global events in chronological order. Merge an event split by a chunk boundary (CONT_INTO_NEXT followed by CONT_FROM_PREV) into one event. Reconcile each chunk's openStateAtEnd with the next chunk's openStateAtStart.",
+    "- storyTimeline: 10-30 global events in chronological order. Merge an event split by a chunk boundary (CONT> followed by CONT<) into one event. Reconcile each chunk's openStateAtEnd with the next chunk's openStateAtStart.",
     "- Keep SOURCE timestamps and sceneIds exactly as given by the chunks (you may merge adjacent ranges; never invent a range no chunk reported).",
     "- hookCandidates, confrontationCandidates, interrogationCandidates, climaxCandidates, resolutionCandidates: at most 5 each, with eventIds from your storyTimeline and exact SOURCE ranges.",
     "- Use only facts present in the chunk inputs. Never invent names, charges, outcomes or motives.",
     "- Keep the JSON under ~6,000 words.",
-    ...(errors.length ? ["", "Your previous output was rejected by the host validator:", ...errors.slice(0, 8).map((error) => `- ${error}`)] : []),
+    ...(errors.length ? ["", "Your previous output was rejected by the host validator:", ...errors.slice(0, 8).map((error) => `- ${clip(error, 160)}`)] : []),
     "",
     "CHUNK UNDERSTANDINGS:",
     reducerInput,
@@ -493,6 +554,7 @@ module.exports = {
   computeReducerKey,
   renderReducerInput,
   renderReducerInputWithinBudget,
+  compactSceneIds,
   buildReducePrompt,
   validateReducerGrounding,
   resolveMapReduceTimeouts

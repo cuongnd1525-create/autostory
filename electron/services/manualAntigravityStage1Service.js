@@ -2902,17 +2902,23 @@ class ManualAntigravityStage1Service {
       || process.env.ANTIGRAVITY_MODEL
       || ""
     );
-    const overhead = MapReduce.buildReducePrompt({ reducerInput: "", videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE, errors: ["x".repeat(900)] }).length;
-    const budget = MAX_PRINT_PROMPT_CHARS - overhead - 200;
-    let { text: reducerInput, overBudget } = MapReduce.renderReducerInputWithinBudget(chunks, budget);
-    diagnostics.reduce.inputChars = reducerInput.length;
     // Isolated reducer workspace (cwd, logs, input) — never shared with a map chunk.
     const workDir = path.join(resultDir, "reduce");
     await fs.mkdir(workDir, { recursive: true });
     diagnostics.reduce.workDir = workDir;
+    // Overhead = the real prompt without input: output path + longest repair error block included.
+    const overhead = MapReduce.buildReducePrompt({
+      reducerInput: "", videoDurationSec, chunkCount: chunks.length, schemaExample: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE,
+      errors: Array.from({ length: 8 }, () => "x".repeat(160)), outputPath: path.join(workDir, "source-understanding.json")
+    }).length;
+    const budget = MAX_PRINT_PROMPT_CHARS - overhead - 200;
+    let { text: reducerInput, overBudget, level: reducerLevel } = MapReduce.renderReducerInputWithinBudget(chunks, budget);
+    diagnostics.reduce.inputChars = reducerInput.length;
+    diagnostics.reduce.inputBudgetChars = budget;
+    diagnostics.reduce.inputLevel = reducerLevel?.levelIndex || null;
     await fs.writeFile(path.join(workDir, "reducer-input.txt"), reducerInput, "utf8");
     if (overBudget) {
-      const error = new Error(`[${label}] FAILED: ${chunks.length} chunk understanding quá lớn cho prompt reducer (${reducerInput.length} ký tự).`);
+      const error = new Error(`[${label}] FAILED: ${chunks.length} chunk understanding quá lớn cho prompt reducer (${reducerInput.length}/${budget} ký tự ở mức nén cao nhất).`);
       error.kind = "reduce_input_too_large";
       throw error;
     }
@@ -2929,7 +2935,7 @@ class ManualAntigravityStage1Service {
       message: `[REDUCE] ${String(item.message || "")}`.slice(0, 220)
     });
     diagnostics.reduce.model = reduceModel;
-    this.emitLog(onProgress, 41, `[REDUCE] START (model ${reduceModel}, text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
+    this.emitLog(onProgress, 41, `[REDUCE] START (model ${reduceModel}, text-only, ${reducerInput.length} ký tự từ ${chunks.length} chunk, mức nén ${reducerLevel?.levelIndex || "?"}/7; timeout ${Math.round(timeouts.reduceTimeoutMs / 1000)}s).`, logs);
     let errors = [];
     let capacityRetries = 0;
     let repairs = 0;
