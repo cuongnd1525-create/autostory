@@ -863,12 +863,27 @@ async function persistAcceptedSpine(root, id, spine) {
   await fs.rename(tempPath, spinePath);
 }
 
-async function critiqueDirectorRender(ai, spine, mp4, probe, script) {
+async function critiqueDirectorRender(service, ai, spine, mp4, probe, script, { root, id, pass = 0, onProgress, signal } = {}) {
   const meta = await probe(mp4);
-  let critique = await ScopeCritic.critiqueScopedRender(spine, { aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script });
+  const stat = await fs.stat(mp4);
+  const runReview = typeof service.stage === 'function' ? args => service.stage(root, 'review-' + id + '-scope-' + pass, {
+    mp4Path: mp4, mp4Size: stat.size, mp4MtimeMs: stat.mtimeMs,
+    spineHash: crypto.createHash('sha256').update(JSON.stringify(spine)).digest('hex'),
+    scriptHash: crypto.createHash('sha256').update(JSON.stringify(script || {})).digest('hex'),
+    actualMp4DurationSec: meta.duration
+  }, args, raw => {
+    const timeline = ScopeCritic.outputTimeline(spine, script);
+    const valid = ScopeCritic.normalizeCritique(raw, { durationSec: meta.duration, timeline,
+      deliveryAware: Boolean(ScopeCritic.deliveryTimeline(spine, script, timeline)) });
+    if (valid.status === 'MEDIA_CRITIC_INVALID') throw new Error(valid.summary);
+  }, onProgress, signal) : null;
+  const review = () => ScopeCritic.critiqueScopedRender(spine, {
+    aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script, runReview
+  });
+  let critique = await review();
   if (critique.status === 'MEDIA_CRITIC_INVALID') {
-    console.warn(`[Director] Scope critic returned ${critique.status} (${critique.summary}). Retrying once on the same MP4...`);
-    critique = await ScopeCritic.critiqueScopedRender(spine, { aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script });
+    console.warn('[Director] Scope critic invalid (' + critique.summary + '); retrying MP4 review once.');
+    critique = await review();
   }
   return { critique, duration: meta.duration };
 }
@@ -900,7 +915,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     spine = { ...rendered, openLoops: _o || rendered.openLoops || [] };
   }
   onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (initial render)...` });
-  let { critique, duration } = await critiqueDirectorRender(ai, spine, currentMp4, probe, script);
+  let { critique, duration } = await critiqueDirectorRender(service, ai, spine, currentMp4, probe, script, { root, id, pass: 0, onProgress, signal });
   await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
   await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
   if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
@@ -951,7 +966,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
 
     await fs.writeFile(path.join(root, `last-rendered-story-spine-${id}.json`), JSON.stringify(current, null, 2));
     onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (repair pass ${pass})...` });
-    ({ critique, duration } = await critiqueDirectorRender(ai, current, currentMp4, probe, highlight));
+    ({ critique, duration } = await critiqueDirectorRender(service, ai, current, currentMp4, probe, highlight, { root, id, pass, onProgress, signal }));
     } catch (err) {
       if (signal?.aborted) throw err;
       return passFailure(pass, err);
