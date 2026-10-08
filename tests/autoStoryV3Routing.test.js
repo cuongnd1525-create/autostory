@@ -52,6 +52,14 @@ const ok = async (name, fn) => { await fn(); passed++; console.log('  ok -', nam
     assert.equal(calls.v3.project.autoStoryConfig.outputCount, 1);
   });
 
+  await ok('project.autoStoryContractVersion === 4 routes to director-capable v3 orchestrator', async () => {
+    calls = {};
+    const project = { autoStoryContractVersion: 4, autoStoryConfig: { outputCount: 1 } };
+    const res = await makeService(project).run({ workspaceRoot: '/w', projectId: 'p1' });
+    assert.equal(res.routed, 'v3');
+    assert.ok(calls.v3);
+  });
+
   await ok('project.autoStoryContractVersion === 2 routes to v2 pipeline', async () => {
     calls = {};
     const project = { autoStoryContractVersion: 2 };
