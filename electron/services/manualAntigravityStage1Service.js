@@ -3090,9 +3090,19 @@ class ManualAntigravityStage1Service {
       }
       return null;
     };
-    const makeConfig = (text, timeoutMs) => this.buildCommand(text, schemaPath, pass1Dir, {
-      packageInfo, timeoutMs
-    });
+    const makeConfig = (text, timeoutMs) => {
+      const config = this.buildCommand(text, schemaPath, pass1Dir, { packageInfo, timeoutMs });
+      // A global --print-timeout in settings must not override this phase's
+      // bounded retry. Keep exactly one CLI timer consistent with host timeout.
+      const args = [];
+      for (let i = 0; i < config.args.length; i += 1) {
+        if (config.args[i] === "--print-timeout") { i += 1; continue; }
+        if (config.args[i].startsWith("--print-timeout=")) continue;
+        args.push(config.args[i]);
+      }
+      args.push("--print-timeout", Math.ceil(timeoutMs / 1000) + "s");
+      return { ...config, args, timeoutMs };
+    };
     const started = await this.runAgyPhase({
       label: "SERIES_PLAN",
       commandConfig: makeConfig(prompt, resolvePhaseTimeoutMs("series_plan", this.settings)),
