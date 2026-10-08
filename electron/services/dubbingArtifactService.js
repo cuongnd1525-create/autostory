@@ -274,6 +274,13 @@ function resolveSuggestedTopCaption(project = {}) {
   const analysis = project.analysis || {};
   const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
   const firstVariant = variants[0] || {};
+  const activeVariant = variants.find(variant => variant.id === analysis.activeVariantId) || firstVariant;
+  // AutoStory variants may represent DIFFERENT story scopes. Never inherit another
+  // variant's viral headline just because it was imported first.
+  if (project.analysisWorkflow === "vertex_auto_story" || project.autoStoryContractVersion >= 3) {
+    const own = safeText(activeVariant.topHeader || activeVariant.title || analysis.scriptTitle);
+    if (own) return own.slice(0, 180);
+  }
   return safeText(
     analysis.hookHeadline
     || analysis.sharedTopBannerText
