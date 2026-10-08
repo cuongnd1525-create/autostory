@@ -5220,6 +5220,29 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         Boolean(draftReviewArtifact)
       );
       const variantId = activeVariant.id || "variant_01";
+      if (draftReviewArtifact && safeText(activeVariant.promptProfile).toLowerCase() === "viral_tiktok_crime_part1") {
+        const reviewDir = activeVariant.artifacts?.draftReviewPackagePath || "";
+        const contextPath = reviewDir && path.join(reviewDir, "review-context.json");
+        let context = null;
+        if (contextPath) {
+          try { context = JSON.parse(await fs.readFile(contextPath, "utf8")); }
+          catch (_) { /* Fail closed below if the reviewed draft's binding is missing. */ }
+        }
+        if (!context || context?.script?.prompt_profile !== "viral_tiktok_crime_part1") {
+          throw new Error("Thiếu review-context.json của Bodycam V1. Phải review đúng MP4 gốc của variant trước khi import V2.");
+        }
+        const qualityGate = require("./bodycamQualityGate").checkReview(draftReviewArtifact, {
+          durationSec: context.draftTimeline?.totalOutputDurationSec,
+          scriptId: activeVariant.scriptId
+        });
+        if (!qualityGate.passed) {
+          await this.projectStore.writeJson(
+            path.join(paths.analysisDir, "bodycam-v2-import-rejected.json"),
+            { generatedAt: now, variantId, issues: qualityGate.errors, jsonPath });
+          throw new Error("Không import Bodycam V2 chưa đạt Hard Quality Gate: "
+            + qualityGate.errors.slice(0, 4).join("; "));
+        }
+      }
       let reapplyCurrentReviewFile = false;
       let effectiveReviewedRevision = 0;
       let reviewBindingWarning = "";
