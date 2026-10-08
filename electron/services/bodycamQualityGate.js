@@ -69,9 +69,10 @@ function checkReview(review, { durationSec = 0, scriptId = 1 } = {}) {
 async function detectSilence(ffmpegPath, mp4Path) {
   if (!mp4Path) return { intervals: [], warning: "Missing MP4" };
   try {
-    await runFile(ffmpegPath || "ffmpeg",
+    const { stderr } = await runFile(ffmpegPath || "ffmpeg",
       ["-hide_banner", "-nostdin", "-i", mp4Path, "-af", "silencedetect=noise=-38dB:d=1.3", "-f", "null", "-"],
       { timeout: 150000, maxBuffer: 8 * 1024 * 1024, windowsHide: true });
+    return { intervals: parseSilence(stderr), thresholdDb: -38, minDurationSec: 1.3 };
   } catch (error) {
     // FFmpeg emits stderr even on success and may exit with a non-zero status
     // for non-audio streams. Parse stderr, but do not confuse tool failure with silence.
@@ -79,7 +80,6 @@ async function detectSilence(ffmpegPath, mp4Path) {
     if (!log.includes("silence_")) return { intervals: [], warning: String(error.message || "Audio QA unavailable") };
     return { intervals: parseSilence(log), thresholdDb: -38, minDurationSec: 1.3 };
   }
-  return { intervals: [], thresholdDb: -38, minDurationSec: 1.3 };
 }
 function parseSilence(log) {
   const intervals = [];
