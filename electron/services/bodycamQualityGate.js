@@ -68,6 +68,23 @@ function checkReview(review, { durationSec = 0, scriptId = 1 } = {}) {
       return sum + (b > a && speed > 0 ? (b - a) / speed : 0);
     }, 0);
     if (total < 109.95 || total > 125.05) errors.push("V2 output duration " + total.toFixed(1) + "s falls outside 110–125s.");
+    const intervals = revised.segments.map(s => ({
+      start: finite(s.sourceStartSec ?? s.source_start_sec),
+      end: finite(s.sourceEndSec ?? s.source_end_sec)
+    }));
+    if (hook?.resolvedWithinPart === true && Number.isFinite(finite(hook.payoffSourceSec))) {
+      const t = finite(hook.payoffSourceSec);
+      if (!intervals.some(r => r.start <= t && t <= r.end)) {
+        errors.push("Hook payoff source timestamp " + t.toFixed(1) + "s is absent from revised footage.");
+      }
+    }
+    if (ending?.sourceSec !== undefined && ending?.sourceSec !== null) {
+      const t = finite(ending.sourceSec);
+      const last = intervals[intervals.length - 1];
+      if (!Number.isFinite(t) || !last || !(last.start <= t && t <= last.end)) {
+        errors.push("Ending evidence timestamp is absent from final revised source range.");
+      }
+    }
     const modes = revised.segments.map(s => str(s.audio_mode || s.audioMode));
     if (!modes.includes("original_audio") || !modes.includes("voiceover_only")) errors.push("V2 lost raw/narration sandwich.");
   }
