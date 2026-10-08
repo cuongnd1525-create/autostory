@@ -45,7 +45,22 @@ const other = Review.buildReviewPrompt({
 });
 assert.doesNotMatch(other, /VIRAL BODYCAM PART 1 \/ 8-BEAT SANDWICH REVIEW/,
   'Bodycam Part1 override must not affect other modes');
-console.log('Antigravity bodycam prompt routing assertions passed.');
+// Keep V1 quality gate and English audience captions wired to this exact mode.
+const v1Service = fs.readFileSync(path.join(__dirname, '..', 'electron',
+  'services', 'bodycamV1QualityService.js'), 'utf8');
+const stage1Source = fs.readFileSync(path.join(__dirname, '..', 'electron',
+  'services', 'manualAntigravityStage1Service.js'), 'utf8');
+const dubbingSource = fs.readFileSync(path.join(__dirname, '..', 'electron',
+  'services', 'dubbingService.js'), 'utf8');
+assert.match(stage1Source, /V1_EDITORIAL_GATE/);
+assert.match(stage1Source, /scoreManualGeminiVariant/);
+assert.match(stage1Source, /v1EditorialAudit/);
+assert.match(v1Service, /headlineMatchesHook/);
+assert.match(v1Service, /hookEventId/);
+assert.match(dubbingSource, /bodycamEnglish/);
+assert.match(dubbingSource, /isEnglishBodycamDraft/);
+assert.match(dubbingSource, /bodycam-v1-score-rejected\.json/);
+console.log('Antigravity bodycam prompt routing and V1-first safeguards passed.');
 
 // Deterministic hard gate regression: complete MP4 windows and source-grounded
 // Hook + usable ending are mandatory. An AI "PASS" without evidence must fail.
