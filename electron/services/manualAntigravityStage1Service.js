@@ -3563,10 +3563,81 @@ class ManualAntigravityStage1Service {
       throw new Error(`Antigravity không trả về artifacts JSON hợp lệ. Xem log tại ${resultDir}.`);
     }
 
-    const scriptArtifacts = envelope.artifacts.filter((a) => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
-    const normalized = scriptArtifacts.map(normalizeArtifact);
-    const deduplicated = new Map();
+    let scriptArtifacts = envelope.artifacts.filter(a => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
+    let normalized = scriptArtifacts.map(normalizeArtifact);
+    let deduplicated = new Map();
     for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
+
+    if (series?.profile === BodycamV1.PROFILE) {
+      const scoreScripts = () => BodycamV1.inspectScripts(
+        [...deduplicated.values()].map(a => a.script),
+        { source: understanding, seriesPlan, videoDurationSec }
+      );
+      let v1Verdict = scoreScripts();
+      await writeJsonAtomic(path.join(resultDir, "bodycam-v1-quality-initial.json"), v1Verdict);
+      if (!v1Verdict.passed) {
+        this.emitLog(onProgress, 83,
+          "[V1_EDITORIAL_GATE] REBUILD: " + v1Verdict.errors.slice(0, 4).join("; "), logs);
+        // Always start a clean AI turn instead of anchoring on the bad script.
+        // The full source was already watched and cached in Phase A.
+        const repairPrompt = assertPrintPromptSize([
+          "V1 REBUILD REQUIRED. The previously generated Bodycam Parts are NOT editorially ready.",
+          "Build all three Scripts 1/3/4 from the ORIGINAL locked source understanding and series plan.",
+          "FAILURES FOUND BY HOST:", ...v1Verdict.errors.slice(0, 30).map(v => "- "+v),
+          "Repair the hook, causal story, meaningful source selection, English narration and ending BEFORE rendering V1.",
+          "Never pad static inactive footage or invent a payoff to achieve a length requirement.",
+          "Return a COMPLETE JSON artifacts envelope with v1EditorialAudit for every Script.",
+          "", promptB
+        ].join("\n"), "Bodycam V1 rebuild");
+        const repairConfig = this.buildCommand(repairPrompt, schemaPath, pass1Dir, {
+          packageInfo, timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
+        });
+        const rebuildMetrics = newMetrics();
+        const permittedInputs = new Set([
+          promptPath, understandingPath, path.join(phaseBInputDir, "series-plan.json"),
+          inputPaths.sceneManifestPath, inputPaths.transcriptPath,
+          inputPaths.hookContractPath, inputPaths.actionCandidatesPath
+        ].filter(Boolean).map(p => path.basename(String(p).replace(/\\/g, "/")).toLowerCase()));
+        const rebuilt = await this.runAgyPhase({
+          label: "PHASE_B_V1_REBUILD", commandConfig: repairConfig, prompt: repairPrompt,
+          resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+          metrics: rebuildMetrics, logs, logBase: "phaseB-v1-rebuild",
+          cwd: phaseBInputDir,
+          toolGuard: ({toolName, file}) => {
+            if (toolName !== "view_file") return "Phase B chỉ được đọc input; không chạy code/delegate";
+            const base = path.basename(String(file || "").replace(/\\/g, "/")).toLowerCase();
+            return permittedInputs.has(base) ? null : "Không phải source input: " + base;
+          }
+        });
+        const rebuiltStdout = rebuilt.stdout || "";
+        await fs.writeFile(path.join(resultDir, "antigravity-output-phaseB-v1-rebuild.log"),
+          rebuiltStdout, "utf8");
+        let newEnvelope = findArtifactEnvelope(rebuiltStdout);
+        if (!newEnvelope?.artifacts?.length) {
+          for (const agentText of collectAgentTexts(rebuiltStdout).reverse()) {
+            newEnvelope = findArtifactEnvelope(agentText);
+            if (newEnvelope?.artifacts?.length) break;
+          }
+        }
+        if (!newEnvelope?.artifacts?.length) {
+          throw new Error("[V1_EDITORIAL_GATE] Antigravity rebuild không trả đủ JSON. "
+            + "Xem antigravity-output-phaseB-v1-rebuild.log");
+        }
+        normalized = newEnvelope.artifacts
+          .filter(a => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId)
+          .map(normalizeArtifact);
+        deduplicated = new Map(normalized.map(a => [a.script.scriptId, a]));
+        v1Verdict = scoreScripts();
+      }
+      await writeJsonAtomic(path.join(resultDir, "bodycam-v1-quality.json"), v1Verdict);
+      if (!v1Verdict.passed) {
+        throw new Error("[V1_EDITORIAL_GATE] Chặn V1 yếu trước render: " +
+          v1Verdict.errors.slice(0, 7).join("; ") +
+          ". Xem bodycam-v1-quality.json; Phase A video cache vẫn được giữ.");
+      }
+      this.emitLog(onProgress, 86,
+        "[V1_EDITORIAL_GATE] PASS: 3 Part có Hook/Payoff/Ending khớp source và 8 nhịp.", logs);
+    }
     const files = [];
     for (const scriptId of requestedScriptIds) {
       const artifact = deduplicated.get(scriptId);
