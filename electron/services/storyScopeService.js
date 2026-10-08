@@ -398,7 +398,7 @@ function alternateScopes(selection, chosenId, opts) {
 
 // Escalation after a real MP4 critic proves that the chosen scope was wrong.
 // Require a DIFFERENT, valid mini-story; never recycle the failed selection as a PASS.
-async function rebuildStoryScope(engine, model, { failedScope, critique, scriptId = 1, pass = 1, root = null, write = null, emit = () => {} } = {}) {
+async function rebuildStoryScope(engine, model, { failedScope, critique, scriptId = 1, pass = 1, avoidScopeIds = [], root = null, write = null, emit = () => {} } = {}) {
   const cfg = engine.config || {};
   const opts = {
     durationSec: engine.duration || model.durationSec,
@@ -411,6 +411,7 @@ async function rebuildStoryScope(engine, model, { failedScope, critique, scriptI
   const selection = await engine.ask('v5-story-scope-rebuild-' + scriptId + '-' + pass, {
     model: modelForScope(model),
     previousStoryScope: failedScope,
+    excludedStoryScopeIds: [failedScope?.storyScopeId, ...avoidScopeIds].filter(Boolean),
     failedVideoReview: {
       summary: critique?.summary || '',
       observedStory: critique?.observedStory || '',
@@ -423,10 +424,11 @@ async function rebuildStoryScope(engine, model, { failedScope, critique, scriptI
   }, schemas.storyScopeSelection, instruction +
     '\n\nREBUILD AFTER RENDERED MP4 FAILED: The previous Story Scope demonstrably assembled unrelated material. Select a DIFFERENT central conflict with its own complete hook, evidence and ending. Do not relabel or recycle the failed scope. Treat the previous review as evidence of what NOT to cut. Only return source-grounded story scopes.', [],
     validateSelectionShape, 'auto_story_edit', {});
+  const excluded = new Set([failedScope?.storyScopeId, ...avoidScopeIds]);
   const candidateScopes = [
     chosenScope(selection),
     ...(selection.candidates || [])
-  ].filter(Boolean).filter(s => s.storyScopeId !== failedScope?.storyScopeId);
+  ].filter(Boolean).filter(s => !excluded.has(s.storyScopeId));
   let replacement = null;
   for (const s of candidateScopes) {
     const report = validateStoryScope(s, opts);
