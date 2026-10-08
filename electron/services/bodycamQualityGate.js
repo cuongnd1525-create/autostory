@@ -32,6 +32,15 @@ function checkReview(review, { durationSec = 0, scriptId = 1 } = {}) {
       if (!str(w.visibleAction) || !str(w.audibleContent) || !str(w.storyProgress)) {
         errors.push("Missing audiovisual evidence or story progression at " + start.toFixed(1) + "s.");
       }
+      const states = [
+        ["narratorNaturalness", ["natural", "robotic", "not_applicable"]],
+        ["captionReadability", ["readable", "unreadable", "not_applicable"]],
+        ["framingUsability", ["usable", "blocked", "not_applicable"]]
+      ];
+      for (const [field, allowed] of states) {
+        if (!allowed.includes(w[field])) errors.push("Missing or invalid " + field + " at " + start.toFixed(1) + "s.");
+      }
+      if (w.weak === true && !str(w.reason)) errors.push("Weak window lacks reason at " + start.toFixed(1) + "s.");
       coveredUntil = Math.max(coveredUntil, end);
     }
     if (coveredUntil < duration - .5) errors.push("Unreviewed final MP4 " + coveredUntil.toFixed(1) + "–" + duration.toFixed(1) + "s.");
