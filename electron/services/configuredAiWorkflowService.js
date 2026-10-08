@@ -484,6 +484,21 @@ class ConfiguredAiWorkflowService {
       onProgress?.({ step: "configured_ai_draft_review", percent: 98,
         message: verdict.passed ? "Bodycam MP4 quality gate passed" : "Bodycam quality gate failed: " + verdict.errors.join("; ") });
       if (!verdict.passed) {
+        // A failed review is NOT a cache hit for the next attempt.
+        // Preserve the rejected JSON for diagnosis before removing live cache keys.
+        const rejectedPath = path.join(resultDir, "bodycam-rejected-review-" + Date.now() + ".json");
+        await writeJson(rejectedPath, review);
+        for (const candidatePath of existingCandidates) {
+          try {
+            const candidate = await readJson(candidatePath, "rejected review cache");
+            const candidateBinding = candidate?.reviewTarget?.reviewBindingId
+              || candidate?.review_target?.reviewBindingId;
+            if (candidate?.artifactType === "gemini_draft_review"
+                && (!expectedBinding || candidateBinding === expectedBinding)) {
+              await fs.rm(candidatePath, { force: true });
+            }
+          } catch (_) { /* Never mask the quality-gate failure with cleanup errors. */ }
+        }
         const error = new Error("Antigravity Bodycam V2 không đạt Hard Quality Gate: "
           + verdict.errors.slice(0, 5).join("; ") + ". Xem " + qualityAuditPath
           + ". Review phải được tạo lại; tool không coi bản lỗi là đạt.");
