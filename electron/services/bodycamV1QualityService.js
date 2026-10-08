@@ -58,9 +58,9 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     "original_audio","voiceover_only","original_audio","voiceover_only"];
   if (runs.length!==8 || runs.some((x,i)=>x!==pattern[i]))
     errors.push("Cấu trúc 8 nhịp chưa chuẩn: "+runs.join(" -> "));
-  let runLength=0, runType="";
+  let runLength=0, runType="", protectedRun=false;
   const flushRun=() => {
-    if (runType==="original_audio" && runLength>22) {
+    if (runType==="original_audio" && runLength>22 && !protectedRun) {
       errors.push("Raw audio dài "+runLength.toFixed(1)+
         "s liên tục: chỉ giữ khi có high-action override có chứng cứ; bỏ đoạn chờ/xe đứng yên.");
     }
@@ -73,7 +73,16 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     const t=modeOf(beats[i]),r=selected[i];
     const speed=num(beats[i].playbackSpeed ?? beats[i].playback_speed ?? 1);
     const d=r.end>r.start&&speed>0?(r.end-r.start)/speed:0;
-    if(t!==runType){if(runType)flushRun();runType=t;runLength=0;}
+    if(t!==runType){if(runType)flushRun();runType=t;runLength=0;protectedRun=false;}
+    if (beats[i].actionOverride===true || beats[i].sustainedBeatOverride===true ||
+        beats[i].action_override===true || beats[i].sustained_beat_override===true) {
+      const supported = (Array.isArray(source.storyTimeline)?source.storyTimeline:[]).some(ev => {
+        const er=range(ev);
+        return overlaps(er,r) && /climax|confrontation|escalation|evidence/i.test(txt(ev.eventType))
+          && Number(ev.storyImportance || ev.viralValue || 0)>=5;
+      });
+      protectedRun=protectedRun||supported;
+    }
     runLength+=d;
   }
   if(runType)flushRun();
