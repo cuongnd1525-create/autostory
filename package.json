@@ -8,7 +8,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron .",
-    "test:bodycam": "node tests/antigravitySeriesPlanRecovery.test.js && node tests/viralBodycamAntigravityWorkflow.test.js && node tests/geminiDraftReviewService.test.js && node tests/manualAntigravityStage1Service.test.js",
+    "test:bodycam": "node tests/bodycamV1QualityService.test.js && node tests/antigravitySeriesPlanRecovery.test.js && node tests/viralBodycamAntigravityWorkflow.test.js && node tests/geminiDraftReviewService.test.js && node tests/manualAntigravityStage1Service.test.js",
     "test:queue": "node tests/productionQueue.test.js && node tests/productionQueueIpc.test.js && node tests/autoStoryVariantWorker.test.js && node tests/autoStoryBoundedRun.test.js && node --check electron/services/productionQueueIpc.js && node --check src/productionQueueUi.js",
     "test:v4-production": "node tests/autoStoryV3Routing.test.js && node tests/autoStoryV4ProductionRepair.test.js",
     "test:vertex": "node --check electron/services/vertexAiService.js && node --check electron/services/configuredAiWorkflowService.js && node tests/vertexAiService.test.js && node --test tests/autoStorySchemaBoundary.test.js tests/autoStoryDiscoveryRecovery.test.js tests/autoStoryHookSelection.test.js tests/autoStoryRateLimit.test.js",
