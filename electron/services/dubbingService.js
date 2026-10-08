@@ -6548,6 +6548,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const ffmpeg = new FfmpegService(settings);
     const autoStorySourceStat = await fs.stat(project.sourceVideoPath).catch(() => null);
     const activeVariant = getActiveHighlightVariant(project);
+    if (activeVariant.promptProfile === "viral_tiktok_crime_part1" &&
+        Number(activeVariant.revisionNumber || 1) <= 1 &&
+        !(Number(activeVariant.viralPreflight?.score) >= 65)) {
+      throw new Error("Bodycam V1 cũ hoặc chưa đạt Viral Preflight (score " +
+        (activeVariant.viralPreflight?.score ?? "chưa có") +
+        "/100). Không render lại kịch bản yếu. Hãy chạy lại Antigravity GĐ1 với " +
+        "V1 Editorial Gate, import Script mới rồi render.");
+    }
     const variantId = activeVariant.id || "variant_01";
     const variantMetadata = resolveVariantFileMetadata(project, activeVariant);
     const variantSuffix = variantMetadata.fileTag;
