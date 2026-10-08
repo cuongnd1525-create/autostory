@@ -6440,6 +6440,24 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         previewSubtitleCues: originalAudioCues.length ? originalAudioCues : voiceSubtitleCues
       };
     });
+    // Bodycam content targets an English-speaking viewer. For this profile,
+    // burn the actual English dialogue/narration in the V1 draft instead of
+    // automatically translating every cue into Vietnamese.
+    const bodycamEnglish = project.manualGeminiPromptOptions?.profile === "viral_tiktok_crime_part1"
+      || (project.analysis?.highlightVariants || []).find(v =>
+        v.id === project.analysis?.activeVariantId)?.promptProfile === "viral_tiktok_crime_part1";
+    if (bodycamEnglish) {
+      return subtitleSegments.map(segment => {
+        const cues = (segment.previewSubtitleCues || []).map(cue => ({
+          ...cue,
+          previewSubtitleVi: safeText(cue.text || ""),
+          subtitleSource: "bodycam_english_original"
+        }));
+        return { ...segment,
+          previewSubtitleVi: cues.map(cue => cue.previewSubtitleVi).filter(Boolean).join(" "),
+          previewSubtitleCues: cues };
+      });
+    }
     const translationItems = subtitleSegments.flatMap((segment) => (
       segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
@@ -6542,7 +6560,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
     const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
     const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
+    const isEnglishBodycamDraft = activeVariant.promptProfile === "viral_tiktok_crime_part1";
+    const subtitlePath = path.join(paths.outputDir,
+      `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.${isEnglishBodycamDraft ? "en" : "vi"}.srt`);
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
@@ -6834,7 +6854,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         percent: 96,
         message: isTikTokKaraoke
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
-          : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
+          : isEnglishBodycamDraft ? "Đang nhúng phụ đề tiếng Anh vào bản nháp" : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
       });
       await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
     } else {
@@ -6945,7 +6965,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: isEnglishBodycamDraft ? "en" : "vi",
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
@@ -6965,7 +6985,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: isEnglishBodycamDraft ? "en" : "vi",
           fastDraftSubtitlesArePreviewOnly: true,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
