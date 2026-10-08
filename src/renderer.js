@@ -3823,44 +3823,46 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
   * When a locked series-plan.json is supplied, its scope, scene allocation and cliffhangers are binding.
 
 ### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
-Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio beats + 4 Narration beats):
+All three Parts must strictly follow the same eight LOGICAL alternating beats (4 Raw Audio + 4 concise Narration). Script 1 uses the specific first-incident narrative functions below; Scripts 3 and 4 map those functions to their verified chapter story without inventing a second crash or arrest:
 
-1. BEAT 1 (Target: ~12-15s source duration) - COLD OPEN HOOK
+1. BEAT 1 (Target: ~12-16s meaningful source duration) - COLD OPEN HOOK
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: The strongest VERIFIED raw incident moment in THIS Part's central conflict (e.g. crash response, witness contradiction, roadside exchange, medical crisis, urgent officer action). Prioritize comprehension and stakes over loudness.
    - Rule: Grips the viewer in the first 0-3 seconds with zero narration. Pure authentic raw audio.
 
-2. BEAT 2 (Target: ~16-20s source duration) - INCIDENT SETUP & DISPATCH
+2. BEAT 2 (Target: ~8-12s source duration; English narration <=12s, <=26 naturally spoken words) - INCIDENT SETUP & DISPATCH
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Concise verified setup over fitting footage of dispatch, crash response, arrival, roadside action or another genuine source event. Date, location and call reason only when explicitly verified.
    - Pacing: Active, present-tense, documentary tension.
 
-3. BEAT 3 (Target: ~10-14s source duration) - SCENE ENTRY & RAW REALITY
+3. BEAT 3 (Target: ~16-22s of meaningful raw dialogue/action, never static waiting) - SCENE ENTRY & RAW REALITY
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: The first meaningful original-audio encounter, observation or exchange. The scene could be roadside, in a patrol car, at a crash site, in an ambulance or hospital. Never invent a house, family member, stairs or door.
 
-4. BEAT 4 (Target: ~15-18s source duration) - ESCALATION & DISCOVERY
+4. BEAT 4 (Target: ~8-12s source duration; English narration <=12s) - ESCALATION & DISCOVERY
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: A truthful causal bridge to the next verified discovery or escalation. Identify time/location/perspective changes when source jumps; never promise footage the next beat cannot show.
    - Visual matching: Narration directs viewer attention directly to what is about to be seen.
 
-5. BEAT 5 (Target: ~12-15s source duration) - CLIMACTIC TAKEDOWN / CONFRONTATION
+5. BEAT 5 (Target: ~16-22s of meaningful raw climax/proof) - CLIMACTIC TAKEDOWN / CONFRONTATION
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: The strongest authentic raw turning point within the SAME scoped incident: contradiction, proof, crash discovery, intervention, confrontation or reaction. Physical struggle/restraint is optional and cannot be invented.
 
-6. BEAT 6 (Target: ~17-20s source duration) - CONFLICT BREAKDOWN & MORAL CONTRAST
+6. BEAT 6 (Target: ~8-12s source duration; English narration <=12s) - CONFLICT BREAKDOWN & MORAL CONTRAST
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Summarize only verified competing accounts, new facts, stakes or evidence. Names, diagnoses, victim quotes or suspect motives must come from this source, not template examples.
 
-7. BEAT 7 (Target: ~7-10s source duration) - RAW DIALOGUE EVIDENCE
+7. BEAT 7 (Target: ~16-22s meaningful raw evidence/dialogue; avoid static cars) - RAW DIALOGUE EVIDENCE
    - audio_mode: "original_audio", voiceover_text: ""
    - Content: Use a concise source-verified quote, response, reaction or action that advances the SAME central question; avoid repetitive procedure or unrelated material.
 
-8. BEAT 8 (Target: ~14-17s source duration) - CLIFFHANGER & PART 2 OPEN LOOP
+8. BEAT 8 (Target: ~8-12s source duration; concise grounded open loop) - CLIFFHANGER & PART 2 OPEN LOOP
    - audio_mode: "voiceover_only", English voiceover_text
    - Content: Deliver Part 1's verified near-term consequence and establish a specific unresolved next question. Do NOT promise interrogation, arrest, jail, charges or court result unless the input verifies those events; end on a viewable meaningful frame.
 
 ### REQUIRED ROOT METADATA
+- Every Part must contain 8 alternating narrative audio roles, meaningful source-backed story_blueprint (central question, escalation, causal transitions, verified payoff/open loop) and macroBlockId/storyFunction for each beat, or the pre-render quality gate will reject it.
+- Set series_pacing="story_first" to protect complete authentic raw exchanges while keeping narrator no longer than 12s. Never extend raw footage for the sake of padding.
 Every generated JSON script must include:
 \`\`\`json
 {
@@ -3874,6 +3876,9 @@ Every generated JSON script must include:
   "titleStyle": "tiktok_hook",
   "subtitleStyle": "tiktok_karaoke",
   "targetDurationSec": 117.5,
+  "series_pacing": "story_first",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125,
   "segments": [ ...8 segments... ]
 }
 \`\`\`
