@@ -2,6 +2,7 @@ const fs = require("fs/promises");
 const fsSync = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("node:crypto");
 const { spawn } = require("child_process");
 
 const { buildCliEnv } = require("./cliEnv");
@@ -16,6 +17,7 @@ const {
 } = require("./sourceUnderstandingService");
 const { resetPipelineTiming } = require("./pipelineTimingService");
 const MapReduce = require("./sourceUnderstandingMapReduce");
+const BodycamV1 = require("./bodycamV1QualityService");
 
 // Lazy: manualGeminiPackService is heavy and only needed for legacy packages
 // whose package-info.json predates cache.sourceFingerprint.
@@ -463,24 +465,24 @@ const SERIES_PROFILES = {
         scriptId: 1,
         partNumber: 1,
         partBadge: "PART 1",
-        name: "The Confrontation",
-        scope: "Cold-open hook, dispatch/arrival context, scene entry, escalation and the first confrontation. Ends on an unresolved, verified open question (cliffhanger) that makes the viewer need Part 2.",
+        name: "The Incident Begins",
+        scope: "Source-grounded first chapter of the single VERIFIED central incident: teaser, necessary dispatch/background, real encounter, credible escalation and a meaningful near-term consequence. The next-part question must point to actual later source evidence; no compulsory house entry, hostage, confrontation or arrest. End on an honest verified open loop when the source supports one.",
         ending: "cliffhanger"
       },
       {
         scriptId: 3,
         partNumber: 2,
         partBadge: "PART 2",
-        name: "The Interrogation",
-        scope: "Questioning, explanations, lies, contradictions and evidence that surface after the confrontation. Ends on the strongest verified boiling-point turn BEFORE the arrest/verdict (cliffhanger).",
+        name: "The Investigation Deepens",
+        scope: "Source-grounded next chapter: subsequent verified reactions, statements, competing accounts, evidence or medical/procedural consequences that genuinely advance the SAME incident. Do not require an interrogation or false claim. End with a concrete unresolved next step when supported by source.",
         ending: "cliffhanger"
       },
       {
         scriptId: 4,
         partNumber: 3,
         partBadge: "PART 3",
-        name: "The Verdict & Arrest",
-        scope: "The officers' decision, arrest/charges and the verified consequence. Delivers the payoff to the central viewer question. Only this Part may reveal the outcome.",
+        name: "The Verified Outcome",
+        scope: "Final available VERIFIED consequence of this incident, whether hospital care, established facts, custody, release, recovery, investigation or a documented legal result. Deliver the strongest evidenced payoff; never invent an arrest, charge, verdict, conviction, sentence or court outcome.",
         ending: "payoff"
       }
     ]
@@ -681,6 +683,7 @@ function buildSourceUnderstandingPrompt({ expectedProxyList = [], contextPath = 
     "- Every fact must be visible in the frames or audible/present in the transcript. Never invent names, charges, outcomes or motives.",
     "- Keep the whole JSON under ~6,000 words.",
     "",
+    "FINAL ANSWER CONTRACT: Respond with the full envelope JSON immediately after reading required evidence. No code exploration, planning tools, self-debugging, narrative prose or Markdown fences.",
     "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
     JSON.stringify({ artifacts: [{ filename: "source-understanding.json", script: SOURCE_UNDERSTANDING_SCHEMA_EXAMPLE }], notes: "" })
   ].join("\n");
@@ -1006,6 +1009,10 @@ async function readAntigravityTokenExpiry({ startedAtMs = 0, logDir = path.join(
 function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
   return [
     "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
+    "ROLE: editorial planner producing ONLY JSON data, NOT a coding or software development agent.",
+    "Do NOT inspect the app, repository, JavaScript files, tests, or CLI code; do NOT use manage_task, shell, grep_search, find_by_name, or directory listing. Do not troubleshoot the application.",
+    "IMPORTANT: antigravity-output-schema.json is a schema for SCRIPT files, NOT for series-plan.json. Ignore it entirely. Follow the series-plan TRANSPORT object printed below.",
+    "ONLY read the listed source-understanding / hook-contract / scene-manifest / transcript files using view_file as necessary.",
     "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
     `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
     ...(hookContractPath ? [`HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`] : []),
@@ -1018,9 +1025,9 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
     "RULES:",
     "- Lock the central viewer question and the hook promise. Part 1 opens on the hook; Parts 2-3 pay it off progressively.",
     "- sceneAllocation: give each Part its own chronological SOURCE ranges. A range may appear in two Parts only if listed in sharedRanges with a reason (e.g. a 'previously on' recap of at most 8s). No other duplicates.",
-    "- Spoiler boundaries: Part 1 and Part 2 must not include or narrate the arrest, charges, verdict or final consequence. Put those ranges in Part 3 payoffRanges.",
+    "- Spoiler boundaries: Part 1 and Part 2 must not spoil the actual final verified outcome. Put verified final outcome footage in Part 3 payoffRanges, which may show medical treatment, investigation or rescue, NOT necessarily arrest/charges/verdict.",
     "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
-    "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed).",
+    "- HOOK_CONTRACT.isUserLocked is authoritative: ONLY an explicitly user-locked Hook must be preserved within trimming tolerance. When isUserLocked=false, the anchor is a heuristic recommendation, NOT a mandate. Replace it with a stronger source-verified Hook if its first 3s are obstructed, unclear, inaudible, or narratively unconnected; document the new source range and promise in the plan.",
     "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
     `- All ranges must lie within 0-${Number(videoDurationSec || 0).toFixed(3)}s.`,
     "",
@@ -1101,8 +1108,28 @@ function buildScriptGenerationPrompt({
     `Generate exactly these scripts in order: ${scriptIds.join(", ")}. Each must follow the root schema of the editorial prompt.`,
     "This is a one-turn headless execution: do not stop at a plan, do not ask for approval.",
     "",
+    ...(seriesPlanPath ? [
+      "V1 QUALITY CONTRACT (EDITORIAL PRE-RENDER GATE, HIGH PRIORITY):",
+      "- The host will REJECT your V1 scripts if the first 3 seconds are unclear, source ranges do not substantiate the Hook and its verified payoff/Part open-loop, the ending is unwatchable, raw and tool narration do not form eight connected alternating beats, or filler was used just to reach duration.",
+      "- For each script add top-level v1EditorialAudit = {centralViewerQuestion:string,hookPromise:string,first3SecClear:true,headlineMatchesHook:true,hookSourceSec:number,hookEventId:string,payoffSourceSec:number,payoffEventId:string,payoffWithinPart:boolean,verifiedNextPartOpenLoop:boolean,endingSourceSec:number,endingEventId:string,endingUsable:true,weakSourceRanges:[{sourceStartSec:number,sourceEndSec:number,reason:string}]}. These are SOURCE timestamps, never output timestamps.",
+      "- Copy v1EditorialAudit.centralViewerQuestion EXACTLY from locked series-plan.json; all three Parts must answer the same overarching story question. For Parts 1-2, a verified next-Part open loop requires payoffSourceSec inside the next Part's allocated source range, not an unrelated teaser.",
+      "- Hook: prefer clear conflict, verified stakes, readable face/reaction and intelligible audio. Do not open on a hand/vest obscuring the lens, a routine police approach, slow walking or repetitive commands. The first 3s must identify at least two of person/conflict/stakes.",
+      "- Visual progress: Remove idle patrol-car/police vehicle shots, generic sirens, black/blocked camera, repeated static wide shots and procedural waiting unless each actually adds necessary new evidence or a reaction. Never stretch to 110 seconds by padding.",
+      "- Hook -> 1 brief rewind/context -> connected escalation -> specific payoff/open loop must be obvious to someone who has never seen the original. Explain source time/location jumps in short natural English VO, including daylight/night or hospital/roadside switches.",
+      "- End each Part after a meaningful verified development, in a visible and audible scene; don't stop on a blocked camera or unrelated paperwork. The final evidence must be inside the last V1 source range.",
+      "- Prioritize content quality over duration: if a truthful, clear 110-125 second Part cannot be made, return input_access_failure instead of invented or filler footage.",
+      "- Each logical segment should carry sourceStartSec/sourceEndSec and original_audio or voiceover_only. Split technical scene slices when necessary, not a natural proof event. Never put narrator over indispensable original speech.",
+      "- Narrator: concise conversational American English (no robot-sounding formal boilerplate). Caption language must be English for this content; do not emit Vietnamese subtitle metadata.",
+      "- v1EditorialAudit is a SOURCE-VERIFIABLE claim, not a quality score. Do not set first3SecClear or endingUsable true unless actual Phase A visual evidence supports it. Return the whole scripts envelope only."
+    ] : []),
     "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
-    JSON.stringify({ artifacts: scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id } })), notes: "" })
+    JSON.stringify({ artifacts: scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id, ...(seriesPlanPath ? {
+      v1EditorialAudit: { centralViewerQuestion:"", hookPromise:"", first3SecClear:false,
+        headlineMatchesHook:false,hookSourceSec:0,hookEventId:"",
+        payoffSourceSec:0,payoffEventId:"",payoffWithinPart:false,
+        verifiedNextPartOpenLoop:false,endingSourceSec:0,endingEventId:"",
+        endingUsable:false,weakSourceRanges:[] }
+    } : {}) } })), notes: "" })
   ].join("\n");
 }
 
@@ -1119,7 +1146,8 @@ function toRange(item) {
 function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
   const errors = [];
   const warnings = [];
-  if (!plan || typeof plan !== "object") return { ok: false, errors: ["series-plan không phải object."], warnings };
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) return { ok: false, errors: ["series-plan không phải object."], warnings };
+  if (plan.profile && plan.profile !== series.profile) errors.push("series-plan dùng sai profile.");
   if (plan.artifactType !== "series_plan") errors.push('artifactType phải là "series_plan".');
   for (const field of ["centralViewerQuestion", "hookPromise"]) {
     if (typeof plan[field] !== "string" || !plan[field].trim()) errors.push(`${field} trống.`);
@@ -1250,7 +1278,25 @@ async function extractNamedArtifact(stdout, { filename, artifactType, resultDir 
     return envelope?.artifacts?.find((item) => item?.filename === filename)?.script || null;
   })();
   if (fromEnvelope) return fromEnvelope;
-  const deep = findObjectDeep(stdout, (object) => object.artifactType === artifactType);
+  // AGY stream-json often puts the real final JSON in result.response/text or
+  // per-turn text_delta, NOT in a JSON envelope that parses as raw stdout.
+  // Recover the named artifact from those fields before retrying the model.
+  for (const agentText of collectAgentTexts(stdout).reverse()) {
+    const envelope = findArtifactEnvelope(agentText);
+    const found = envelope?.artifacts?.find((item) => item?.filename === filename);
+    if (found?.script && typeof found.script === "object" && !Array.isArray(found.script)) return found.script;
+    const direct = findObjectDeep(agentText, (object) =>
+      object.artifactType === artifactType ||
+      (artifactType === "series_plan" && Array.isArray(object.parts) &&
+       typeof object.centralViewerQuestion === "string" && typeof object.hookPromise === "string")
+    );
+    if (direct) return direct;
+  }
+  const deep = findObjectDeep(stdout, (object) =>
+    object.artifactType === artifactType ||
+    (artifactType === "series_plan" && Array.isArray(object.parts) &&
+     typeof object.centralViewerQuestion === "string" && typeof object.hookPromise === "string")
+  );
   if (deep) return deep;
   if (resultDir) {
     try {
@@ -2068,11 +2114,11 @@ class ManualAntigravityStage1Service {
    * Text-only phases (series plan, Phase B). Capacity errors may be retried
    * with a fresh process (no video is involved); auth and timeouts are not.
    */
-  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
+  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard = null, forbiddenTools = [], cwd = null }) {
     const maxCapacityRetries = 2;
     for (let attempt = 0; ; attempt += 1) {
       await this.ensureAntigravityAuth({ label, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs });
-      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
+      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard, forbiddenTools, cwd });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && attempt < maxCapacityRetries && !this.cancelled) {
         const delaySec = (attempt + 1) * 8;
@@ -3020,57 +3066,125 @@ class ManualAntigravityStage1Service {
   }
 
   async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics, logs }) {
-    const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
-      series,
-      understandingPath,
+    const lockedPlanPath = path.join(resultDir, "series-plan.json");
+    const signature = crypto.createHash("sha256")
+      .update(await fs.readFile(understandingPath))
+      .update(JSON.stringify(series.parts) + ":" + String(series.profile) + ":" + videoDurationSec)
+      .update(inputPaths.hookContractPath
+        ? await fs.readFile(inputPaths.hookContractPath).catch(() => Buffer.from(""))
+        : Buffer.from(""))
+      .update(inputPaths.transcriptPath
+        ? await fs.readFile(inputPaths.transcriptPath).catch(() => Buffer.from(""))
+        : Buffer.from(""))
+      .update(inputPaths.sceneManifestPath
+        ? await fs.readFile(inputPaths.sceneManifestPath).catch(() => Buffer.from(""))
+        : Buffer.from(""))
+      .digest("hex");
+    // Cache only when source understanding AND user-selected Hook are unchanged.
+    // Reuse only a previously host-validated, profile-matching plan.
+    try {
+      const saved = JSON.parse(await fs.readFile(lockedPlanPath, "utf8"));
+      const verified = validateSeriesPlan(saved, { series, videoDurationSec });
+      if (verified.ok && saved.lockedBy === "host_validator" && saved.sourceSignature === signature) {
+        this.emitLog(onProgress, 57, "[SERIES_PLAN] CACHE HIT: kế hoạch 3 Part đã được host xác minh; không gọi lại AGY.", logs);
+        return { plan: saved, videoViews: 0, cacheHit: true };
+      }
+    } catch (_error) { /* No valid plan to reuse. */ }
+    // Stale agent-written files must not masquerade as output from the next attempt.
+    await fs.rm(lockedPlanPath, { force: true }).catch(() => {});
+
+    const inputs = {
+      series, understandingPath,
       hookContractPath: inputPaths.hookContractPath,
       transcriptPath: inputPaths.transcriptPath,
       sceneManifestPath: inputPaths.sceneManifestPath,
       videoDurationSec
-    }), "Series plan");
-    const commandConfig = this.buildCommand(prompt, schemaPath, pass1Dir, {
-      packageInfo,
-      timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
-    });
-    const videoViews = new Set();
-    const result = await this.runAgyPhase({
-      label: "SERIES_PLAN", commandConfig, prompt, resultDir, onProgress,
-      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan"
-    });
-    let stdout = result.stdout || "";
-    let conversationId = result.conversationId;
-    const parse = async () => {
-      const plan = await extractNamedArtifact(stdout, { filename: "series-plan.json", artifactType: "series_plan", resultDir });
-      const normalized = plan ? { ...plan, artifactType: plan.artifactType || "series_plan", profile: series.profile } : null;
-      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec }) };
     };
-    let parsed = await parse();
-    if (!parsed.validation.ok && conversationId) {
+    const prompt = assertPrintPromptSize(buildSeriesPlanPrompt(inputs), "Series plan");
+    const videoViews = new Set();
+    const allowedInputs = new Set(
+      [understandingPath, inputPaths.hookContractPath, inputPaths.transcriptPath,
+       inputPaths.sceneManifestPath].filter(Boolean)
+        .map((name) => path.basename(String(name).replace(/\\/g, "/")).toLowerCase())
+    );
+    const toolGuard = ({ toolName, file }) => {
+      // AGY once attempted to debug RecapTool's own renderer.js and called
+      // manage_task repeatedly during a pure data-planning retry (6m timeout).
+      // Permit only the explicitly supplied source JSON/SRT documents.
+      if (toolName !== "view_file") return "Series Plan chỉ cho phép view_file các file nguồn đã liệt kê";
+      const basename = path.basename(String(file || "").replace(/\\/g, "/")).toLowerCase();
+      if (!basename || !allowedInputs.has(basename)) {
+        return "Không nằm trong các đầu vào series plan: " + (basename || "(empty)");
+      }
+      return null;
+    };
+    const makeConfig = (text, timeoutMs) => {
+      const config = this.buildCommand(text, schemaPath, pass1Dir, { packageInfo, timeoutMs });
+      // A global --print-timeout in settings must not override this phase's
+      // bounded retry. Keep exactly one CLI timer consistent with host timeout.
+      const args = [];
+      for (let i = 0; i < config.args.length; i += 1) {
+        if (config.args[i] === "--print-timeout") { i += 1; continue; }
+        if (config.args[i].startsWith("--print-timeout=")) continue;
+        args.push(config.args[i]);
+      }
+      args.push("--print-timeout", Math.ceil(timeoutMs / 1000) + "s");
+      return { ...config, args, timeoutMs };
+    };
+    const started = await this.runAgyPhase({
+      label: "SERIES_PLAN",
+      commandConfig: makeConfig(prompt, resolvePhaseTimeoutMs("series_plan", this.settings)),
+      prompt, resultDir, onProgress, expectedProxyList: [],
+      viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan",
+      toolGuard, cwd: path.dirname(understandingPath)
+    });
+    let stdout = started.stdout || "";
+    // Always write the original response BEFORE attempting a repair.
+    await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan-initial.log"), stdout, "utf8");
+    let plan = await extractNamedArtifact(stdout, {
+      filename: "series-plan.json", artifactType: "series_plan", resultDir: ""
+    });
+    let validation = validateSeriesPlan(plan, { series, videoDurationSec });
+    if (!validation.ok) {
       metrics.retryCount += 1;
-      this.emitLog(onProgress, 56, `[SERIES_PLAN] Plan chưa hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu sửa trong cùng hội thoại...`, logs);
-      const repairPrompt = [
-        "Your series plan was rejected by the host validator:",
-        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
-        "Return the COMPLETE corrected series-plan envelope now, exactly one JSON object, no prose. Do not open any .mp4 file."
-      ].join("\n");
-      const retryConfig = this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, {
-        packageInfo,
-        timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
-      });
+      this.emitLog(onProgress, 54,
+        "[SERIES_PLAN] JSON chưa đạt: " + validation.errors.slice(0, 3).join(" ") +
+        " Thử tạo lại bằng hội thoại AGY MỚI, chỉ đọc dữ liệu nguồn; không resume phiên cũ.", logs);
+      const repairPrompt = assertPrintPromptSize([
+        "FRESH DATA-ONLY SERIES PLAN GENERATION. NOT a coding task.",
+        "The host found problems in the previous JSON:",
+        ...validation.errors.slice(0, 10).map((error) => "- " + error),
+        "Do not inspect project source code or troubleshoot the application.",
+        "Return ONE complete JSON envelope for series-plan.json as your final answer.",
+        "",
+        buildSeriesPlanPrompt(inputs)
+      ].join("\n"), "Series plan clean retry");
+      const retryTimeout = Math.min(180000, resolvePhaseTimeoutMs("series_plan", this.settings));
       const retry = await this.runAgyPhase({
-        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt, resultDir, onProgress,
-        expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-retry"
+        label: "SERIES_PLAN_RETRY_FRESH",
+        commandConfig: makeConfig(repairPrompt, retryTimeout),
+        prompt: repairPrompt, resultDir, onProgress, expectedProxyList: [],
+        viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-fresh-retry",
+        toolGuard, cwd: path.dirname(understandingPath)
       });
-      stdout += `\n--- SERIES_PLAN_REPAIR ---\n${retry.stdout || ""}`;
-      conversationId = retry.conversationId || conversationId;
-      parsed = await parse();
+      stdout = retry.stdout || "";
+      await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan-fresh-retry.log"), stdout, "utf8");
+      plan = await extractNamedArtifact(stdout, {
+        filename: "series-plan.json", artifactType: "series_plan", resultDir: ""
+      });
+      validation = validateSeriesPlan(plan, { series, videoDurationSec });
     }
     await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan.log"), stdout, "utf8");
-    if (!parsed.validation.ok) {
-      throw new Error(`[SERIES_PLAN] FAILED: series-plan.json không hợp lệ (${parsed.validation.errors.slice(0, 4).join(" ")}). Không sinh kịch bản khi plan chưa khóa.`);
+    if (!validation.ok) {
+      throw new Error("[SERIES_PLAN] FAILED: JSON không hợp lệ sau 2 lượt độc lập (" +
+        validation.errors.slice(0, 5).join(" ") +
+        "). Giữ nguyên cache hiểu video; xem antigravity-output-seriesPlan-initial.log và " +
+        "antigravity-output-seriesPlan-fresh-retry.log. Không sinh kịch bản khi plan chưa khóa.");
     }
-    const locked = { ...parsed.plan, lockedAt: new Date().toISOString(), lockedBy: "host_validator" };
-    return { plan: locked, videoViews: videoViews.size };
+    const locked = { ...plan, artifactType: "series_plan", profile: series.profile,
+      lockedAt: new Date().toISOString(), lockedBy: "host_validator",
+      sourceSignature: signature };
+    return { plan: locked, videoViews: videoViews.size, cacheHit: false };
   }
 
   /**
@@ -3451,10 +3565,120 @@ class ManualAntigravityStage1Service {
       throw new Error(`Antigravity không trả về artifacts JSON hợp lệ. Xem log tại ${resultDir}.`);
     }
 
-    const scriptArtifacts = envelope.artifacts.filter((a) => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
-    const normalized = scriptArtifacts.map(normalizeArtifact);
-    const deduplicated = new Map();
+    let scriptArtifacts = envelope.artifacts.filter(a => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
+    let normalized = scriptArtifacts.map(normalizeArtifact);
+    let deduplicated = new Map();
     for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
+
+    if (series?.profile === BodycamV1.PROFILE) {
+      const { compileStorySpineScript, isStorySpineScript } = require("./storySpineCompilerService");
+      const { normalizeHighlightCutScript } = require("./dubbingService");
+      const { scoreManualGeminiVariant } = require("./manualGeminiViralPreflightService");
+      const preflightManifest = await fs.readFile(inputPaths.sceneManifestPath, "utf8")
+        .then(JSON.parse).catch(() => null);
+      const editorialPrompt = await fs.readFile(promptPath, "utf8").catch(() => "");
+      const voiceSpeedMatch = editorialPrompt.match(/measuredWordsPerSecond:\s*([0-9]+(?:\.[0-9]+)?)/i);
+      const measuredWps = voiceSpeedMatch ? Number(voiceSpeedMatch[1]) : 0;
+      const measuredVoiceProfile = measuredWps > 0
+        ? { conservativeWordsPerSecond: measuredWps } : null;
+      const scoreScripts = () => {
+        const scripts = [...deduplicated.values()].map(a => a.script);
+        const editorial = BodycamV1.inspectScripts(scripts,
+          { source: understanding, seriesPlan, videoDurationSec });
+        const preflight = [];
+        for (const raw of scripts) {
+          const scriptId = Number(raw.scriptId ?? raw.script_id);
+          try {
+            const compiled = isStorySpineScript(raw)
+              ? compileStorySpineScript(raw, { manifest: preflightManifest, videoDuration: videoDurationSec })
+              : raw;
+            const normalized = normalizeHighlightCutScript(compiled, videoDurationSec);
+            const result = scoreManualGeminiVariant({
+              script: compiled, normalizedScript: normalized, expectedScriptId: scriptId,
+              voiceProfile: measuredVoiceProfile
+            });
+            preflight.push({ scriptId, score: result.score, grade: result.grade,
+              issues: result.issues || [] });
+            if (!(result.score >= 65)) {
+              editorial.errors.push("Script " + scriptId +
+                ": viral preflight " + result.score + "/100 (<65); " +
+                (result.issues || []).slice(0, 4).join("; "));
+            }
+          } catch (error) {
+            preflight.push({ scriptId, score: 0, error: error.message });
+            editorial.errors.push("Script " + scriptId +
+              ": không thể biên dịch/chấm preflight: " + error.message);
+          }
+        }
+        editorial.preflight = preflight;
+        editorial.passed = editorial.errors.length === 0;
+        return editorial;
+      };
+      let v1Verdict = scoreScripts();
+      await writeJsonAtomic(path.join(resultDir, "bodycam-v1-quality-initial.json"), v1Verdict);
+      if (!v1Verdict.passed) {
+        this.emitLog(onProgress, 83,
+          "[V1_EDITORIAL_GATE] REBUILD: " + v1Verdict.errors.slice(0, 4).join("; "), logs);
+        // Always start a clean AI turn instead of anchoring on the bad script.
+        // The full source was already watched and cached in Phase A.
+        const repairPrompt = assertPrintPromptSize([
+          "V1 REBUILD REQUIRED. The previously generated Bodycam Parts are NOT editorially ready.",
+          "Build all three Scripts 1/3/4 from the ORIGINAL locked source understanding and series plan.",
+          "FAILURES FOUND BY HOST:", ...v1Verdict.errors.slice(0, 30).map(v => "- "+v),
+          "Repair the hook, causal story, meaningful source selection, English narration and ending BEFORE rendering V1.",
+          "Never pad static inactive footage or invent a payoff to achieve a length requirement.",
+          "Return a COMPLETE JSON artifacts envelope with v1EditorialAudit for every Script.",
+          "", promptB
+        ].join("\n"), "Bodycam V1 rebuild");
+        const repairConfig = this.buildCommand(repairPrompt, schemaPath, pass1Dir, {
+          packageInfo, timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
+        });
+        const rebuildMetrics = newMetrics();
+        const permittedInputs = new Set([
+          promptPath, understandingPath, path.join(phaseBInputDir, "series-plan.json"),
+          inputPaths.sceneManifestPath, inputPaths.transcriptPath,
+          inputPaths.hookContractPath, inputPaths.actionCandidatesPath
+        ].filter(Boolean).map(p => path.basename(String(p).replace(/\\/g, "/")).toLowerCase()));
+        const rebuilt = await this.runAgyPhase({
+          label: "PHASE_B_V1_REBUILD", commandConfig: repairConfig, prompt: repairPrompt,
+          resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+          metrics: rebuildMetrics, logs, logBase: "phaseB-v1-rebuild",
+          cwd: phaseBInputDir,
+          toolGuard: ({toolName, file}) => {
+            if (toolName !== "view_file") return "Phase B chỉ được đọc input; không chạy code/delegate";
+            const base = path.basename(String(file || "").replace(/\\/g, "/")).toLowerCase();
+            return permittedInputs.has(base) ? null : "Không phải source input: " + base;
+          }
+        });
+        const rebuiltStdout = rebuilt.stdout || "";
+        await fs.writeFile(path.join(resultDir, "antigravity-output-phaseB-v1-rebuild.log"),
+          rebuiltStdout, "utf8");
+        let newEnvelope = findArtifactEnvelope(rebuiltStdout);
+        if (!newEnvelope?.artifacts?.length) {
+          for (const agentText of collectAgentTexts(rebuiltStdout).reverse()) {
+            newEnvelope = findArtifactEnvelope(agentText);
+            if (newEnvelope?.artifacts?.length) break;
+          }
+        }
+        if (!newEnvelope?.artifacts?.length) {
+          throw new Error("[V1_EDITORIAL_GATE] Antigravity rebuild không trả đủ JSON. "
+            + "Xem antigravity-output-phaseB-v1-rebuild.log");
+        }
+        normalized = newEnvelope.artifacts
+          .filter(a => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId)
+          .map(normalizeArtifact);
+        deduplicated = new Map(normalized.map(a => [a.script.scriptId, a]));
+        v1Verdict = scoreScripts();
+      }
+      await writeJsonAtomic(path.join(resultDir, "bodycam-v1-quality.json"), v1Verdict);
+      if (!v1Verdict.passed) {
+        throw new Error("[V1_EDITORIAL_GATE] Chặn V1 yếu trước render: " +
+          v1Verdict.errors.slice(0, 7).join("; ") +
+          ". Xem bodycam-v1-quality.json; Phase A video cache vẫn được giữ.");
+      }
+      this.emitLog(onProgress, 86,
+        "[V1_EDITORIAL_GATE] PASS: 3 Part có Hook/Payoff/Ending khớp source và 8 nhịp.", logs);
+    }
     const files = [];
     for (const scriptId of requestedScriptIds) {
       const artifact = deduplicated.get(scriptId);
@@ -3651,6 +3875,7 @@ ManualAntigravityStage1Service.buildSourceUnderstandingPrompt = buildSourceUnder
 ManualAntigravityStage1Service.buildScriptGenerationPrompt = buildScriptGenerationPrompt;
 ManualAntigravityStage1Service.buildSeriesPlanPrompt = buildSeriesPlanPrompt;
 ManualAntigravityStage1Service.validateSeriesPlan = validateSeriesPlan;
+ManualAntigravityStage1Service.extractNamedArtifact = extractNamedArtifact;
 ManualAntigravityStage1Service.evaluateScriptsAgainstSeriesPlan = evaluateScriptsAgainstSeriesPlan;
 ManualAntigravityStage1Service.detectSeriesProfile = detectSeriesProfile;
 ManualAntigravityStage1Service.SERIES_PROFILES = SERIES_PROFILES;

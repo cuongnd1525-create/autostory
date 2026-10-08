@@ -4361,6 +4361,37 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           + "Hãy mở project gốc và dùng Import JSON thay thế; tool sẽ tự nhận diện review V2 và kiểm tra đúng revision."
         );
       }
+      if (project.manualGeminiPromptOptions?.profile === "viral_tiktok_crime_part1") {
+        // A V1 from a manually copied/stale JSON must pass the SAME pre-render
+        // source gate as the automatic Stage1 output, even if the user skipped
+        // the usual Auto Mode import path.
+        const V1Gate = require("./bodycamV1QualityService");
+        const artifactDir = path.dirname(jsonPath);
+        const understandingFile = path.join(artifactDir, "phase-b-input", "source-understanding.json");
+        const planFile = path.join(artifactDir, "series-plan.json");
+        let sourceUnderstanding = null;
+        let lockedPlan = null;
+        try {
+          sourceUnderstanding = JSON.parse(await fs.readFile(understandingFile, "utf8"));
+          lockedPlan = JSON.parse(await fs.readFile(planFile, "utf8"));
+        } catch (_) {
+          throw new Error("Bodycam V1 chưa có source-understanding.json/series-plan.json đã xác minh. "
+            + "Hãy tạo Script V1 bằng Auto Mode Antigravity Stage1, không import JSON tự do không có bằng chứng nguồn.");
+        }
+        if (lockedPlan.lockedBy !== "host_validator" ||
+            lockedPlan.profile !== "viral_tiktok_crime_part1") {
+          throw new Error("Series Plan chưa được host khóa hoặc dùng sai Bodycam profile.");
+        }
+        const verdict = V1Gate.inspectScript(parsedArtifact, {
+          source: sourceUnderstanding, seriesPlan: lockedPlan, videoDurationSec: media.duration
+        });
+        if (!verdict.passed) {
+          await this.projectStore.writeJson(path.join(artifactDir, "bodycam-v1-import-rejected.json"),
+            { generatedAt: new Date().toISOString(), jsonPath, ...verdict });
+          throw new Error("Bodycam V1 bị chặn trước render: " + verdict.errors.slice(0, 5).join("; ") +
+            ". Xem bodycam-v1-import-rejected.json; cần chạy lại GĐ1 để AI tự rebuild kịch bản.");
+        }
+      }
       if (isDiyStoryRemixWorkflow && safeText(parsedArtifact?.workflow) !== "diy_story_remix") {
         throw new Error(`File ${path.basename(jsonPath)} thiếu workflow="diy_story_remix".`);
       }
@@ -4476,6 +4507,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
+      if (configuredPromptOptions.profile === "viral_tiktok_crime_part1") {
+        const outputSec = (script.segments || []).reduce((sum, segment) =>
+          sum + safeNumber(segment.duration, 0), 0);
+        if (outputSec < 109.95 || outputSec > 125.05) {
+          script.warnings.push(
+            "TikTok Viral Bodycam Part " + (script.partNumber || scriptInput.part_number || "?") + ": output " + outputSec.toFixed(1) +
+            "s nằm ngoài mục tiêu 110-125s. Đây là V1 cần review/rebuild từ bằng chứng nguồn; " +
+            "không chèn cảnh chờ, im lặng hoặc cảnh không liên quan chỉ để đủ thời lượng."
+          );
+        }
+      }
       if (configuredPromptOptions.profile === "independent") {
         const importedScriptId = safeNumber(
           scriptInput.scriptId ?? scriptInput.script_id,
@@ -4518,6 +4560,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           voiceProfile: importVoiceProfileContext?.profile || null
         })
         : null;
+      if (configuredPromptOptions.profile === "viral_tiktok_crime_part1" &&
+          viralPreflight && viralPreflight.score < 65) {
+        await this.projectStore.writeJson(path.join(path.dirname(jsonPath), "bodycam-v1-score-rejected.json"),
+          { generatedAt: new Date().toISOString(), scriptId: script.scriptId,
+            score: viralPreflight.score, issues: viralPreflight.issues, metrics: viralPreflight.metrics });
+        throw new Error(`Bodycam V1 score ${viralPreflight.score}/100 quá thấp (<65). ` +
+          "Tool không dựng video V1 yếu. Xem bodycam-v1-score-rejected.json và chạy lại GĐ1.");
+      }
       if (viralPreflight?.issues?.length) {
         script.warnings.push(
           `Viral readiness ${viralPreflight.score}/100 (${viralPreflight.grade}): ${viralPreflight.issues.join(" ")}`
@@ -5209,6 +5259,29 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         Boolean(draftReviewArtifact)
       );
       const variantId = activeVariant.id || "variant_01";
+      if (draftReviewArtifact && safeText(activeVariant.promptProfile).toLowerCase() === "viral_tiktok_crime_part1") {
+        const reviewDir = activeVariant.artifacts?.draftReviewPackagePath || "";
+        const contextPath = reviewDir && path.join(reviewDir, "review-context.json");
+        let context = null;
+        if (contextPath) {
+          try { context = JSON.parse(await fs.readFile(contextPath, "utf8")); }
+          catch (_) { /* Fail closed below if the reviewed draft's binding is missing. */ }
+        }
+        if (!context || context?.script?.prompt_profile !== "viral_tiktok_crime_part1") {
+          throw new Error("Thiếu review-context.json của Bodycam V1. Phải review đúng MP4 gốc của variant trước khi import V2.");
+        }
+        const qualityGate = require("./bodycamQualityGate").checkReview(draftReviewArtifact, {
+          durationSec: context.draftTimeline?.totalOutputDurationSec,
+          scriptId: activeVariant.scriptId
+        });
+        if (!qualityGate.passed) {
+          await this.projectStore.writeJson(
+            path.join(paths.analysisDir, "bodycam-v2-import-rejected.json"),
+            { generatedAt: now, variantId, issues: qualityGate.errors, jsonPath });
+          throw new Error("Không import Bodycam V2 chưa đạt Hard Quality Gate: "
+            + qualityGate.errors.slice(0, 4).join("; "));
+        }
+      }
       let reapplyCurrentReviewFile = false;
       let effectiveReviewedRevision = 0;
       let reviewBindingWarning = "";
@@ -6367,6 +6440,24 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         previewSubtitleCues: originalAudioCues.length ? originalAudioCues : voiceSubtitleCues
       };
     });
+    // Bodycam content targets an English-speaking viewer. For this profile,
+    // burn the actual English dialogue/narration in the V1 draft instead of
+    // automatically translating every cue into Vietnamese.
+    const bodycamEnglish = project.manualGeminiPromptOptions?.profile === "viral_tiktok_crime_part1"
+      || (project.analysis?.highlightVariants || []).find(v =>
+        v.id === project.analysis?.activeVariantId)?.promptProfile === "viral_tiktok_crime_part1";
+    if (bodycamEnglish) {
+      return subtitleSegments.map(segment => {
+        const cues = (segment.previewSubtitleCues || []).map(cue => ({
+          ...cue,
+          previewSubtitleVi: safeText(cue.text || ""),
+          subtitleSource: "bodycam_english_original"
+        }));
+        return { ...segment,
+          previewSubtitleVi: cues.map(cue => cue.previewSubtitleVi).filter(Boolean).join(" "),
+          previewSubtitleCues: cues };
+      });
+    }
     const translationItems = subtitleSegments.flatMap((segment) => (
       segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
@@ -6457,6 +6548,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const ffmpeg = new FfmpegService(settings);
     const autoStorySourceStat = await fs.stat(project.sourceVideoPath).catch(() => null);
     const activeVariant = getActiveHighlightVariant(project);
+    if (activeVariant.promptProfile === "viral_tiktok_crime_part1" &&
+        Number(activeVariant.revisionNumber || 1) <= 1 &&
+        !(Number(activeVariant.viralPreflight?.score) >= 65)) {
+      throw new Error("Bodycam V1 cũ hoặc chưa đạt Viral Preflight (score " +
+        (activeVariant.viralPreflight?.score ?? "chưa có") +
+        "/100). Không render lại kịch bản yếu. Hãy chạy lại Antigravity GĐ1 với " +
+        "V1 Editorial Gate, import Script mới rồi render.");
+    }
     const variantId = activeVariant.id || "variant_01";
     const variantMetadata = resolveVariantFileMetadata(project, activeVariant);
     const variantSuffix = variantMetadata.fileTag;
@@ -6469,7 +6568,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
     const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
     const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
+    const isEnglishBodycamDraft = activeVariant.promptProfile === "viral_tiktok_crime_part1";
+    const subtitlePath = path.join(paths.outputDir,
+      `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.${isEnglishBodycamDraft ? "en" : "vi"}.srt`);
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
@@ -6761,7 +6862,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         percent: 96,
         message: isTikTokKaraoke
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
-          : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
+          : isEnglishBodycamDraft ? "Đang nhúng phụ đề tiếng Anh vào bản nháp" : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
       });
       await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
     } else {
@@ -6872,7 +6973,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: isEnglishBodycamDraft ? "en" : "vi",
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
@@ -6892,7 +6993,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: isEnglishBodycamDraft ? "en" : "vi",
           fastDraftSubtitlesArePreviewOnly: true,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftRenderedAt: voiceAlignmentReport.generatedAt,

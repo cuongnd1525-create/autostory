@@ -1535,7 +1535,13 @@ function syncProjectSettingsControls(project = state.currentProject) {
 
 function getSuggestedTopCaption(project = state.currentProject) {
   const analysis = project?.analysis || {};
-  const firstVariant = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants[0] : null;
+  const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
+  const firstVariant = variants[0] || null;
+  const activeVariant = variants.find(v => v.id === analysis.activeVariantId) || firstVariant;
+  if (activeVariant?.promptProfile === "viral_tiktok_crime_part1") {
+    const title = String(activeVariant.topHeader || activeVariant.title || "").trim();
+    if (title) return title.replace(/\s+/g, " ").slice(0, 180);
+  }
   return String(
     analysis.sharedTopBannerText
     || analysis.shared_top_banner_text
@@ -3798,57 +3804,65 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 ### SELECTED PROMPT PROFILE
 - prompt_profile: viral_tiktok_crime_part1
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
-- Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
-- Every script must follow the exact 8-beat formula and use 9:16 vertical framing.
+- Return exactly 3 scripts: Script 1 (Part 1 - The Incident Begins), Script 3 (Part 2 - The Investigation Deepens), Script 4 (Part 3 - The Verified Outcome). These are editorial chapter roles, not promises of any particular arrest/verdict. Never return Script 2.
+- Every script must follow the exact 8-beat audio-role formula and use 9:16 vertical framing.
+- SOURCE-DRIVEN INCIDENT GATE (supreme over examples): "Confrontation", "Interrogation", "Verdict & Arrest", hostage, house-entry and takedown examples are ONLY labels/examples, NEVER source facts. Read the source understanding, transcript, action candidates and actual media FIRST. Map each beat to verified events of THIS incident (crash, 911, roadside, hospital, etc.). Never invent an entry into a house, a physical arrest, a charge, a sentence or a victim.
+- The opening teaser must lead to a verified explanation, matching event, or explicit source-grounded next-part question. Do not start with a later hospital incident then finish in an earlier time without returning to the teaser or explaining its consequence.
+- Keep 4 raw + 4 narrator roles, but never pad static procedural footage, silence or unrelated video just to meet a length target.
+- NARRATOR DELIVERY: Write TTS as natural spoken American English, not a scripted police report. Prefer two connected short-to-medium sentences per narrated block with varied sentence length, contractions where natural, clear full-stop/comma punctuation and concrete source facts. Avoid repeated "But what happened next", "Little did they know", fake suspense clichés, uppercase shouting, stacked subordinate clauses and dramatic filler. Place punctuation at genuine breathing/semantic boundaries; a pause should never interrupt a proper name or critical number.
+- AUDIO FIT: Narration must fit the measured selected voice duration at natural playback speed. Trim the underlying visual range before inserting empty narrated time. Keep strong original dialogue fully audible in original_audio beats; don't add TTS on top of it. If there is insufficient evidence for a coherent 110–125s Part, report that limitation rather than inventing source events or a fake ending.
+- End with the verified Part-level consequence then a SPECIFIC unresolved next event supported by source; never advertise a nonexistent interrogation, arrest or verdict.
 - TOP HOOK CAPTION: suggestedTitle/title must be a concise 4-8 word cold-viewer hook, ideally <= 42 characters, grounded in the actual conflict/action. Create curiosity without generic clickbait, hashtags, "PART 1/2/3", or spoiling the final payoff.
 - titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
 - Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
 - The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
-  * Script 1 / PART 1 - The Confrontation: hook, dispatch/arrival, scene entry, escalation, first confrontation. Ends on a verified unresolved cliffhanger.
-  * Script 3 / PART 2 - The Interrogation: questioning, explanations, lies, contradictions and evidence. Ends on the strongest verified pre-arrest cliffhanger.
-  * Script 4 / PART 3 - The Verdict & Arrest: decision, arrest/charges and the verified consequence (payoff).
-  * PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Never reuse the same footage across Parts except a recap of at most 3 seconds.
+  * Script 1 / PART 1 - The Incident Begins: hook, verified context, first relevant encounter, escalation and a meaningful in-part consequence. End on a verified specific open loop if source supports one.
+  * Script 3 / PART 2 - The Investigation Deepens: verified subsequent accounts, evidence, interventions or conflicts. End on a specific later event supported by source, not necessarily an arrest.
+  * Script 4 / PART 3 - The Verified Outcome: strongest actual source-supported consequence or final available status, including medical, investigation or legal outcome when truly documented.
+  * PART 1 and PART 2 should withhold the final verified resolution when a genuine later source event exists, but still provide a meaningful within-Part consequence. Never invent a non-existent arrest, charges or verdict. Never reuse the same footage across Parts except a recap of at most 3 seconds.
   * When a locked series-plan.json is supplied, its scope, scene allocation and cliffhangers are binding.
 
 ### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
-Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio beats + 4 Narration beats):
+All three Parts must strictly follow the same eight LOGICAL alternating beats (4 Raw Audio + 4 concise Narration). Script 1 uses the specific first-incident narrative functions below; Scripts 3 and 4 map those functions to their verified chapter story without inventing a second crash or arrest:
 
-1. BEAT 1 (Target: ~12-15s source duration) - COLD OPEN HOOK
+1. BEAT 1 (Target: ~12-16s meaningful source duration) - COLD OPEN HOOK
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: The single most shocking, loud, or chaotic raw moment from the entire source footage (e.g. screaming at the door, physical struggle, forced breach, frantic yelling).
+   - Content: The strongest VERIFIED raw incident moment in THIS Part's central conflict (e.g. crash response, witness contradiction, roadside exchange, medical crisis, urgent officer action). Prioritize comprehension and stakes over loudness.
    - Rule: Grips the viewer in the first 0-3 seconds with zero narration. Pure authentic raw audio.
 
-2. BEAT 2 (Target: ~16-20s source duration) - INCIDENT SETUP & DISPATCH
+2. BEAT 2 (Target: ~8-12s source duration; English narration <=12s, <=26 naturally spoken words) - INCIDENT SETUP & DISPATCH
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Grounding narration over footage of police arrival / driving. State the date, location, the 911 dispatch premise, what officers were responding to, and the high stakes.
+   - Content: Concise verified setup over fitting footage of dispatch, crash response, arrival, roadside action or another genuine source event. Date, location and call reason only when explicitly verified.
    - Pacing: Active, present-tense, documentary tension.
 
-3. BEAT 3 (Target: ~10-14s source duration) - SCENE ENTRY & RAW REALITY
+3. BEAT 3 (Target: ~16-22s of meaningful raw dialogue/action, never static waiting) - SCENE ENTRY & RAW REALITY
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: Officer steps inside the house/scene, encounters the first suspect or family member at the door/stairs, capturing natural ambient dialogue and escalating tension.
+   - Content: The first meaningful original-audio encounter, observation or exchange. The scene could be roadside, in a patrol car, at a crash site, in an ambulance or hospital. Never invent a house, family member, stairs or door.
 
-4. BEAT 4 (Target: ~15-18s source duration) - ESCALATION & DISCOVERY
+4. BEAT 4 (Target: ~8-12s source duration; English narration <=12s) - ESCALATION & DISCOVERY
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Narration builds intense suspense as officer rushes upstairs/inward and discovers the core crisis (e.g. suspect physically pinning the victim).
+   - Content: A truthful causal bridge to the next verified discovery or escalation. Identify time/location/perspective changes when source jumps; never promise footage the next beat cannot show.
    - Visual matching: Narration directs viewer attention directly to what is about to be seen.
 
-5. BEAT 5 (Target: ~12-15s source duration) - CLIMACTIC TAKEDOWN / CONFRONTATION
+5. BEAT 5 (Target: ~16-22s of meaningful raw climax/proof) - CLIMACTIC TAKEDOWN / CONFRONTATION
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: Peak physical and vocal confrontation! Commands shouted by police ("Get off her! Let go of her! Stand up!"), restraint applied, separating suspect from victim. 100% authentic raw audio.
+   - Content: The strongest authentic raw turning point within the SAME scoped incident: contradiction, proof, crash discovery, intervention, confrontation or reaction. Physical struggle/restraint is optional and cannot be invented.
 
-6. BEAT 6 (Target: ~17-20s source duration) - CONFLICT BREAKDOWN & MORAL CONTRAST
+6. BEAT 6 (Target: ~8-12s source duration; English narration <=12s) - CONFLICT BREAKDOWN & MORAL CONTRAST
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Identifies key suspects and victims by name. Contrasts the suspect's absurd excuse or fake medical claim ("she was having a mental episode") against the victim's clear explanation ("I just wanted to leave").
+   - Content: Summarize only verified competing accounts, new facts, stakes or evidence. Names, diagnoses, victim quotes or suspect motives must come from this source, not template examples.
 
-7. BEAT 7 (Target: ~7-10s source duration) - RAW DIALOGUE EVIDENCE
+7. BEAT 7 (Target: ~16-22s meaningful raw evidence/dialogue; avoid static cars) - RAW DIALOGUE EVIDENCE
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: Suspect stammers an incriminating excuse or victim gives emotional response to the officer.
+   - Content: Use a concise source-verified quote, response, reaction or action that advances the SAME central question; avoid repetitive procedure or unrelated material.
 
-8. BEAT 8 (Target: ~14-17s source duration) - CLIFFHANGER & PART 2 OPEN LOOP
+8. BEAT 8 (Target: ~8-12s source duration; concise grounded open loop) - CLIFFHANGER & PART 2 OPEN LOOP
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Questioning begins; suspect eagerly starts trying to justify their actions, unaware they are digging their own grave. Narration delivers a compelling hook urging the audience to watch Part 2 for the full interrogation and arrest.
+   - Content: Deliver Part 1's verified near-term consequence and establish a specific unresolved next question. Do NOT promise interrogation, arrest, jail, charges or court result unless the input verifies those events; end on a viewable meaningful frame.
 
 ### REQUIRED ROOT METADATA
+- Every Part must contain 8 alternating narrative audio roles, meaningful source-backed story_blueprint (central question, escalation, causal transitions, verified payoff/open loop) and macroBlockId/storyFunction for each beat, or the pre-render quality gate will reject it.
+- Set series_pacing="story_first" to protect complete authentic raw exchanges while keeping narrator no longer than 12s. Never extend raw footage for the sake of padding.
 Every generated JSON script must include:
 \`\`\`json
 {
@@ -3862,6 +3876,9 @@ Every generated JSON script must include:
   "titleStyle": "tiktok_hook",
   "subtitleStyle": "tiktok_karaoke",
   "targetDurationSec": 117.5,
+  "series_pacing": "story_first",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125,
   "segments": [ ...8 segments... ]
 }
 \`\`\`

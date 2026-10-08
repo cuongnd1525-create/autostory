@@ -274,6 +274,13 @@ function resolveSuggestedTopCaption(project = {}) {
   const analysis = project.analysis || {};
   const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
   const firstVariant = variants[0] || {};
+  const activeVariant = variants.find(v => v.id === analysis.activeVariantId) || firstVariant;
+  // The three Bodycam Parts each have a different hook/promise; a global banner
+  // derived from Part 1 must not override the current Part's actual headline.
+  if (activeVariant.promptProfile === "viral_tiktok_crime_part1") {
+    const ownHeadline = safeText(activeVariant.topHeader || activeVariant.title);
+    if (ownHeadline) return ownHeadline.slice(0, 180);
+  }
   return safeText(
     analysis.hookHeadline
     || analysis.sharedTopBannerText
