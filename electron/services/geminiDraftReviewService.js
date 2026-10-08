@@ -830,7 +830,12 @@ function buildReviewPrompt({
 - Headline must match THIS Part's actual Hook and central conflict. When UI decoration carries a misleading shared title, flag it for user adjustment rather than claiming the revised JSON automatically changed an already-rendered banner.
 - Target 110–125 seconds of actual output only with VERIFIED meaningful source material; never pad footage to reach duration. Clearly report if this source cannot support the requested profile.
 - Wrong Hook, broken causal story, missing payoff or unusable ending requires a FULL revisedScript restructuring; mark review.issues actions replace_scene/remove_segment as needed. Do not limit the repair to narrator/caption polish.
-- Review coverage may be partial: do not claim an omitted source moment was inspected unless its proxy is truly supplied.`
+- Review coverage may be partial: do not claim an omitted source moment was inspected unless its proxy is truly supplied.
+- OUTPUT A MANDATORY TOP-LEVEL bodycamQualityAudit JSON object with observationWindows covering the entire actual draft in contiguous non-overlapping windows no longer than 8 seconds (last shorter window allowed). Each window MUST contain numeric startSec/endSec and non-empty visibleAction, audibleContent and storyProgress (say "no progress" if static), plus weak:Boolean and reason:String. Timestamps refer to DRAFT output, not source.
+- bodycamQualityAudit.hookPromise MUST include promise:String, payoffEvidence:String, payoffSourceSec:Number, resolvedWithinPart:Boolean, verifiedNextPartOpenLoop:Boolean. If an open loop is left for the next Part, give evidence of the later event; never mark a nonexistent event verified.
+- bodycamQualityAudit.ending MUST include usableAudio:Boolean, usablePicture:Boolean, grounded:Boolean, sourceEvidence:String. False values are an explicit failure, not a signal to fabricate approval.
+- For each observationWindow tagged weak, the V2 timeline must remove, replace or meaningfully shorten that source moment unless direct audiovisual evidence proves it indispensable; mention the corrective choice in review.issues.
+- Missing or invented audit fields, fake full coverage, missing Hook evidence, invalid V2 duration, or unwatchable ending cause a local hard quality-gate failure. Never claim publish-ready until the re-rendered V2 has also been inspected.`
     : "";
   const diyStoryReviewRules = isDiyStoryRemix
     ? `DIY STORY REMIX REVIEW OVERRIDE - HIGHER PRIORITY THAN TRUE-CRIME RULES:
@@ -1083,6 +1088,11 @@ REQUIRED ROOT SCHEMA:
     "rejectedHighMotionCandidates": [{ "candidateId": "", "reason": "" }]
   },
   "reviewedRevision": ${revision},
+  ${isViralBodycamPart1 ? `"bodycamQualityAudit": {
+    "observationWindows": [{"startSec":0,"endSec":8,"visibleAction":"observable action","audibleContent":"actual speech or quiet ambience","storyProgress":"specific new event or no progress","weak":false,"reason":""}],
+    "hookPromise":{"promise":"","payoffEvidence":"","payoffSourceSec":0,"resolvedWithinPart":false,"verifiedNextPartOpenLoop":false},
+    "ending":{"usableAudio":false,"usablePicture":false,"grounded":false,"sourceEvidence":""}
+  },` : ""}
   "review": {
     "scoreBefore": 0,
     "scoreAfterEstimated": 0,
