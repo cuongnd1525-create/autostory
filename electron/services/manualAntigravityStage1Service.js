@@ -1027,7 +1027,7 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
     "- sceneAllocation: give each Part its own chronological SOURCE ranges. A range may appear in two Parts only if listed in sharedRanges with a reason (e.g. a 'previously on' recap of at most 8s). No other duplicates.",
     "- Spoiler boundaries: Part 1 and Part 2 must not spoil the actual final verified outcome. Put verified final outcome footage in Part 3 payoffRanges, which may show medical treatment, investigation or rescue, NOT necessarily arrest/charges/verdict.",
     "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
-    "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed).",
+    "- HOOK_CONTRACT.isUserLocked is authoritative: ONLY an explicitly user-locked Hook must be preserved within trimming tolerance. When isUserLocked=false, the anchor is a heuristic recommendation, NOT a mandate. Replace it with a stronger source-verified Hook if its first 3s are obstructed, unclear, inaudible, or narratively unconnected; document the new source range and promise in the plan.",
     "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
     `- All ranges must lie within 0-${Number(videoDurationSec || 0).toFixed(3)}s.`,
     "",
