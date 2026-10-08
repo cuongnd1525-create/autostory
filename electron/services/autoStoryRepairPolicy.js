@@ -14,9 +14,17 @@ function chooseRepairStrategy(critic = {}, durationSec = 0) {
   if (blocking.some(i => !Array.isArray(i.beatIds) || !i.beatIds.length)) {
     return { mode: 'edl_rebuild', reason: 'Blocking MP4 finding cannot be mapped to any editable EDL beat.' };
   }
-  const totalBadSeconds = blocking.reduce((sum, i) =>
-    sum + Math.max(0, Math.min(durationSec, Number(i.outputEndSec) || 0) -
-      Math.max(0, Number(i.outputStartSec) || 0)), 0);
+  // Merge overlaps so two findings on the same 5s do not masquerade as 10s.
+  const ranges = blocking.map(i => [Math.max(0, Number(i.outputStartSec) || 0),
+    Math.min(durationSec, Number(i.outputEndSec) || 0)])
+    .filter(([s, e]) => e > s).sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const [start, end] of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+    else merged.push([start, end]);
+  }
+  const totalBadSeconds = merged.reduce((sum, [start, end]) => sum + end - start, 0);
   if (durationSec > 0 && totalBadSeconds / durationSec >= 0.42) {
     return { mode: 'edl_rebuild', reason: 'Blocking problems span too much of the timeline for a local patch.' };
   }
