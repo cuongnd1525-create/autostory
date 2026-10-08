@@ -719,6 +719,19 @@ function targetedRepairViolations(before, after, weakRegions = []) {
         message: "Targeted repair changed or removed unaffected beat '" + beat.beatId + "'." });
     }
   }
+  // Delivery ownership is as important as visual EDL. Only blocks touching
+  // authorized beats or explicitly reported deliveryBlockIds may be rewritten.
+  const weakBlockIds = new Set(weakRegions.flatMap(r => r.deliveryBlockIds || []));
+  const afterBlocks = new Map((after?.deliveryBlocks || []).map(b => [b.blockId, b]));
+  for (const block of before?.deliveryBlocks || []) {
+    const affected = weakBlockIds.has(block.blockId) ||
+      (block.beatIds || []).some(id => allowed.has(id));
+    if (affected) continue;
+    if (JSON.stringify(afterBlocks.get(block.blockId)) !== JSON.stringify(block)) {
+      problems.push({ code: 'TARGETED_REPAIR_MODIFIED_LOCKED_DELIVERY_BLOCK', blockId: block.blockId,
+        message: "Targeted repair changed unaffected delivery block '" + block.blockId + "'." });
+    }
+  }
   const lockedIds = locked.map(b => b.beatId);
   const actual = next.filter(b => lockedIds.includes(b.beatId)).map(b => b.beatId);
   if (actual.join('|') !== lockedIds.join('|')) {
