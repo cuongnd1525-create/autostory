@@ -762,13 +762,13 @@ function buildReviewPrompt({
 }) {
   const revision = Math.max(1, safeNumber(variant.revisionNumber, 1));
   const transcriptInputName = safeText(variant.transcriptInputName || "source-transcript.srt");
-  const isSerialized = variant.seriesMode === "interleaved_multipart";
+  const isViralBodycamPart1 = safeText(variant.promptProfile).toLowerCase() === "viral_tiktok_crime_part1";
+  const isSerialized = variant.seriesMode === "interleaved_multipart" && !isViralBodycamPart1;
   const serializedProfile = safeText(variant.promptProfile).toLowerCase() === "serialized_genz"
     ? "serialized_genz"
     : "serialized_interleaved";
   const isSerializedGenZ = isSerialized && serializedProfile === "serialized_genz";
   const isPoliceBlotter = safeText(variant.promptProfile).toLowerCase() === "viral_police_blotter";
-  const isViralBodycamPart1 = safeText(variant.promptProfile).toLowerCase() === "viral_tiktok_crime_part1";
   const isDiyStoryRemix = safeText(variant.workflow).toLowerCase() === "diy_story_remix";
   const isIndependent = !isSerialized && !isPoliceBlotter && !isDiyStoryRemix
     && safeText(variant.promptProfile || "independent").toLowerCase() === "independent";
