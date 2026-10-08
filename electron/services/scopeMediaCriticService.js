@@ -30,7 +30,7 @@ const ISSUE_TYPES = [
   'hook_promise_unresolved',       // a hook must lead to an observed payoff
   'audio_gap_unexplained'          // unintentional long silent stretch
 ];
-const DELIVERY_ISSUES = new Set(ISSUE_TYPES.slice(ISSUE_TYPES.indexOf('unbridged_perspective_shift')));
+const DELIVERY_ISSUES = new Set(ISSUE_TYPES.slice(ISSUE_TYPES.indexOf('unbridged_perspective_shift'), ISSUE_TYPES.indexOf('opening_lacks_curiosity') + 1));
 
 const object = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required });
 const responseSchema = object({
