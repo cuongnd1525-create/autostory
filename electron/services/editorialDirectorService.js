@@ -478,6 +478,20 @@ function openingViolations(spine, beats) {
   if (o.chosen === 'chronological' && first?.chronologyMode === 'teaser') {
     out.push({ code: 'OPENING_STRATEGY_INCONSISTENT', message: `openingStrategy.chosen is chronological but the first beat '${first?.beatId}' is a teaser.`, beatId: first?.beatId });
   }
+  if (o.chosen === 'conflict_teaser_rewind' && beats.length > 1) {
+    const body = beats.slice(1);
+    if (!body.some(b => b.chronologyMode === 'rewind')) {
+      out.push({ code: 'TEASER_REWIND_MISSING', message: 'Conflict teaser promises a rewind, but the EDL never signals one.' });
+    }
+    const latestBody = Math.max(...body.map(b => num(b.sourceEndSec)).filter(Number.isFinite));
+    const last = beats[beats.length - 1];
+    const namedForwardCliffhanger = last.payoffTiming === 'part_2' && last.isForwardConsequence === true &&
+      String(last.expectedNextConsequence || '').trim() && String(last.whyCutHere || '').trim();
+    if (Number.isFinite(latestBody) && num(first.sourceStartSec) > latestBody + 30 && !namedForwardCliffhanger) {
+      out.push({ code: 'TEASER_PROMISE_OUTSIDE_STORY', beatId: first.beatId,
+        message: 'The opening teaser occurs over 30 source seconds after EVERY body/ending beat, with no grounded forward-consequence cliffhanger. The promised later moment can never be explained by this EDL.' });
+    }
+  }
   return out;
 }
 
