@@ -46,3 +46,45 @@ const other = Review.buildReviewPrompt({
 assert.doesNotMatch(other, /VIRAL BODYCAM PART 1 \/ 8-BEAT SANDWICH REVIEW/,
   'Bodycam Part1 override must not affect other modes');
 console.log('Antigravity bodycam prompt routing assertions passed.');
+
+// Deterministic hard gate regression: complete MP4 windows and source-grounded
+// Hook + usable ending are mandatory. An AI "PASS" without evidence must fail.
+const Gate = require('../electron/services/bodycamQualityGate');
+const ranges = [[0,8],[8,16]];
+const audit = {
+  bodycamQualityAudit: {
+    observationWindows: ranges.map(([startSec,endSec]) => ({
+      startSec, endSec, visibleAction:'Officer response',
+      audibleContent:'Dialogue', storyProgress:'New verified fact',
+      narratorNaturalness:'not_applicable', captionReadability:'readable',
+      framingUsability:'usable', weak:false, reason:''
+    })),
+    hookPromise: { promise:'What happened?', payoffEvidence:'Verified later footage',
+      payoffSourceSec:81, resolvedWithinPart:true, verifiedNextPartOpenLoop:false },
+    ending: { usableAudio:true, usablePicture:true, grounded:true, sourceEvidence:'Verified ending frame' }
+  },
+  revisedScript: { prompt_profile:'viral_tiktok_crime_part1', scriptId:1,
+    segments: [{sourceStartSec:0,sourceEndSec:60,audio_mode:'original_audio'},
+      {sourceStartSec:60,sourceEndSec:115,audio_mode:'voiceover_only'}] }
+};
+assert.equal(Gate.checkReview(audit,{durationSec:16,scriptId:1}).passed,true);
+assert.equal(Gate.checkReview({...audit,bodycamQualityAudit:undefined},{durationSec:16,scriptId:1}).passed,false);
+assert.equal(Gate.checkReview({...audit,bodycamQualityAudit:{
+  ...audit.bodycamQualityAudit,observationWindows:[audit.bodycamQualityAudit.observationWindows[0]]
+}},{durationSec:16,scriptId:1}).passed,false);
+assert.equal(Gate.checkReview({...audit,bodycamQualityAudit:{
+  ...audit.bodycamQualityAudit, hookPromise: {...audit.bodycamQualityAudit.hookPromise,
+    payoffEvidence:'',resolvedWithinPart:false,verifiedNextPartOpenLoop:false}
+}},{durationSec:16,scriptId:1}).passed,false);
+assert.equal(Gate.checkReview({...audit,bodycamQualityAudit:{
+  ...audit.bodycamQualityAudit, ending:{ ...audit.bodycamQualityAudit.ending,usablePicture:false}
+}},{durationSec:16,scriptId:1}).passed,false);
+assert.equal(Gate.checkReview({...audit,bodycamQualityAudit:{
+  ...audit.bodycamQualityAudit, observationWindows:[
+    {...audit.bodycamQualityAudit.observationWindows[0],framingUsability:undefined},
+    audit.bodycamQualityAudit.observationWindows[1]
+  ]
+}},{durationSec:16,scriptId:1}).passed,false);
+assert.deepEqual(Gate.parseSilence('[silencedetect] silence_start: 88.9\\n[silencedetect] silence_end: 94.95 | silence_duration: 6.05'),
+  [{startSec:88.9,endSec:94.95,durationSec:6.05}]);
+console.log('Bodycam MP4 coverage, Hook, ending, audio parser gate assertions passed.');
