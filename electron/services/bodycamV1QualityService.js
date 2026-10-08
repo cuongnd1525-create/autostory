@@ -41,6 +41,16 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     if (modeOf(beat)==="original_audio" && txt(beat.voiceoverText||beat.voiceover_text)) {
       errors.push("Beat "+(i+1)+" phát audio gốc nhưng lại có voiceover.");
     }
+    if (modeOf(beat)==="voiceover_only") {
+      const speech=txt(beat.voiceoverText || beat.voiceover_text);
+      const words=speech.split(/\s+/).filter(Boolean).length;
+      const speedSec=(r.end-r.start)/(Number.isFinite(speed) && speed>0?speed:1);
+      if (words === 0) errors.push("Beat "+(i+1)+" cần narrator nhưng voiceover trống.");
+      if (words > 0 && speedSec > 0 && words/speedSec > 2.4) {
+        errors.push("Beat "+(i+1)+" TTS quá dồn chữ ("+(words/speedSec).toFixed(2)+
+          " từ/giây). Rút gọn câu để đọc tự nhiên.");
+      }
+    }
   }
   const modes=beats.map(modeOf);
   const runs=modes.filter((x,i)=>i===0||x!==modes[i-1]);
@@ -48,6 +58,25 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     "original_audio","voiceover_only","original_audio","voiceover_only"];
   if (runs.length!==8 || runs.some((x,i)=>x!==pattern[i]))
     errors.push("Cấu trúc 8 nhịp chưa chuẩn: "+runs.join(" -> "));
+  let runLength=0, runType="";
+  const flushRun=() => {
+    if (runType==="original_audio" && runLength>22) {
+      errors.push("Raw audio dài "+runLength.toFixed(1)+
+        "s liên tục: chỉ giữ khi có high-action override có chứng cứ; bỏ đoạn chờ/xe đứng yên.");
+    }
+    if (runType==="voiceover_only" && runLength>22) {
+      errors.push("Một nhịp narrator dài "+runLength.toFixed(1)+
+        "s: chia hoặc tinh gọn câu và dùng sự kiện gốc chen giữa.");
+    }
+  };
+  for(let i=0;i<beats.length;i++){
+    const t=modeOf(beats[i]),r=selected[i];
+    const speed=num(beats[i].playbackSpeed ?? beats[i].playback_speed ?? 1);
+    const d=r.end>r.start&&speed>0?(r.end-r.start)/speed:0;
+    if(t!==runType){if(runType)flushRun();runType=t;runLength=0;}
+    runLength+=d;
+  }
+  if(runType)flushRun();
   if (seconds < 109.5 || seconds > 125.5) {
     errors.push("Thời lượng source " + seconds.toFixed(1) +
       "s ngoài 110-125s: chọn footage có giá trị, không kéo dài cảnh trống.");
@@ -73,8 +102,10 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
   const first = selected[0];
   if (first && audit.hookSourceSec!=null) {
     const hookT=num(audit.hookSourceSec);
-    if (!Number.isFinite(hookT)||!(first.start-.5<=hookT&&hookT<=first.end+.5))
-      errors.push("Hook được audit không nằm trong cảnh mở đầu V1.");
+    const firstSpeed=num(beats[0].playbackSpeed ?? beats[0].playback_speed ?? 1);
+    if (!Number.isFinite(hookT) || !(first.start-.5<=hookT && hookT<=
+        Math.min(first.end+.5,first.start+3*Math.max(0.1,firstSpeed)+.25)))
+      errors.push("Trigger Hook phải nằm trong 0-3 giây đầu V1, không phải sâu trong cảnh mở đầu.");
   } else {
     errors.push("Thiếu hookSourceSec để đối chiếu Hook với source.");
   }
@@ -107,7 +138,9 @@ function inspectScript(script, { source = {}, seriesPlan = null, videoDurationSe
     const er=range(ev);
     if (/camera (?:is |was )?(?:blocked|obstructed)|lens (?:covered|blocked)|no usable visuals|black screen/i.test(desc) &&
       selected.some(r=>overlaps(er,r))) {
-      warnings.push("Source có mô tả khung hình che khuất: "+er.start+"-"+er.end+"s.");
+      const extendsFirst3 = first && er.start<first.start+3 && er.end>first.start;
+      if(extendsFirst3) errors.push("Hook che camera/mất hình theo nguồn: "+er.start+"-"+er.end+"s.");
+      else warnings.push("Source có mô tả khung hình che khuất: "+er.start+"-"+er.end+"s.");
     }
   }
   const result={passed:errors.length===0,scriptId:id,seconds:Number(seconds.toFixed(2)),
