@@ -768,6 +768,7 @@ function buildReviewPrompt({
     : "serialized_interleaved";
   const isSerializedGenZ = isSerialized && serializedProfile === "serialized_genz";
   const isPoliceBlotter = safeText(variant.promptProfile).toLowerCase() === "viral_police_blotter";
+  const isViralBodycamPart1 = safeText(variant.promptProfile).toLowerCase() === "viral_tiktok_crime_part1";
   const isDiyStoryRemix = safeText(variant.workflow).toLowerCase() === "diy_story_remix";
   const isIndependent = !isSerialized && !isPoliceBlotter && !isDiyStoryRemix
     && safeText(variant.promptProfile || "independent").toLowerCase() === "independent";
@@ -816,6 +817,20 @@ function buildReviewPrompt({
 - Specific_Cliffhanger must be the final segment, name a concrete verified lie/object/witness/dispatch call/document/location/next action, and end before that later source event is revealed. Ban generic endings such as "everything was about to change" or "what happened next shocked everyone".
 - Keep exactly four voiceover_only segments after revision. Never place them over indispensable source dialogue, commands, confessions, reactions, radio calls, or action sound.
 - Every script remains at least 60.5 seconds. Use relevant source footage rather than filler, freezes, silence, credits, or repeated clips.`
+    : "";
+  const viralBodycamReviewRules = isViralBodycamPart1
+    ? `VIRAL BODYCAM PART 1 / 8-BEAT SANDWICH REVIEW — HIGHEST PRIORITY FOR THIS PROFILE:
+- Preserve prompt_profile="viral_tiktok_crime_part1", original scriptId/part_number mapping (1->Part1, 3->Part2, 4->Part3), and 8 LOGICAL audio beats alternating original_audio / voiceover_only. Scene-boundary cuts may split a logical beat into multiple technical segments.
+- Judge the REAL source incident, NOT a hostage, house-entry, interrogation, takedown or arrest story invented from template examples. Identify the actual central question, actors, incident, time sequence and consequence from source media/transcript. Rebuild story_blueprint when V1 picked the wrong premise.
+- Hook contract: specify what the first 3 rendered seconds make the viewer expect; identify the exact source event and a later within-Part payoff or explicitly source-grounded next-Part question. A later hospital/physical teaser cannot appear only at 0s while the body stops earlier in chronology.
+- Part1 and Part2 need their own meaningful verified near-term consequence and a specific next event supported by source evidence. Generic "watch Part2 for the arrest" when no arrest exists is not acceptable. Part3 ends at the strongest FINAL VERIFIED source outcome; do not invent legal charges or convictions.
+- For EVERY raw/narrator block establish new information, causal connection to previous block, and relevance to the Part's active viewer question. Remove or shorten routine car interior, administrative waiting, repetitive questioning, irrelevant 911 audio over dead pictures. Never delete a meaningful authentic quote, command or reaction.
+- Explicitly bridge source time/location/perspective jumps among dispatch, crash site, roadside, ambulance and hospital. Never join two high-adrenaline events merely because both look dramatic.
+- Ending must be understandable and visually/audibly usable for the final 3-5 seconds, with either a within-Part payoff or truthful grounded cliffhanger. Obscured/black camera, unrelated scene switch or unexplained silence does not qualify.
+- Headline must match THIS Part's actual Hook and central conflict. When UI decoration carries a misleading shared title, flag it for user adjustment rather than claiming the revised JSON automatically changed an already-rendered banner.
+- Target 110–125 seconds of actual output only with VERIFIED meaningful source material; never pad footage to reach duration. Clearly report if this source cannot support the requested profile.
+- Wrong Hook, broken causal story, missing payoff or unusable ending requires reviewDecision="rebuild", not narration/caption polish.
+- Review coverage may be partial: do not claim an omitted source moment was inspected unless its proxy is truly supplied.`
     : "";
   const diyStoryReviewRules = isDiyStoryRemix
     ? `DIY STORY REMIX REVIEW OVERRIDE - HIGHER PRIORITY THAN TRUE-CRIME RULES:
@@ -971,6 +986,7 @@ ${timestampGate}
 ${serializedReviewRules}
 ${serializedGenZReviewRules}
 ${policeBlotterReviewRules}
+${viralBodycamReviewRules}
 ${diyStoryReviewRules}
 ${independentReviewRules}
 
