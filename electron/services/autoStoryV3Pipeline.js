@@ -31,6 +31,7 @@ const StoryScope = require('./storyScopeService');
 const Director = require('./editorialDirectorService');
 const ScopeCritic = require('./scopeMediaCriticService');
 const RepairPolicy = require('./autoStoryRepairPolicy');
+const AudioQa = require('./autoStoryAudioQa');
 const Delivery = require('./deliveryBlockService');
 const BlockNarration = require('./blockNarrationService');
 
@@ -867,11 +868,13 @@ async function persistAcceptedSpine(root, id, spine) {
 async function critiqueDirectorRender(service, ai, spine, mp4, probe, script, { root, id, pass = 0, onProgress, signal } = {}) {
   const meta = await probe(mp4);
   const stat = await fs.stat(mp4);
+  const audioEvidence = await AudioQa.detectSilence(service.ffmpeg, mp4, meta.duration);
+  if (root) await fs.writeFile(path.join(root, 'audio-qa-' + id + '-' + pass + '.json'), JSON.stringify(audioEvidence, null, 2));
   const runReview = typeof service.stage === 'function' ? args => service.stage(root, 'review-' + id + '-scope-' + pass, {
     mp4Path: mp4, mp4Size: stat.size, mp4MtimeMs: stat.mtimeMs,
     spineHash: crypto.createHash('sha256').update(JSON.stringify(spine)).digest('hex'),
     scriptHash: crypto.createHash('sha256').update(JSON.stringify(script || {})).digest('hex'),
-    actualMp4DurationSec: meta.duration
+    actualMp4DurationSec: meta.duration, audioEvidence
   }, args, raw => {
     const timeline = ScopeCritic.outputTimeline(spine, script);
     const valid = ScopeCritic.normalizeCritique(raw, { durationSec: meta.duration, timeline,
@@ -879,13 +882,14 @@ async function critiqueDirectorRender(service, ai, spine, mp4, probe, script, { 
     if (valid.status === 'MEDIA_CRITIC_INVALID') throw new Error(valid.summary);
   }, onProgress, signal) : null;
   const review = () => ScopeCritic.critiqueScopedRender(spine, {
-    aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script, runReview
+    aiService: ai, mp4Path: mp4, actualMp4DurationSec: meta.duration, script, runReview, audioEvidence
   });
   let critique = await review();
   if (critique.status === 'MEDIA_CRITIC_INVALID') {
     console.warn('[Director] Scope critic invalid (' + critique.summary + '); retrying MP4 review once.');
     critique = await review();
   }
+  critique.audioEvidence = audioEvidence;
   return { critique, duration: meta.duration };
 }
 
