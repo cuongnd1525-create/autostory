@@ -1535,7 +1535,13 @@ function syncProjectSettingsControls(project = state.currentProject) {
 
 function getSuggestedTopCaption(project = state.currentProject) {
   const analysis = project?.analysis || {};
-  const firstVariant = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants[0] : null;
+  const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
+  const firstVariant = variants[0] || null;
+  const activeVariant = variants.find(v => v.id === analysis.activeVariantId) || firstVariant;
+  if (project?.analysisWorkflow === "vertex_auto_story" || project?.autoStoryContractVersion >= 3) {
+    const ownTitle = String(activeVariant?.topHeader || activeVariant?.title || analysis.scriptTitle || "").trim();
+    if (ownTitle) return ownTitle.replace(/\\s+/g, " ").slice(0, 180);
+  }
   return String(
     analysis.sharedTopBannerText
     || analysis.shared_top_banner_text
@@ -1562,7 +1568,7 @@ function syncAutoTopCaptionFromScript(project = state.currentProject, { force = 
   if (suggestion) {
     el.topCaptionText.value = suggestion;
     el.topCaptionText.dataset.autoFromScript = "true";
-    if (el.topCaptionSource) el.topCaptionSource.textContent = "Đang dùng tiêu đề chung tự động từ JSON Gemini. Sửa nội dung để chuyển sang thủ công.";
+    if (el.topCaptionSource) el.topCaptionSource.textContent = "Đang dùng headline của variant hiện tại (nếu có). Sửa nội dung để chuyển sang thủ công.";
   }
   return suggestion;
 }
