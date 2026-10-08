@@ -110,7 +110,17 @@ function checkReview(review, { durationSec = 0, scriptId = 1, audioQa = null } =
       }
     }
     const modes = revised.segments.map(s => str(s.audio_mode || s.audioMode));
-    if (!modes.includes("original_audio") || !modes.includes("voiceover_only")) errors.push("V2 lost raw/narration sandwich.");
+    if (!modes.includes("original_audio") || !modes.includes("voiceover_only")) {
+      errors.push("V2 lost raw/narration sandwich.");
+    } else {
+      const runs = modes.filter((mode, index) => index === 0 || mode !== modes[index - 1]);
+      const expected = ["original_audio", "voiceover_only", "original_audio", "voiceover_only",
+        "original_audio", "voiceover_only", "original_audio", "voiceover_only"];
+      if (runs.length !== expected.length || runs.some((mode, index) => mode !== expected[index])) {
+        errors.push("V2 must contain eight logical alternating raw/narrator beats; found "
+          + runs.length + " mode runs: " + runs.join(" → "));
+      }
+    }
   }
   return { passed: errors.length === 0, errors, windowCount: Array.isArray(windows) ? windows.length : 0,
     durationSec: duration, profile: PROFILE };
