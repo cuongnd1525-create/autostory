@@ -2,6 +2,21 @@
 
 Target **only**: **Viết kịch bản rồi review video thật** -> **TikTok Viral Bodycam (Part 1 - 8 nhịp xen kẽ)** -> **Antigravity**. This is NOT Vertex AutoStory V4.
 
+## V1-first quality pipeline (new)
+
+**Do not** import previous score-13 V1 JSON. This branch has a new V1 editorial compiler/quality policy; generate new scripts even when Phase A understanding is cached.
+
+- Stage1 Phase A: reuse the verified 7/7 source proxy understanding.
+- Stage1 Series Plan: keep the verified same-incident 3-Part chronology.
+- Stage1 Phase B: generate **all three 8-beat scripts** with source-event IDs, a first-3-second hook, verified payoff/grounded next-Part question and strong last beat.
+- **V1_EDITORIAL_GATE**: check source ranges, 110-125s of meaningful footage, eight alternating raw/narrator runs, natural TTS density, Hook 0-3s, evidence IDs, headline/Hook relationship, visual obstructions, Part ending, plus the same viral preflight scorer used at import (minimum 65).
+- If V1 fails, run one **fresh Phase B full-script rebuild** from the verified source understanding + locked series plan; keep separate logs and retry once. Source video is not rewatched.
+- If the rebuild still fails, stop **before** importing/rendering poor footage. Inspect \`bodycam-v1-quality-initial.json\`, \`bodycam-v1-quality.json\` and \`antigravity-output-phaseB-v1-rebuild.log\`.
+- The V1 JSON import path repeats checks. Old JSON without locked \`source-understanding.json\`/\`series-plan.json\` or low preflight score is rejected.
+- Bodycam V1 rendered preview now uses **English SRT/captions** rather than Vietnamese auto-translation; other modes are unchanged.
+
+What passing means: the generated script and its declared evidence meet the host's structural and preflight requirements **before rendering**. It still does not guarantee genuine cold-viewer retention, realistic TTS intonation, correct face tracking or TikTok distribution. Inspect V1 directly before posting.
+
 ## Before testing
 Use a clean checkout of branch `feat/antigravity-bodycam-review-quality`:
 ```powershell
