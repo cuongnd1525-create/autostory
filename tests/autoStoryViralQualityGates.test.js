@@ -103,6 +103,14 @@ async function main() {
   assert.ok(futureTeaser.violations.some(v => v.code === 'TEASER_PROMISE_OUTSIDE_STORY'),
     'Opening at 08:16 cannot PASS when the entire body ends around 05:41');
 
+  assert.equal(RepairPolicy.chooseRepairStrategy({
+    scopeSurvived: true, hookPromiseResolved: true, endingIsConsequence: true,
+    centralQuestionActiveThroughout: true,
+    issues: [
+      { severity: 'blocking', type: 'causal_break', outputStartSec: 0, outputEndSec: 25, beatIds: ['a'] },
+      { severity: 'blocking', type: 'low_value_stretch', outputStartSec: 0, outputEndSec: 25, beatIds: ['a'] }
+    ]
+  }, 100).mode, 'targeted', 'Overlapping findings must not double-count broken seconds');
   assert.equal(RepairPolicy.chooseRepairStrategy({ scopeSurvived: false }).mode, 'scope_rebuild');
   assert.equal(RepairPolicy.chooseRepairStrategy({ scopeSurvived: true, hookPromiseResolved: false }).mode, 'edl_rebuild');
   assert.equal(RepairPolicy.chooseRepairStrategy({ scopeSurvived: true, hookPromiseResolved: true,
