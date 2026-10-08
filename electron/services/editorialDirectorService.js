@@ -393,13 +393,20 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   const last = beats[beats.length - 1];
   const endingRanges = [
     ...(scope?.candidateEndingEvents || []).map(e => [num(e.sourceStartSec), num(e.sourceEndSec)]),
-    ...(scope?.scopeWindows || []).filter(w => w.purpose === 'ending_material').map(w => [num(w.startSec), num(w.endSec)])
+    ...(scope?.scopeWindows || []).filter(w => (w.purposes || (w.purpose ? [w.purpose] : [])).includes('ending_material')).map(w => [num(w.startSec), num(w.endSec)])
   ].filter(([s, e]) => e > s);
   const ls = num(last.sourceStartSec), le = num(last.sourceEndSec);
   if (endingRanges.length && !endingRanges.some(([s, e]) => Math.min(le, e) - Math.max(ls, s) > 0)) {
     add('ENDING_NOT_IN_SCOPE', `The final beat '${last.beatId}' (${ls}-${le}s) is not one of the scope's candidate endings or ending_material windows.`, { beatId: last.beatId });
   }
 
+  // Grounded ending evidence is mandatory in the Director (V4) contract.
+  if (requireDeliveryBlocks && scope && !endingRanges.length) {
+    add('ENDING_EVIDENCE_MISSING', 'Story Scope has no grounded candidate ending range.');
+  }
+  if (requireDeliveryBlocks && last.scopeMembership !== 'ending') {
+    add('ENDING_BEAT_MISSING', "The final beat must be marked scopeMembership='ending'.");
+  }
   return { valid: violations.length === 0, violations, metrics: { totalSec: round2(total), beatCount: beats.length } };
 }
 
@@ -688,6 +695,53 @@ function validateTextShape(v) {
 }
 
 // Existing beats must survive a duration-only repair unchanged in identity and order.
+// A targeted media repair must not silently rewrite the whole story.
+function targetedRepairViolations(before, after, weakRegions = []) {
+  const oldBeats = before?.beats || [];
+  const next = after?.beats || [];
+  const oldIds = oldBeats.map(b => b.beatId);
+  const byId = new Map(next.map(b => [b.beatId, b]));
+  const allowed = new Set(weakRegions.flatMap(r => r.beatIds || []));
+  // A broken bridge may require changing either adjacent beat.
+  if (weakRegions.some(r => /transition|time_jump|handoff|perspective|causal_break/.test(r.type || ''))) {
+    const anchors = [...allowed];
+    for (const id of anchors) {
+      const i = oldIds.indexOf(id);
+      if (i > 0) allowed.add(oldIds[i - 1]);
+      if (i >= 0 && i + 1 < oldIds.length) allowed.add(oldIds[i + 1]);
+    }
+  }
+  const problems = [];
+  const locked = oldBeats.filter(b => !allowed.has(b.beatId));
+  for (const beat of locked) {
+    if (JSON.stringify(byId.get(beat.beatId)) !== JSON.stringify(beat)) {
+      problems.push({ code: 'TARGETED_REPAIR_MODIFIED_LOCKED_BEAT', beatId: beat.beatId,
+        message: "Targeted repair changed or removed unaffected beat '" + beat.beatId + "'." });
+    }
+  }
+  const lockedIds = locked.map(b => b.beatId);
+  const actual = next.filter(b => lockedIds.includes(b.beatId)).map(b => b.beatId);
+  if (actual.join('|') !== lockedIds.join('|')) {
+    problems.push({ code: 'TARGETED_REPAIR_REORDERED_LOCKED_BEATS', message: 'Unchanged beats were reordered.' });
+  }
+  // Newly inserted beats must be between the same locked anchors as a weak region.
+  const authorizedSlots = new Set();
+  oldIds.forEach((id, i) => { if (allowed.has(id)) { authorizedSlots.add(i); authorizedSlots.add(i + 1); } });
+  for (let i = 0; i < next.length; i++) {
+    const b = next[i];
+    if (oldIds.includes(b.beatId)) continue;
+    const l = next.slice(0, i).reverse().find(x => oldIds.includes(x.beatId));
+    const r = next.slice(i + 1).find(x => oldIds.includes(x.beatId));
+    const low = l ? oldIds.indexOf(l.beatId) + 1 : 0;
+    const high = r ? oldIds.indexOf(r.beatId) : oldIds.length;
+    if (![...authorizedSlots].some(slot => slot >= low && slot <= high)) {
+      problems.push({ code: 'TARGETED_REPAIR_INSERTION_OUTSIDE_REGION', beatId: b.beatId,
+        message: "Inserted beat '" + b.beatId + "' outside the repair region." });
+    }
+  }
+  return problems;
+}
+
 function storyPreservationViolations(before, after, { allowRemoval = false } = {}) {
   const prev = (before?.beats || []).map(b => b.beatId);
   const nextIds = (after?.beats || []).map(b => b.beatId);
@@ -779,6 +833,10 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     let report = schemaError
       ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the EDL contract: ${schemaError}` }], metrics: {} }
       : validateDirectorEdl(spine, scope, valOpts);
+    if (!schemaError && spine && extraInput.currentEdl && Array.isArray(extraInput.weakRegions) && extraInput.weakRegions.length) {
+      const preservation = targetedRepairViolations(extraInput.currentEdl, spine, extraInput.weakRegions);
+      if (preservation.length) report = { ...report, valid: false, violations: [...report.violations, ...preservation] };
+    }
     // Preserve the Story Scope ending across repairs: when the EDL being repaired ends
     // on its ending beat, the repaired EDL must too (new material goes before it).
     if (!schemaError && technical && spine && current) {
@@ -1027,7 +1085,7 @@ module.exports = {
   DIRECTOR_CONTRACT, SCOPE_MEMBERSHIP, schemas, instruction, repairInstruction,
   validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
   directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
-  durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
+  durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, targetedRepairViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
   deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };
