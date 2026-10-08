@@ -463,24 +463,24 @@ const SERIES_PROFILES = {
         scriptId: 1,
         partNumber: 1,
         partBadge: "PART 1",
-        name: "The Confrontation",
-        scope: "Cold-open hook, dispatch/arrival context, scene entry, escalation and the first confrontation. Ends on an unresolved, verified open question (cliffhanger) that makes the viewer need Part 2.",
+        name: "The Incident Begins",
+        scope: "Source-grounded first chapter of the single VERIFIED central incident: teaser, necessary dispatch/background, real encounter, credible escalation and a meaningful near-term consequence. The next-part question must point to actual later source evidence; no compulsory house entry, hostage, confrontation or arrest. End on an honest verified open loop when the source supports one.",
         ending: "cliffhanger"
       },
       {
         scriptId: 3,
         partNumber: 2,
         partBadge: "PART 2",
-        name: "The Interrogation",
-        scope: "Questioning, explanations, lies, contradictions and evidence that surface after the confrontation. Ends on the strongest verified boiling-point turn BEFORE the arrest/verdict (cliffhanger).",
+        name: "The Investigation Deepens",
+        scope: "Source-grounded next chapter: subsequent verified reactions, statements, competing accounts, evidence or medical/procedural consequences that genuinely advance the SAME incident. Do not require an interrogation or false claim. End with a concrete unresolved next step when supported by source.",
         ending: "cliffhanger"
       },
       {
         scriptId: 4,
         partNumber: 3,
         partBadge: "PART 3",
-        name: "The Verdict & Arrest",
-        scope: "The officers' decision, arrest/charges and the verified consequence. Delivers the payoff to the central viewer question. Only this Part may reveal the outcome.",
+        name: "The Verified Outcome",
+        scope: "Final available VERIFIED consequence of this incident, whether hospital care, established facts, custody, release, recovery, investigation or a documented legal result. Deliver the strongest evidenced payoff; never invent an arrest, charge, verdict, conviction, sentence or court outcome.",
         ending: "payoff"
       }
     ]
