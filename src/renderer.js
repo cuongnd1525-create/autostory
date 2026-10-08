@@ -1540,7 +1540,7 @@ function getSuggestedTopCaption(project = state.currentProject) {
   const activeVariant = variants.find(v => v.id === analysis.activeVariantId) || firstVariant;
   if (project?.analysisWorkflow === "vertex_auto_story" || project?.autoStoryContractVersion >= 3) {
     const ownTitle = String(activeVariant?.topHeader || activeVariant?.title || analysis.scriptTitle || "").trim();
-    if (ownTitle) return ownTitle.replace(/\\s+/g, " ").slice(0, 180);
+    if (ownTitle) return ownTitle.replace(/\s+/g, " ").slice(0, 180);
   }
   return String(
     analysis.sharedTopBannerText
