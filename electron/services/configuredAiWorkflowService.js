@@ -426,7 +426,7 @@ class ConfiguredAiWorkflowService {
     if (!review) {
       const transportPrompt = buildDraftTransportPrompt(promptText, inputDir, { resultDir })
         + (gateFeedback ? "\n\nREQUIRED CORRECTION FROM FAILED LOCAL QUALITY GATE:\n" + gateFeedback + "\nRegenerate the ENTIRE corrected JSON and actually inspect every required MP4 window.\n" : "")
-        + (isBodycamPart ? "\\n\\nLOCAL AUDIO SIGNAL EVIDENCE (machine-measured; silence may be intentional; cross-check against picture and dialogue):\\n"
+        + (isBodycamPart ? "\n\nLOCAL AUDIO SIGNAL EVIDENCE (machine-measured; silence may be intentional; cross-check against picture and dialogue):\n"
           + JSON.stringify(audioQa) : "");
       vertexRun = descriptor.provider === "vertex_ai"
         ? await this.runVertex({
