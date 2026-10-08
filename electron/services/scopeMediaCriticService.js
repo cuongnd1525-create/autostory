@@ -295,13 +295,18 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   };
 }
 
-async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null, runReview = null } = {}) {
+async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null, runReview = null, audioEvidence = null } = {}) {
   if (!aiService || !mp4Path || !actualMp4DurationSec) throw new Error('Scope media critic requires aiService, mp4Path, and actualMp4DurationSec');
   const timeline = outputTimeline(spine, script);
   const delivery = deliveryTimeline(spine, script, timeline);
   // Beat -> delivery block in output time, so repair can target the block.
   if (delivery) timeline.forEach(t => { const d = delivery.find(x => (x.beatIds || []).includes(t.beatId)); if (d) { t.deliveryBlockId = d.blockId; t.deliveryMode = d.mode; } });
-  const prompt = buildPrompt(spine, timeline, actualMp4DurationSec, delivery);
+  const soundClues = audioEvidence?.available && audioEvidence.windows?.length
+    ? '\n\nDETERMINISTIC AUDIO SILENCE MEASUREMENTS (not verdicts): ' +
+      JSON.stringify(audioEvidence.windows) +
+      '. These are measured intervals below the signal threshold. Listen to the ACTUAL MP4 and judge whether each interval is an intentional pause, naturally quiet source evidence, or unexplained dead air. Mark unexplainedAudioGap only when a silence damages comprehension; never infer a failure solely from dB.'
+    : '';
+  const prompt = buildPrompt(spine, timeline, actualMp4DurationSec, delivery) + soundClues;
   let raw;
   try {
     const args = { filePaths: [mp4Path], prompt, responseSchema, taskType: 'auto_story_review', videoFps: 2,
