@@ -3798,7 +3798,7 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 ### SELECTED PROMPT PROFILE
 - prompt_profile: viral_tiktok_crime_part1
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
-- Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
+- Return exactly 3 scripts: Script 1 (Part 1 - The Incident Begins), Script 3 (Part 2 - The Investigation Deepens), Script 4 (Part 3 - The Verified Outcome). These are editorial chapter roles, not promises of any particular arrest/verdict. Never return Script 2.
 - Every script must follow the exact 8-beat audio-role formula and use 9:16 vertical framing.
 - SOURCE-DRIVEN INCIDENT GATE (supreme over examples): "Confrontation", "Interrogation", "Verdict & Arrest", hostage, house-entry and takedown examples are ONLY labels/examples, NEVER source facts. Read the source understanding, transcript, action candidates and actual media FIRST. Map each beat to verified events of THIS incident (crash, 911, roadside, hospital, etc.). Never invent an entry into a house, a physical arrest, a charge, a sentence or a victim.
 - The opening teaser must lead to a verified explanation, matching event, or explicit source-grounded next-part question. Do not start with a later hospital incident then finish in an earlier time without returning to the teaser or explaining its consequence.
@@ -3808,10 +3808,10 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 - titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
 - Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
 - The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
-  * Script 1 / PART 1 - The Confrontation: hook, dispatch/arrival, scene entry, escalation, first confrontation. Ends on a verified unresolved cliffhanger.
-  * Script 3 / PART 2 - The Interrogation: questioning, explanations, lies, contradictions and evidence. Ends on the strongest verified pre-arrest cliffhanger.
-  * Script 4 / PART 3 - The Verdict & Arrest: decision, arrest/charges and the verified consequence (payoff).
-  * PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Never reuse the same footage across Parts except a recap of at most 3 seconds.
+  * Script 1 / PART 1 - The Incident Begins: hook, verified context, first relevant encounter, escalation and a meaningful in-part consequence. End on a verified specific open loop if source supports one.
+  * Script 3 / PART 2 - The Investigation Deepens: verified subsequent accounts, evidence, interventions or conflicts. End on a specific later event supported by source, not necessarily an arrest.
+  * Script 4 / PART 3 - The Verified Outcome: strongest actual source-supported consequence or final available status, including medical, investigation or legal outcome when truly documented.
+  * PART 1 and PART 2 should withhold the final verified resolution when a genuine later source event exists, but still provide a meaningful within-Part consequence. Never invent a non-existent arrest, charges or verdict. Never reuse the same footage across Parts except a recap of at most 3 seconds.
   * When a locked series-plan.json is supplied, its scope, scene allocation and cliffhangers are binding.
 
 ### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
