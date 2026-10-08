@@ -64,8 +64,16 @@ const audit = {
     ending: { usableAudio:true, usablePicture:true, grounded:true, sourceEvidence:'Verified ending frame' }
   },
   revisedScript: { prompt_profile:'viral_tiktok_crime_part1', scriptId:1,
-    segments: [{sourceStartSec:0,sourceEndSec:60,audio_mode:'original_audio'},
-      {sourceStartSec:60,sourceEndSec:115,audio_mode:'voiceover_only'}] }
+    segments: [
+      {sourceStartSec:0,sourceEndSec:14,audio_mode:'original_audio'},
+      {sourceStartSec:14,sourceEndSec:31,audio_mode:'voiceover_only'},
+      {sourceStartSec:31,sourceEndSec:43,audio_mode:'original_audio'},
+      {sourceStartSec:43,sourceEndSec:59,audio_mode:'voiceover_only'},
+      {sourceStartSec:59,sourceEndSec:72,audio_mode:'original_audio'},
+      {sourceStartSec:72,sourceEndSec:90,audio_mode:'voiceover_only'},
+      {sourceStartSec:90,sourceEndSec:100,audio_mode:'original_audio'},
+      {sourceStartSec:100,sourceEndSec:115,audio_mode:'voiceover_only'}
+    ] }
 };
 assert.equal(Gate.checkReview(audit,{durationSec:16,scriptId:1}).passed,true);
 assert.equal(Gate.checkReview({...audit,bodycamQualityAudit:undefined},{durationSec:16,scriptId:1}).passed,false);
