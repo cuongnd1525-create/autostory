@@ -22,6 +22,10 @@ function part(id, start, source, opts = {}) {
       centralViewerQuestion:"Why did the driver behave strangely?",
       hookPromise:"Police uncover a contradiction",
       first3SecClear:true,hookSourceSec:start+2,payoffSourceSec:source,
+      hookEventId: id===1?"e1":id===3?"e2":"e3",
+      payoffEventId: source<120?"e1":source<240?"e2":"e3",
+      endingEventId: id===1?"e1":id===3?"e2":"e3",
+      headlineMatchesHook:true,
       payoffWithinPart:id===4,verifiedNextPartOpenLoop:id!==4,
       endingSourceSec:start+114,endingUsable:true,weakSourceRanges:[]
     },
@@ -29,9 +33,9 @@ function part(id, start, source, opts = {}) {
   };
 }
 const source={storyTimeline:[
-  {sourceStartSec:0,sourceEndSec:119,summary:"Initial police response"},
-  {sourceStartSec:120,sourceEndSec:238,summary:"Accounts diverge"},
-  {sourceStartSec:240,sourceEndSec:360,summary:"Later resolution"}
+  {eventId:"e1",sourceStartSec:0,sourceEndSec:119,summary:"Initial police response"},
+  {eventId:"e2",sourceStartSec:120,sourceEndSec:238,summary:"Accounts diverge"},
+  {eventId:"e3",sourceStartSec:240,sourceEndSec:360,summary:"Later resolution"}
 ]};
 const seriesPlan={parts:[
   {scriptId:1,sceneAllocation:[{sourceStartSec:0,sourceEndSec:119}]},
