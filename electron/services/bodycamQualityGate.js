@@ -6,7 +6,7 @@ const PROFILE = "viral_tiktok_crime_part1";
 const finite = value => Number.isFinite(Number(value)) ? Number(value) : NaN;
 const str = value => typeof value === "string" ? value.trim() : "";
 
-function checkReview(review, { durationSec = 0, scriptId = 1 } = {}) {
+function checkReview(review, { durationSec = 0, scriptId = 1, audioQa = null } = {}) {
   const errors = [];
   const audit = review?.bodycamQualityAudit;
   const duration = finite(durationSec);
@@ -40,10 +40,34 @@ function checkReview(review, { durationSec = 0, scriptId = 1 } = {}) {
       for (const [field, allowed] of states) {
         if (!allowed.includes(w[field])) errors.push("Missing or invalid " + field + " at " + start.toFixed(1) + "s.");
       }
+      const qualityFlags = w.narratorNaturalness === "robotic"
+        || w.captionReadability === "unreadable" || w.framingUsability === "blocked"
+        || /^(?:no progress|nothing new|static|repetitive|dead air)$/i.test(str(w.storyProgress));
+      if (qualityFlags && w.weak !== true) errors.push("Reviewer did not flag weak footage/audio at " + start.toFixed(1) + "s.");
       if (w.weak === true && !str(w.reason)) errors.push("Weak window lacks reason at " + start.toFixed(1) + "s.");
+      if (w.weak === true) {
+        const reviewIssues = Array.isArray(review?.review?.issues) ? review.review.issues : [];
+        const fixed = reviewIssues.some(issue => {
+          const issueStart = finite(issue.outputStartSec);
+          const issueEnd = finite(issue.outputEndSec);
+          const overlaps = Number.isFinite(issueStart) &&
+            (Number.isFinite(issueEnd) ? issueStart < end + 1 && issueEnd > start - 1 : Math.abs(issueStart - start) < 8);
+          return overlaps && !["keep", ""].includes(str(issue.action));
+        });
+        if (!fixed) errors.push("Weak MP4 range " + start.toFixed(1) + "–" + end.toFixed(1) + "s has no explicit V2 repair action.");
+      }
       coveredUntil = Math.max(coveredUntil, end);
     }
     if (coveredUntil < duration - .5) errors.push("Unreviewed final MP4 " + coveredUntil.toFixed(1) + "–" + duration.toFixed(1) + "s.");
+  }
+  for (const span of audioQa?.intervals || []) {
+    if (!(finite(span.durationSec) >= 3)) continue;
+    const matched = Array.isArray(windows) && windows.some(w =>
+      finite(w.startSec) < finite(span.endSec) && finite(w.endSec) > finite(span.startSec) &&
+      (w.weak === true || /silence|quiet|inaudible|ambient|no speech|sound drop/i.test(str(w.audibleContent) + " " + str(w.reason)))
+    );
+    if (!matched) errors.push("Unreviewed machine-detected low-audio range " +
+      Number(span.startSec).toFixed(1) + "–" + Number(span.endSec).toFixed(1) + "s.");
   }
   const hook = audit.hookPromise;
   if (!hook || !str(hook.promise) || !str(hook.payoffEvidence) ||
