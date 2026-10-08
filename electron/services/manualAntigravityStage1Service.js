@@ -3569,10 +3569,43 @@ class ManualAntigravityStage1Service {
     for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
 
     if (series?.profile === BodycamV1.PROFILE) {
-      const scoreScripts = () => BodycamV1.inspectScripts(
-        [...deduplicated.values()].map(a => a.script),
-        { source: understanding, seriesPlan, videoDurationSec }
-      );
+      const { compileStorySpineScript, isStorySpineScript } = require("./storySpineCompilerService");
+      const { normalizeHighlightCutScript } = require("./dubbingService");
+      const { scoreManualGeminiVariant } = require("./manualGeminiViralPreflightService");
+      const preflightManifest = await fs.readFile(inputPaths.sceneManifestPath, "utf8")
+        .then(JSON.parse).catch(() => null);
+      const scoreScripts = () => {
+        const scripts = [...deduplicated.values()].map(a => a.script);
+        const editorial = BodycamV1.inspectScripts(scripts,
+          { source: understanding, seriesPlan, videoDurationSec });
+        const preflight = [];
+        for (const raw of scripts) {
+          const scriptId = Number(raw.scriptId ?? raw.script_id);
+          try {
+            const compiled = isStorySpineScript(raw)
+              ? compileStorySpineScript(raw, { manifest: preflightManifest, videoDuration: videoDurationSec })
+              : raw;
+            const normalized = normalizeHighlightCutScript(compiled, videoDurationSec);
+            const result = scoreManualGeminiVariant({
+              script: compiled, normalizedScript: normalized, expectedScriptId: scriptId
+            });
+            preflight.push({ scriptId, score: result.score, grade: result.grade,
+              issues: result.issues || [] });
+            if (!(result.score >= 65)) {
+              editorial.errors.push("Script " + scriptId +
+                ": viral preflight " + result.score + "/100 (<65); " +
+                (result.issues || []).slice(0, 4).join("; "));
+            }
+          } catch (error) {
+            preflight.push({ scriptId, score: 0, error: error.message });
+            editorial.errors.push("Script " + scriptId +
+              ": không thể biên dịch/chấm preflight: " + error.message);
+          }
+        }
+        editorial.preflight = preflight;
+        editorial.passed = editorial.errors.length === 0;
+        return editorial;
+      };
       let v1Verdict = scoreScripts();
       await writeJsonAtomic(path.join(resultDir, "bodycam-v1-quality-initial.json"), v1Verdict);
       if (!v1Verdict.passed) {
