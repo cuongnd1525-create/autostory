@@ -1010,6 +1010,7 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
     "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
     "ROLE: editorial planner producing ONLY JSON data, NOT a coding or software development agent.",
     "Do NOT inspect the app, repository, JavaScript files, tests, or CLI code; do NOT use manage_task, shell, grep_search, find_by_name, or directory listing. Do not troubleshoot the application.",
+    "IMPORTANT: antigravity-output-schema.json is a schema for SCRIPT files, NOT for series-plan.json. Ignore it entirely. Follow the series-plan TRANSPORT object printed below.",
     "ONLY read the listed source-understanding / hook-contract / scene-manifest / transcript files using view_file as necessary.",
     "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
     `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
@@ -2092,11 +2093,11 @@ class ManualAntigravityStage1Service {
    * Text-only phases (series plan, Phase B). Capacity errors may be retried
    * with a fresh process (no video is involved); auth and timeouts are not.
    */
-  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard = null, forbiddenTools = [] }) {
+  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard = null, forbiddenTools = [], cwd = null }) {
     const maxCapacityRetries = 2;
     for (let attempt = 0; ; attempt += 1) {
       await this.ensureAntigravityAuth({ label, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs });
-      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard, forbiddenTools });
+      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, toolGuard, forbiddenTools, cwd });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && attempt < maxCapacityRetries && !this.cancelled) {
         const delaySec = (attempt + 1) * 8;
@@ -3047,9 +3048,15 @@ class ManualAntigravityStage1Service {
     const lockedPlanPath = path.join(resultDir, "series-plan.json");
     const signature = crypto.createHash("sha256")
       .update(await fs.readFile(understandingPath))
-      .update(String(series.profile) + ":" + videoDurationSec)
+      .update(JSON.stringify(series.parts) + ":" + String(series.profile) + ":" + videoDurationSec)
       .update(inputPaths.hookContractPath
         ? await fs.readFile(inputPaths.hookContractPath).catch(() => Buffer.from(""))
+        : Buffer.from(""))
+      .update(inputPaths.transcriptPath
+        ? await fs.readFile(inputPaths.transcriptPath).catch(() => Buffer.from(""))
+        : Buffer.from(""))
+      .update(inputPaths.sceneManifestPath
+        ? await fs.readFile(inputPaths.sceneManifestPath).catch(() => Buffer.from(""))
         : Buffer.from(""))
       .digest("hex");
     // Cache only when source understanding AND user-selected Hook are unchanged.
@@ -3076,7 +3083,7 @@ class ManualAntigravityStage1Service {
     const videoViews = new Set();
     const allowedInputs = new Set(
       [understandingPath, inputPaths.hookContractPath, inputPaths.transcriptPath,
-       inputPaths.sceneManifestPath, schemaPath].filter(Boolean)
+       inputPaths.sceneManifestPath].filter(Boolean)
         .map((name) => path.basename(String(name).replace(/\\/g, "/")).toLowerCase())
     );
     const toolGuard = ({ toolName, file }) => {
@@ -3108,7 +3115,7 @@ class ManualAntigravityStage1Service {
       commandConfig: makeConfig(prompt, resolvePhaseTimeoutMs("series_plan", this.settings)),
       prompt, resultDir, onProgress, expectedProxyList: [],
       viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan",
-      toolGuard
+      toolGuard, cwd: path.dirname(understandingPath)
     });
     let stdout = started.stdout || "";
     // Always write the original response BEFORE attempting a repair.
@@ -3137,7 +3144,7 @@ class ManualAntigravityStage1Service {
         commandConfig: makeConfig(repairPrompt, retryTimeout),
         prompt: repairPrompt, resultDir, onProgress, expectedProxyList: [],
         viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-fresh-retry",
-        toolGuard
+        toolGuard, cwd: path.dirname(understandingPath)
       });
       stdout = retry.stdout || "";
       await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan-fresh-retry.log"), stdout, "utf8");
