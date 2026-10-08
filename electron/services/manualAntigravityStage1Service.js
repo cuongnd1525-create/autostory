@@ -3576,6 +3576,11 @@ class ManualAntigravityStage1Service {
       const { scoreManualGeminiVariant } = require("./manualGeminiViralPreflightService");
       const preflightManifest = await fs.readFile(inputPaths.sceneManifestPath, "utf8")
         .then(JSON.parse).catch(() => null);
+      const editorialPrompt = await fs.readFile(promptPath, "utf8").catch(() => "");
+      const voiceSpeedMatch = editorialPrompt.match(/measuredWordsPerSecond:\s*([0-9]+(?:\.[0-9]+)?)/i);
+      const measuredWps = voiceSpeedMatch ? Number(voiceSpeedMatch[1]) : 0;
+      const measuredVoiceProfile = measuredWps > 0
+        ? { conservativeWordsPerSecond: measuredWps } : null;
       const scoreScripts = () => {
         const scripts = [...deduplicated.values()].map(a => a.script);
         const editorial = BodycamV1.inspectScripts(scripts,
@@ -3589,7 +3594,8 @@ class ManualAntigravityStage1Service {
               : raw;
             const normalized = normalizeHighlightCutScript(compiled, videoDurationSec);
             const result = scoreManualGeminiVariant({
-              script: compiled, normalizedScript: normalized, expectedScriptId: scriptId
+              script: compiled, normalizedScript: normalized, expectedScriptId: scriptId,
+              voiceProfile: measuredVoiceProfile
             });
             preflight.push({ scriptId, score: result.score, grade: result.grade,
               issues: result.issues || [] });
