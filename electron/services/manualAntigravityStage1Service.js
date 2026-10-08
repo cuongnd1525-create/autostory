@@ -17,6 +17,7 @@ const {
 } = require("./sourceUnderstandingService");
 const { resetPipelineTiming } = require("./pipelineTimingService");
 const MapReduce = require("./sourceUnderstandingMapReduce");
+const BodycamV1 = require("./bodycamV1QualityService");
 
 // Lazy: manualGeminiPackService is heavy and only needed for legacy packages
 // whose package-info.json predates cache.sourceFingerprint.
@@ -1107,8 +1108,26 @@ function buildScriptGenerationPrompt({
     `Generate exactly these scripts in order: ${scriptIds.join(", ")}. Each must follow the root schema of the editorial prompt.`,
     "This is a one-turn headless execution: do not stop at a plan, do not ask for approval.",
     "",
+    ...(seriesPlanPath ? [
+      "V1 QUALITY CONTRACT (EDITORIAL PRE-RENDER GATE, HIGH PRIORITY):",
+      "- The host will REJECT your V1 scripts if the first 3 seconds are unclear, source ranges do not substantiate the Hook and its verified payoff/Part open-loop, the ending is unwatchable, raw and tool narration do not form eight connected alternating beats, or filler was used just to reach duration.",
+      "- For each script add top-level v1EditorialAudit = {centralViewerQuestion:string,hookPromise:string,first3SecClear:true,hookSourceSec:number,payoffSourceSec:number,payoffWithinPart:boolean,verifiedNextPartOpenLoop:boolean,endingSourceSec:number,endingUsable:true,weakSourceRanges:[{sourceStartSec:number,sourceEndSec:number,reason:string}]}. These are SOURCE timestamps, never output timestamps.",
+      "- Hook: prefer clear conflict, verified stakes, readable face/reaction and intelligible audio. Do not open on a hand/vest obscuring the lens, a routine police approach, slow walking or repetitive commands. The first 3s must identify at least two of person/conflict/stakes.",
+      "- Visual progress: Remove idle patrol-car/police vehicle shots, generic sirens, black/blocked camera, repeated static wide shots and procedural waiting unless each actually adds necessary new evidence or a reaction. Never stretch to 110 seconds by padding.",
+      "- Hook -> 1 brief rewind/context -> connected escalation -> specific payoff/open loop must be obvious to someone who has never seen the original. Explain source time/location jumps in short natural English VO, including daylight/night or hospital/roadside switches.",
+      "- End each Part after a meaningful verified development, in a visible and audible scene; don't stop on a blocked camera or unrelated paperwork. The final evidence must be inside the last V1 source range.",
+      "- Prioritize content quality over duration: if a truthful, clear 110-125 second Part cannot be made, return input_access_failure instead of invented or filler footage.",
+      "- Each logical segment should carry sourceStartSec/sourceEndSec and original_audio or voiceover_only. Split technical scene slices when necessary, not a natural proof event. Never put narrator over indispensable original speech.",
+      "- Narrator: concise conversational American English (no robot-sounding formal boilerplate). Caption language must be English for this content; do not emit Vietnamese subtitle metadata.",
+      "- v1EditorialAudit is a SOURCE-VERIFIABLE claim, not a quality score. Do not set first3SecClear or endingUsable true unless actual Phase A visual evidence supports it. Return the whole scripts envelope only."
+    ] : []),
     "TRANSPORT (return exactly one JSON object, no prose, no Markdown):",
-    JSON.stringify({ artifacts: scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id } })), notes: "" })
+    JSON.stringify({ artifacts: scriptIds.map((id) => ({ filename: `script-${id}.json`, script: { scriptId: id, ...(seriesPlanPath ? {
+      v1EditorialAudit: { centralViewerQuestion:"", hookPromise:"", first3SecClear:false,
+        hookSourceSec:0, payoffSourceSec:0, payoffWithinPart:false,
+        verifiedNextPartOpenLoop:false, endingSourceSec:0, endingUsable:false,
+        weakSourceRanges:[] }
+    } : {}) } })), notes: "" })
   ].join("\n");
 }
 
