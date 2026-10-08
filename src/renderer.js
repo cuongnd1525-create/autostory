@@ -3799,7 +3799,11 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 - prompt_profile: viral_tiktok_crime_part1
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
 - Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
-- Every script must follow the exact 8-beat formula and use 9:16 vertical framing.
+- Every script must follow the exact 8-beat audio-role formula and use 9:16 vertical framing.
+- SOURCE-DRIVEN INCIDENT GATE (supreme over examples): "Confrontation", "Interrogation", "Verdict & Arrest", hostage, house-entry and takedown examples are ONLY labels/examples, NEVER source facts. Read the source understanding, transcript, action candidates and actual media FIRST. Map each beat to verified events of THIS incident (crash, 911, roadside, hospital, etc.). Never invent an entry into a house, a physical arrest, a charge, a sentence or a victim.
+- The opening teaser must lead to a verified explanation, matching event, or explicit source-grounded next-part question. Do not start with a later hospital incident then finish in an earlier time without returning to the teaser or explaining its consequence.
+- Keep 4 raw + 4 narrator roles, but never pad static procedural footage, silence or unrelated video just to meet a length target. If there is insufficient evidence for a coherent 110–125s Part, report that limitation rather than inventing source events or a fake ending.
+- End with the verified Part-level consequence then a SPECIFIC unresolved next event supported by source; never advertise a nonexistent interrogation, arrest or verdict.
 - TOP HOOK CAPTION: suggestedTitle/title must be a concise 4-8 word cold-viewer hook, ideally <= 42 characters, grounded in the actual conflict/action. Create curiosity without generic clickbait, hashtags, "PART 1/2/3", or spoiling the final payoff.
 - titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
 - Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
@@ -3815,38 +3819,38 @@ Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio 
 
 1. BEAT 1 (Target: ~12-15s source duration) - COLD OPEN HOOK
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: The single most shocking, loud, or chaotic raw moment from the entire source footage (e.g. screaming at the door, physical struggle, forced breach, frantic yelling).
+   - Content: The strongest VERIFIED raw incident moment in THIS Part's central conflict (e.g. crash response, witness contradiction, roadside exchange, medical crisis, urgent officer action). Prioritize comprehension and stakes over loudness.
    - Rule: Grips the viewer in the first 0-3 seconds with zero narration. Pure authentic raw audio.
 
 2. BEAT 2 (Target: ~16-20s source duration) - INCIDENT SETUP & DISPATCH
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Grounding narration over footage of police arrival / driving. State the date, location, the 911 dispatch premise, what officers were responding to, and the high stakes.
+   - Content: Concise verified setup over fitting footage of dispatch, crash response, arrival, roadside action or another genuine source event. Date, location and call reason only when explicitly verified.
    - Pacing: Active, present-tense, documentary tension.
 
 3. BEAT 3 (Target: ~10-14s source duration) - SCENE ENTRY & RAW REALITY
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: Officer steps inside the house/scene, encounters the first suspect or family member at the door/stairs, capturing natural ambient dialogue and escalating tension.
+   - Content: The first meaningful original-audio encounter, observation or exchange. The scene could be roadside, in a patrol car, at a crash site, in an ambulance or hospital. Never invent a house, family member, stairs or door.
 
 4. BEAT 4 (Target: ~15-18s source duration) - ESCALATION & DISCOVERY
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Narration builds intense suspense as officer rushes upstairs/inward and discovers the core crisis (e.g. suspect physically pinning the victim).
+   - Content: A truthful causal bridge to the next verified discovery or escalation. Identify time/location/perspective changes when source jumps; never promise footage the next beat cannot show.
    - Visual matching: Narration directs viewer attention directly to what is about to be seen.
 
 5. BEAT 5 (Target: ~12-15s source duration) - CLIMACTIC TAKEDOWN / CONFRONTATION
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: Peak physical and vocal confrontation! Commands shouted by police ("Get off her! Let go of her! Stand up!"), restraint applied, separating suspect from victim. 100% authentic raw audio.
+   - Content: The strongest authentic raw turning point within the SAME scoped incident: contradiction, proof, crash discovery, intervention, confrontation or reaction. Physical struggle/restraint is optional and cannot be invented.
 
 6. BEAT 6 (Target: ~17-20s source duration) - CONFLICT BREAKDOWN & MORAL CONTRAST
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Identifies key suspects and victims by name. Contrasts the suspect's absurd excuse or fake medical claim ("she was having a mental episode") against the victim's clear explanation ("I just wanted to leave").
+   - Content: Summarize only verified competing accounts, new facts, stakes or evidence. Names, diagnoses, victim quotes or suspect motives must come from this source, not template examples.
 
 7. BEAT 7 (Target: ~7-10s source duration) - RAW DIALOGUE EVIDENCE
    - audio_mode: "original_audio", voiceover_text: ""
-   - Content: Suspect stammers an incriminating excuse or victim gives emotional response to the officer.
+   - Content: Use a concise source-verified quote, response, reaction or action that advances the SAME central question; avoid repetitive procedure or unrelated material.
 
 8. BEAT 8 (Target: ~14-17s source duration) - CLIFFHANGER & PART 2 OPEN LOOP
    - audio_mode: "voiceover_only", English voiceover_text
-   - Content: Questioning begins; suspect eagerly starts trying to justify their actions, unaware they are digging their own grave. Narration delivers a compelling hook urging the audience to watch Part 2 for the full interrogation and arrest.
+   - Content: Deliver Part 1's verified near-term consequence and establish a specific unresolved next question. Do NOT promise interrogation, arrest, jail, charges or court result unless the input verifies those events; end on a viewable meaningful frame.
 
 ### REQUIRED ROOT METADATA
 Every generated JSON script must include:
