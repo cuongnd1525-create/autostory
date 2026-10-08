@@ -6,6 +6,7 @@ const path = require('node:path');
 const Critic = require('../electron/services/scopeMediaCriticService');
 const Director = require('../electron/services/editorialDirectorService');
 const RepairPolicy = require('../electron/services/autoStoryRepairPolicy');
+const AudioQa = require('../electron/services/autoStoryAudioQa');
 
 function observedWindows() {
   return [
@@ -38,6 +39,10 @@ const normalize = raw => Critic.normalizeCritique(raw, { durationSec: 12, timeli
 
 async function main() {
   assert.equal(normalize(validCritique()).isCompliant, true, 'Complete, observed story should PASS');
+  const silenceLog = 'silence_start: 88.90\nsilence_end: 94.95 | silence_duration: 6.05';
+  assert.deepEqual(AudioQa.parseSilences(silenceLog, 103.7), [
+    { startSec: 88.9, endSec: 94.95, durationSec: 6.05 }
+  ]);
   const missingTail = validCritique(); missingTail.observationWindows.pop();
   assert.equal(normalize(missingTail).status, 'MEDIA_CRITIC_INVALID', 'Missing last video window must not PASS');
   const gap = validCritique(); gap.observationWindows[1].windowStartSec = 7;
