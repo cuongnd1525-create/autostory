@@ -86,6 +86,22 @@ async function main() {
   { durationSec: 15, targetDurationMinSec: 1, targetDurationMaxSec: 12,
     reel: { ranges: [{ sourceStartSec: 4, sourceEndSec: 10 }] } });
   assert.ok(!ending.violations.some(v => v.code === 'ENDING_NOT_IN_SCOPE'), 'purposes[] must be recognized');
+  const futureTeaser = Director.validateDirectorEdl({
+    openingStrategy: { chronologicalOption: 'Routine encounter', conflictTeaserOption: 'Later arrest', chosen: 'conflict_teaser_rewind', why: 'Drama' },
+    deliveryBlocks: [], transitionChecks: [], beats: [
+      { beatId: 'hook', sourceStartSec: 500, sourceEndSec: 505, narrativeRole: 'hook',
+        chronologyMode: 'teaser', scopeMembership: 'hook', observedInFootage: 'Arrest', whyNecessaryNow: 'Hook' },
+      { beatId: 'body', sourceStartSec: 100, sourceEndSec: 120, narrativeRole: 'context',
+        chronologyMode: 'rewind', scopeMembership: 'core', observedInFootage: 'Call', whyNecessaryNow: 'Context' },
+      { beatId: 'end', sourceStartSec: 150, sourceEndSec: 160, narrativeRole: 'payoff',
+        chronologyMode: 'chronological', scopeMembership: 'ending', observedInFootage: 'Hospital',
+        whyNecessaryNow: 'Ending' }
+    ]
+  }, { candidateEndingEvents: [{ sourceStartSec: 150, sourceEndSec: 160 }] },
+  { durationSec: 550, targetDurationMinSec: 1, targetDurationMaxSec: 90,
+    requireDeliveryBlocks: true, reel: { ranges: [{ sourceStartSec: 100, sourceEndSec: 170 }, { sourceStartSec: 495, sourceEndSec: 510 }] } });
+  assert.ok(futureTeaser.violations.some(v => v.code === 'TEASER_PROMISE_OUTSIDE_STORY'),
+    'Opening at 08:16 cannot PASS when the entire body ends around 05:41');
 
   assert.equal(RepairPolicy.chooseRepairStrategy({ scopeSurvived: false }).mode, 'scope_rebuild');
   assert.equal(RepairPolicy.chooseRepairStrategy({ scopeSurvived: true, hookPromiseResolved: false }).mode, 'edl_rebuild');
