@@ -1981,10 +1981,10 @@ DIRECT HIGHLIGHT CONTENT RULES:
 - Do not create scene-evidence.json or story-blueprint.json. Reason internally, then write the final edit scripts directly from the video.
 - For independent scripts, complete the Semantic Hook Tournament and Viral Moment Inventory required by the editorial prompt before choosing Narrative Beats. Local action-candidate order is never a Hook ranking.
 - VIRAL EDITORIAL RULES (JCS / EWU STYLE):
-  * HOOK: Must hit within the first second with one of 5 Archetypes: Physical Friction & Barricade Suspense, Absurd Contradiction, In Medias Res, Instant Karma, or Unbelievable Stakes. Distinguish routine approach/casual door opening (BANNED) from violent door rattling/barricade pounding/standoff (TIER-S HOOK). SPOILER BAN: Hook the tension/friction, never spoil the aftermath/resolution at second 0.
-  * VOICEOVER: Sentence limit <= 25 words. Fast-paced, high-energy present tense. Sensational TikTok true-crime tone. Ruthlessly contrast suspect lies with camera facts to trigger outrage. Ban academic language.
+  * HOOK: Open at the exact verified trigger (action, contradiction, consequential quote, evidence reveal, or other source-specific curiosity). Optimize the Hook AND the next 15 seconds as one handoff. Prefer a clear viewer question whose payoff exists later. Do not force a physical-action archetype over a stronger grounded story hook. Avoid spoilers.
+  * VOICEOVER: Natural conversational US English, concise sentences with varied rhythm. Narrator is the BRIDGE between verified events: orient time/actors, explain causal stakes, reinterpret real evidence, and yield to authentic dialogue. Never restate obvious visible actions, exaggerate guilt, invent motives or manufacture outrage. Keep lines concise enough for real TTS pacing.
   * PACING: Enter late, exit early. Eliminate dead-air/silence > 1.5s between dialogue exchanges.
-  * OUTRO: End video within 2-3s of the final verified payoff/aftermath. Zero lingering paperwork or idle outro footage.
+  * OUTRO: Final Part ends promptly after the actual verified payoff/consequence. Intermediate Parts end on a meaningful verified development and unresolved question, never solely a 'follow for part 2' CTA. Remove routine paperwork and idle outro footage.
 
 ${timelineContract}
 
