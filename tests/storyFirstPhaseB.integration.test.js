@@ -84,7 +84,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
       const repairing = prompt.includes("EDITORIAL REPAIR");
       if (repairing) attemptedRepair = true;
       if (repairing) {
-        const scriptId = Number(prompt.match(/Repair EXACTLY Part Script (\\d+)/)?.[1] || 0);
+        const scriptId = Number(prompt.match(/Repair EXACTLY Part Script (\d+)/)?.[1] || 0);
         assert(SCRIPTS.includes(scriptId), "repair must target one of the exact rejected Part IDs");
         if (rogueRepairCommand && scriptId === 1 && !prompt.includes("NO TOOLS whatsoever")) {
           return { extraEvents: [{
@@ -136,7 +136,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert.strictEqual(good.intelligence.artifactType, "story_intelligence");
     assert.strictEqual(good.blueprint.seriesParts.length, 3);
     assert.deepStrictEqual(good.calls.map((c) => c.kind), ["map", "reduce", "series_plan", "phase_b", "phase_b", "phase_b", "phase_b"]);
-    assert.deepStrictEqual(good.calls.filter(c=>c.prompt.includes("EDITORIAL REPAIR")).map(c=>Number(c.prompt.match(/Repair EXACTLY Part Script (\\d+)/)?.[1])),[1,3,4]);
+    assert.deepStrictEqual(good.calls.filter(c=>c.prompt.includes("EDITORIAL REPAIR")).map(c=>Number(c.prompt.match(/Repair EXACTLY Part Script (\d+)/)?.[1])),[1,3,4]);
     assert(good.calls.filter((c) => c.kind === "phase_b").every((c) => !/view_file\("[^"]+\.mp4"\)/.test(c.prompt)));
     assert(good.value.validFiles.length === 3);
   } finally { await fs.rm(good.root, { recursive: true, force: true }); }
@@ -183,7 +183,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     const repairCalls = rogue.calls.filter(c=>c.kind === "phase_b" && c.prompt.includes("EDITORIAL REPAIR"));
     assert(repairCalls.some(c=>c.prompt.includes("NO TOOLS whatsoever")), "forbidden run_command must cause one tool-free inline recovery");
     assert(repairCalls.every(c=>!c.args.includes("--conversation")), "no recovery resumes a contaminated session");
-    assert(!rogue.calls.some(c=>c.prompt.includes("view_file(\\\"") && c.prompt.includes(".mp4")));
+    assert(repairCalls.every(c=>!c.prompt.includes("view_file(\\\"") || !c.prompt.includes(".mp4")), "editorial repair cannot rewatch source video");
     const fallbackCall = repairCalls.find(c=>c.prompt.includes("NO TOOLS whatsoever"));
     assert(fallbackCall.prompt.includes("ORIGINAL_SCRIPT_JSON:"), "model can repair without shell because candidate JSON is inline");
   } finally { await fs.rm(rogue.root, { recursive: true, force: true }); }
