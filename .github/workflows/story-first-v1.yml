@@ -32,6 +32,12 @@ jobs:
           node tests/storyFirstEditorialService.test.js
           node tests/storyFirstPhaseB.integration.test.js
           node tests/seriesPlan.test.js
+          node tests/hookAudition.test.js
+          node tests/highlightPromptTemplate.test.js
+          node tests/manualGeminiPackService.test.js
+          node tests/manualGeminiViralPreflight.test.js
+          node tests/manualDraftNarration.test.js
+          node tests/geminiDraftReviewService.test.js
           node tests/antigravityAuthBudget.test.js
           node tests/manualAntigravityStage1Service.test.js
           node tests/phaseARecovery.test.js
