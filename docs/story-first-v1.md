@@ -56,3 +56,25 @@ The test suite uses a fake Antigravity CLI. A live Windows run with real audio/v
 ## Not yet covered by this branch
 
 Separate two-**call** independent audience-only / repair-only review, per-voice-block real TTS rehearsal, full human-rated multi-case benchmark and in-app engagement analytics dashboard. These are distinct workstreams, not silently claimed complete by a passing unit test.
+
+
+## October 9 quality corrections (post-video review)
+
+- Stage 1 now scores the same normalized output timeline with the same production Viral Preflight used at import; there is no longer a passing 95-point structural report hiding a 41-point production score. Production deficits are included in editorial repair diagnostics before import.
+- An **independent Cold Viewer text-only model pass** reviews the actual script sequence for hook question, handoff to the next 15 seconds, narrator's informational contribution, slow/unclear stretches and concrete chapter payoff. The review runs before and after at most one script repair; unsubstantiated/missing structured reports fail closed. The same model provider still cannot predict real audience retention.
+- The structural guard rejects an opening source beat over 12 seconds and temporal rewinds justified solely by metadata. Time travel needs an audible narrator bridge or a supported explicitly rendered title.
+- On import and before render, the target series requires normalized Viral Preflight >=72, editorial readiness >=72 and technical readiness >=80 (where present). See analysis/story-first-import-rejected-script-N.json for failures.
+- US English bodycam preview keeps **English subtitles** by default; no automatic local English->Vietnamese translation. Optional storyFirstPreviewSubtitleLanguage is en, vi, or off. An explicit Vietnamese choice preserves legacy translation.
+- Draft logs include each misaligned TTS scene and voice/timeline seconds. A voice-issue draft is inspectable but marked needs_voice_repair; without voice issues it still needs_real_video_review.
+- Developer switches: storyFirstColdViewerEnabled=false or storyFirstUnifiedPreflightEnabled=false isolate tests; storyFirstAllowLowQualityDraft=true allows intentional low-quality diagnostic previews only. None of these mean the draft is production-ready.
+
+### Inspect these diagnostics
+
+- \`01-ANTIGRAVITY-RESULT/audience-review-initial.json\`
+- \`01-ANTIGRAVITY-RESULT/audience-review-repaired.json\` (when repair occurred)
+- \`01-ANTIGRAVITY-RESULT/editorial-quality-report.json\` (structure + cold viewer + production preflight)
+- \`analysis/story-first-import-rejected-script-N.json\` (if still rejected at import)
+- \`...fast-draft-...-voice-warnings.json\` (measured voice alignment)
+- \`...fast-draft-....en.srt\` (US series English draft captions)
+
+Actual multimodal review of the **rendered MP4** still belongs to the subsequent Gemini Draft Review step. Text-only Cold Viewer is not a substitute for watching the output, and a passing CI test does not guarantee virality.
