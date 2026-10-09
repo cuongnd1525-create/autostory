@@ -53,7 +53,7 @@ function weakScript(id) {
 function envelopeFor(fn) {
   return { artifacts: SCRIPTS.map((id) => ({ filename: `script-${id}.json`, script: fn(id) })) };
 }
-async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false, unifiedPreflight = false } = {}) {
+async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false, unifiedPreflight = false, rogueRepairCommand = false } = {}) {
   const root = await fixture();
   const calls = [];
   let attemptedRepair = false;
@@ -83,9 +83,22 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     if (kind === "phase_b") {
       const repairing = prompt.includes("EDITORIAL REPAIR");
       if (repairing) attemptedRepair = true;
-      return { envelope: envelopeFor(repairing
-        ? (repairsFixIssue ? repairedScript : weakScript)
-        : (initialIsValid ? repairedScript : weakScript)) };
+      if (repairing) {
+        const scriptId = Number(prompt.match(/Repair EXACTLY Part Script (\\d+)/)?.[1] || 0);
+        assert(SCRIPTS.includes(scriptId), "repair must target one of the exact rejected Part IDs");
+        if (rogueRepairCommand && scriptId === 1 && !prompt.includes("NO TOOLS whatsoever")) {
+          return { extraEvents: [{
+            event: "step_update",
+            step_update: {step_index:12,conversation_id:"bad-editorial",step_type:"tool",
+              state:"ACTIVE",tool_name:"run_command",tool_info:{name:"run_command",parameters:{CommandLine:"node -e JSON.parse(...)"}}}
+          }], envelope: {artifacts:[]} };
+        }
+        return { envelope: {artifacts:[{
+          filename:`script-${scriptId}.json`,
+          script: (repairsFixIssue ? repairedScript : weakScript)(scriptId)
+        }]} };
+      }
+      return { envelope: envelopeFor(initialIsValid ? repairedScript : weakScript) };
     }
     return normal(kind, prompt, call);
   };
@@ -122,7 +135,8 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert(good.report.results.every((x) => x.metrics.narrationBeats >= 2));
     assert.strictEqual(good.intelligence.artifactType, "story_intelligence");
     assert.strictEqual(good.blueprint.seriesParts.length, 3);
-    assert.deepStrictEqual(good.calls.map((c) => c.kind), ["map", "reduce", "series_plan", "phase_b", "phase_b"]);
+    assert.deepStrictEqual(good.calls.map((c) => c.kind), ["map", "reduce", "series_plan", "phase_b", "phase_b", "phase_b", "phase_b"]);
+    assert.deepStrictEqual(good.calls.filter(c=>c.prompt.includes("EDITORIAL REPAIR")).map(c=>Number(c.prompt.match(/Repair EXACTLY Part Script (\\d+)/)?.[1])),[1,3,4]);
     assert(good.calls.filter((c) => c.kind === "phase_b").every((c) => !/view_file\("[^"]+\.mp4"\)/.test(c.prompt)));
     assert(good.value.validFiles.length === 3);
   } finally { await fs.rm(good.root, { recursive: true, force: true }); }
@@ -133,7 +147,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert(poor.error && poor.error.kind === "editorial_quality", poor.error?.stack);
     assert(!poor.report.accepted);
     assert(poor.attemptedRepair);
-    assert.strictEqual(poor.calls.filter((c) => c.kind === "phase_b").length, 2, "repair capped to one pass");
+    assert.strictEqual(poor.calls.filter((c) => c.kind === "phase_b").length, 4, "one repair cycle per failed Part");
   } finally { await fs.rm(poor.root, { recursive: true, force: true }); }
   const critic = await exercise({ repairsFixIssue: true, coldViewer: true, initialIsValid: true });
   try {
@@ -143,7 +157,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert.strictEqual(critic.report.results.length, 3);
     assert(critic.report.results.every((x) => x.audienceScore >= 80 && x.structuralScore >= 80));
     assert.strictEqual(critic.calls.filter((x) => x.prompt.includes("INDEPENDENT COLD VIEWER")).length, 2);
-    assert.strictEqual(critic.calls.filter((x) => x.kind === "phase_b").length, 2);
+    assert.strictEqual(critic.calls.filter((x) => x.kind === "phase_b").length, 4);
     assert(critic.calls.filter((x) => x.prompt.includes("INDEPENDENT COLD VIEWER")).every((x) => !x.prompt.includes(".mp4")));
   } finally { await fs.rm(critic.root, { recursive: true, force: true }); }
 
@@ -161,6 +175,18 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     ), JSON.stringify(normalizedGate.report));
     assert(normalizedGate.attemptedRepair, "production-readiness failure must trigger the same repair path");
   } finally { await fs.rm(normalizedGate.root, {recursive:true,force:true}); }
+
+  const rogue = await exercise({ repairsFixIssue: true, rogueRepairCommand: true });
+  try {
+    assert(!rogue.error, rogue.error?.stack || String(rogue.error));
+    assert(rogue.report.accepted, "safe inline fallback must be revalidated against the same editorial gate");
+    const repairCalls = rogue.calls.filter(c=>c.kind === "phase_b" && c.prompt.includes("EDITORIAL REPAIR"));
+    assert(repairCalls.some(c=>c.prompt.includes("NO TOOLS whatsoever")), "forbidden run_command must cause one tool-free inline recovery");
+    assert(repairCalls.every(c=>!c.args.includes("--conversation")), "no recovery resumes a contaminated session");
+    assert(!rogue.calls.some(c=>c.prompt.includes("view_file(\\\"") && c.prompt.includes(".mp4")));
+    const fallbackCall = repairCalls.find(c=>c.prompt.includes("NO TOOLS whatsoever"));
+    assert(fallbackCall.prompt.includes("ORIGINAL_SCRIPT_JSON:"), "model can repair without shell because candidate JSON is inline");
+  } finally { await fs.rm(rogue.root, { recursive: true, force: true }); }
 
   console.log("story-first Phase B reject/repair end-to-end tests passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
