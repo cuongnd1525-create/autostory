@@ -3698,9 +3698,15 @@ class ManualAntigravityStage1Service {
           ?.find((item) => item.filename === "audience-review.json");
         reviewed = artifact?.script || null;
       } catch (error) {
-        // A failed/unverifiable quality review is never a pass. Save its cause.
-        this.emitLog(onProgress, 83, `[COLD_VIEWER] FAILED: ${String(error.message || "").slice(0, 200)}`, logs);
-        reviewed = { artifactType: "audience_review", parts: [], failure: String(error.message || "") };
+        // Auth/timeout/capacity problems are infrastructure failures, NOT
+        // editorial criticism. Do not burn a repair attempt on a transport error.
+        this.emitLog(onProgress, 83, `[COLD_VIEWER] CLI ERROR: ${String(error.message || "").slice(0, 200)}`, logs);
+        await writeJsonAtomic(path.join(resultDir, `audience-review-${suffix}.json`), {
+          artifactType: "audience_review_validation", accepted: false,
+          errorKind: error.kind || "cli_failure", errorMessage: String(error.message || "")
+        });
+        await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+        throw error;
       }
       const validated = StoryFirst.validateColdViewerReview(reviewed, requestedScriptIds);
       await writeJsonAtomic(path.join(resultDir, `audience-review-${suffix}.json`), {
