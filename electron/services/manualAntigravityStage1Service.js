@@ -2001,7 +2001,7 @@ class ManualAntigravityStage1Service {
     }
     if (remainingSec !== null && remainingSec < requiredSec) {
       const error = new Error(
-        `[${label}] AUTH: token Antigravity còn ${Math.floor(remainingSec / 60)} phút ${remainingSec % 60}s (hết hạn ${record.tokenExpiresAt}) nhưng bước này có thể chạy tới ${Math.round(stageTimeoutMs / 1000)}s + ${marginSec}s an toàn. `
+        `[${label}] AUTH: token Antigravity còn ${Math.floor(remainingSec / 60)} phút ${remainingSec % 60}s (hết hạn ${record.tokenExpiresAt}); ${textOnly ? `cần tối thiểu ${requiredSec}s (gồm thời gian xử lý ngắn + dự phòng)` : `bước này cần tới ${Math.round(stageTimeoutMs / 1000)}s + ${marginSec}s dự phòng`}. `
         + (textOnly
           ? "Không đủ thời gian tối thiểu để chạy một lượt AI văn bản an toàn. Làm mới đăng nhập Antigravity rồi chạy lại; cache hiểu nguồn vẫn được giữ."
           : "AGY CLI chỉ tự làm mới token SAU khi hết hạn và yêu cầu đang chạy sẽ lỗi 401. Mở Antigravity để làm mới đăng nhập rồi chạy lại. Chưa khởi động tiến trình AGY, chưa xem video.")
