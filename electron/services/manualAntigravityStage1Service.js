@@ -3892,14 +3892,41 @@ class ManualAntigravityStage1Service {
             sourceEvents: partEvents,
             immutableSeriesPlan: seriesPlan?.parts?.find((part) => Number(part.scriptId) === scriptId) || null
           };
-          const buildRepair = (inlineOnly) => assertPrintPromptSize(StoryFirst.buildEditorialRepairPrompt({
-            previousFiles: [originalFile], reportPath: gatePath, blueprintPath: narrativeBlueprintPath,
-            intelligencePath: storyIntelligencePath, seriesPlanPath,
-            scriptIds: [scriptId], partIssues: conciseFailure,
-            inlineOnly, originalScript: originalArtifact.script, inlineEvidence
-          }), `Part ${scriptId} editorial repair`);
+          // Windows passes --print in argv (24k safe limit). Never inline the
+          // potentially >100kB original script/evidence. Write the FULL packet
+          // once, then reference its absolute path for both repair attempts.
+          const repairPacketPath = path.join(resultDir, `editorial-repair-part-${scriptId}-packet.json`);
+          await writeJsonAtomic(repairPacketPath, {
+            artifactType: "host_editorial_repair_packet",
+            schemaVersion: 1, scriptId,
+            originalScript: originalArtifact.script,
+            actualQualityGateFailures: conciseFailure,
+            lockedPartContext: inlineEvidence,
+            sourceEventTimeline: storyIntelligence?.events || [],
+            qualityPolicy: {
+              minRenderableSec: 60.5,
+              targetMinSec: series?.durationMinSec ?? 75,
+              targetMaxSec: series?.durationMaxSec ?? 110,
+              maxVoiceoverSec: 12,
+              maxAudioRunSec: 15,
+              maxSourceJumps: 7
+            }
+          });
+          const buildRepair = (recoveryFromForbiddenTool) => assertPrintPromptSize(
+            StoryFirst.buildEditorialRepairPrompt({
+              previousFiles: [originalFile], reportPath: gatePath,
+              blueprintPath: narrativeBlueprintPath, intelligencePath: storyIntelligencePath,
+              seriesPlanPath, transcriptPath: inputPaths.transcriptPath,
+              sceneManifestPath: inputPaths.sceneManifestPath,
+              scriptIds: [scriptId], partIssues: conciseFailure,
+              repairPacketPath, recoveryFromForbiddenTool
+            }), `Part ${scriptId} editorial repair`
+          );
           const safeReadOnly = buildSeriesPlanReadOnlyGuard([
-            originalFile, gatePath, narrativeBlueprintPath, storyIntelligencePath, seriesPlanPath
+            originalFile, gatePath, narrativeBlueprintPath, storyIntelligencePath,
+            seriesPlanPath, inputPaths.sceneManifestPath,
+            inputPaths.transcriptPath, understandingPath,
+            inputPaths.hookContractPath, repairPacketPath
           ]);
           const metricsForPart = newMetrics();
           let payload = null;
@@ -3926,24 +3953,23 @@ class ManualAntigravityStage1Service {
               await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
               throw error;
             }
-            // Transport fallback: one new read-only model turn, all evidence
-            // INLINED, no tool access at all. This is still ONE editorial
-            // revision cycle; do not bypass the substantive quality gate.
+            // The former fallback inlined the whole script into --print and
+            // crashed Windows at 35,102 characters (>24k). Isolated recovery
+            // now reads ONE host-owned packet via view_file, never shell/edits.
             this.emitLog(onProgress, 84,
-              `[EDITORIAL_REPAIR] Part ${scriptId} thử dùng công cụ không được phép. Chuyển sang phục hồi JSON nội tuyến, không thực thi lệnh ngoài.`, logs);
+              `[EDITORIAL_REPAIR] Part ${scriptId} thử dùng công cụ ngoài phạm vi. Phục hồi ở phiên mới qua JSON FILE (${path.basename(repairPacketPath)}), chỉ cho phép view_file; không chạy lệnh hệ thống.`, logs);
             const fallbackPrompt = buildRepair(true);
             const fallbackMetrics = newMetrics();
             try {
               const recovered = await this.runAgyPhase({
-                label: `PHASE_B_EDITORIAL_REPAIR_INLINE_PART_${scriptId}`,
+                label: `PHASE_B_EDITORIAL_REPAIR_RECOVERY_PART_${scriptId}`,
                 commandConfig: this.buildCommand(fallbackPrompt, schemaPath, pass1Dir, {
                   packageInfo, timeoutMs: Math.min(180000, resolvePhaseTimeoutMs("phase_b", this.settings))
                 }), prompt: fallbackPrompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
-                metrics: fallbackMetrics, logs, logBase: `phaseB-editorial-repair-inline-${scriptId}`,
-                forbiddenTools: ["view_file"],
-                toolGuard: ({ toolName }) => `inline repair: no tool ${toolName || ""} is allowed`
+                metrics: fallbackMetrics, logs, logBase: `phaseB-editorial-repair-recovery-${scriptId}`,
+                toolGuard: buildSeriesPlanReadOnlyGuard([repairPacketPath])
               });
-              await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-inline-part-${scriptId}.log`), recovered.stdout || "", "utf8");
+              await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-recovery-part-${scriptId}.log`), recovered.stdout || "", "utf8");
               payload = findArtifactEnvelope(recovered.stdout || "");
               if (!payload?.artifacts?.length) {
                 const recoveredScript = await extractNamedArtifact(recovered.stdout || "", {
