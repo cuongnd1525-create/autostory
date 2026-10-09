@@ -336,6 +336,114 @@ function buildPhaseBEditorialGuidance({ intelligencePath, blueprintPath }) {
   ].join("\n");
 }
 
+
+const CRITICAL_AUDIENCE_CODES = new Set(["hook_not_clear", "hook_handoff", "temporal_confusion",
+  "causal_gap", "narrator_repeats_visual", "narrator_missing_bridge",
+  "dead_zone", "missing_payoff", "false_claim", "wrong_actor", "missing_evidence"]);
+
+/**
+ * An independently prompted critic does not receive the Writer's self-reported
+ * scores or the structural-gate score. It reviews only source-backed scripts.
+ * This is still an AI opinion, not observed watch-time or true MP4 review.
+ */
+function buildColdViewerPrompt({ scriptPaths = [], blueprintPath = "", intelligencePath = "", scriptIds = [] } = {}) {
+  return [
+    "You are an INDEPENDENT COLD VIEWER / TRUE-CRIME EDITOR, not the script writer.",
+    "Evaluate the exact order and spoken words in each proposed edit as if you have NEVER seen the case.",
+    "TEXT INPUTS ONLY: do not open video files. Read these script files using view_file:",
+    ...scriptPaths.map((p) => `- ${p}`),
+    `Evidence-backed source understanding: ${intelligencePath}`,
+    `Locked Part story plan: ${blueprintPath}`,
+    "Do not read previous Editorial Gate scores, Writer rationale or earlier AI review reports.",
+    "First identify a specific curiosity question the opening creates and whether the NEXT 15 seconds orient viewers to the characters, location, cause and time jump.",
+    "Audit each bridge with the exact SPOKEN narrator text and the source event it connects. A transitionReason metadata string that is NOT narrated or rendered as a title does not orient the audience.",
+    "Audit the middle for stretches of routine dialogue or footage that make no meaningful narrative progress. A quiet meaningful reaction is NOT dead air.",
+    "Audit whether the ending VISIBLY/AUDIBLY delivers the locked cliffhanger/payoff, not just the word cliffhanger, a static label or Follow for Part 2.",
+    "Do not use missing facts or invent legal charges, motives, timecode, dialogue or a person. Treat unverified claims by characters as claims, not proven truth.",
+    "List precise beat indices (ZERO BASED) with a verified source eventId / time window and a concrete viewer-level consequence for EACH substantial problem.",
+    "Assess the story without assuming a million views. A superficially valid schema must NOT earn a high score.",
+    "If there is any unresolved hook-to-context, causal/temporal continuity, narrator grounding or ending problem, set accepted=false.",
+    "Use 80/100 as the minimum recommendation threshold, but never pass based on score alone.",
+    "Return EXACTLY ONE JSON envelope with artifacts=[{filename:\"audience-review.json\", script:{artifactType:\"audience_review\",schemaVersion:1,parts:[...]}}]. NO Markdown.",
+    `One part entry for each scriptId: ${scriptIds.join(", ")}.`,
+    "Each part MUST have these fields: scriptId:number, score:number 0..100, accepted:boolean, hookQuestion:string,",
+    "hookHandoffAssessment:string, narratorContribution:string, weakestMoment:string, endingPayoffAssessment:string,",
+    "issues:array of {code, segmentIndex:number 0-based, sourceEventId:string, whyViewerLeaves:string, requiredChange:string}.",
+    `Allowed critical issue codes: ${[...CRITICAL_AUDIENCE_CODES].join(", ")}.`,
+    "Use issues=[] only when the Part is genuinely compelling, unambiguous and evidence-grounded, and justify it in all assessment fields."
+  ].join("\\n");
+}
+
+function validateColdViewerReview(raw, scriptIds = []) {
+  const errors = [];
+  const parts = Array.isArray(raw?.parts) ? raw.parts : [];
+  if (raw?.artifactType !== "audience_review") errors.push("Missing artifactType audience_review");
+  const seen = new Set();
+  const normalized = [];
+  for (const requestedId of scriptIds) {
+    const matches = parts.filter((part) => Number(part?.scriptId) === Number(requestedId));
+    if (matches.length !== 1) {
+      errors.push(`Reviewer must provide exactly one assessment for script ${requestedId}.`);
+      continue;
+    }
+    const item = matches[0];
+    seen.add(Number(requestedId));
+    const required = ["hookQuestion", "hookHandoffAssessment", "narratorContribution", "weakestMoment", "endingPayoffAssessment"];
+    const missing = required.filter((key) => compact(item[key]).length < 8);
+    if (missing.length) errors.push(`Script ${requestedId} has unsupported/missing narrative explanations: ${missing.join(", ")}`);
+    const score = num(item.score);
+    if (!(score >= 0 && score <= 100)) errors.push(`Script ${requestedId} has invalid independent score.`);
+    if (typeof item.accepted !== "boolean") errors.push(`Script ${requestedId} has no explicit acceptance decision.`);
+    const issues = Array.isArray(item.issues) ? item.issues : null;
+    if (!issues) errors.push(`Script ${requestedId} has no issue list.`);
+    const normalizedIssues = (issues || []).map((issue, index) => {
+      const code = compact(issue?.code);
+      const segmentIndex = num(issue?.segmentIndex);
+      const whyViewerLeaves = compact(issue?.whyViewerLeaves);
+      const requiredChange = compact(issue?.requiredChange);
+      if (!CRITICAL_AUDIENCE_CODES.has(code) || !Number.isInteger(segmentIndex) || segmentIndex < 0
+        || whyViewerLeaves.length < 12 || requiredChange.length < 12) {
+        errors.push(`Script ${requestedId}, issue ${index + 1}: missing grounded, actionable problem.`);
+      }
+      return { code, segmentIndex, sourceEventId: compact(issue?.sourceEventId),
+        whyViewerLeaves, requiredChange };
+    });
+    normalized.push({ scriptId: Number(requestedId), score, accepted: item.accepted === true
+        && score >= 80 && normalizedIssues.length === 0 && missing.length === 0,
+      hookQuestion: compact(item.hookQuestion), hookHandoffAssessment: compact(item.hookHandoffAssessment),
+      narratorContribution: compact(item.narratorContribution), weakestMoment: compact(item.weakestMoment),
+      endingPayoffAssessment: compact(item.endingPayoffAssessment), issues: normalizedIssues });
+  }
+  if (parts.length !== scriptIds.length || seen.size !== scriptIds.length) errors.push("Reviewer part coverage does not match the requested series.");
+  return { artifactType: "audience_review_validation", accepted: errors.length === 0 && normalized.every((p) => p.accepted),
+    errors, parts: normalized };
+}
+
+function attachAudienceReview(gate, audience) {
+  const results = (gate.results || []).map((item) => {
+    const critique = audience.parts.find((part) => part.scriptId === item.scriptId);
+    const combined = item.passed && audience.errors.length === 0 && critique?.accepted === true;
+    return {
+      ...item, structuralScore: item.score, audienceScore: critique?.score ?? null,
+      audienceIssues: critique?.issues || [], passed: combined,
+      score: critique ? Math.min(item.score, critique.score) : 0,
+      errors: [
+        ...(item.errors || []),
+        ...((critique?.issues || []).map((issue) => ({
+          code: issue.code, segmentIndex: issue.segmentIndex,
+          message: issue.whyViewerLeaves + " Required: " + issue.requiredChange
+        }))),
+        ...(!critique?.accepted && !(critique?.issues?.length)
+          ? [{code:"audience_review_rejected",message: "Cold viewer did not endorse this Part; inspect the independent review artifact."}] : [])
+      ],
+      feedback: [...(item.feedback || []),
+        ...(critique?.issues || []).map((issue) => `audience/${issue.code}: ${issue.whyViewerLeaves} → ${issue.requiredChange}`)]
+    };
+  });
+  return { ...gate, accepted: audience.accepted && results.every((r) => r.passed),
+    results, independentAudienceReview: audience };
+}
+
 function buildEditorialRepairPrompt({ previousFiles = [], reportPath = "", blueprintPath = "", intelligencePath = "", scriptIds = [] } = {}) {
   return [
     "You are executing Phase B (Script Generation) EDITORIAL REPAIR of True Crime AutoStory. TEXT INPUTS ONLY. Do not view any .mp4.",
@@ -351,4 +459,4 @@ function buildEditorialRepairPrompt({ previousFiles = [], reportPath = "", bluep
   ].join("\n");
 }
 
-module.exports = { makeStoryIntelligence, makeHookTournament, makeNarrativeBlueprint, evaluateEditorialScript, buildPhaseBEditorialGuidance, buildEditorialRepairPrompt, readJson };
+module.exports = { makeStoryIntelligence, makeHookTournament, makeNarrativeBlueprint, evaluateEditorialScript, buildPhaseBEditorialGuidance, buildEditorialRepairPrompt, buildColdViewerPrompt, validateColdViewerReview, attachAudienceReview, readJson };
