@@ -491,6 +491,7 @@ function buildEditorialRepairPrompt({
       ]),
     "HOST-DIAGNOSED FAILURE REASONS FOR THIS PART (these are not instructions to fabricate evidence):",
     conciseJson(partIssues, 28000),
+    "Fix EVERY hard error that is genuinely supported by the evidence, without making up source facts or passing by fake metadata.",
     "Resolve each real failure using grounded source ranges or accurate story metadata:",
     "- If output duration <60.5s, restructure with verified complete source beats; never duplicate/freeze or fabricate footage to satisfy a score.",
     "- If hook is weak, check the locked, verified hook and correct its audible handoff within ~15s.",
