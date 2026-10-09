@@ -100,6 +100,25 @@ repeated.segments[3].voiceover_text = repeated.segments[1].voiceover_text;
 report = evaluateEditorialScript(repeated, blueprint);
 assert(report.errors.some((x) => x.code === "repeated_narration"));
 
+const overlongHook = JSON.parse(JSON.stringify(validScript));
+overlongHook.segments[0].sourceEndSec = 17;
+report = evaluateEditorialScript(overlongHook, blueprint);
+assert(report.errors.some((x) => x.code === "oversized_opening_hook"), JSON.stringify(report));
+const invisibleBridge = JSON.parse(JSON.stringify(validScript));
+invisibleBridge.segments = [
+  segment(23, 27, "original_audio"),
+  segment(3, 7, "voiceover_only", "The officer questions the driver", {transitionReason:"20 minutes earlier"}),
+  segment(8, 13, "original_audio"),
+  segment(15, 20, "voiceover_only", "But the investigation then moved to the evidence."),
+  segment(27, 29, "original_audio")
+];
+report = evaluateEditorialScript(invisibleBridge, blueprint);
+assert(report.errors.some((x) => x.code === "unbridged_flashback"),
+  "hidden transitionReason cannot excuse an invisible rewind: " + JSON.stringify(report));
+invisibleBridge.segments[1].voiceover_text = "Twenty minutes earlier, officers arrived at the crash.";
+report = evaluateEditorialScript(invisibleBridge, blueprint);
+assert(!report.errors.some((x) => x.code === "unbridged_flashback"), JSON.stringify(report));
+
 const noNarrator = { scriptId: 1, segments: [segment(3, 7, "original_audio"), segment(18, 22, "original_audio")] };
 report = evaluateEditorialScript(noNarrator, blueprint);
 assert(report.errors.some((x) => x.code === "narrator_not_directing"));
