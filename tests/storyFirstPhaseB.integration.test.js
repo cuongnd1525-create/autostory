@@ -93,7 +93,10 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     antigravityCommand: "agy",
     antigravityModel: "test-model",
     storyFirstEditorialEnabled: true,
-    storyFirstColdViewerEnabled: coldViewer
+    storyFirstColdViewerEnabled: coldViewer,
+    // The synthetic 90-second source has three 29s chapters; bypass only
+    // the production 60.5s monetization floor in this fake-CLI test.
+    storyFirstUnifiedPreflightEnabled: false
   }, {
     spawn: createPhaseAwareSpawn({ calls, respond: responder }),
     authProbe: async () => ({ expiresAt: new Date(Date.now() + 3600000), expiredFlag: false })
