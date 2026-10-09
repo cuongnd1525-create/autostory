@@ -17,6 +17,7 @@ const {
 } = require("./sourceUnderstandingService");
 const { resetPipelineTiming } = require("./pipelineTimingService");
 const MapReduce = require("./sourceUnderstandingMapReduce");
+const StoryFirst = require("./storyFirstEditorialService");
 
 // Lazy: manualGeminiPackService is heavy and only needed for legacy packages
 // whose package-info.json predates cache.sourceFingerprint.
@@ -1064,6 +1065,8 @@ function buildScriptGenerationPrompt({
   transcriptPath = "",
   hookContractPath = "",
   actionCandidatesPath = "",
+  storyIntelligencePath = "",
+  narrativeBlueprintPath = "",
   resultDir,
   scriptIds = [1, 3, 4],
   coverageSummary = ""
@@ -1080,6 +1083,9 @@ function buildScriptGenerationPrompt({
     ...(transcriptPath ? [`- source-transcript.srt: ${transcriptPath}`] : []),
     ...(hookContractPath ? [`- hook-contract.json: ${hookContractPath}`] : []),
     ...(actionCandidatesPath ? [`- action-candidates.json: ${actionCandidatesPath}`] : []),
+    ...(narrativeBlueprintPath && storyIntelligencePath
+      ? [StoryFirst.buildPhaseBEditorialGuidance({ intelligencePath: storyIntelligencePath, blueprintPath: narrativeBlueprintPath })]
+      : []),
     `RESULT_FOLDER_FOR_THE_HOST_APP: ${resultDir}`,
     "",
     "================================================================================",
@@ -3449,6 +3455,27 @@ class ManualAntigravityStage1Service {
     }
 
     // ---------------------------------------------------------------------
+    // Story-first creative direction: host-generated from verified source
+    // understanding and locked Part allocation, NOT from invented dialogue.
+    // ---------------------------------------------------------------------
+    const storyFirstEnabled = Boolean(series && this.settings.storyFirstEditorialEnabled !== false);
+    let storyBlueprint = null;
+    let storyIntelligencePath = "";
+    let narrativeBlueprintPath = "";
+    if (storyFirstEnabled) {
+      const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
+      const intelligence = StoryFirst.makeStoryIntelligence(understanding, { hookContract, sourceDurationSec: videoDurationSec });
+      storyBlueprint = StoryFirst.makeNarrativeBlueprint(intelligence, { seriesPlan, series });
+      storyIntelligencePath = path.join(phaseBInputDir, "story-intelligence.json");
+      narrativeBlueprintPath = path.join(phaseBInputDir, "narrative-blueprint.json");
+      await writeJsonAtomic(storyIntelligencePath, intelligence);
+      await writeJsonAtomic(narrativeBlueprintPath, storyBlueprint);
+      await writeJsonAtomic(path.join(resultDir, "story-intelligence.json"), intelligence);
+      await writeJsonAtomic(path.join(resultDir, "narrative-blueprint.json"), storyBlueprint);
+      this.emitLog(onProgress, 59, `[STORY_FIRST] Đã khóa ${intelligence.events.length} sự kiện nguồn, ${storyBlueprint.seriesParts.length} Story Blueprint và hướng dẫn Narrator Director.`, logs);
+    }
+
+    // ---------------------------------------------------------------------
     // Phase B2: script generation from the verified understanding (text only).
     // ---------------------------------------------------------------------
     const phaseBMetrics = newMetrics();
@@ -3462,6 +3489,8 @@ class ManualAntigravityStage1Service {
       transcriptPath: inputPaths.transcriptPath,
       hookContractPath: inputPaths.hookContractPath,
       actionCandidatesPath: inputPaths.actionCandidatesPath,
+      storyIntelligencePath,
+      narrativeBlueprintPath,
       resultDir,
       scriptIds: requestedScriptIds,
       coverageSummary
@@ -3549,10 +3578,94 @@ class ManualAntigravityStage1Service {
       throw new Error(`Antigravity không trả về artifacts JSON hợp lệ. Xem log tại ${resultDir}.`);
     }
 
-    const scriptArtifacts = envelope.artifacts.filter((a) => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
-    const normalized = scriptArtifacts.map(normalizeArtifact);
-    const deduplicated = new Map();
-    for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
+    // The first Phase B response is a candidate, not an accepted V1.
+    // A weak narrator/story is repaired ONCE using only structured text;
+    // if still weak, preserve diagnostics and block importing the script.
+    const scriptsFrom = (rawEnvelope) => {
+      const artifacts = (rawEnvelope?.artifacts || [])
+        .filter((a) => /^script-\d+\.json$/i.test(a.filename || "") || a.script?.scriptId)
+        .map(normalizeArtifact);
+      const map = new Map();
+      for (const artifact of artifacts) map.set(Number(artifact.script.scriptId), artifact);
+      return map;
+    };
+    let deduplicated = scriptsFrom(envelope);
+    const gatePath = path.join(resultDir, "editorial-quality-report.json");
+    const evaluate = (map) => {
+      const results = requestedScriptIds.map((scriptId) => {
+        const script = map.get(scriptId)?.script;
+        if (!script) return { scriptId, passed: false, score: 0, errors: [{ code: "missing_script", message: "Missing requested Part" }], warnings: [], feedback: ["Missing script."] };
+        return StoryFirst.evaluateEditorialScript(script, storyBlueprint, { minScore: 80 });
+      });
+      const adherence = evaluateScriptsAgainstSeriesPlan([...map.values()].map((item) => item.script), seriesPlan);
+      for (const item of adherence.report) {
+        if (item.adherence < 0.80) {
+          const target = results.find((result) => result.scriptId === item.scriptId);
+          if (target) {
+            target.passed = false;
+            target.errors.push({ code: "series_allocation", message: `Only ${Math.round(item.adherence * 100)}% of footage matches the locked series allocation.` });
+            target.feedback.push("Source segments violate the locked Series Plan.");
+          }
+        }
+      }
+      return { artifactType: "editorial_quality_report", schemaVersion: 1, accepted: results.every((result) => result.passed), results, seriesAdherence: adherence };
+    };
+    let editorialReport = null;
+    if (storyFirstEnabled) {
+      editorialReport = evaluate(deduplicated);
+      await writeJsonAtomic(gatePath, editorialReport);
+      if (!editorialReport.accepted && !this.cancelled) {
+        for (const [id, artifact] of deduplicated) {
+          await writeJsonAtomic(path.join(resultDir, `script-${id}-before-editorial-repair.json`), artifact.script);
+        }
+        this.emitLog(onProgress, 83,
+          `[EDITORIAL_GATE] V1 chưa đạt: ${editorialReport.results.filter((x) => !x.passed).map((x) => `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 3).join(", ")}`).join("; ")}. Gemini đang sửa cấu trúc và narrator từ bằng chứng đã khóa.`, logs);
+        const repairPrompt = assertPrintPromptSize(StoryFirst.buildEditorialRepairPrompt({
+          previousFiles: [...deduplicated.keys()].map((id) => path.join(resultDir, `script-${id}-before-editorial-repair.json`)),
+          reportPath: gatePath, blueprintPath: narrativeBlueprintPath,
+          intelligencePath: storyIntelligencePath, scriptIds: requestedScriptIds
+        }), "Phase B editorial repair");
+        const repairConfig = this.buildCommand(repairPrompt, schemaPath, pass1Dir, {
+          packageInfo, timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
+        });
+        const repairMetrics = newMetrics();
+        try {
+          const repaired = await this.runAgyPhase({
+            label: "PHASE_B_EDITORIAL_REPAIR", commandConfig: repairConfig, prompt: repairPrompt,
+            resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+            metrics: repairMetrics, logs, logBase: "phaseB-editorial-repair"
+          });
+          await fs.writeFile(path.join(resultDir, "phaseB-editorial-repair-output.log"), repaired.stdout || "", "utf8");
+          const repairedEnvelope = findArtifactEnvelope(repaired.stdout || "");
+          if (repairedEnvelope?.artifacts?.length) {
+            // A repair response must include every requested script; never
+            // accidentally accept half a repair and half the stale scripts.
+            deduplicated = scriptsFrom(repairedEnvelope);
+          }
+        } catch (error) {
+          await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+          throw error;
+        } finally {
+          timing.scriptGeneration.editorialRepairProcesses = repairMetrics.agyProcessCount;
+          timing.scriptGeneration.editorialRepairTokens = tokenSummary(repairMetrics);
+        }
+        const repairedReport = evaluate(deduplicated);
+        editorialReport = { ...repairedReport, repairedOnce: true };
+        await writeJsonAtomic(gatePath, editorialReport);
+      }
+      timing.scriptGeneration.editorialReady = editorialReport.accepted;
+      timing.scriptGeneration.editorialScores = editorialReport.results.map((x) => ({ scriptId: x.scriptId, score: x.score, passed: x.passed }));
+      if (!editorialReport.accepted) {
+        await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
+        const codes = editorialReport.results.filter((x) => !x.passed)
+          .map((x) => `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 4).join(", ")}`).join("; ");
+        const error = new Error(`[EDITORIAL_GATE] V1 bị chặn trước render: ${codes}. Xem ${gatePath}.`);
+        error.kind = "editorial_quality";
+        throw error;
+      }
+      this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}=${x.score}/100`).join(", ")}; narration và story continuity đã được kiểm tra trước render.`, logs);
+    }
+    const normalized = [...deduplicated.values()];
     const files = [];
     for (const scriptId of requestedScriptIds) {
       const artifact = deduplicated.get(scriptId);
