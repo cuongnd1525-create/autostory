@@ -1131,7 +1131,7 @@ function toRange(item) {
   return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
 }
 
-function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
+function validateSeriesPlan(plan, { series, videoDurationSec = 0, hookContract = null } = {}) {
   const errors = [];
   const warnings = [];
   if (!plan || typeof plan !== "object") return { ok: false, errors: ["series-plan không phải object."], warnings };
@@ -1176,6 +1176,22 @@ function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
         }
       }
       if (duplicated > 3) errors.push(`Script ${scriptIds[i]} và Script ${scriptIds[j]} trùng ${duplicated.toFixed(1)}s nguồn ngoài sharedRanges.`);
+    }
+  }
+  // Only user-locked hooks are immutable. Auto-suggested hooks are provisional
+  // and may be replaced with a stronger story-grounded opener by Gemini.
+  if (hookContract?.isUserLocked === true) {
+    const lockedHook = toRange(hookContract.variants?.variant_01?.anchorRange || hookContract.anchorRange || {});
+    const firstPart = series.parts.find((part) => part.partNumber === 1);
+    const plannedHook = toRange((parts.find((p) => Number(p.scriptId) === firstPart?.scriptId) || {}).hookRange || {});
+    const startTolerance = Number(hookContract.trimmingTolerance?.startOffsetMaxSec ?? 2);
+    const endTolerance = Number(hookContract.trimmingTolerance?.endOffsetMaxSec ?? 3);
+    if (!lockedHook || !plannedHook
+      || plannedHook.start < lockedHook.start - Math.max(0, startTolerance) - 0.05
+      || plannedHook.start > lockedHook.end + 0.05
+      || plannedHook.end > lockedHook.end + Math.max(0, endTolerance) + 0.05
+      || plannedHook.end < lockedHook.start - 0.05) {
+      errors.push("Part 1 hookRange vi phạm Hook Contract đã được user khóa; không được tự thay bằng auto hook.");
     }
   }
   const payoffPart = series.parts.find((part) => part.ending === "payoff");
@@ -3116,6 +3132,7 @@ class ManualAntigravityStage1Service {
       timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
     });
     const videoViews = new Set();
+    const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
     const result = await this.runAgyPhase({
       label: "SERIES_PLAN", commandConfig, prompt, resultDir, onProgress,
       expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan"
@@ -3125,7 +3142,7 @@ class ManualAntigravityStage1Service {
     const parse = async () => {
       const plan = await extractNamedArtifact(stdout, { filename: "series-plan.json", artifactType: "series_plan", resultDir });
       const normalized = plan ? { ...plan, artifactType: plan.artifactType || "series_plan", profile: series.profile } : null;
-      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec }) };
+      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec, hookContract }) };
     };
     let parsed = await parse();
     if (!parsed.validation.ok && conversationId) {
@@ -3435,7 +3452,9 @@ class ManualAntigravityStage1Service {
       let cached = null;
       try { cached = JSON.parse(await fs.readFile(planCachePath, "utf8")); } catch (_error) {}
       if (cached?.key === planCacheKey && cached?.plan?.lockedBy === "host_validator"
-          && validateSeriesPlan(cached.plan, { series, videoDurationSec }).ok) {
+          && validateSeriesPlan(cached.plan, {
+            series, videoDurationSec, hookContract: await StoryFirst.readJson(inputPaths.hookContractPath)
+          }).ok) {
         seriesPlan = cached.plan;
         cacheHit = true;
         this.emitLog(onProgress, 56, `[SERIES_PLAN] CACHE HIT: dùng lại kế hoạch đã khóa và xác minh (${planCachePath}).`, logs);
