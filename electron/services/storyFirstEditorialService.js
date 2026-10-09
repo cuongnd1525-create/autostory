@@ -266,20 +266,33 @@ function evaluateEditorialScript(script = {}, blueprint = {}, { minScore = 80, s
       if (GENERIC_NARRATION.test(voice)) addError("generic_clickbait", "Remove generic clickbait/forced Part CTA.", i);
       if (voice.split(/\s+/).length > 36) warnings.push({ code: "long_voice", index: i, message: "Narrator sentence/block may be too long for a natural delivery." });
     }
+    // Transition metadata is invisible to a viewer. Require an actual
+    // spoken temporal cue (or an explicitly rendered supported time card).
+    // A 'transitionReason: earlier' string alone cannot justify the edit.
+    const transitionSpoken = [segments[i - 1], segment, segments[i + 1]]
+      .filter(Boolean).map((entry) => extractVoice(entry)).join(" ");
+    const renderedTimeCard = compact(segment.onScreenTimeCard || segment.renderedTimeCard);
     if (previousRange && sourceRange.start < previousRange.start - 15) {
-      if (!/earlier|before|rewind|flashback|back to|previously|hours? ago|minutes? ago|trước đó|quay lại/i.test(bridgeTextAt(segments, i))) {
+      if (!/earlier|before|rewind|flashback|back to|previously|hours? ago|minutes? ago|trước đó|quay lại/i.test(transitionSpoken + " " + renderedTimeCard)) {
         unbridgedJumps++;
-        addError("unbridged_flashback", "Major backward source jump has no explicit temporal bridge.", i);
+        addError("unbridged_flashback",
+          "Major rewind lacks an AUDIBLE narrator cue or explicitly rendered time card; transitionReason metadata alone does not count.", i);
       }
     }
     if (previousRange && sourceRange.start > previousRange.end + 90) {
-      if (!bridgeTextAt(segments, i).trim()) warnings.push({ code: "unexplained_forward_jump", index: i, message: "Large forward jump needs causal/time orientation." });
+      if (!transitionSpoken.trim() && !renderedTimeCard) {
+        addError("unbridged_forward_jump",
+          "Major forward jump lacks spoken time/causal orientation; hidden JSON metadata is not enough.", i);
+      }
     }
     previousRange = sourceRange;
   }
   if (part && segments.length > 0 && num(part.partNumber) === 1) {
     const firstRange = range(segments[0]), hook = range(part.hookRange);
     if (hook && firstRange && !overlaps(firstRange, hook)) addError("hook_misaligned", "Part 1 must start on the locked hook source range.", 0);
+    if (firstRange && firstRange.end - firstRange.start > 12) {
+      addError("oversized_opening_hook", "The initial bodycam hold exceeds 12 seconds without an editorial handoff; extract the trigger and move promptly to verified context.", 0);
+    }
     if (extractMode(segments[0]) !== "original_audio") warnings.push({ code: "hook_muted", index: 0, message: "Consider retaining compelling authentic hook audio." });
   }
   if (part && voices.length < 2) addError("narrator_not_directing", "Narration requires at least two meaningful bridge/interpretation beats; footage-only summary fails the narrator-led series profile.");
@@ -327,7 +340,9 @@ function buildPhaseBEditorialGuidance({ intelligencePath, blueprintPath }) {
     "- Write narrator text as a storyteller, not as a visual describer or police report. Each narration sentence must ADD verified background, explain a chronological/causal jump, reinterpret evidence, or set up the next authentic beat.",
     "- Interleave narrator with authentic original_audio. Never bury the crucial officer/suspect quote, scream, impact or reveal beneath voiceover; hand back to live audio promptly.",
     "- At least two purposeful narrator beats per Part unless user explicitly selected source-audio-only mode. Do NOT hit a narration quota with filler.",
-    "- Every backward source jump greater than ~15 seconds must be anchored by a CLEAR explicit rewind/earlier transition in narration or transitionReason. Explain character changes and spatial jumps when needed.",
+    "- Every backward source jump greater than ~15 seconds MUST be anchored by ACTUALLY SPOKEN rewind/earlier narration or a time title which WILL BE RENDERED. A transitionReason hidden in JSON does not count. Explain character changes and spatial jumps.",
+    "- In a multipart True Crime cold open, do not hold the opening source beat for more than about 8s without new information. Hard limit 12s unless source dialogue is both exceptional and absolutely indispensable.",
+    "- Include an explicit per-Part story_blueprint and narration_arc with grounded narrator functions, evidence anchors, source time ranges and actual performed transitions. These fields must agree with the locked narrative-blueprint.json and the rendered segment list; metadata is not a substitute for a spoken bridge.",
     "- Each new beat must have a narrative function and information gain. Discard procedural bloat and repeated facts, but keep subtle consequential reactions and essential context.",
     "- Respect all source-grounded hook promises, scene allocations, Part boundaries and spoiler restrictions. End Part 1/2 on a verified consequential unanswered question, not 'follow for part 2'.",
     "- Conversation-friendly natural US English; short sentences, varied rhythm, no 'what happened next' filler, never fake conclusions/charges/motives.",
