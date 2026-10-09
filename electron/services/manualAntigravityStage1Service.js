@@ -3399,8 +3399,11 @@ class ManualAntigravityStage1Service {
         ? await fs.readFile(inputPaths.hookContractPath, "utf8").catch(() => "")
         : "";
       const planCacheKey = crypto.createHash("sha256").update(JSON.stringify({
-        version: 1, understandingKey, promptText, hookContractText,
-        sourceFingerprint, profile: series.profile, parts: series.parts,
+        version: 1, understandingKey, understanding,
+        promptText, hookContractText, sourceFingerprint,
+        profile: series.profile, parts: series.parts,
+        command: this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy",
+        args: this.settings.antigravityArgs || process.env.ANTIGRAVITY_ARGS || "",
         model: this.settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "",
         reasoning: this.settings.antigravityReasoning || "high",
         scriptIds: requestedScriptIds
