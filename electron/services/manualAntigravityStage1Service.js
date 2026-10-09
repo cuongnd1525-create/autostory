@@ -3650,7 +3650,49 @@ class ManualAntigravityStage1Service {
       const results = requestedScriptIds.map((scriptId) => {
         const script = map.get(scriptId)?.script;
         if (!script) return { scriptId, passed: false, score: 0, errors: [{ code: "missing_script", message: "Missing requested Part" }], warnings: [], feedback: ["Missing script."] };
-        return StoryFirst.evaluateEditorialScript(script, storyBlueprint, { minScore: 80 });
+        const result = StoryFirst.evaluateEditorialScript(script, storyBlueprint, { minScore: 80 });
+        // Use exactly the SAME production scorer/normalizer as import.
+        // Stage 1 must not say "PASS 95" if import would subsequently score
+        // this V1 at 41 and proceed to render.
+        if (this.settings.storyFirstUnifiedPreflightEnabled !== false) {
+          try {
+            const { normalizeHighlightCutScript } = require("./dubbingService");
+            const { scoreManualGeminiVariant } = require("./manualGeminiViralPreflightService");
+            const plannedPart = series?.parts?.find((p) => p.scriptId === scriptId);
+            const candidate = {
+              ...script, prompt_profile: series?.profile || "viral_tiktok_crime_part1",
+              part_number: plannedPart?.partNumber || 1
+            };
+            const normalized = normalizeHighlightCutScript(candidate, videoDurationSec);
+            const readiness = scoreManualGeminiVariant({
+              script: candidate, normalizedScript: normalized,
+              expectedScriptId: scriptId
+            });
+            result.productionPreflight = {
+              score: readiness.score,
+              passed: readiness.passed,
+              editorialReadiness: readiness.scoreBreakdown?.editorialReadiness?.score ?? null,
+              technicalReadiness: readiness.scoreBreakdown?.technicalReadiness?.score ?? null,
+              issues: (readiness.issues || []).slice(0, 14)
+            };
+            if (readiness.score < 72 || !readiness.passed
+              || (readiness.scoreBreakdown?.editorialReadiness?.score ?? 100) < 72
+              || (readiness.scoreBreakdown?.technicalReadiness?.score ?? 100) < 80) {
+              result.passed = false;
+              result.errors.push({
+                code: "production_preflight_failed",
+                message: `Production Viral Preflight ${readiness.score}/100 (editorial ${result.productionPreflight.editorialReadiness}, technical ${result.productionPreflight.technicalReadiness}) would reject this V1.`
+              });
+              result.feedback.push(...(readiness.issues || []).slice(0, 12)
+                .map((issue) => `production_preflight: ${issue}`));
+            }
+          } catch (error) {
+            result.passed = false;
+            result.errors.push({ code: "production_preflight_error", message: String(error.message || "") });
+            result.feedback.push("Production normalized timeline could not be scored: " + String(error.message || ""));
+          }
+        }
+        return result;
       });
       const adherence = evaluateScriptsAgainstSeriesPlan([...map.values()].map((item) => item.script), seriesPlan);
       for (const item of adherence.report) {
@@ -3778,7 +3820,7 @@ class ManualAntigravityStage1Service {
         error.kind = "editorial_quality";
         throw error;
       }
-      this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}: structure=${x.structuralScore ?? x.score}, cold-viewer=${x.audienceScore ?? "disabled"}`).join("; ")}; đây là kiểm tra kịch bản, Viral Preflight và MP4 review vẫn phải đạt riêng.`, logs);
+      this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}: structure=${x.structuralScore ?? x.score}, cold-viewer=${x.audienceScore ?? "disabled"}, production-preflight=${x.productionPreflight?.score ?? "disabled"}`).join("; ")}; bản render thực tế vẫn cần MP4 review.`, logs);
     }
     const normalized = [...deduplicated.values()];
     const files = [];
