@@ -3193,10 +3193,13 @@ class ManualAntigravityStage1Service {
       // NEVER resume that session: it can start debugging and writing app code.
       // Start one fresh, tightly bounded, read-only planning turn instead.
       const diagnosticsPath = path.join(resultDir, "series-plan-validation-diagnostics.json");
+      const firstAttemptDiagnostics = {
+        validationErrors: [...parsed.validation.errors],
+        streamBytes: Buffer.byteLength(stdout, "utf8"),
+        agentTextCount: collectAgentTexts(stdout).length
+      };
       await writeJsonAtomic(diagnosticsPath, {
-        firstAttempt: { validationErrors: parsed.validation.errors,
-          streamBytes: Buffer.byteLength(stdout, "utf8"),
-          agentTextCount: collectAgentTexts(stdout).length },
+        firstAttempt: firstAttemptDiagnostics,
         action: "fresh_isolated_read_only_regeneration"
       });
       metrics.retryCount += 1;
@@ -3232,9 +3235,11 @@ class ManualAntigravityStage1Service {
       conversationId = retry.conversationId || conversationId;
       parsed = await parse();
       await writeJsonAtomic(diagnosticsPath, {
-        firstAttempt: { validationErrors: ["first attempt invalid"] },
-        repairAttempt: { validationErrors: parsed.validation.errors,
-          isolated: true, success: parsed.validation.ok }
+        firstAttempt: firstAttemptDiagnostics,
+        repairAttempt: {
+          validationErrors: [...parsed.validation.errors],
+          isolated: true, success: parsed.validation.ok
+        }
       });
     }
     await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan.log"), stdout, "utf8");
