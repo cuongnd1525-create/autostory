@@ -1,0 +1,36 @@
+name: Story First V1 Editorial Regression
+
+on:
+  pull_request:
+    paths:
+      - "electron/services/storyFirstEditorialService.js"
+      - "electron/services/manualAntigravityStage1Service.js"
+      - "tests/storyFirstEditorialService.test.js"
+      - "tests/antigravityAuthBudget.test.js"
+      - ".github/workflows/story-first-v1.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  story-first:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Editorial + existing Stage 1 regression
+        run: |
+          node --check electron/services/storyFirstEditorialService.js
+          node --check electron/services/manualAntigravityStage1Service.js
+          node tests/storyFirstEditorialService.test.js
+          node tests/seriesPlan.test.js
+          node tests/antigravityAuthBudget.test.js
+          node tests/manualAntigravityStage1Service.test.js
+          node tests/phaseARecovery.test.js
+          node tests/sourceUnderstandingMapReduce.test.js
