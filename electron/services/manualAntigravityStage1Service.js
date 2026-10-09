@@ -1286,6 +1286,15 @@ async function extractNamedArtifact(stdout, { filename, artifactType, resultDir 
   if (fromEnvelope) return fromEnvelope;
   const deep = findObjectDeep(stdout, (object) => object.artifactType === artifactType);
   if (deep) return deep;
+  // In real agy stream-json the final response may be streamed as text_delta
+  // steps without a complete "result.response" JSON object.
+  // Reassemble agent text before consuming an expensive regeneration attempt.
+  for (const text of collectAgentTexts(stdout).reverse()) {
+    const fromText = findArtifactEnvelope(text)?.artifacts?.find((entry) => entry.filename === filename);
+    if (fromText?.script && typeof fromText.script === "object") return fromText.script;
+    const recovered = findObjectDeep(text, (object) => object.artifactType === artifactType);
+    if (recovered) return recovered;
+  }
   if (resultDir) {
     try {
       const parsed = parseJsonCandidate(await fs.readFile(path.join(resultDir, filename), "utf8"));
@@ -2144,7 +2153,7 @@ class ManualAntigravityStage1Service {
    * stage's maximum timeout is longer than its remaining TTL.
    * Retry 401 only after verifying a genuinely newer token, never blindly.
    */
-  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
+  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, forbiddenTools = [], toolGuard = null }) {
     const maxCapacityRetries = 2;
     let capacityRetries = 0;
     let authRefreshRetries = 0;
@@ -2159,7 +2168,7 @@ class ManualAntigravityStage1Service {
       const outcome = await this.runAgyOnce({
         label, commandConfig: boundedConfig, prompt, resultDir, onProgress,
         expectedProxyList, viewedProxySet, metrics, logs, logBase,
-        forbiddenTools: ["view_file:video"]
+        forbiddenTools: ["view_file:video", ...forbiddenTools], toolGuard
       });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && capacityRetries < maxCapacityRetries && !this.cancelled) {
@@ -3121,6 +3130,26 @@ class ManualAntigravityStage1Service {
     return { data: normalized, validation: validateSourceUnderstanding(normalized, { videoDurationSec }) };
   }
 
+
+/**
+ * Planning is read-only, NOT an agentic code-editing task. Restrict Antigravity
+ * to the exact evidence input paths that the host supplied for this case.
+ * Reject the tool at its ACTIVE event before the agent can roam or edit source.
+ */
+function buildSeriesPlanReadOnlyGuard(allowedInputPaths = []) {
+  const normalized = (value) => String(value || "").trim().replace(/\\/g, "/").toLowerCase();
+  const allowed = new Set(allowedInputPaths.filter(Boolean).map(normalized));
+  return ({ toolName, file }) => {
+    if (toolName !== "view_file") {
+      return `series plan is read-only; ${toolName || "unknown tool"} is not allowed`;
+    }
+    if (!allowed.has(normalized(file))) {
+      return `not an approved series planning evidence path: ${path.basename(String(file || ""))}`;
+    }
+    return null;
+  };
+}
+
   async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, hookTournamentPath = "", inputPaths, videoDurationSec, onProgress, metrics, logs }) {
     const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
       series,
@@ -3137,9 +3166,14 @@ class ManualAntigravityStage1Service {
     });
     const videoViews = new Set();
     const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
+    const readOnlyGuard = buildSeriesPlanReadOnlyGuard([
+      understandingPath, inputPaths.hookContractPath, hookTournamentPath,
+      inputPaths.sceneManifestPath, inputPaths.transcriptPath
+    ]);
     const result = await this.runAgyPhase({
       label: "SERIES_PLAN", commandConfig, prompt, resultDir, onProgress,
-      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan"
+      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs,
+      logBase: "seriesPlan", toolGuard: readOnlyGuard
     });
     let stdout = result.stdout || "";
     let conversationId = result.conversationId;
@@ -3149,25 +3183,54 @@ class ManualAntigravityStage1Service {
       return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec, hookContract }) };
     };
     let parsed = await parse();
-    if (!parsed.validation.ok && conversationId) {
-      metrics.retryCount += 1;
-      this.emitLog(onProgress, 56, `[SERIES_PLAN] Plan chưa hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu sửa trong cùng hội thoại...`, logs);
-      const repairPrompt = [
-        "Your series plan was rejected by the host validator:",
-        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
-        "Return the COMPLETE corrected series-plan envelope now, exactly one JSON object, no prose. Do not open any .mp4 file."
-      ].join("\n");
-      const retryConfig = this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, {
-        packageInfo,
-        timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
+    if (!parsed.validation.ok) {
+      // A malformed/empty first response may be a contaminated conversation.
+      // NEVER resume that session: it can start debugging and writing app code.
+      // Start one fresh, tightly bounded, read-only planning turn instead.
+      const diagnosticsPath = path.join(resultDir, "series-plan-validation-diagnostics.json");
+      await writeJsonAtomic(diagnosticsPath, {
+        firstAttempt: { validationErrors: parsed.validation.errors,
+          streamBytes: Buffer.byteLength(stdout, "utf8"),
+          agentTextCount: collectAgentTexts(stdout).length },
+        action: "fresh_isolated_read_only_regeneration"
       });
+      metrics.retryCount += 1;
+      this.emitLog(onProgress, 56,
+        `[SERIES_PLAN] Invalid output: ${parsed.validation.errors.slice(0, 2).join(" ")}. Tạo lại kế hoạch trong tiến trình MỚI, chỉ được đọc dữ liệu nguồn; cấm sửa code.`, logs);
+      const repairPrompt = assertPrintPromptSize([
+        "FRESH, ISOLATED SERIES PLAN REGENERATION. You are NOT debugging code.",
+        "The previous planning result was rejected or not serialized. Do not resume the old session or inspect its logs.",
+        "Do NOT read, inspect or modify source code, project files, Git, renderer.js or manualAntigravityStage1Service.js.",
+        "Do NOT use manage_task, write_to_file, run_command, search, shell or any tool except view_file on the EXACT evidence paths listed below.",
+        "Do not write the output into any file; put the complete JSON in your final response ONLY.",
+        "Problems to address:",
+        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
+        "",
+        "REISSUED ORIGINAL PLANNING INSTRUCTIONS (complete and authoritative):",
+        prompt,
+        "",
+        "Return the COMPLETE artifacts envelope with filename series-plan.json, correct script JSON, three Parts, verified source ranges.",
+        "FINAL RESPONSE MUST START WITH { AND END WITH }. No explanation, code edits, Markdown or files."
+      ].join("\n"), "Series plan isolated regeneration");
+      const retryConfig = this.buildCommand(repairPrompt, schemaPath, pass1Dir, {
+        packageInfo,
+        timeoutMs: Math.min(180000, resolvePhaseTimeoutMs("series_plan", this.settings))
+      });
+      // The CLI still permits non-interactive input reading, but any non-evidence
+      // access or code-editing tool immediately stops this process.
       const retry = await this.runAgyPhase({
-        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt, resultDir, onProgress,
-        expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-retry"
+        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt,
+        resultDir, onProgress, expectedProxyList: [], viewedProxySet: videoViews,
+        metrics, logs, logBase: "seriesPlan-retry", toolGuard: readOnlyGuard
       });
       stdout += `\n--- SERIES_PLAN_REPAIR ---\n${retry.stdout || ""}`;
       conversationId = retry.conversationId || conversationId;
       parsed = await parse();
+      await writeJsonAtomic(diagnosticsPath, {
+        firstAttempt: { validationErrors: ["first attempt invalid"] },
+        repairAttempt: { validationErrors: parsed.validation.errors,
+          isolated: true, success: parsed.validation.ok }
+      });
     }
     await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan.log"), stdout, "utf8");
     if (!parsed.validation.ok) {
