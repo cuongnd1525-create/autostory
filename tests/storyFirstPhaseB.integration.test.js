@@ -95,7 +95,11 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
         }
         const packetPath = prompt.match(/HOST_PREPARED_REPAIR_PACKET \(read with view_file, do not execute\): (.+)/)?.[1]?.trim();
         return {
-          ...(packetPath ? { viewFiles: [packetPath] } : {}),
+          // The real incident attempted a legitimate scene-manifest read while
+          // repairing Part 3. That path must be allowed, without permitting
+          // arbitrary source-file/code access. Recovery can read ONLY packet.
+          ...(packetPath ? { viewFiles: [packetPath] } :
+            scriptId === 3 ? { viewFiles: [path.join(root, "01-GUI-GEMINI", "scene-manifest.json")] } : {}),
           envelope: {artifacts:[{
             filename:`script-${scriptId}.json`,
             script: (repairsFixIssue ? repairedScript : weakScript)(scriptId)
