@@ -6,6 +6,7 @@ on:
       - "electron/services/storyFirstEditorialService.js"
       - "electron/services/manualAntigravityStage1Service.js"
       - "tests/storyFirstEditorialService.test.js"
+      - "tests/storyFirstPhaseB.integration.test.js"
       - "tests/antigravityAuthBudget.test.js"
       - ".github/workflows/story-first-v1.yml"
   workflow_dispatch:
@@ -29,6 +30,7 @@ jobs:
           node --check electron/services/storyFirstEditorialService.js
           node --check electron/services/manualAntigravityStage1Service.js
           node tests/storyFirstEditorialService.test.js
+          node tests/storyFirstPhaseB.integration.test.js
           node tests/seriesPlan.test.js
           node tests/antigravityAuthBudget.test.js
           node tests/manualAntigravityStage1Service.test.js
