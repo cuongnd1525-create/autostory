@@ -213,6 +213,15 @@ function evaluateEditorialScript(script = {}, blueprint = {}, { minScore = 80, s
   if (part && voices.length && !meaningful.length) addError("empty_narrative_function", "Narrator has no evident contextual/causal contribution.");
   if (part && originalAudioCount === 0) addError("no_original_evidence", "No original bodycam/dialogue/action audio to demonstrate the narrator's claims.");
   if (part && !compact(part.expectedEnding)) addError("missing_locked_ending", "Locked Part has no source-grounded payoff/cliffhanger.");
+  if (part && segments.length) {
+    const endingRanges = (Array.isArray(part.endingRange) ? part.endingRange : [part.endingRange]).map(range).filter(Boolean);
+    const endingFootagePresent = endingRanges.length > 0 && segments.slice(-2).some((item) =>
+      endingRanges.some((ending) => overlaps(range(item), ending))
+    );
+    if (endingRanges.length && !endingFootagePresent) {
+      addError("missing_ending_footage", `The final two beats omit the locked ${part.endingType}; a call-to-follow cannot substitute for the promised cliffhanger/payoff.`, segments.length - 1);
+    }
+  }
   if (voices.length > 0 && originalAudioCount === 0) warnings.push({ code: "over_narrated", message: "No handoff from narrator to authentic source evidence." });
   const baseScore = 100;
   const score = Math.max(0, baseScore - errors.length * 14 - warnings.length * 5);
