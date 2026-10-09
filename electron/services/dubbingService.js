@@ -6815,6 +6815,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       segments,
       draftVoiceReports
     });
+    if (voiceAlignmentReport.warningCount > 0) {
+      const details = voiceAlignmentReport.warnings.map((w) =>
+        `cảnh ${w.sceneNumber}: ${w.status}, voice=${Number(w.rawVoiceSec || 0).toFixed(1)}s / timeline=${Number(w.plannedTimelineSec || 0).toFixed(1)}s`
+      ).join("; ");
+      onProgress?.({
+        projectId, step: "draft", percent: 97,
+        message: `[VOICE_QA] NEEDS_REPAIR: ${details}`.slice(0, 400)
+      });
+    }
     const resolvedTimeline = compileResolvedTimeline({
       mode: "highlight_cut",
       segments,
@@ -6972,9 +6981,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       internalOutputPath: outputPath,
       subtitlePath,
       variantId,
-      previewSubtitleLanguage: "vi",
+      previewSubtitleLanguage,
       previewOnly: true,
       voiceWarningCount: voiceAlignmentReport.warningCount,
+      editorialStatus: voiceAlignmentReport.warningCount > 0 ? "needs_voice_repair" : "needs_real_video_review",
       voiceWarningReportPath,
       resolvedTimelinePath,
       geminiRewritePromptPath,
