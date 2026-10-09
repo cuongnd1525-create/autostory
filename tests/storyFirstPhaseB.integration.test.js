@@ -93,7 +93,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
               state:"ACTIVE",tool_name:"run_command",tool_info:{name:"run_command",parameters:{CommandLine:"node -e JSON.parse(...)"}}}
           }], envelope: {artifacts:[]} };
         }
-        const packetPath = prompt.match(/HOST_PREPARED_REPAIR_PACKET \\(read with view_file, do not execute\\): (.+)/)?.[1]?.trim();
+        const packetPath = prompt.match(/HOST_PREPARED_REPAIR_PACKET \(read with view_file, do not execute\): (.+)/)?.[1]?.trim();
         return {
           ...(packetPath ? { viewFiles: [packetPath] } : {}),
           envelope: {artifacts:[{
