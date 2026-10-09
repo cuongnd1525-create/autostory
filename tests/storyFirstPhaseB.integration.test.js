@@ -147,6 +147,11 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert.deepStrictEqual(good.calls.filter(c=>c.prompt.includes("EDITORIAL REPAIR")).map(c=>Number(c.prompt.match(/Repair EXACTLY Part Script (\d+)/)?.[1])),[1,3,4]);
     assert(good.calls.filter((c) => c.kind === "phase_b").every((c) => !/view_file\("[^"]+\.mp4"\)/.test(c.prompt)));
     assert(good.value.validFiles.length === 3);
+    const savedPart1 = JSON.parse(await fs.readFile(good.value.validFiles[0], "utf8"));
+    assert.strictEqual(savedPart1.prompt_profile, "viral_tiktok_crime_part1",
+      "exported script must retain Series profile for import-time QA");
+    assert.strictEqual(savedPart1.target_duration_min_sec, 110);
+    assert.strictEqual(savedPart1.target_duration_max_sec, 125);
   } finally { await fs.rm(good.root, { recursive: true, force: true }); }
 
   const poor = await exercise({ repairsFixIssue: false });
@@ -196,6 +201,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     const fallbackCall = repairCalls.find(c=>c.prompt.includes("ISOLATED RECOVERY AFTER A FORBIDDEN TOOL ATTEMPT"));
     assert(fallbackCall.prompt.includes("HOST_PREPARED_REPAIR_PACKET"), "recovery points to a host-generated evidence JSON file");
     assert(fallbackCall.prompt.length < 24000, "Windows agy --print argv must remain under 24k");
+    assert(repairCalls.every(c=>c.prompt.length < 24000), "both original and fallback repair prompts must remain Windows-safe");
     const packetPath = path.join(rogue.resultDir, "editorial-repair-part-3-packet.json");
     const packet = JSON.parse(await fs.readFile(packetPath, "utf8"));
     assert(packet.originalScript._sourceEvidencePayload.length > 35000, "regression fixture must carry a source JSON larger than Windows argv limit");
