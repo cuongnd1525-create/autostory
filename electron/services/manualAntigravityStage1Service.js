@@ -3847,35 +3847,114 @@ class ManualAntigravityStage1Service {
         }
         this.emitLog(onProgress, 83,
           `[EDITORIAL_GATE] V1 chưa đạt: ${editorialReport.results.filter((x) => !x.passed).map((x) => `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 3).join(", ")}`).join("; ")}. Gemini đang sửa cấu trúc và narrator từ bằng chứng đã khóa.`, logs);
-        const repairPrompt = assertPrintPromptSize(StoryFirst.buildEditorialRepairPrompt({
-          previousFiles: [...deduplicated.keys()].map((id) => path.join(resultDir, `script-${id}-before-editorial-repair.json`)),
-          reportPath: gatePath, blueprintPath: narrativeBlueprintPath,
-          intelligencePath: storyIntelligencePath, scriptIds: requestedScriptIds
-        }), "Phase B editorial repair");
-        const repairConfig = this.buildCommand(repairPrompt, schemaPath, pass1Dir, {
-          packageInfo, timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
-        });
-        const repairMetrics = newMetrics();
-        try {
-          const repaired = await this.runAgyPhase({
-            label: "PHASE_B_EDITORIAL_REPAIR", commandConfig: repairConfig, prompt: repairPrompt,
-            resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
-            metrics: repairMetrics, logs, logBase: "phaseB-editorial-repair"
+        // Repair only the failing Part(s): a monolithic three-Part rewrite
+        // encouraged AGY to call run_command to manipulate JSON and tripped the
+        // read-only tool guard. Each repair gets its OWN evidence and precise
+        // normalized preflight deductions, preserving already accepted Parts.
+        const failedIds = editorialReport.results.filter((entry) => !entry.passed).map((entry) => Number(entry.scriptId));
+        let repairProcessCount = 0;
+        const perPartRepairs = [];
+        for (const scriptId of failedIds) {
+          if (this.cancelled) break;
+          const originalArtifact = deduplicated.get(scriptId);
+          if (!originalArtifact) continue;
+          const originalFile = path.join(resultDir, `script-${scriptId}-before-editorial-repair.json`);
+          const issue = editorialReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const conciseFailure = {
+            scriptId, score: issue.score, structuralScore: issue.structuralScore ?? issue.score,
+            productionPreflight: issue.productionPreflight || null,
+            audienceScore: issue.audienceScore ?? null,
+            audienceIssues: issue.audienceIssues || [],
+            errors: issue.errors || [], warnings: issue.warnings || []
+          };
+          const partBlueprint = (storyBlueprint?.seriesParts || []).find((part) => Number(part.scriptId) === scriptId) || null;
+          const partRanges = (partBlueprint?.sceneAllocation || []).map(toRange).filter(Boolean);
+          const partEvents = (storyIntelligence?.events || []).filter((event) => {
+            const eventRange = toRange(event);
+            return partRanges.some((allowed) => eventRange && overlapSec(eventRange, allowed) > 0)
+              || (eventRange && overlapSec(eventRange, toRange(partBlueprint?.hookRange || {})) > 0);
           });
-          await fs.writeFile(path.join(resultDir, "phaseB-editorial-repair-output.log"), repaired.stdout || "", "utf8");
-          const repairedEnvelope = findArtifactEnvelope(repaired.stdout || "");
-          if (repairedEnvelope?.artifacts?.length) {
-            // A repair response must include every requested script; never
-            // accidentally accept half a repair and half the stale scripts.
-            deduplicated = scriptsFrom(repairedEnvelope);
+          const inlineEvidence = {
+            caseSummary: storyIntelligence?.caseSummary,
+            centralViewerQuestion: storyIntelligence?.centralViewerQuestion,
+            centralConflict: storyIntelligence?.centralConflict,
+            characters: storyIntelligence?.characters,
+            partBlueprint,
+            sourceEvents: partEvents,
+            immutableSeriesPlan: seriesPlan?.parts?.find((part) => Number(part.scriptId) === scriptId) || null
+          };
+          const buildRepair = (inlineOnly) => assertPrintPromptSize(StoryFirst.buildEditorialRepairPrompt({
+            previousFiles: [originalFile], reportPath: gatePath, blueprintPath: narrativeBlueprintPath,
+            intelligencePath: storyIntelligencePath, seriesPlanPath,
+            scriptIds: [scriptId], partIssues: conciseFailure,
+            inlineOnly, originalScript: originalArtifact.script, inlineEvidence
+          }), `Part ${scriptId} editorial repair`);
+          const safeReadOnly = buildSeriesPlanReadOnlyGuard([
+            originalFile, gatePath, narrativeBlueprintPath, storyIntelligencePath, seriesPlanPath
+          ]);
+          const metricsForPart = newMetrics();
+          let payload = null;
+          try {
+            const prompt = buildRepair(false);
+            const response = await this.runAgyPhase({
+              label: `PHASE_B_EDITORIAL_REPAIR_PART_${scriptId}`,
+              commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, {
+                packageInfo, timeoutMs: Math.min(300000, resolvePhaseTimeoutMs("phase_b", this.settings))
+              }), prompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+              metrics: metricsForPart, logs, logBase: `phaseB-editorial-repair-part-${scriptId}`,
+              toolGuard: safeReadOnly
+            });
+            await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-part-${scriptId}.log`), response.stdout || "", "utf8");
+            payload = findArtifactEnvelope(response.stdout || "");
+          } catch (error) {
+            if (error.kind !== "forbidden_tool") {
+              await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+              throw error;
+            }
+            // Transport fallback: one new read-only model turn, all evidence
+            // INLINED, no tool access at all. This is still ONE editorial
+            // revision cycle; do not bypass the substantive quality gate.
+            this.emitLog(onProgress, 84,
+              `[EDITORIAL_REPAIR] Part ${scriptId} thử dùng công cụ không được phép. Chuyển sang phục hồi JSON nội tuyến, không thực thi lệnh ngoài.`, logs);
+            const fallbackPrompt = buildRepair(true);
+            const fallbackMetrics = newMetrics();
+            try {
+              const recovered = await this.runAgyPhase({
+                label: `PHASE_B_EDITORIAL_REPAIR_INLINE_PART_${scriptId}`,
+                commandConfig: this.buildCommand(fallbackPrompt, schemaPath, pass1Dir, {
+                  packageInfo, timeoutMs: Math.min(180000, resolvePhaseTimeoutMs("phase_b", this.settings))
+                }), prompt: fallbackPrompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+                metrics: fallbackMetrics, logs, logBase: `phaseB-editorial-repair-inline-${scriptId}`,
+                forbiddenTools: ["view_file"],
+                toolGuard: ({ toolName }) => `inline repair: no tool ${toolName || ""} is allowed`
+              });
+              await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-inline-part-${scriptId}.log`), recovered.stdout || "", "utf8");
+              payload = findArtifactEnvelope(recovered.stdout || "");
+            } catch (recoveryError) {
+              await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+              throw recoveryError;
+            } finally {
+              repairProcessCount += fallbackMetrics.agyProcessCount;
+            }
+          } finally {
+            repairProcessCount += metricsForPart.agyProcessCount;
           }
-        } catch (error) {
-          await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
-          throw error;
-        } finally {
-          timing.scriptGeneration.editorialRepairProcesses = repairMetrics.agyProcessCount;
-          timing.scriptGeneration.editorialRepairTokens = tokenSummary(repairMetrics);
+          const repairedArtifacts = payload?.artifacts || [];
+          const expectedFilename = `script-${scriptId}.json`;
+          if (repairedArtifacts.length !== 1 || repairedArtifacts[0]?.filename !== expectedFilename
+              || Number(repairedArtifacts[0]?.script?.scriptId) !== scriptId) {
+            const badArtifact = new Error(
+              `[EDITORIAL_REPAIR] Part ${scriptId} không trả đúng một JSON hoàn chỉnh (${expectedFilename}); không dùng lại bản lỗi hoặc chấp nhận nửa vời.`
+            );
+            badArtifact.kind = "editorial_repair_invalid";
+            throw badArtifact;
+          }
+          const normalizedRepair = normalizeArtifact(repairedArtifacts[0]);
+          deduplicated.set(scriptId, normalizedRepair);
+          perPartRepairs.push({ scriptId, processCount: metricsForPart.agyProcessCount, status: "replaced" });
         }
+        timing.scriptGeneration.editorialRepairProcesses = repairProcessCount;
+        timing.scriptGeneration.editorialRepairParts = perPartRepairs;
         let repairedReport = evaluate(deduplicated);
         if (coldViewerEnabled) repairedReport = StoryFirst.attachAudienceReview(
           repairedReport, await critiqueCandidate(deduplicated, "repaired")
