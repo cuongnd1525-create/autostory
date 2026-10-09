@@ -3665,9 +3665,60 @@ class ManualAntigravityStage1Service {
       }
       return { artifactType: "editorial_quality_report", schemaVersion: 1, accepted: results.every((result) => result.passed), results, seriesAdherence: adherence };
     };
+    // Cold viewer is an independent text-only Gemini turn, without Writer
+    // scores or the host's QA grade. Every review is persisted for diagnosis.
+    const coldViewerEnabled = storyFirstEnabled && this.settings.storyFirstColdViewerEnabled !== false;
+    const critiqueCandidate = async (map, suffix) => {
+      const candidateFiles = [];
+      for (const id of requestedScriptIds) {
+        const artifact = map.get(id);
+        if (!artifact) continue;
+        const candidate = path.join(resultDir, `script-${id}-audience-${suffix}.json`);
+        await writeJsonAtomic(candidate, artifact.script);
+        candidateFiles.push(candidate);
+      }
+      const criticPrompt = assertPrintPromptSize(StoryFirst.buildColdViewerPrompt({
+        scriptPaths: candidateFiles, blueprintPath: narrativeBlueprintPath,
+        intelligencePath: storyIntelligencePath, scriptIds: requestedScriptIds
+      }), "Audience review");
+      const criticConfig = this.buildCommand(criticPrompt, schemaPath, pass1Dir, {
+        packageInfo, timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
+      });
+      const reviewMetrics = newMetrics();
+      this.emitLog(onProgress, 83, `[COLD_VIEWER] Đang đánh giá độc lập mạch truyện, hook, narrator và payoff (${suffix}), không xem lại proxy video.`, logs);
+      let reviewed = null;
+      try {
+        const response = await this.runAgyPhase({
+          label: "PHASE_B_COLD_VIEWER", commandConfig: criticConfig, prompt: criticPrompt,
+          resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+          metrics: reviewMetrics, logs, logBase: `phaseB-cold-viewer-${suffix}`
+        });
+        await fs.writeFile(path.join(resultDir, `audience-review-${suffix}-raw.log`), response.stdout || "", "utf8");
+        const artifact = findArtifactEnvelope(response.stdout || "")?.artifacts
+          ?.find((item) => item.filename === "audience-review.json");
+        reviewed = artifact?.script || null;
+      } catch (error) {
+        // A failed/unverifiable quality review is never a pass. Save its cause.
+        this.emitLog(onProgress, 83, `[COLD_VIEWER] FAILED: ${String(error.message || "").slice(0, 200)}`, logs);
+        reviewed = { artifactType: "audience_review", parts: [], failure: String(error.message || "") };
+      }
+      const validated = StoryFirst.validateColdViewerReview(reviewed, requestedScriptIds);
+      await writeJsonAtomic(path.join(resultDir, `audience-review-${suffix}.json`), {
+        ...validated, rawReview: reviewed
+      });
+      timing.scriptGeneration.audienceReviews ||= [];
+      timing.scriptGeneration.audienceReviews.push({
+        suffix, accepted: validated.accepted, processCount: reviewMetrics.agyProcessCount,
+        tokens: tokenSummary(reviewMetrics)
+      });
+      return validated;
+    };
     let editorialReport = null;
     if (storyFirstEnabled) {
       editorialReport = evaluate(deduplicated);
+      if (coldViewerEnabled) editorialReport = StoryFirst.attachAudienceReview(
+        editorialReport, await critiqueCandidate(deduplicated, "initial")
+      );
       await writeJsonAtomic(gatePath, editorialReport);
       if (!editorialReport.accepted && !this.cancelled) {
         for (const [id, artifact] of deduplicated) {
@@ -3704,7 +3755,10 @@ class ManualAntigravityStage1Service {
           timing.scriptGeneration.editorialRepairProcesses = repairMetrics.agyProcessCount;
           timing.scriptGeneration.editorialRepairTokens = tokenSummary(repairMetrics);
         }
-        const repairedReport = evaluate(deduplicated);
+        let repairedReport = evaluate(deduplicated);
+        if (coldViewerEnabled) repairedReport = StoryFirst.attachAudienceReview(
+          repairedReport, await critiqueCandidate(deduplicated, "repaired")
+        );
         editorialReport = { ...repairedReport, repairedOnce: true };
         await writeJsonAtomic(gatePath, editorialReport);
       }
@@ -3718,7 +3772,7 @@ class ManualAntigravityStage1Service {
         error.kind = "editorial_quality";
         throw error;
       }
-      this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}=${x.score}/100`).join(", ")}; narration và story continuity đã được kiểm tra trước render.`, logs);
+      this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}: structure=${x.structuralScore ?? x.score}, cold-viewer=${x.audienceScore ?? "disabled"}`).join("; ")}; đây là kiểm tra kịch bản, Viral Preflight và MP4 review vẫn phải đạt riêng.`, logs);
     }
     const normalized = [...deduplicated.values()];
     const files = [];
