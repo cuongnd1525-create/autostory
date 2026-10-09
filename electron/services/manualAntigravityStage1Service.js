@@ -1005,12 +1005,13 @@ async function readAntigravityTokenExpiry({ startedAtMs = 0, logDir = path.join(
   return null;
 }
 
-function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
+function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", hookTournamentPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
   return [
     "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
     "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
     `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
-    ...(hookContractPath ? [`HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`] : []),
+    ...(hookContractPath ? [`HOOK_CONTRACT (user-locked or provisional hook candidate): ${hookContractPath}`] : []),
+    ...(hookTournamentPath ? [`STORY_AWARE_HOOK_TOURNAMENT (read the candidate ranking and payoffs): ${hookTournamentPath}`] : []),
     ...(sceneManifestPath ? [`SCENE_MANIFEST (legal source boundaries): ${sceneManifestPath}`] : []),
     ...(transcriptPath ? [`SOURCE_TRANSCRIPT (exact spoken lines): ${transcriptPath}`] : []),
     "",
@@ -1027,6 +1028,7 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
     "- Spoiler boundaries: Part 1 and Part 2 must not include or narrate the arrest, charges, verdict or final consequence. Put those ranges in Part 3 payoffRanges.",
     "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
     "- When HOOK_CONTRACT.isUserLocked=true, the Part 1 hook MUST match its variant_01 anchor (trimming tolerance allowed). When isUserLocked=false, the auto-suggested hook is provisional: choose the stronger SOURCE-VERIFIED candidate if it better serves the central conflict, clarity, handoff and later payoff; never fabricate a new source interval.",
+    "- When STORY_AWARE_HOOK_TOURNAMENT exists, study ALL its evidence-grounded candidates. Treat its scores as editorial heuristics, NOT audience data. Choose a real hook with a verified payoff and a clear causal handoff; explain why weaker alternatives were rejected.",
     "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
     `- All ranges must lie within 0-${Number(videoDurationSec || 0).toFixed(3)}s.`,
     "",
@@ -1040,6 +1042,7 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
           profile: series.profile,
           centralViewerQuestion: "",
           hookPromise: "",
+          hookSelection: { candidateId: "", sourceEventId: "", whyItWins: "", hookTo15SecBridge: "", verifiedPayoffEventIds: [] },
           parts: series.parts.map((part) => ({
             scriptId: part.scriptId,
             partNumber: part.partNumber,
@@ -3118,11 +3121,12 @@ class ManualAntigravityStage1Service {
     return { data: normalized, validation: validateSourceUnderstanding(normalized, { videoDurationSec }) };
   }
 
-  async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics, logs }) {
+  async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, hookTournamentPath = "", inputPaths, videoDurationSec, onProgress, metrics, logs }) {
     const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
       series,
       understandingPath,
       hookContractPath: inputPaths.hookContractPath,
+      hookTournamentPath,
       transcriptPath: inputPaths.transcriptPath,
       sceneManifestPath: inputPaths.sceneManifestPath,
       videoDurationSec
@@ -3217,6 +3221,7 @@ class ManualAntigravityStage1Service {
       sceneManifestPath: [packageInfo.manifestPath, path.join(pass1Dir, "scene-manifest.json")].find((item) => item && fsSync.existsSync(item)) || "",
       transcriptPath: [packageInfo.transcriptPath, path.join(pass1Dir, "source-transcript.srt")].find((item) => item && fsSync.existsSync(item)) || "",
       hookContractPath: [packageInfo.hookContractPath, path.join(pass1Dir, "hook-contract.json")].find((item) => item && fsSync.existsSync(item)) || "",
+      hookCandidatesPath: [packageInfo.hookCandidatesPath, path.join(pass1Dir, "hook-candidates.json")].find((item) => item && fsSync.existsSync(item)) || "",
       actionCandidatesPath: [packageInfo.actionCandidatesPath, path.join(pass1Dir, "action-candidates.json")].find((item) => item && fsSync.existsSync(item)) || ""
     };
     let videoDurationSec = 0;
@@ -3424,6 +3429,29 @@ class ManualAntigravityStage1Service {
     const coverageSummary = `${coverage.viewedProxyFiles.length}/${expectedProxyList.length} proxy chunks, ${coverage.source}${coverage.verifiedAt ? ` verified ${coverage.verifiedAt}` : ""}`;
 
     // ---------------------------------------------------------------------
+    // Story-aware Hook Tournament runs only AFTER multimodal source understanding.
+    // The auto-audition winner is provisional; a user-locked hook stays binding.
+    // ---------------------------------------------------------------------
+    const storyFirstEnabled = Boolean(series && this.settings.storyFirstEditorialEnabled !== false);
+    let storyIntelligence = null;
+    let storyIntelligencePath = "";
+    let storyHookTournament = null;
+    let storyHookTournamentPath = "";
+    if (storyFirstEnabled) {
+      const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
+      const candidates = await StoryFirst.readJson(inputPaths.hookCandidatesPath);
+      storyIntelligence = StoryFirst.makeStoryIntelligence(understanding, { hookContract, sourceDurationSec: videoDurationSec });
+      storyHookTournament = StoryFirst.makeHookTournament(storyIntelligence, { hookCandidates: candidates, hookContract });
+      storyIntelligencePath = path.join(phaseBInputDir, "story-intelligence.json");
+      storyHookTournamentPath = path.join(phaseBInputDir, "story-hook-tournament.json");
+      await writeJsonAtomic(storyIntelligencePath, storyIntelligence);
+      await writeJsonAtomic(storyHookTournamentPath, storyHookTournament);
+      await writeJsonAtomic(path.join(resultDir, "story-intelligence.json"), storyIntelligence);
+      await writeJsonAtomic(path.join(resultDir, "story-hook-tournament.json"), storyHookTournament);
+      this.emitLog(onProgress, 49, `[STORY_HOOK] So sánh ${storyHookTournament.candidates.length} hook theo xung đột, độ rõ và payoff; ${storyHookTournament.userLocked ? "giữ nguyên hook user khóa" : "tự đề xuất có thể được tối ưu"}.`, logs);
+    }
+
+    // ---------------------------------------------------------------------
     // Phase B1: lock the series plan before any Part is written.
     // ---------------------------------------------------------------------
     let seriesPlan = null;
@@ -3436,7 +3464,7 @@ class ManualAntigravityStage1Service {
         ? await fs.readFile(inputPaths.hookContractPath, "utf8").catch(() => "")
         : "";
       const planCacheKey = crypto.createHash("sha256").update(JSON.stringify({
-        version: 1, understandingKey, understanding,
+        version: 2, understandingKey, understanding, storyHookTournament,
         promptText, hookContractText, sourceFingerprint,
         profile: series.profile, parts: series.parts,
         command: this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy",
@@ -3461,7 +3489,8 @@ class ManualAntigravityStage1Service {
       } else {
         this.emitLog(onProgress, 50, `[SERIES_PLAN] START: khóa kế hoạch ${series.parts.length} Part (${series.profile}) trước khi viết kịch bản.`, logs);
         const planned = await this.runSeriesPlan({
-          series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs
+          series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, hookTournamentPath: storyHookTournamentPath,
+          inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs
         });
         seriesPlan = planned.plan;
         try {
@@ -3491,21 +3520,14 @@ class ManualAntigravityStage1Service {
     // Story-first creative direction: host-generated from verified source
     // understanding and locked Part allocation, NOT from invented dialogue.
     // ---------------------------------------------------------------------
-    const storyFirstEnabled = Boolean(series && this.settings.storyFirstEditorialEnabled !== false);
     let storyBlueprint = null;
-    let storyIntelligencePath = "";
     let narrativeBlueprintPath = "";
     if (storyFirstEnabled) {
-      const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
-      const intelligence = StoryFirst.makeStoryIntelligence(understanding, { hookContract, sourceDurationSec: videoDurationSec });
-      storyBlueprint = StoryFirst.makeNarrativeBlueprint(intelligence, { seriesPlan, series });
-      storyIntelligencePath = path.join(phaseBInputDir, "story-intelligence.json");
+      storyBlueprint = StoryFirst.makeNarrativeBlueprint(storyIntelligence, { seriesPlan, series });
       narrativeBlueprintPath = path.join(phaseBInputDir, "narrative-blueprint.json");
-      await writeJsonAtomic(storyIntelligencePath, intelligence);
       await writeJsonAtomic(narrativeBlueprintPath, storyBlueprint);
-      await writeJsonAtomic(path.join(resultDir, "story-intelligence.json"), intelligence);
       await writeJsonAtomic(path.join(resultDir, "narrative-blueprint.json"), storyBlueprint);
-      this.emitLog(onProgress, 59, `[STORY_FIRST] Đã khóa ${intelligence.events.length} sự kiện nguồn, ${storyBlueprint.seriesParts.length} Story Blueprint và hướng dẫn Narrator Director.`, logs);
+      this.emitLog(onProgress, 59, `[STORY_FIRST] Đã khóa ${storyIntelligence.events.length} sự kiện nguồn, ${storyBlueprint.seriesParts.length} Story Blueprint và hướng dẫn Narrator Director.`, logs);
     }
 
     // ---------------------------------------------------------------------
