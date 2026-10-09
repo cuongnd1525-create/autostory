@@ -60,6 +60,8 @@ function runner(calls, respond) {
     assert(seconds<=180,"fresh retry has its own 180s hard cap");
     const diag=JSON.parse(await fs.readFile(path.join(root,"01-ANTIGRAVITY-RESULT","series-plan-validation-diagnostics.json"),"utf8"));
     assert.strictEqual(diag.repairAttempt.success,true);
+    assert(diag.firstAttempt.validationErrors.some((e)=>e.includes("series-plan không phải object")),
+      "retain original evidence of failed JSON extraction after a successful repair");
     assert(calls.every(c=>!c.prompt.includes("renderer.js") || c.prompt.includes("Do NOT read")), "no app source investigation");
   });
 
