@@ -53,7 +53,7 @@ function weakScript(id) {
 function envelopeFor(fn) {
   return { artifacts: SCRIPTS.map((id) => ({ filename: `script-${id}.json`, script: fn(id) })) };
 }
-async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false } = {}) {
+async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false, unifiedPreflight = false } = {}) {
   const root = await fixture();
   const calls = [];
   let attemptedRepair = false;
@@ -96,7 +96,7 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     storyFirstColdViewerEnabled: coldViewer,
     // The synthetic 90-second source has three 29s chapters; bypass only
     // the production 60.5s monetization floor in this fake-CLI test.
-    storyFirstUnifiedPreflightEnabled: false
+    storyFirstUnifiedPreflightEnabled: unifiedPreflight
   }, {
     spawn: createPhaseAwareSpawn({ calls, respond: responder }),
     authProbe: async () => ({ expiresAt: new Date(Date.now() + 3600000), expiredFlag: false })
@@ -146,6 +146,21 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert.strictEqual(critic.calls.filter((x) => x.kind === "phase_b").length, 2);
     assert(critic.calls.filter((x) => x.prompt.includes("INDEPENDENT COLD VIEWER")).every((x) => !x.prompt.includes(".mp4")));
   } finally { await fs.rm(critic.root, { recursive: true, force: true }); }
+
+  const normalizedGate = await exercise({
+    repairsFixIssue: true, coldViewer: false,
+    initialIsValid: true, unifiedPreflight: true
+  });
+  try {
+    assert.strictEqual(normalizedGate.value, null, "a structurally passing but production-invalid 29s Part must NOT reach import");
+    assert(normalizedGate.error?.kind === "editorial_quality", normalizedGate.error?.stack);
+    assert(normalizedGate.report.results.every((x) => x.productionPreflight),
+      JSON.stringify(normalizedGate.report));
+    assert(normalizedGate.report.results.every((x) =>
+      x.errors.some((error) => error.code === "production_preflight_failed")
+    ), JSON.stringify(normalizedGate.report));
+    assert(normalizedGate.attemptedRepair, "production-readiness failure must trigger the same repair path");
+  } finally { await fs.rm(normalizedGate.root, {recursive:true,force:true}); }
 
   console.log("story-first Phase B reject/repair end-to-end tests passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
