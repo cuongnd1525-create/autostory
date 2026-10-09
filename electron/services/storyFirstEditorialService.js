@@ -88,6 +88,78 @@ function makeStoryIntelligence(understanding = {}, { hookContract = null, source
   };
 }
 
+/**
+ * Story-aware second-round hook ranking AFTER Phase A has watched the source.
+ * Candidate windows are sourced from the precomputed hook audition; no new
+ * footage, quote or payoff may be invented here.
+ * Scores are planning heuristics, NOT measured audience retention.
+ */
+function makeHookTournament(intelligence = {}, { hookCandidates = null, hookContract = null } = {}) {
+  const raw = Array.isArray(hookCandidates?.topCandidates) ? hookCandidates.topCandidates : [];
+  const words = (str) => new Set(compact(str).toLowerCase().split(/[^a-z0-9]+/).filter((w) =>
+    w.length > 3 && !new Set(["with", "from", "that", "were", "this", "into", "they", "them", "what", "when"]).has(w)
+  ));
+  const conflictTerms = words(`${intelligence.centralConflict} ${intelligence.centralViewerQuestion}`);
+  const clamp = (n) => Math.max(0, Math.min(100, Number(n) || 0));
+  const overlapCount = (one, another) => [...one].filter((w) => another.has(w)).length;
+  const candidates = raw.map((candidate, index) => {
+    const selectedRange = range(candidate.anchorRange || candidate);
+    if (!selectedRange || !Number.isFinite(intelligence.sourceDurationSec)
+      || selectedRange.end > intelligence.sourceDurationSec + 1) return null;
+    const sourceEvent = (intelligence.events || []).find((event) => overlaps(selectedRange, range(event))) || null;
+    const eventTerms = words(`${sourceEvent?.summary || ""} ${sourceEvent?.visualFacts?.join(" ") || ""} ${candidate.coreEventDescription || ""}`);
+    const storyRelevance = sourceEvent
+      ? clamp(45 + 35 * Math.min(1, overlapCount(eventTerms, conflictTerms) / Math.max(1, conflictTerms.size * 0.3))
+        + 20 * Math.min(1, num(sourceEvent.storyImportance, 0) / 100))
+      : 25;
+    const s = candidate.scores || {};
+    const visual = clamp(s.visual_immediacy ?? 50);
+    const curiosity = clamp(s.curiosity_gap ?? 50);
+    const clarity = clamp(((Number(s.dialogue_strength) || 50) + (Number(s.conflict) || 50)) / 2);
+    const payoffEvents = (intelligence.events || [])
+      .filter((e) => e.sourceStartSec > selectedRange.end + 0.5
+        && ["reveal", "escalation", "climax", "consequence"].includes(e.storyRole));
+    const payoff = clamp((payoffEvents.length ? 50 : 15) + Math.min(50, Number(s.payoff_potential) || 0) * 0.5);
+    const spoiler = clamp(s.spoiler_risk ?? 0)
+      + (sourceEvent?.storyRole === "consequence" ? 25 : 0);
+    const score = clamp(0.20 * visual + 0.25 * curiosity + 0.25 * storyRelevance
+      + 0.15 * clarity + 0.15 * payoff - 0.20 * Math.min(100, spoiler));
+    return {
+      candidateId: compact(candidate.hookId || candidate.candidateId) || `hook_${index + 1}`,
+      sourceStartSec: selectedRange.start,
+      sourceEndSec: selectedRange.end,
+      sourceEventId: sourceEvent?.eventId || null,
+      candidateTitle: compact(candidate.title),
+      triggerQuote: compact(candidate.keyDialogue),
+      scores: { overall: Math.round(score), visual: Math.round(visual), curiosity: Math.round(curiosity),
+        storyRelevance: Math.round(storyRelevance), clarity: Math.round(clarity), payoff: Math.round(payoff), spoiler: Math.round(spoiler) },
+      payoffEventIds: payoffEvents.slice(0, 4).map((e) => e.eventId),
+      bridgeRequired: Boolean(sourceEvent && (intelligence.events || []).some((event) => event.sourceEndSec < sourceEvent.sourceStartSec - 15)),
+      qualityCaveat: !sourceEvent ? "Candidate has no overlapping verified Story Timeline event; review before selecting." : "",
+      provisional: hookContract?.isUserLocked !== true
+    };
+  }).filter(Boolean).sort((a, b) => b.scores.overall - a.scores.overall);
+  const lockedRange = range(hookContract?.variants?.variant_01?.anchorRange || hookContract?.anchorRange);
+  const lockedCandidate = lockedRange && candidates.find((item) =>
+    overlaps(range(item), lockedRange)
+  );
+  return {
+    artifactType: "story_hook_tournament", schemaVersion: 1,
+    assessmentKind: "source_grounded_editorial_heuristic_not_audience_metric",
+    userLocked: hookContract?.isUserLocked === true,
+    lockedRange: lockedRange ? { sourceStartSec: lockedRange.start, sourceEndSec: lockedRange.end } : null,
+    originalAutoCandidateId: compact(hookCandidates?.defaultRecommendedHook?.hookId || hookCandidates?.defaultRecommendedHook?.candidateId),
+    recommendedCandidateId: hookContract?.isUserLocked === true
+      ? (lockedCandidate?.candidateId || "USER_LOCKED_HOOK")
+      : (candidates[0]?.candidateId || null),
+    candidates,
+    selectionRule: hookContract?.isUserLocked === true
+      ? "Must use the user-locked hook; only trim within allowed tolerance."
+      : "Compare top candidates with entire source and 15-second post-hook handoff; prefer the strongest REAL hook with later payoff, not the loudest action. Gemini may reject the heuristic top pick if other grounded evidence is stronger.",
+    insufficientCoverage: candidates.length === 0
+  };
+}
+
 function makeNarrativeBlueprint(intelligence, { seriesPlan = null, series = null } = {}) {
   const parts = (series?.parts || []).map((definition) => {
     const locked = (seriesPlan?.parts || []).find((item) => num(item.scriptId, -1) === num(definition.scriptId, -2)) || {};
@@ -279,4 +351,4 @@ function buildEditorialRepairPrompt({ previousFiles = [], reportPath = "", bluep
   ].join("\n");
 }
 
-module.exports = { makeStoryIntelligence, makeNarrativeBlueprint, evaluateEditorialScript, buildPhaseBEditorialGuidance, buildEditorialRepairPrompt, readJson };
+module.exports = { makeStoryIntelligence, makeHookTournament, makeNarrativeBlueprint, evaluateEditorialScript, buildPhaseBEditorialGuidance, buildEditorialRepairPrompt, readJson };
