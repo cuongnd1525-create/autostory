@@ -93,3 +93,17 @@ The repair protocol now:
 5. Enforces exactly one complete `script-N.json` per affected Part, then re-runs the full structural, production and independent cold-viewer gates. Unresolved V1 failures still block export; they are never silently approved.
 
 Tests cover multiple Part-specific repairs, an attempted forbidden `run_command` and the tool-free fallback. This is not a claim that a live model will always return a quality-approved rewrite; it prevents the previous forbidden-tool crash and produces explicit diagnostics when the creative criteria are not met.
+
+
+## October 9 — Windows 24k argv overflow in Part-3 editorial repair
+
+Real run `1008_03`: Source Understanding cache, Series Plan cache, Phase B and initial Cold Viewer completed. Actual Part production scores were 40/51/46, with `technicalReadiness=100`. The Part-3 repair attempted an unauthorized file/tool operation, correctly invoking the read-only guard. The **fallback then crashed before launching AGY** because it embedded `35,102` characters of raw source JSON/evidence in `--print`, above the Windows CLI safety limit of `24,000`.
+
+Changes:
+- Initial per-Part repair and forbidden-tool recovery now reference **one host-written `editorial-repair-part-N-packet.json` file** containing full script, QA, verified source timeline and Part allocations. No truncation of large source evidence into the Windows `--print` command line.
+- A fresh recovery process may use `view_file` on that **single packet path only**, while shell, code editing, task-management and unrelated file reads are blocked. Legitimate first-pass reads of `scene-manifest.json` and source transcript are explicitly permitted by exact path.
+- Regression test includes a synthetic original Part JSON **over 60,000 characters**, a simulated forbidden `run_command`, a fresh recovery turn with prompt under 24k, and one explicitly whitelisted `view_file` call.
+- Discovered a second deterministic problem: **viral_tiktok_crime_part1's Series Planner locks 110–125s per Part**, but the generic serialized Production Preflight incorrectly used 75–110s whenever the model omitted target duration metadata. Real drafts at 115.5–116.4s were penalized unfairly. This profile now has a host-locked 110–125s contract in the Preflight scorer, Phase B generation, repair prompt, and every saved/repaired Part JSON. A true overlong 126s Part still gets flagged. Stage 1 and downstream import therefore use the same duration contract.
+- Store all Production Preflight issues in the QA report/recovery packet (not just the first 14); UI progress is intentionally abbreviated.
+
+CI covers these invariants on Linux and Windows with mock AGY. An actual Antigravity rerun and actual MP4 review remain necessary before claiming user-facing video quality. **No bypass of Quality Gate, no merge to main.**
