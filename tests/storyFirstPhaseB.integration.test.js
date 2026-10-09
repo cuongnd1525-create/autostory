@@ -40,7 +40,7 @@ function repairedScript(id) {
       segment(base + 8, base + 11, "voiceover_only", "But officers had received a different explanation earlier."),
       segment(base + 13, base + 17, "original_audio"),
       segment(base + 19, base + 22, "voiceover_only", "Before they could leave, the new evidence changed their questions."),
-      segment(base + 25, base + 29, "original_audio")
+      segment(base + 27, base + 30, "original_audio")
     ]
   };
 }
