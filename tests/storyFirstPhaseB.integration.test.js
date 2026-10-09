@@ -53,23 +53,47 @@ function weakScript(id) {
 function envelopeFor(fn) {
   return { artifacts: SCRIPTS.map((id) => ({ filename: `script-${id}.json`, script: fn(id) })) };
 }
-async function exercise({ repairsFixIssue }) {
+async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false } = {}) {
   const root = await fixture();
   const calls = [];
   let attemptedRepair = false;
   const normal = defaultResponder({ durationSec: DURATION });
   const responder = (kind, prompt, call) => {
+    if (prompt.includes("INDEPENDENT COLD VIEWER / TRUE-CRIME EDITOR")) {
+      const repaired = prompt.includes("audience-repaired.json");
+      const passes = repaired && repairsFixIssue;
+      const review = {
+        artifactType: "audience_review", schemaVersion: 1,
+        parts: SCRIPTS.map((id) => ({
+          scriptId: id, score: passes ? 91 : 51, accepted: passes,
+          hookQuestion: "What did the officers learn after that confrontation?",
+          hookHandoffAssessment: "The selected timeline needs a clear transition from hook to the investigation.",
+          narratorContribution: "The narrator must explain what changed and yield to authentic source quotes.",
+          weakestMoment: "The initial hook ends without an adequate chronology and context bridge.",
+          endingPayoffAssessment: "The final source-audio beat provides a verifiable chapter development.",
+          issues: passes ? [] : [{
+            code: "hook_handoff", segmentIndex: 1, sourceEventId: "e2",
+            whyViewerLeaves: "The viewer cannot understand why the hook jumps to the next event.",
+            requiredChange: "Add a grounded spoken bridge before the first rewind."
+          }]
+        }))
+      };
+      return { envelope: { artifacts: [{ filename: "audience-review.json", script: review }] } };
+    }
     if (kind === "phase_b") {
       const repairing = prompt.includes("EDITORIAL REPAIR");
       if (repairing) attemptedRepair = true;
-      return { envelope: envelopeFor(repairing && repairsFixIssue ? repairedScript : weakScript) };
+      return { envelope: envelopeFor(repairing
+        ? (repairsFixIssue ? repairedScript : weakScript)
+        : (initialIsValid ? repairedScript : weakScript)) };
     }
     return normal(kind, prompt, call);
   };
   const service = new Stage1({
     antigravityCommand: "agy",
     antigravityModel: "test-model",
-    storyFirstEditorialEnabled: true
+    storyFirstEditorialEnabled: true,
+    storyFirstColdViewerEnabled: coldViewer
   }, {
     spawn: createPhaseAwareSpawn({ calls, respond: responder }),
     authProbe: async () => ({ expiresAt: new Date(Date.now() + 3600000), expiredFlag: false })
@@ -108,5 +132,17 @@ async function exercise({ repairsFixIssue }) {
     assert(poor.attemptedRepair);
     assert.strictEqual(poor.calls.filter((c) => c.kind === "phase_b").length, 2, "repair capped to one pass");
   } finally { await fs.rm(poor.root, { recursive: true, force: true }); }
+  const critic = await exercise({ repairsFixIssue: true, coldViewer: true, initialIsValid: true });
+  try {
+    assert(!critic.error, critic.error?.stack || String(critic.error));
+    assert(critic.attemptedRepair, "independent viewer must be able to force repair even when structural gate passes");
+    assert(critic.report.accepted);
+    assert.strictEqual(critic.report.results.length, 3);
+    assert(critic.report.results.every((x) => x.audienceScore >= 80 && x.structuralScore >= 80));
+    assert.strictEqual(critic.calls.filter((x) => x.prompt.includes("INDEPENDENT COLD VIEWER")).length, 2);
+    assert.strictEqual(critic.calls.filter((x) => x.kind === "phase_b").length, 2);
+    assert(critic.calls.filter((x) => x.prompt.includes("INDEPENDENT COLD VIEWER")).every((x) => !x.prompt.includes(".mp4")));
+  } finally { await fs.rm(critic.root, { recursive: true, force: true }); }
+
   console.log("story-first Phase B reject/repair end-to-end tests passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
