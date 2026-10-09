@@ -461,48 +461,58 @@ function attachAudienceReview(gate, audience) {
 
 function buildEditorialRepairPrompt({
   previousFiles = [], reportPath = "", blueprintPath = "", intelligencePath = "",
-  seriesPlanPath = "", scriptIds = [], partIssues = null, inlineEvidence = null,
-  originalScript = null, inlineOnly = false
+  seriesPlanPath = "", transcriptPath = "", sceneManifestPath = "",
+  scriptIds = [], partIssues = null, repairPacketPath = "", recoveryFromForbiddenTool = false
 } = {}) {
   const uniquePart = scriptIds.length === 1 ? scriptIds[0] : null;
-  const conciseJson = (value, maxChars = 40000) => JSON.stringify(value || {}).slice(0, maxChars);
+  // NEVER paste a full script/source intelligence into the --print argv on
+  // Windows. Every large input belongs in a host-written JSON file; the CLI
+  // prompt carries only bounded context and the exact read-only file paths.
+  const shortFailure = (value) => JSON.stringify(value || {}).slice(0, 2300);
   return [
     "You are executing Phase B (Script Generation) EDITORIAL REPAIR of True Crime AutoStory.",
     "You are an editorial SCRIPT WRITER, not a software developer or file maintainer.",
     "NO run_command, terminal, shell, manage_task, write_to_file, search or codebase tools.",
-    "Do NOT inspect JavaScript source code or open any .mp4. In normal mode, ONLY view_file on the explicitly listed JSON files is allowed.",
-    "Never try to run a JSON fixer or validation script. All validation happens in the HOST after your reply.",
-    uniquePart ? `Repair EXACTLY Part Script ${uniquePart}; return ONE complete script JSON artifact. Other Parts are already locked, preserve their story boundaries.` :
-      `Repair exactly these Script IDs: ${scriptIds.join(", ")}.`,
-    ...(inlineOnly
+    "Do NOT inspect JavaScript source code or open any .mp4. ONLY view_file on the listed evidence JSON/text files is permitted.",
+    "Never run a JSON fixer or validation script. The HOST validates your final response.",
+    uniquePart
+      ? `Repair EXACTLY Part Script ${uniquePart}; return ONE complete script JSON artifact. Preserve all other Part boundaries.`
+      : `Repair exactly these Script IDs: ${scriptIds.join(", ")}.`,
+    ...(recoveryFromForbiddenTool
       ? [
-        "NO TOOLS whatsoever. The full candidate and relevant evidence are already copied below. Generate from this evidence only.",
-        "ORIGINAL_SCRIPT_JSON:",
-        conciseJson(originalScript, 54000),
-        "LOCKED_SOURCE_EVIDENCE_AND_BLUEPRINT_JSON:",
-        conciseJson(inlineEvidence, 34000)
+        "ISOLATED RECOVERY AFTER A FORBIDDEN TOOL ATTEMPT: DO NOT resume the prior conversation.",
+        "The previous agent called a tool outside the whitelist. The HOST terminated that run.",
+        "This is NOT an instruction to debug, inspect or change application code.",
+        "FIRST open the single HOST_PREPARED_REPAIR_PACKET below with view_file; it contains the FULL original script, exact Preflight deductions, episode evidence and locked Part allocation.",
+        `HOST_PREPARED_REPAIR_PACKET (read with view_file, do not execute): ${repairPacketPath}`,
+        "Do not call view_file on any other path. Do not call run_command even to read JSON.",
+        "If you cannot read the packet, return a clear input-access failure rather than inventing source facts."
       ]
       : [
-        `Original script to repair (read using view_file): ${previousFiles.join(" ; ")}`,
-        `Independent host report: ${reportPath}`,
-        `Locked Narrative Blueprint: ${blueprintPath}`,
-        `Source Intelligence: ${intelligencePath}`,
-        ...(seriesPlanPath ? [`LOCKED SERIES PLAN (do not change Part assignments): ${seriesPlanPath}`] : [])
+        `Original script to repair (view_file): ${previousFiles.join(" ; ")}`,
+        `Host QA report (view_file): ${reportPath}`,
+        `Locked Narrative Blueprint (view_file): ${blueprintPath}`,
+        `Source Intelligence (view_file): ${intelligencePath}`,
+        ...(seriesPlanPath ? [`LOCKED SERIES PLAN (view_file): ${seriesPlanPath}`] : []),
+        ...(sceneManifestPath ? [`Source scene boundaries (view_file only if necessary): ${sceneManifestPath}`] : []),
+        ...(transcriptPath ? [`Source transcript (view_file only if necessary): ${transcriptPath}`] : []),
+        ...(repairPacketPath ? [`HOST_PREPARED_REPAIR_PACKET (full problems and Part-specific evidence; view_file): ${repairPacketPath}`] : []),
+        "Host-identified errors (abbreviated; read FULL failure report from JSON):",
+        shortFailure(partIssues)
       ]),
-    "HOST-DIAGNOSED FAILURE REASONS FOR THIS PART (these are not instructions to fabricate evidence):",
-    conciseJson(partIssues, 28000),
     "Fix EVERY hard error that is genuinely supported by the evidence, without making up source facts or passing by fake metadata.",
-    "Resolve each real failure using grounded source ranges or accurate story metadata:",
-    "- If output duration <60.5s, restructure with verified complete source beats; never duplicate/freeze or fabricate footage to satisfy a score.",
-    "- If hook is weak, check the locked, verified hook and correct its audible handoff within ~15s.",
-    "- If macroBlockId/storyFunction/blueprint is missing, supply TRUE metadata reflecting the actual chosen narrative events; labels alone will not make a weak story good.",
-    "- If the voiceover is long or descriptive, rewrite it into short, meaningful causal transitions; do not silence critical original bodycam dialogue.",
-    "- If story jumps backward, ensure the actual SPOKEN narration includes the time reset, not merely JSON transitionReason.",
-    "- Resolve verified consequences/cliffhangers from the locked Part ending, not a generic Follow for Part 2 CTA.",
-    "- Preserve all proven dialogue, people, plot facts, relevant scene allocation, source timestamps and Part boundaries. No invented charges/motives.",
-    "- Keep complete segment structure and root script fields used for import: scriptId, segments, audio_mode, sourceStartSec, sourceEndSec, voiceover_text, transitionReason, storyFunction, story_blueprint where applicable.",
-    "IMPORTANT: Final result must be an actual complete artifact response, not a plan, a code snippet for writing files, a script patch, a summary or a tool call.",
-    `Return EXACTLY ONE JSON envelope: {\"artifacts\":[{\"filename\":\"script-${uniquePart || "N"}.json\",\"script\":{...COMPLETE REPAIRED SCRIPT...}}]}. No prose, no Markdown.`
+    "Repair priorities based on the live normalized Production Preflight:",
+    "- Keep the Part's COMPLETE playable duration within its locked series range (normally 75-110s), and ALWAYS above 60.5s. If longer, remove low-value source beats; do not truncate an essential exchange or pad duration.",
+    "- No voiceover segment should exceed 12s of actual spoken narration. Use SHORT contextual bridges and original audio with clear handoffs.",
+    "- Avoid original-audio / voiceover runs over 15s when the series profile requests interleaving; do not cut away mid-sentence or hide evidence.",
+    "- Avoid >7 distant source jumps per Part unless the story genuinely requires them; prioritize causal continuity over arbitrary hop counts.",
+    "- Part 1 must establish the hook conflict and audible context/rewind bridge within the opening ~15s, preserving the selected authentic hook.",
+    "- Every Part needs a verified cliffhanger or payoff according to the locked Part ending. No generic 'Follow for Part 2' CTA.",
+    "- Set macroBlockId/storyFunction and story_blueprint to reflect the ACTUAL story; do not simply add labels or pass flags.",
+    "- Preserve source quotes, actors, timestamps, original bodycam audio and Part boundaries; do not invent charges, motives or outcomes.",
+    "- Preserve all necessary import fields including scriptId, segments, audio_mode, sourceStartSec, sourceEndSec and voiceover_text.",
+    "IMPORTANT: Return a COMPLETE replacement SCRIPT artifact. Do not return a plan, a patch, shell instructions, or a file-write action.",
+    `Return ONE JSON envelope: {\"artifacts\":[{\"filename\":\"script-${uniquePart || "N"}.json\",\"script\":{...COMPLETE SCRIPT...}}]}. No prose, no Markdown.`
   ].join("\n");
 }
 
