@@ -2187,7 +2187,12 @@ class ManualAntigravityStage1Service {
       const outcome = await this.runAgyOnce({
         label, commandConfig: boundedConfig, prompt, resultDir, onProgress,
         expectedProxyList, viewedProxySet, metrics, logs, logBase,
-        forbiddenTools: ["view_file:video", ...forbiddenTools], toolGuard
+        // No text-only creative stage has a legitimate reason to launch a
+        // task manager, run commands, search the app codebase, or edit files.
+        // Restrict tools even if the prompt/model starts improvising.
+        forbiddenTools: ["view_file:video", ...forbiddenTools],
+        toolGuard: toolGuard || (({ toolName }) =>
+          toolName === "view_file" ? null : `text-only planning forbids ${toolName || "unknown tool"}`)
       });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && capacityRetries < maxCapacityRetries && !this.cancelled) {
