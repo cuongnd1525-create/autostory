@@ -462,7 +462,8 @@ function attachAudienceReview(gate, audience) {
 function buildEditorialRepairPrompt({
   previousFiles = [], reportPath = "", blueprintPath = "", intelligencePath = "",
   seriesPlanPath = "", transcriptPath = "", sceneManifestPath = "",
-  scriptIds = [], partIssues = null, repairPacketPath = "", recoveryFromForbiddenTool = false
+  scriptIds = [], partIssues = null, repairPacketPath = "", recoveryFromForbiddenTool = false,
+  targetMinSec = 110, targetMaxSec = 125
 } = {}) {
   const uniquePart = scriptIds.length === 1 ? scriptIds[0] : null;
   // NEVER paste a full script/source intelligence into the --print argv on
@@ -502,7 +503,7 @@ function buildEditorialRepairPrompt({
       ]),
     "Fix EVERY hard error that is genuinely supported by the evidence, without making up source facts or passing by fake metadata.",
     "Repair priorities based on the live normalized Production Preflight:",
-    "- Keep the Part's COMPLETE playable duration within its locked series range (normally 75-110s), and ALWAYS above 60.5s. If longer, remove low-value source beats; do not truncate an essential exchange or pad duration.",
+    `- Target playable duration for THIS locked Series Part is ${targetMinSec}-${targetMaxSec}s (never under 60.5s); use actual post-normalization durations, not guessed metadata. If longer, remove low-value source beats; do not truncate an essential exchange or pad duration.`,
     "- No voiceover segment should exceed 12s of actual spoken narration. Use SHORT contextual bridges and original audio with clear handoffs.",
     "- Avoid original-audio / voiceover runs over 15s when the series profile requests interleaving; do not cut away mid-sentence or hide evidence.",
     "- Avoid >7 distant source jumps per Part unless the story genuinely requires them; prioritize causal continuity over arbitrary hop counts.",
