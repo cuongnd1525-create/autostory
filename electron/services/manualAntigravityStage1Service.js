@@ -2,6 +2,7 @@ const fs = require("fs/promises");
 const fsSync = require("fs");
 const os = require("os");
 const path = require("path");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 
 const { buildCliEnv } = require("./cliEnv");
@@ -1945,16 +1946,22 @@ class ManualAntigravityStage1Service {
    * ("browser.go: token refreshed" at 09:45:10, 15:24:08, 17:14:38), and the
    * request in flight still fails with 401 each time. There is no verified
    * non-interactive refresh command, so the host does not invent one: a
-   * process is only started when the token outlives the stage's own timeout
-   * plus a safety margin; otherwise it fails BEFORE any video is viewed.
+   * video work is only started when the token outlives the full timeout.
+   * Text-only work may instead use a shorter, safe per-process deadline:
+   * it is retryable without watching the video again.
    *
-   * requiredSec = stage timeout + antigravityAuthSafetyMarginSec (default 120).
-   * The expiry is absolute, so a probe is reused across processes (no extra
-   * `agy models` per chunk) and redone only when the cached value is short.
+   * The expiry is absolute, so a probe is reused across processes while the
+   * required budget remains, avoiding extra `agy models` calls.
    */
-  async ensureAntigravityAuth({ label, diagnostics = null, onProgress, logs, stageTimeoutMs = 0 }) {
+  async ensureAntigravityAuth({ label, diagnostics = null, onProgress, logs, stageTimeoutMs = 0, textOnly = false }) {
     const marginSec = Number.isFinite(Number(this.settings.antigravityAuthSafetyMarginSec)) ? Math.max(0, Number(this.settings.antigravityAuthSafetyMarginSec)) : 120;
-    const requiredSec = stageTimeoutMs > 0 ? Math.ceil(stageTimeoutMs / 1000) + marginSec : 60;
+    const graceSec = textOnly ? Math.ceil(this.timers.hardTimeoutGraceMs / 1000) : 0;
+    const minimumTextRunSec = 120;
+    // A 15-minute worst-case timeout is NOT the minimum time a text-only
+    // inference needs. Require a viable short turn and cap its actual timeout
+    // below token expiry; video MAP retains the full-timeout requirement.
+    const intendedRunSec = stageTimeoutMs > 0 ? Math.ceil(stageTimeoutMs / 1000) : 60;
+    const requiredSec = (textOnly ? Math.min(intendedRunSec, minimumTextRunSec) : intendedRunSec) + marginSec + graceSec;
     let now = Date.now();
     const cached = this.authCache;
     let probe = null;
@@ -1978,6 +1985,9 @@ class ManualAntigravityStage1Service {
       tokenExpiresAt: expiresAtMs ? new Date(expiresAtMs).toISOString() : null,
       tokenRemainingSec: remainingSec,
       requiredSec,
+      safetyMarginSec: marginSec,
+      hardTimeoutGraceSec: graceSec,
+      textOnly,
       probeReused: reused
     };
     if (diagnostics?.authChecks) diagnostics.authChecks.push(record);
@@ -1991,8 +2001,10 @@ class ManualAntigravityStage1Service {
     }
     if (remainingSec !== null && remainingSec < requiredSec) {
       const error = new Error(
-        `[${label}] AUTH: token Antigravity còn ${Math.floor(remainingSec / 60)} phút ${remainingSec % 60}s (hết hạn ${record.tokenExpiresAt}) nhưng bước này có thể chạy tới ${Math.round(stageTimeoutMs / 1000)}s + ${marginSec}s an toàn. `
-        + "AGY CLI chỉ tự làm mới token SAU khi hết hạn và yêu cầu đang chạy sẽ lỗi 401. Mở Antigravity để làm mới đăng nhập rồi chạy lại. Chưa khởi động tiến trình AGY, chưa xem video."
+        `[${label}] AUTH: token Antigravity còn ${Math.floor(remainingSec / 60)} phút ${remainingSec % 60}s (hết hạn ${record.tokenExpiresAt}); ${textOnly ? `cần tối thiểu ${requiredSec}s (gồm thời gian xử lý ngắn + dự phòng)` : `bước này cần tới ${Math.round(stageTimeoutMs / 1000)}s + ${marginSec}s dự phòng`}. `
+        + (textOnly
+          ? "Không đủ thời gian tối thiểu để chạy một lượt AI văn bản an toàn. Làm mới đăng nhập Antigravity rồi chạy lại; cache hiểu nguồn vẫn được giữ."
+          : "AGY CLI chỉ tự làm mới token SAU khi hết hạn và yêu cầu đang chạy sẽ lỗi 401. Mở Antigravity để làm mới đăng nhập rồi chạy lại. Chưa khởi động tiến trình AGY, chưa xem video.")
       );
       error.kind = "auth_ttl";
       error.authRecord = record;
@@ -2065,21 +2077,72 @@ class ManualAntigravityStage1Service {
   }
 
   /**
-   * Text-only phases (series plan, Phase B). Capacity errors may be retried
-   * with a fresh process (no video is involved); auth and timeouts are not.
+   * Bound the CLI and host timeouts to the authenticated token's remaining
+   * lifetime. Leave 120s (configurable) and the host's hard timeout grace
+   * before expiry, so a text-only turn can run without a premature TTL block.
+   * Never mutate the shared command config (including caller-supplied args).
+   */
+  boundTextPhaseCommand(commandConfig, authRecord) {
+    const remainingSec = authRecord?.tokenRemainingSec;
+    if (!Number.isFinite(remainingSec)) return commandConfig;
+    const safetyMarginMs = authRecord.safetyMarginSec * 1000;
+    const budgetMs = Math.max(0, Math.floor(remainingSec * 1000 - safetyMarginMs - this.timers.hardTimeoutGraceMs));
+    if (budgetMs >= commandConfig.timeoutMs) return commandConfig;
+    const safeTimeoutSec = Math.floor(budgetMs / 1000);
+    if (safeTimeoutSec < 15) {
+      const error = new Error("Token Antigravity quá gần hạn hết để bắt đầu lượt AI an toàn.");
+      error.kind = "auth_ttl";
+      throw error;
+    }
+    const args = [];
+    for (let index = 0; index < commandConfig.args.length; index += 1) {
+      const arg = commandConfig.args[index];
+      if (arg === "--print-timeout") { index += 1; continue; }
+      if (arg.startsWith("--print-timeout=")) continue;
+      args.push(arg);
+    }
+    args.push("--print-timeout", `${safeTimeoutSec}s`);
+    return { ...commandConfig, args, timeoutMs: safeTimeoutSec * 1000 };
+  }
+
+  /**
+   * Text-only phases (series plan, Phase B). A short-lived but still valid
+   * token gets a bounded turn rather than being rejected merely because the
+   * stage's maximum timeout is longer than its remaining TTL.
+   * Retry 401 only after verifying a genuinely newer token, never blindly.
    */
   async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
     const maxCapacityRetries = 2;
-    for (let attempt = 0; ; attempt += 1) {
-      await this.ensureAntigravityAuth({ label, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs });
-      const outcome = await this.runAgyOnce({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
+    let capacityRetries = 0;
+    let authRefreshRetries = 0;
+    for (;;) {
+      const auth = await this.ensureAntigravityAuth({ label, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs, textOnly: true });
+      const boundedConfig = this.boundTextPhaseCommand(commandConfig, auth);
+      if (boundedConfig.timeoutMs < commandConfig.timeoutMs) {
+        this.emitLog(onProgress, 15, `[${label}] AUTH BUDGET: token còn ${auth.tokenRemainingSec}s; chạy tối đa ${Math.round(boundedConfig.timeoutMs / 1000)}s thay vì ${Math.round(commandConfig.timeoutMs / 1000)}s (dự phòng ${auth.safetyMarginSec}s + host grace).`, logs);
+      }
+      const outcome = await this.runAgyOnce({ label, commandConfig: boundedConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
       if (outcome.ok) return outcome.result;
-      if (outcome.kind === "capacity" && attempt < maxCapacityRetries && !this.cancelled) {
-        const delaySec = (attempt + 1) * 8;
+      if (outcome.kind === "capacity" && capacityRetries < maxCapacityRetries && !this.cancelled) {
+        const delaySec = (++capacityRetries) * 8;
         metrics.retryCount += 1;
-        this.emitLog(onProgress, 15, `[${label}] 503/UNAVAILABLE: máy chủ AI hết dung lượng. Thử lại sau ${delaySec}s (${attempt + 1}/${maxCapacityRetries})...`, logs);
+        this.emitLog(onProgress, 15, `[${label}] 503/UNAVAILABLE: máy chủ AI hết dung lượng. Thử lại sau ${delaySec}s (${capacityRetries}/${maxCapacityRetries})...`, logs);
         await new Promise((resolve) => setTimeout(resolve, delaySec * 1000));
         continue;
+      }
+      if (outcome.kind === "auth" && authRefreshRetries === 0 && !this.cancelled) {
+        // A running turn may see 401 after Antigravity refreshed credentials.
+        // Re-probe exactly once and retry only if expiry has moved forward.
+        this.authCache = null;
+        const latest = await this.ensureAntigravityAuth({ label: `${label}_AUTH_RECHECK`, onProgress, logs, stageTimeoutMs: commandConfig.timeoutMs, textOnly: true }).catch(() => null);
+        const oldExpiryMs = Date.parse(auth.tokenExpiresAt || "");
+        const newExpiryMs = Date.parse(latest?.tokenExpiresAt || "");
+        if (Number.isFinite(oldExpiryMs) && Number.isFinite(newExpiryMs) && newExpiryMs > oldExpiryMs + 60000) {
+          authRefreshRetries += 1;
+          metrics.retryCount += 1;
+          this.emitLog(onProgress, 15, `[${label}] AUTH REFRESHED: xác minh token mới, thử lại đúng bước văn bản (không xem lại video).`, logs);
+          continue;
+        }
       }
       const error = new Error(`[${label}] ${describeAgyFailure(outcome.kind, outcome.error)}`);
       Object.assign(error, { kind: outcome.kind, stdout: outcome.error.stdout, stderr: outcome.error.stderr, cause: outcome.error });
@@ -3329,18 +3392,53 @@ class ManualAntigravityStage1Service {
     let seriesPlan = null;
     let seriesPlanPath = "";
     if (series) {
-      const planMetrics = newMetrics();
+      // Persist only a host-validated, locked plan. The result folder above is
+      // reset on each run, but the scoped cache survives an auth_ttl failure.
+      // Any source, transcript, prompt, hook or model change invalidates it.
+      const hookContractText = inputPaths.hookContractPath
+        ? await fs.readFile(inputPaths.hookContractPath, "utf8").catch(() => "")
+        : "";
+      const planCacheKey = crypto.createHash("sha256").update(JSON.stringify({
+        version: 1, understandingKey, understanding,
+        promptText, hookContractText, sourceFingerprint,
+        profile: series.profile, parts: series.parts,
+        command: this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy",
+        args: this.settings.antigravityArgs || process.env.ANTIGRAVITY_ARGS || "",
+        model: this.settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "",
+        reasoning: this.settings.antigravityReasoning || "high",
+        scriptIds: requestedScriptIds
+      })).digest("hex").slice(0, 24);
+      const planCachePath = path.join(cacheDir, `series-plan-v1-${planCacheKey}.json`);
       const planStartedAt = Date.now();
-      this.emitLog(onProgress, 50, `[SERIES_PLAN] START: khóa kế hoạch ${series.parts.length} Part (${series.profile}) trước khi viết kịch bản.`, logs);
-      const planned = await this.runSeriesPlan({
-        series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs
-      });
-      seriesPlan = planned.plan;
+      const planMetrics = newMetrics();
+      let cacheHit = false;
+      let cached = null;
+      try { cached = JSON.parse(await fs.readFile(planCachePath, "utf8")); } catch (_error) {}
+      if (cached?.key === planCacheKey && cached?.plan?.lockedBy === "host_validator"
+          && validateSeriesPlan(cached.plan, { series, videoDurationSec }).ok) {
+        seriesPlan = cached.plan;
+        cacheHit = true;
+        this.emitLog(onProgress, 56, `[SERIES_PLAN] CACHE HIT: dùng lại kế hoạch đã khóa và xác minh (${planCachePath}).`, logs);
+      } else {
+        this.emitLog(onProgress, 50, `[SERIES_PLAN] START: khóa kế hoạch ${series.parts.length} Part (${series.profile}) trước khi viết kịch bản.`, logs);
+        const planned = await this.runSeriesPlan({
+          series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs
+        });
+        seriesPlan = planned.plan;
+        try {
+          await fs.mkdir(cacheDir, { recursive: true });
+          await writeJsonAtomic(planCachePath, { schemaVersion: 1, key: planCacheKey, plan: seriesPlan });
+        } catch (error) {
+          this.emitLog(onProgress, 56, `[SERIES_PLAN] CACHE WARNING: không lưu được plan cache (${error.message}).`, logs);
+        }
+      }
       seriesPlanPath = path.join(resultDir, "series-plan.json");
       await writeJsonAtomic(seriesPlanPath, seriesPlan);
       await writeJsonAtomic(path.join(phaseBInputDir, "series-plan.json"), seriesPlan);
       timing.seriesPlan = {
         durationMs: Date.now() - planStartedAt,
+        cacheHit,
+        cachePath: planCachePath,
         agyProcessCount: planMetrics.agyProcessCount,
         retryCount: planMetrics.retryCount,
         videoViewFileCount: planMetrics.viewFileVideoCount,
