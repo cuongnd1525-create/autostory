@@ -371,7 +371,7 @@ function buildColdViewerPrompt({ scriptPaths = [], blueprintPath = "", intellige
     "issues:array of {code, segmentIndex:number 0-based, sourceEventId:string, whyViewerLeaves:string, requiredChange:string}.",
     `Allowed critical issue codes: ${[...CRITICAL_AUDIENCE_CODES].join(", ")}.`,
     "Use issues=[] only when the Part is genuinely compelling, unambiguous and evidence-grounded, and justify it in all assessment fields."
-  ].join("\\n");
+  ].join("\n");
 }
 
 function validateColdViewerReview(raw, scriptIds = []) {
