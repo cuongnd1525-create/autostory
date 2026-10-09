@@ -4,6 +4,9 @@ on:
   pull_request:
     paths:
       - "electron/services/storyFirstEditorialService.js"
+      - "electron/services/storyFirstReadinessService.js"
+      - "electron/services/dubbingService.js"
+      - "tests/storyFirstReadiness.test.js"
       - "electron/services/manualAntigravityStage1Service.js"
       - "tests/storyFirstEditorialService.test.js"
       - "tests/storyFirstPhaseB.integration.test.js"
@@ -28,7 +31,10 @@ jobs:
       - name: Editorial + existing Stage 1 regression
         run: |
           node --check electron/services/storyFirstEditorialService.js
+          node --check electron/services/storyFirstReadinessService.js
+          node --check electron/services/dubbingService.js
           node --check electron/services/manualAntigravityStage1Service.js
+          node tests/storyFirstReadiness.test.js
           node tests/storyFirstEditorialService.test.js
           node tests/storyFirstPhaseB.integration.test.js
           node tests/seriesPlan.test.js
