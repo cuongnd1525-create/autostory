@@ -2135,7 +2135,13 @@ class ManualAntigravityStage1Service {
       if (boundedConfig.timeoutMs < commandConfig.timeoutMs) {
         this.emitLog(onProgress, 15, `[${label}] AUTH BUDGET: token còn ${auth.tokenRemainingSec}s; chạy tối đa ${Math.round(boundedConfig.timeoutMs / 1000)}s thay vì ${Math.round(commandConfig.timeoutMs / 1000)}s (dự phòng ${auth.safetyMarginSec}s + host grace).`, logs);
       }
-      const outcome = await this.runAgyOnce({ label, commandConfig: boundedConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
+      // Series Plan, script generation and editorial repair are text-only.
+      // Block any accidental multimodal rewatch rather than merely logging it.
+      const outcome = await this.runAgyOnce({
+        label, commandConfig: boundedConfig, prompt, resultDir, onProgress,
+        expectedProxyList, viewedProxySet, metrics, logs, logBase,
+        forbiddenTools: ["view_file:video"]
+      });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && capacityRetries < maxCapacityRetries && !this.cancelled) {
         const delaySec = (++capacityRetries) * 8;
