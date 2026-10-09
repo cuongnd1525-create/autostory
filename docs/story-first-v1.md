@@ -78,3 +78,18 @@ Separate two-**call** independent audience-only / repair-only review, per-voice-
 - \`...fast-draft-....en.srt\` (US series English draft captions)
 
 Actual multimodal review of the **rendered MP4** still belongs to the subsequent Gemini Draft Review step. Text-only Cold Viewer is not a substitute for watching the output, and a passing CI test does not guarantee virality.
+
+
+## October 9: multi-Part repair trap and forbidden run_command
+
+A live run successfully locked Series Plan, generated all 3 Parts, and completed Cold Viewer. All Parts failed the unified normalized `production_preflight` gate. The previous **monolithic three-Part** editorial-repair prompt made the model try `run_command`; the read-only safety guard correctly terminated it instead of executing shell commands.
+
+The repair protocol now:
+
+1. Logs each Part's production score, editorial/technical sub-scores and first three deducted-issue explanations before attempting repair.
+2. Saves immutable pre-repair scripts and repairs **only rejected Part IDs**, individually. Accepted Parts are preserved.
+3. Gives each Part the precise normalized production-readiness deductions, independent audience issues and host validation errors inline; the writer may only view explicitly approved source evidence JSON. It is told not to run scripts or modify source files.
+4. If a Part tries a disallowed command, aborts that attempt and starts **one new, completely tool-free** 180-second inline-JSON recovery for that Part. Original script, verified event ranges and exact failure reasons are included in the new prompt; there is no shell execution or source rewatch.
+5. Enforces exactly one complete `script-N.json` per affected Part, then re-runs the full structural, production and independent cold-viewer gates. Unresolved V1 failures still block export; they are never silently approved.
+
+Tests cover multiple Part-specific repairs, an attempted forbidden `run_command` and the tool-free fallback. This is not a claim that a live model will always return a quality-approved rewrite; it prevents the previous forbidden-tool crash and produces explicit diagnostics when the creative criteria are not met.
