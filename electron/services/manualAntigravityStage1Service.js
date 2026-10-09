@@ -1443,6 +1443,25 @@ function resolveAntigravityTimeoutMs(settingsTimeout, packageInfo = null) {
   return Math.max(15000, baseTimeout);
 }
 
+/**
+ * Planning is read-only, NOT an agentic code-editing task. Restrict Antigravity
+ * to the exact evidence input paths that the host supplied for this case.
+ * Reject the tool at its ACTIVE event before the agent can roam or edit source.
+ */
+function buildSeriesPlanReadOnlyGuard(allowedInputPaths = []) {
+  const normalized = (value) => String(value || "").trim().replace(/\\/g, "/").toLowerCase();
+  const allowed = new Set(allowedInputPaths.filter(Boolean).map(normalized));
+  return ({ toolName, file }) => {
+    if (toolName !== "view_file") {
+      return `series plan is read-only; ${toolName || "unknown tool"} is not allowed`;
+    }
+    if (!allowed.has(normalized(file))) {
+      return `not an approved series planning evidence path: ${path.basename(String(file || ""))}`;
+    }
+    return null;
+  };
+}
+
 class ManualAntigravityStage1Service {
   constructor(settings = {}, dependencies = {}) {
     this.settings = settings;
@@ -3130,25 +3149,6 @@ class ManualAntigravityStage1Service {
     return { data: normalized, validation: validateSourceUnderstanding(normalized, { videoDurationSec }) };
   }
 
-
-/**
- * Planning is read-only, NOT an agentic code-editing task. Restrict Antigravity
- * to the exact evidence input paths that the host supplied for this case.
- * Reject the tool at its ACTIVE event before the agent can roam or edit source.
- */
-function buildSeriesPlanReadOnlyGuard(allowedInputPaths = []) {
-  const normalized = (value) => String(value || "").trim().replace(/\\/g, "/").toLowerCase();
-  const allowed = new Set(allowedInputPaths.filter(Boolean).map(normalized));
-  return ({ toolName, file }) => {
-    if (toolName !== "view_file") {
-      return `series plan is read-only; ${toolName || "unknown tool"} is not allowed`;
-    }
-    if (!allowed.has(normalized(file))) {
-      return `not an approved series planning evidence path: ${path.basename(String(file || ""))}`;
-    }
-    return null;
-  };
-}
 
   async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, hookTournamentPath = "", inputPaths, videoDurationSec, onProgress, metrics, logs }) {
     const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
