@@ -4031,7 +4031,10 @@ class ManualAntigravityStage1Service {
             badArtifact.kind = "editorial_repair_invalid";
             throw badArtifact;
           }
-          const normalizedRepair = normalizeArtifact(repairedArtifacts[0]);
+          // Reapply the exact same host-locked series metadata that initial
+          // Phase B scripts receive. Otherwise a repaired JSON loses its
+          // 110-125s profile before import and gets misgraded as 75-110s.
+          const normalizedRepair = scriptsFrom({ artifacts: [repairedArtifacts[0]] }).get(scriptId);
           deduplicated.set(scriptId, normalizedRepair);
           perPartRepairs.push({ scriptId, processCount: metricsForPart.agyProcessCount, status: "replaced" });
         }
