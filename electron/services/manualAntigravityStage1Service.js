@@ -3837,6 +3837,14 @@ class ManualAntigravityStage1Service {
     let editorialReport = null;
     if (storyFirstEnabled) {
       editorialReport = evaluate(deduplicated);
+      for (const item of editorialReport.results) {
+        if (item.productionPreflight && !item.productionPreflight.passed) {
+          const firstReasons = (item.productionPreflight.issues || []).slice(0, 3)
+            .map((reason) => String(reason).replace(/\s+/g, " ").slice(0, 180));
+          this.emitLog(onProgress, 82,
+            `[PRODUCTION_PREFLIGHT] Part ${item.scriptId} = ${item.productionPreflight.score}/100, editorial=${item.productionPreflight.editorialReadiness}, technical=${item.productionPreflight.technicalReadiness}; lỗi chính: ${firstReasons.join(" | ")}`, logs);
+        }
+      }
       if (coldViewerEnabled) editorialReport = StoryFirst.attachAudienceReview(
         editorialReport, await critiqueCandidate(deduplicated, "initial")
       );
@@ -3869,10 +3877,11 @@ class ManualAntigravityStage1Service {
           };
           const partBlueprint = (storyBlueprint?.seriesParts || []).find((part) => Number(part.scriptId) === scriptId) || null;
           const partRanges = (partBlueprint?.sceneAllocation || []).map(toRange).filter(Boolean);
+          const partHookRange = toRange(partBlueprint?.hookRange || {});
           const partEvents = (storyIntelligence?.events || []).filter((event) => {
             const eventRange = toRange(event);
             return partRanges.some((allowed) => eventRange && overlapSec(eventRange, allowed) > 0)
-              || (eventRange && overlapSec(eventRange, toRange(partBlueprint?.hookRange || {})) > 0);
+              || Boolean(eventRange && partHookRange && overlapSec(eventRange, partHookRange) > 0);
           });
           const inlineEvidence = {
             caseSummary: storyIntelligence?.caseSummary,
@@ -3906,6 +3915,12 @@ class ManualAntigravityStage1Service {
             });
             await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-part-${scriptId}.log`), response.stdout || "", "utf8");
             payload = findArtifactEnvelope(response.stdout || "");
+            if (!payload?.artifacts?.length) {
+              const recoveredScript = await extractNamedArtifact(response.stdout || "", {
+                filename: `script-${scriptId}.json`, artifactType: "story_recut_script"
+              });
+              if (recoveredScript) payload = { artifacts: [{ filename: `script-${scriptId}.json`, script: recoveredScript }] };
+            }
           } catch (error) {
             if (error.kind !== "forbidden_tool") {
               await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
@@ -3930,6 +3945,12 @@ class ManualAntigravityStage1Service {
               });
               await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-inline-part-${scriptId}.log`), recovered.stdout || "", "utf8");
               payload = findArtifactEnvelope(recovered.stdout || "");
+              if (!payload?.artifacts?.length) {
+                const recoveredScript = await extractNamedArtifact(recovered.stdout || "", {
+                  filename: `script-${scriptId}.json`, artifactType: "story_recut_script"
+                });
+                if (recoveredScript) payload = { artifacts: [{ filename: `script-${scriptId}.json`, script: recoveredScript }] };
+              }
             } catch (recoveryError) {
               await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
               throw recoveryError;
