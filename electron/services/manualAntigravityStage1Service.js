@@ -1080,7 +1080,8 @@ function buildScriptGenerationPrompt({
   narrativeBlueprintPath = "",
   resultDir,
   scriptIds = [1, 3, 4],
-  coverageSummary = ""
+  coverageSummary = "",
+  series = null
 }) {
   return [
     "You are executing Phase B (Script Generation) of RecapTool Studio's manual Gemini draft-review workflow.",
@@ -1112,6 +1113,16 @@ function buildScriptGenerationPrompt({
       "- Each Script is the Part assigned to it in LOCKED_SERIES_PLAN. Use only that Part's sceneAllocation/hookRange (plus declared sharedRanges).",
       "- Respect mustNotReveal and spoiler boundaries; Part 1/2 end on their planned cliffhanger, Part 3 delivers the planned payoff.",
       "- Ignore any '3-VARIANT NARRATIVE DIFFERENTIATION MATRIX' or 'DUPLICATE HOOK DIVERGENCE' text: the Parts are chapters of ONE story.",
+      ""
+    ] : []),
+    ...(series ? [
+      "RENDERABLE SERIES PRODUCTION CONSTRAINTS (follow these when constructing each complete Part, not only in repair):",
+      `- IMPORTANT: This specific profile requires ${series.durationMinSec}-${series.durationMaxSec}s per Part, NOT the generic 75-110s serialized preset. The HOST scorer uses the locked profile range.`,
+      "- Estimate actual combined footage length from selected source ranges. Keep each Part inside its range and above 60.5s; do not stuff redundant procedural footage.",
+      "- Narrator delivery follows the measured voice profile ~2.2 words/s: keep each voiceover bridge comfortably under 12 seconds (~20-24 spoken English words), unless the actual recorded rate justifies a different duration.",
+      "- Keep original audio / narration runs under 15 seconds when this preserves intact dialogue and meaningful authentic action; do not cut away mid-sentence to game the score.",
+      "- Prefer at most 7 distant source jumps per Part; more jumps require genuine narrative value, clear audible context and source grounding.",
+      "- Story-first: strong cold open, intelligible first-15-second handoff, meaningful narrator contribution, verifiable climax/cliffhanger/payoff. Never pass by merely inventing metadata.",
       ""
     ] : []),
     "TIMELINE RULE: return only sceneId, sourceStartSec, sourceEndSec, audio_mode and voiceover_text (plus the editorial metadata the prompt asks for). Do NOT return startSec/endSec/outputStartSec/outputEndSec/duration; the local compiler derives the output timeline and playback speed.",
@@ -3621,7 +3632,8 @@ class ManualAntigravityStage1Service {
       narrativeBlueprintPath,
       resultDir,
       scriptIds: requestedScriptIds,
-      coverageSummary
+      coverageSummary,
+      series
     }), "Phase B");
     const commandConfigB = this.buildCommand(promptB, schemaPath, pass1Dir, {
       packageInfo,
@@ -3712,7 +3724,24 @@ class ManualAntigravityStage1Service {
     const scriptsFrom = (rawEnvelope) => {
       const artifacts = (rawEnvelope?.artifacts || [])
         .filter((a) => /^script-\d+\.json$/i.test(a.filename || "") || a.script?.scriptId)
-        .map(normalizeArtifact);
+        .map(normalizeArtifact)
+        .map((artifact) => {
+          if (!series) return artifact;
+          const part = series.parts.find((item) => item.scriptId === Number(artifact.script.scriptId));
+          // Persist host-locked metadata into the files we actually import,
+          // rather than relying on optional AI output or UI config.
+          return {
+            ...artifact,
+            script: {
+              ...artifact.script, prompt_profile: series.profile,
+              series_mode: "interleaved_multipart",
+              part_number: part?.partNumber || 1,
+              part_badge: part?.partBadge || "",
+              target_duration_min_sec: series.durationMinSec,
+              target_duration_max_sec: series.durationMaxSec
+            }
+          };
+        });
       const map = new Map();
       for (const artifact of artifacts) map.set(Number(artifact.script.scriptId), artifact);
       return map;
@@ -3746,7 +3775,11 @@ class ManualAntigravityStage1Service {
               passed: readiness.passed,
               editorialReadiness: readiness.scoreBreakdown?.editorialReadiness?.score ?? null,
               technicalReadiness: readiness.scoreBreakdown?.technicalReadiness?.score ?? null,
-              issues: (readiness.issues || []).slice(0, 14)
+              // Never truncate the canonical QA evidence in the report. Only
+              // the short UI progress message is abridged.
+              issues: readiness.issues || [],
+              editorialIssues: readiness.scoreBreakdown?.editorialReadiness?.issues || [],
+              technicalIssues: readiness.scoreBreakdown?.technicalReadiness?.issues || []
             };
             if (readiness.score < 72 || !readiness.passed
               || (readiness.scoreBreakdown?.editorialReadiness?.score ?? 100) < 72
@@ -3905,8 +3938,8 @@ class ManualAntigravityStage1Service {
             sourceEventTimeline: storyIntelligence?.events || [],
             qualityPolicy: {
               minRenderableSec: 60.5,
-              targetMinSec: series?.durationMinSec ?? 75,
-              targetMaxSec: series?.durationMaxSec ?? 110,
+              targetMinSec: series?.durationMinSec ?? 110,
+              targetMaxSec: series?.durationMaxSec ?? 125,
               maxVoiceoverSec: 12,
               maxAudioRunSec: 15,
               maxSourceJumps: 7
@@ -3919,7 +3952,9 @@ class ManualAntigravityStage1Service {
               seriesPlanPath, transcriptPath: inputPaths.transcriptPath,
               sceneManifestPath: inputPaths.sceneManifestPath,
               scriptIds: [scriptId], partIssues: conciseFailure,
-              repairPacketPath, recoveryFromForbiddenTool
+              repairPacketPath, recoveryFromForbiddenTool,
+              targetMinSec: series?.durationMinSec ?? 110,
+              targetMaxSec: series?.durationMaxSec ?? 125
             }), `Part ${scriptId} editorial repair`
           );
           const safeReadOnly = buildSeriesPlanReadOnlyGuard([
