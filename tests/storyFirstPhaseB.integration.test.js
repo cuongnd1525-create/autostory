@@ -53,7 +53,7 @@ function weakScript(id) {
 function envelopeFor(fn) {
   return { artifacts: SCRIPTS.map((id) => ({ filename: `script-${id}.json`, script: fn(id) })) };
 }
-async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false, unifiedPreflight = false, rogueRepairCommand = false } = {}) {
+async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = false, unifiedPreflight = false, rogueRepairCommand = false, hugeRepairEvidence = false } = {}) {
   const root = await fixture();
   const calls = [];
   let attemptedRepair = false;
@@ -86,19 +86,27 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
       if (repairing) {
         const scriptId = Number(prompt.match(/Repair EXACTLY Part Script (\d+)/)?.[1] || 0);
         assert(SCRIPTS.includes(scriptId), "repair must target one of the exact rejected Part IDs");
-        if (rogueRepairCommand && scriptId === 1 && !prompt.includes("NO TOOLS whatsoever")) {
+        if (rogueRepairCommand && scriptId === 3 && !prompt.includes("ISOLATED RECOVERY AFTER A FORBIDDEN TOOL ATTEMPT")) {
           return { extraEvents: [{
             event: "step_update",
             step_update: {step_index:12,conversation_id:"bad-editorial",step_type:"tool",
               state:"ACTIVE",tool_name:"run_command",tool_info:{name:"run_command",parameters:{CommandLine:"node -e JSON.parse(...)"}}}
           }], envelope: {artifacts:[]} };
         }
-        return { envelope: {artifacts:[{
-          filename:`script-${scriptId}.json`,
-          script: (repairsFixIssue ? repairedScript : weakScript)(scriptId)
-        }]} };
+        const packetPath = prompt.match(/HOST_PREPARED_REPAIR_PACKET \\(read with view_file, do not execute\\): (.+)/)?.[1]?.trim();
+        return {
+          ...(packetPath ? { viewFiles: [packetPath] } : {}),
+          envelope: {artifacts:[{
+            filename:`script-${scriptId}.json`,
+            script: (repairsFixIssue ? repairedScript : weakScript)(scriptId)
+          }]}
+        };
       }
-      return { envelope: envelopeFor(initialIsValid ? repairedScript : weakScript) };
+      return { envelope: envelopeFor((id)=>{
+        const candidate = (initialIsValid ? repairedScript : weakScript)(id);
+        if (hugeRepairEvidence && id === 3) candidate._sourceEvidencePayload = "bodycam event transcript and source ranges ".repeat(1500);
+        return candidate;
+      }) };
     }
     return normal(kind, prompt, call);
   };
@@ -176,16 +184,26 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert(normalizedGate.attemptedRepair, "production-readiness failure must trigger the same repair path");
   } finally { await fs.rm(normalizedGate.root, {recursive:true,force:true}); }
 
-  const rogue = await exercise({ repairsFixIssue: true, rogueRepairCommand: true });
+  const rogue = await exercise({ repairsFixIssue: true, rogueRepairCommand: true, hugeRepairEvidence: true });
   try {
     assert(!rogue.error, rogue.error?.stack || String(rogue.error));
     assert(rogue.report.accepted, "safe inline fallback must be revalidated against the same editorial gate");
     const repairCalls = rogue.calls.filter(c=>c.kind === "phase_b" && c.prompt.includes("EDITORIAL REPAIR"));
-    assert(repairCalls.some(c=>c.prompt.includes("NO TOOLS whatsoever")), "forbidden run_command must cause one tool-free inline recovery");
+    assert(repairCalls.some(c=>c.prompt.includes("ISOLATED RECOVERY AFTER A FORBIDDEN TOOL ATTEMPT")),
+      "forbidden run_command must cause an isolated file-backed recovery");
     assert(repairCalls.every(c=>!c.args.includes("--conversation")), "no recovery resumes a contaminated session");
     assert(repairCalls.every(c=>!c.prompt.includes("view_file(\\\"") || !c.prompt.includes(".mp4")), "editorial repair cannot rewatch source video");
-    const fallbackCall = repairCalls.find(c=>c.prompt.includes("NO TOOLS whatsoever"));
-    assert(fallbackCall.prompt.includes("ORIGINAL_SCRIPT_JSON:"), "model can repair without shell because candidate JSON is inline");
+    const fallbackCall = repairCalls.find(c=>c.prompt.includes("ISOLATED RECOVERY AFTER A FORBIDDEN TOOL ATTEMPT"));
+    assert(fallbackCall.prompt.includes("HOST_PREPARED_REPAIR_PACKET"), "recovery points to a host-generated evidence JSON file");
+    assert(fallbackCall.prompt.length < 24000, "Windows agy --print argv must remain under 24k");
+    const packetPath = path.join(rogue.resultDir, "editorial-repair-part-3-packet.json");
+    const packet = JSON.parse(await fs.readFile(packetPath, "utf8"));
+    assert(packet.originalScript._sourceEvidencePayload.length > 35000, "regression fixture must carry a source JSON larger than Windows argv limit");
+    assert(packet.actualQualityGateFailures.errors.length, "full score deductions are persisted in the packet");
+    assert(fallbackCall.prompt.includes(packetPath), "fallback uses the file path, not an inline truncated script");
+    assert(!fallbackCall.prompt.includes(packet.originalScript._sourceEvidencePayload.slice(0, 300)),
+      "original JSON must never be embedded in Windows --print");
+    assert(fallbackCall.emittedViews === 1, "recovery model must view the single whitelisted packet, never source code");
   } finally { await fs.rm(rogue.root, { recursive: true, force: true }); }
 
   console.log("story-first Phase B reject/repair end-to-end tests passed");
