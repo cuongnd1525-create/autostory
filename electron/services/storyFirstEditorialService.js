@@ -147,7 +147,7 @@ function makeNarrativeBlueprint(intelligence, { seriesPlan = null, series = null
 
 const PURE_ACTION_NARRATION = /^(?:the|a|an|then|now|here|you can see|we can see|as you can see)\s+(?:officer|police|suspect|driver|man|woman|person|he|she|they|we|the officer|the driver|the man)\s+(?:is |are |starts? |begins? |goes? |walks? |runs? |says? |tells? |looks? |gets? |approaches? |moves? )/i;
 const GENERIC_NARRATION = /\b(?:what happens next|you won't believe|things took a shocking turn|little did (?:they|he|she) know|stay tuned for part|follow for part)\b/i;
-const FACTUAL_ANCHOR_WORDS = /\b(?:earlier|later|minutes?|hours?|because|but|instead|after|before|meanwhile|however|revealed|discovered|found|reported|according|while|until|despite|when|why|evidence|claim|contradict|investigat|realiz|question|suspect|crash|called|dispatch|officer|vehicle|witness|victim)\b/i;
+const FACTUAL_ANCHOR_WORDS = /\b(?:earlier|later|minutes?|hours?|because|but|instead|after|before|meanwhile|however|revealed|discovered|found|reported|according|while|until|despite|when|why|evidence|claim|contradict|investigat|realiz|question)\b/i;
 function scriptSegments(script) {
   return Array.isArray(script?.segments) ? script.segments : Array.isArray(script?.narrativeBeats) ? script.narrativeBeats : [];
 }
@@ -188,7 +188,9 @@ function evaluateEditorialScript(script = {}, blueprint = {}, { minScore = 80, s
     if (voice) {
       voices.push({ index: i, text: voice });
       if (audioMode === "original_audio") addError("voice_over_original_audio", "Narrator text cannot replace protected original audio implicitly.", i);
-      if (PURE_ACTION_NARRATION.test(voice)) warnings.push({ code: "descriptive_voice", index: i, message: "Narrator describes obvious action instead of bridging meaning." });
+      if (PURE_ACTION_NARRATION.test(voice) && !FACTUAL_ANCHOR_WORDS.test(voice)) {
+        addError("descriptive_voice", "Narrator merely describes visible action; add verified context, meaning, causal connection, or remove the narration.", i);
+      }
       if (GENERIC_NARRATION.test(voice)) addError("generic_clickbait", "Remove generic clickbait/forced Part CTA.", i);
       if (voice.split(/\s+/).length > 36) warnings.push({ code: "long_voice", index: i, message: "Narrator sentence/block may be too long for a natural delivery." });
     }
@@ -209,6 +211,12 @@ function evaluateEditorialScript(script = {}, blueprint = {}, { minScore = 80, s
     if (extractMode(segments[0]) !== "original_audio") warnings.push({ code: "hook_muted", index: 0, message: "Consider retaining compelling authentic hook audio." });
   }
   if (part && voices.length < 2) addError("narrator_not_directing", "Narration requires at least two meaningful bridge/interpretation beats; footage-only summary fails the narrator-led series profile.");
+  const normalizedNarrations = voices.map((v) => v.text.toLowerCase().replace(/[^a-z0-9 ]/g, "").replace(/\s+/g, " ").trim());
+  for (let i = 1; i < normalizedNarrations.length; i++) {
+    if (normalizedNarrations[i].length > 12 && normalizedNarrations[i] === normalizedNarrations[i - 1]) {
+      addError("repeated_narration", "Identical narrator lines repeat without new information.", voices[i].index);
+    }
+  }
   const meaningful = voices.filter((v) => v.text.split(/\s+/).length >= 4 && FACTUAL_ANCHOR_WORDS.test(v.text));
   if (part && voices.length && !meaningful.length) addError("empty_narrative_function", "Narrator has no evident contextual/causal contribution.");
   if (part && originalAudioCount === 0) addError("no_original_evidence", "No original bodycam/dialogue/action audio to demonstrate the narrator's claims.");
