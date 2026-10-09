@@ -22,6 +22,7 @@ const {
   resolveVoiceVisualFit
 } = require("./voiceTimingPolicy");
 const { compileResolvedTimeline } = require("./resolvedTimelineService");
+const StoryFirstReadiness = require("./storyFirstReadinessService");
 const { createAiProvider, LocalFallbackProvider } = require("./aiProviderRegistry");
 const { DubbingSpeechPlanner } = require("./dubbingSpeechPlanner");
 const {
@@ -4523,6 +4524,22 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           `Viral readiness ${viralPreflight.score}/100 (${viralPreflight.grade}): ${viralPreflight.issues.join(" ")}`
         );
       }
+      const crossStageReadiness = StoryFirstReadiness.preflightReadiness(
+        project, { promptProfile: configuredPromptOptions.profile, viralPreflight }, settings
+      );
+      if (!crossStageReadiness.accepted) {
+        const reportPath = path.join(paths.analysisDir, `story-first-import-rejected-script-${scriptInput.scriptId || variantIndex + 1}.json`);
+        await this.projectStore.writeJson(reportPath, {
+          generatedAt: new Date().toISOString(),
+          whyRejected: "Stage 1 script validation cannot override the normalized timeline's low Viral Preflight.",
+          ...crossStageReadiness
+        }).catch(() => {});
+        throw new Error(
+          `[STORY_FIRST_READINESS] Script ${scriptInput.scriptId || variantIndex + 1} chưa đủ chất lượng để tạo V1: `
+          + crossStageReadiness.reasons.join(" ")
+          + ` Chi tiết: ${reportPath}. Cần sửa kịch bản, không nên render bản thấp điểm.`
+        );
+      }
       const storedSegments = isStoryRecutWorkflow
         ? consolidateStoryRecutSegments(script.segments, { maxSourceGapSec: 4 })
         : script.segments;
@@ -6367,6 +6384,20 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         previewSubtitleCues: originalAudioCues.length ? originalAudioCues : voiceSubtitleCues
       };
     });
+    const previewLanguage = StoryFirstReadiness.resolvePreviewSubtitleLanguage(
+      project, settings, getActiveHighlightVariant(project)
+    );
+    if (previewLanguage !== "vi") {
+      // Spoken English captions must remain English. Do not feed source
+      // officer names, bodycam transcripts or TTS back through local EN→VI MT.
+      return subtitleSegments.map((segment) => ({
+        ...segment,
+        previewSubtitleVi: previewLanguage === "en" ? (segment.previewSubtitleCues || []).map((c) => c.text).filter(Boolean).join(" ") : "",
+        previewSubtitleCues: (segment.previewSubtitleCues || []).map((cue) => ({
+          ...cue, previewSubtitleVi: previewLanguage === "en" ? safeText(cue.text) : ""
+        }))
+      }));
+    }
     const translationItems = subtitleSegments.flatMap((segment) => (
       segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
@@ -6467,9 +6498,20 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
     const draftStamp = Date.now();
     const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
+    const previewSubtitleLanguage = StoryFirstReadiness.resolvePreviewSubtitleLanguage(
+      project, settings, activeVariant
+    );
+    const readiness = StoryFirstReadiness.preflightReadiness(project, activeVariant, settings);
+    if (!readiness.accepted) {
+      throw new Error(
+        "[STORY_FIRST_READINESS] Không render V1: "
+        + readiness.reasons.join(" ")
+        + " Sửa script trước khi render hoặc dùng chế độ override để kiểm tra nháp lỗi."
+      );
+    }
     const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
     const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
+    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.${previewSubtitleLanguage === "en" ? "en" : "vi"}.srt`);
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
@@ -6753,7 +6795,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       effectiveSubtitlePath = assPath;
     }
     const hasPreviewSubtitles = previewSubtitleCues.some((cue) => safeText(cue.translatedText));
-    const embedPreviewSubtitles = (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
+    const embedPreviewSubtitles = previewSubtitleLanguage !== "off"
+      && ((hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke);
     if (embedPreviewSubtitles) {
       onProgress?.({
         projectId,
@@ -6761,7 +6804,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         percent: 96,
         message: isTikTokKaraoke
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
-          : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
+          : `Đang nhúng phụ đề ${previewSubtitleLanguage === "en" ? "tiếng Anh" : "tiếng Việt"} vào bản nháp`
       });
       await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
     } else {
@@ -6772,6 +6815,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       segments,
       draftVoiceReports
     });
+    if (voiceAlignmentReport.warningCount > 0) {
+      const details = voiceAlignmentReport.warnings.map((w) =>
+        `cảnh ${w.sceneNumber}: ${w.status}, voice=${Number(w.rawVoiceSec || 0).toFixed(1)}s / timeline=${Number(w.plannedTimelineSec || 0).toFixed(1)}s`
+      ).join("; ");
+      onProgress?.({
+        projectId, step: "draft", percent: 97,
+        message: `[VOICE_QA] NEEDS_REPAIR: ${details}`.slice(0, 400)
+      });
+    }
     const resolvedTimeline = compileResolvedTimeline({
       mode: "highlight_cut",
       segments,
@@ -6872,7 +6924,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: previewSubtitleLanguage,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
@@ -6892,7 +6944,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: previewSubtitleLanguage,
           fastDraftSubtitlesArePreviewOnly: true,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
@@ -6929,9 +6981,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       internalOutputPath: outputPath,
       subtitlePath,
       variantId,
-      previewSubtitleLanguage: "vi",
+      previewSubtitleLanguage,
       previewOnly: true,
       voiceWarningCount: voiceAlignmentReport.warningCount,
+      editorialStatus: voiceAlignmentReport.warningCount > 0 ? "needs_voice_repair" : "needs_real_video_review",
       voiceWarningReportPath,
       resolvedTimelinePath,
       geminiRewritePromptPath,

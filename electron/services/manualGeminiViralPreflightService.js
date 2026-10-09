@@ -182,9 +182,16 @@ function resolveScriptProfile(script = {}, expectedScriptId = 0) {
       policeBlotter: true
     };
   }
-  if (seriesMode === "interleaved_multipart" || partNumber > 0) {
-    const minDuration = Math.max(60.5, number(script.target_duration_min_sec ?? script.targetDurationMinSec, 75));
-    const maxDuration = Math.max(minDuration, number(script.target_duration_max_sec ?? script.targetDurationMaxSec, 110));
+  // The viral_tiktok_crime_part1 Series Planner locks 110-125s per Part.
+  // Real 2026-10-09 output (115-116s) was wrongly penalized by the generic
+  // 75-110s serialized fallback. This profile must be a single source of
+  // truth, even if a generated script omits/overrides target_duration_*.
+  const crimeSeriesProfile = promptProfile === "viral_tiktok_crime_part1";
+  if (crimeSeriesProfile || seriesMode === "interleaved_multipart" || partNumber > 0) {
+    const minDuration = crimeSeriesProfile ? 110
+      : Math.max(60.5, number(script.target_duration_min_sec ?? script.targetDurationMinSec, 75));
+    const maxDuration = crimeSeriesProfile ? 125
+      : Math.max(minDuration, number(script.target_duration_max_sec ?? script.targetDurationMaxSec, 110));
     return {
       scriptId,
       label: `Serialized Part ${partNumber || [1, 3, 4].indexOf(scriptId) + 1}`,

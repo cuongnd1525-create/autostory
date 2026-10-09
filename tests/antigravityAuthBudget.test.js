@@ -97,7 +97,7 @@ async function checkSeriesCache() {
     }));
     const firstCalls = [];
     const responder = defaultResponder({ durationSec: 20 });
-    const first = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model" }, {
+    const first = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model", storyFirstEditorialEnabled: false }, {
       authProbe: async () => ttl(3600),
       spawn: createPhaseAwareSpawn({ calls: firstCalls, respond: (kind, prompt, call) => kind === "phase_b"
         ? { resultObject: { status: "ERROR", error: "UNAUTHENTICATED (code 401)" }, exitCode: 1 }
@@ -107,7 +107,7 @@ async function checkSeriesCache() {
     assert(firstCalls.some((call) => call.kind === "series_plan"), "first run must lock a real plan");
 
     const secondCalls = [];
-    const second = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model" }, {
+    const second = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model", storyFirstEditorialEnabled: false }, {
       authProbe: async () => ttl(777),
       spawn: createPhaseAwareSpawn({ calls: secondCalls, respond: responder })
     });
@@ -121,7 +121,7 @@ async function checkSeriesCache() {
 
     await fs.writeFile(path.join(pass1Dir, "hook-contract.json"), JSON.stringify({ selectedHookId: "changed" }));
     const changedCalls = [];
-    const third = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model" }, {
+    const third = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model", storyFirstEditorialEnabled: false }, {
       authProbe: async () => ttl(3600),
       spawn: createPhaseAwareSpawn({ calls: changedCalls, respond: responder })
     });

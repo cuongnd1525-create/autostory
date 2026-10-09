@@ -2,7 +2,8 @@ const assert = require("assert");
 const {
   measureVoiceGrounding,
   rankManualGeminiVariants,
-  scoreManualGeminiVariant
+  scoreManualGeminiVariant,
+  resolveScriptProfile
 } = require("../electron/services/manualGeminiViralPreflightService");
 
 const evidencePayload = {
@@ -963,5 +964,34 @@ assert.strictEqual(failedDraftCoverageAndDelayedHook.metrics.teaserClimaxHandoff
 assert.ok(failedDraftCoverageAndDelayedHook.issues.some((issue) => issue.includes("Draft Access Gate")));
 assert.ok(failedDraftCoverageAndDelayedHook.issues.some((issue) => issue.includes("Hook Trigger Gate lỗi nặng")));
 assert.ok(failedDraftCoverageAndDelayedHook.issues.some((issue) => issue.includes("Teaser-Climax Handoff")));
+
+// Regression of real 2026-10-09 bodycam run: the Series Planner required
+// 110-125 seconds while generic serialized preflight incorrectly imposed
+// 75-110, penalizing three valid ~116-second chapters.
+const crimePartWithStaleAiBounds = {
+  ...script, scriptId: 1, prompt_profile: "viral_tiktok_crime_part1",
+  part_number: 1, series_mode: "interleaved_multipart",
+  target_duration_min_sec: 75, target_duration_max_sec: 110
+};
+const crimeProfile = resolveScriptProfile(crimePartWithStaleAiBounds, 1);
+assert.strictEqual(crimeProfile.seriesMode, true);
+assert.strictEqual(crimeProfile.minDuration, 110, "host series contract overrides generic bounds");
+assert.strictEqual(crimeProfile.maxDuration, 125, "host series contract overrides AI-supplied bounds");
+const crime116 = scoreManualGeminiVariant({
+  script: crimePartWithStaleAiBounds,
+  normalizedScript: { ...normalizedScript, totalDuration: 116.4 },
+  expectedScriptId: 1
+});
+assert.strictEqual(crime116.metrics.durationWithinProfile, true);
+assert(!crime116.issues.some((issue)=>/vượt vùng ưu tiên|thấp hơn vùng ưu tiên/.test(issue)),
+  "116.4s is valid for this series, not a deduction");
+const crime126 = scoreManualGeminiVariant({
+  script: crimePartWithStaleAiBounds,
+  normalizedScript: { ...normalizedScript, totalDuration: 126 },
+  expectedScriptId: 1
+});
+assert.strictEqual(crime126.metrics.durationWithinProfile, false);
+assert(crime126.issues.some((issue)=>issue.includes("vượt vùng ưu tiên")),
+  "genuinely excessive duration remains a QA issue");
 
 console.log("manualGeminiViralPreflight tests passed");

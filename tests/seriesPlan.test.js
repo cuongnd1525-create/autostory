@@ -13,6 +13,12 @@ assert.strictEqual(Stage1.detectSeriesProfile("- prompt_profile: independent"), 
 const valid = buildSeriesPlan(90);
 assert.deepStrictEqual(Stage1.validateSeriesPlan(valid, { series, videoDurationSec: 90 }).errors, []);
 
+// A provisional auto hook may be improved after AI understands the full story;
+// a genuinely user-locked hook may not be silently swapped by Series Planner.
+const lockedHook = { isUserLocked: true, anchorRange: { startSec: 15, endSec: 22 }, trimmingTolerance: { startOffsetMaxSec: 2, endOffsetMaxSec: 3 } };
+assert(Stage1.validateSeriesPlan(valid, { series, videoDurationSec: 90, hookContract: lockedHook }).errors.some((x) => x.includes("user khóa")));
+assert.deepStrictEqual(Stage1.validateSeriesPlan(valid, { series, videoDurationSec: 90, hookContract: { ...lockedHook, isUserLocked: false } }).errors, []);
+
 // Duplicate footage between Parts (not declared as shared) is rejected.
 const duplicate = JSON.parse(JSON.stringify(valid));
 duplicate.parts[1].sceneAllocation.push({ sourceStartSec: 5, sourceEndSec: 25, purpose: "reuse" });
