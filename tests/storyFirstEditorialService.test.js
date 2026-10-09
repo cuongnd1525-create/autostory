@@ -3,6 +3,7 @@
 const assert = require("assert");
 const {
   makeStoryIntelligence,
+  makeHookTournament,
   makeNarrativeBlueprint,
   evaluateEditorialScript,
   buildPhaseBEditorialGuidance,
@@ -39,6 +40,22 @@ assert.strictEqual(intel.events.length, 4);
 assert.strictEqual(intel.events[1].dialogueFacts[0].quote, "What's this?");
 assert.strictEqual(intel.events[1].verifiedFrom, "source_understanding");
 assert.deepStrictEqual(intel.selectedHookRange, { sourceStartSec: 3, sourceEndSec: 7 });
+const hookAudition = { topCandidates: [
+  { hookId: "early_conflict", title: "Evidence-based confrontation", sourceStartSec: 3, sourceEndSec: 7,
+    scores: { visual_immediacy: 75, curiosity_gap: 85, dialogue_strength: 80, conflict: 80, payoff_potential: 90, spoiler_risk: 5 } },
+  { hookId: "spoiler_arrest", title: "Final arrest", sourceStartSec: 80, sourceEndSec: 86,
+    scores: { visual_immediacy: 95, curiosity_gap: 90, dialogue_strength: 95, conflict: 95, payoff_potential: 80, spoiler_risk: 90 } }
+], defaultRecommendedHook: { hookId: "spoiler_arrest" } };
+const tournament = makeHookTournament(intel, { hookCandidates: hookAudition, hookContract: { isUserLocked: false } });
+assert.strictEqual(tournament.artifactType, "story_hook_tournament");
+assert.strictEqual(tournament.candidates.length, 2);
+assert.strictEqual(tournament.recommendedCandidateId, "early_conflict", JSON.stringify(tournament));
+assert(tournament.candidates[0].payoffEventIds.length > 0);
+const lockedTournament = makeHookTournament(intel, { hookCandidates: hookAudition, hookContract: {
+  isUserLocked: true, anchorRange: { startSec: 80, endSec: 86 }
+} });
+assert.strictEqual(lockedTournament.recommendedCandidateId, "spoiler_arrest", "user lock wins even if the editorial heuristic disagrees");
+
 const blueprint = makeNarrativeBlueprint(intel, { series, seriesPlan: plan });
 assert.strictEqual(blueprint.seriesParts.length, 3);
 assert.strictEqual(blueprint.seriesParts[0].plannedEvents.length, 2);
