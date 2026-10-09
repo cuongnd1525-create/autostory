@@ -70,6 +70,19 @@ wrongHook.segments[0].sourceEndSec = 16;
 report = evaluateEditorialScript(wrongHook, blueprint);
 assert(report.errors.some((x) => x.code === "hook_misaligned"), JSON.stringify(report));
 
+// Weak synthetic narration that only describes obvious visible action must
+// never be promoted to a "narrator-directed" V1 merely because text exists.
+const descriptive = JSON.parse(JSON.stringify(validScript));
+descriptive.segments[1].voiceover_text = "The officer walks up to the car.";
+descriptive.segments[3].voiceover_text = "The officer looks at the driver.";
+report = evaluateEditorialScript(descriptive, blueprint);
+assert(report.errors.filter((x) => x.code === "descriptive_voice").length === 2);
+
+const repeated = JSON.parse(JSON.stringify(validScript));
+repeated.segments[3].voiceover_text = repeated.segments[1].voiceover_text;
+report = evaluateEditorialScript(repeated, blueprint);
+assert(report.errors.some((x) => x.code === "repeated_narration"));
+
 const noNarrator = { scriptId: 1, segments: [segment(3, 7, "original_audio"), segment(18, 22, "original_audio")] };
 report = evaluateEditorialScript(noNarrator, blueprint);
 assert(report.errors.some((x) => x.code === "narrator_not_directing"));
