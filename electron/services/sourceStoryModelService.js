@@ -10,18 +10,20 @@
 
 const fs = require('fs/promises');
 const path = require('path');
+const crypto = require('crypto');
 const { EPISTEMIC } = require('./autoStoryV3Taxonomy');
 
 // Bump when the schema/shape materially changes so stale caches are cleanly missed.
-const MODEL_VERSION = 6;
+const MODEL_VERSION = 7;
 // Bump when the MAX_TOKENS recovery / classifier logic materially changes. Shown
 // in the runtime fingerprint so we can PROVE which build the Electron process loaded.
 const RECOVERY_VERSION = 3;
 
 // Deterministic output caps (enforced in normalize regardless of what the model returns).
 const MAX_PEOPLE = 24;
-const MAX_EVENTS = 40;
-const MAX_QUOTES = 60;
+// Keep a separate full evidence archive; this is only the compact story index.
+const MAX_EVENTS = 80;
+const MAX_QUOTES = 120;
 const MAX_QUOTES_PER_EVENT = 3;
 const SUMMARY_MAX_WORDS = 14;
 const QUOTE_MAX_CHARS = 240;
@@ -111,6 +113,10 @@ function normalize(raw = {}, ctx = {}) {
     firstSeenSec: Number.isFinite(p.firstSeenSec) ? p.firstSeenSec : null
   }));
 
+  // The original events/quotes are kept losslessly outside the model prompt.
+  const sourceEvidenceArchive = {
+    events: structuredClone(raw.events || []), quotes: structuredClone(raw.quotes || [])
+  };
   // Events: keep the most editorially important, capped, then chronological.
   let events = (raw.events || [])
     .filter(e => Number.isFinite(e.startSec) && Number.isFinite(e.endSec) && e.endSec > e.startSec)
@@ -132,7 +138,16 @@ function normalize(raw = {}, ctx = {}) {
       audioType: e.audioType || 'uncertain',
       audioConfidence: clamp01(e.audioConfidence)
     }));
-  events.sort((a, b) => eventImportance(b) - eventImportance(a));
+  // Preserve causal setup, contradiction/reveal references and quoted beats
+  // before ranking remaining events for editorial tension.
+  const referenced = new Set();
+  for (const q of raw.quotes || []) if (q.eventId) referenced.add(q.eventId);
+  for (const ev of events) {
+    for (const id of ev.causalParents || []) referenced.add(id);
+    if (ev.spoilsEventId) referenced.add(ev.spoilsEventId);
+  }
+  events.sort((a, b) => Number(referenced.has(b.id)) - Number(referenced.has(a.id))
+    || eventImportance(b) - eventImportance(a));
   events = events.slice(0, MAX_EVENTS);
   events.forEach((e, i) => { if (!e.id) e.id = `e${i + 1}`; });
   events.sort((a, b) => a.startSec - b.startSec);
@@ -165,7 +180,7 @@ function normalize(raw = {}, ctx = {}) {
 
   const tensionCurve = events.slice().sort((a, b) => a.startSec - b.startSec).map(e => ({ atSec: e.startSec, tension: e.tension }));
 
-  return {
+  const model = {
     artifactType: 'auto_story_source_model',
     modelVersion: MODEL_VERSION,
     sourceId: ctx.sourceId || raw.sourceId || null,
@@ -173,6 +188,8 @@ function normalize(raw = {}, ctx = {}) {
     people, events, quotes, audioEvents, tensionCurve,
     visualQuality: events.map(e => ({ atSec: e.startSec, quality: e.visualQuality }))
   };
+  Object.defineProperty(model, 'sourceEvidenceArchive', { value: sourceEvidenceArchive, enumerable: false });
+  return model;
 }
 
 // ---- merge / dedup for chunked extraction (pure) ---------------------------
@@ -225,11 +242,23 @@ function mergeSourceModels(models = []) {
 
 function modelPath(cacheDir) { return path.join(cacheDir, 'story-model.json'); }
 
-async function loadWithReason(cacheDir) {
+function sourceCacheIdentity(engine) {
+  const model = engine?.service?.vertex?.getModel?.('auto_story_plan');
+  if (!model) return null; // lightweight unit-test engines
+  const V3 = require('./autoStoryV3Contracts');
+  return crypto.createHash('sha256').update(JSON.stringify({
+    model, sourceHash: engine.sourceHash, modelVersion: MODEL_VERSION,
+    recoveryVersion: RECOVERY_VERSION, mediaFps: 4,
+    instructions: [V3.instructions.sourceModel, V3.instructions.sourceModelCompact, V3.instructions.sourceModelChunk],
+    transcript: engine.cues || []
+  })).digest('hex');
+}
+async function loadWithReason(cacheDir, expectedIdentity = null) {
   let raw;
   try { raw = JSON.parse(await fs.readFile(modelPath(cacheDir), 'utf8')); }
   catch (_) { return { model: null, reason: 'no cached story-model.json' }; }
   if (raw?.modelVersion !== MODEL_VERSION) return { model: null, reason: `schema version ${raw?.modelVersion} != ${MODEL_VERSION}` };
+  if (expectedIdentity && raw.cacheIdentity !== expectedIdentity) return { model: null, reason: 'model/prompt/transcript/media cache identity changed' };
   if (!Array.isArray(raw.events) || !raw.events.length) return { model: null, reason: 'cached model has no events' };
   return { model: raw, reason: 'hit' };
 }
@@ -239,15 +268,21 @@ async function load(cacheDir) { return (await loadWithReason(cacheDir)).model; }
 // proxy). Lets the pipeline resolve a HIT and skip whole-source media preparation
 // and the Vertex call entirely.
 async function loadCached(engine) {
-  const { model } = await loadWithReason(engine.cache);
+  const { model } = await loadWithReason(engine.cache, sourceCacheIdentity(engine));
   return model || null;
 }
 
-async function persist(cacheDir, model) {
+async function persist(cacheDir, model, cacheIdentity = null) {
   await fs.mkdir(cacheDir, { recursive: true });
+  if (model.sourceEvidenceArchive) {
+    const archiveFile = path.join(cacheDir, 'source-evidence-full.json');
+    const archiveTemp = `${archiveFile}.tmp`;
+    await fs.writeFile(archiveTemp, JSON.stringify(model.sourceEvidenceArchive, null, 2));
+    await fs.rename(archiveTemp, archiveFile);
+  }
   const file = modelPath(cacheDir);
   const tmp = `${file}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(model, null, 2));
+  await fs.writeFile(tmp, JSON.stringify(cacheIdentity ? { ...model, cacheIdentity } : model, null, 2));
   await fs.rename(tmp, file);
   return file;
 }
@@ -333,7 +368,9 @@ async function persistDiag(cacheDir, diag) {
 // goes CHUNK-FIRST with small windows so a normal window extracts in one call.
 // Recursion is an emergency fallback for the odd token-dense window, NOT the plan.
 function callLimit(service) {
-  return Math.max(1, Math.min(100, Number(service?.settings?.vertexAutoStoryMaxCalls) || 16));
+  const explicit = Number(service?.settings?.vertexAutoStoryMaxCalls);
+  if (Number.isFinite(explicit) && explicit > 0) return Math.max(1, Math.min(100, explicit));
+  return Math.max(16, Math.min(100, Number(service?.callBudget?.limit) || 16));
 }
 // Downstream calls the run still needs AFTER the source model, derived from the
 // pipeline's own bounded loops (not a guess).
@@ -350,8 +387,16 @@ function downstreamReserve(config) {
 function requestBudgetPlan(engine) {
   const cb = engine.service?.callBudget;
   if (!cb) return { unbounded: true, global: Infinity, downstreamReserved: 0, sourceModelLimit: Infinity };
-  const global = callLimit(engine.service);
   const downstreamReserved = downstreamReserve(engine.config);
+  const explicit = Number(engine.service.settings?.vertexAutoStoryMaxCalls);
+  if (!(Number.isFinite(explicit) && explicit > 0)) {
+    const planned = engine.duration > LONG_SOURCE_THRESHOLD_SEC
+      ? planChunkWindows(engine.duration, Infinity).initialWindows
+      : Math.max(4, Math.ceil(engine.duration / CHUNK_FIRST_TARGET_SEC));
+    const dynamicLimit = Math.min(100, Math.max(16, downstreamReserved + planned + 4));
+    if (engine.service.callBudget) engine.service.callBudget.limit = Math.max(engine.service.callBudget.limit || 0, dynamicLimit);
+  }
+  const global = callLimit(engine.service);
   const sourceModelLimit = Math.max(SOURCE_MODEL_MIN_CALLS, Math.min(global, global - downstreamReserved));
   return { unbounded: false, global, downstreamReserved, sourceModelLimit };
 }
@@ -566,7 +611,8 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
   emit(`[V3] Runtime build: sourceModelVersion=${fp.sourceModelVersion} recoveryVersion=${fp.recoveryVersion} MAX_EVENTS=${fp.maxEvents} MAX_QUOTES=${fp.maxQuotes} wholeMaxOutputTokens=${fp.wholeMaxOutputTokens} thinkingBudget=${fp.thinkingBudget} recoveryEnabled=${fp.recoveryEnabled}`);
 
   // Cache: same source hash + same schema version => reuse, no Vertex call.
-  const { model: cached, reason } = await loadWithReason(cacheDir);
+  const identity = sourceCacheIdentity(engine);
+  const { model: cached, reason } = await loadWithReason(cacheDir, identity);
   if (cached) {
     emit('[V3] Source Story Model cache HIT');
     await engine.metric('v3-source-model', { cached: true }).catch(() => {});
@@ -590,7 +636,7 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
         emit(`[V3] Source Model Vertex options: maxOutputTokens=${WHOLE_MAX_OUTPUT_TOKENS} thinkingBudget=${SOURCE_MODEL_THINKING_BUDGET} strategy=whole`);
         const raw = await askModel(engine, 'v3-source-model', baseInput, schema, instruction, await getOverview(), { maxOutputTokens: WHOLE_MAX_OUTPUT_TOKENS, thinkingBudget: SOURCE_MODEL_THINKING_BUDGET });
         const model = normalize(raw, ctx);
-        await persist(cacheDir, model);
+        await persist(cacheDir, model, identity);
         return model;
       } catch (err) {
         if (!isRecoverable(err)) throw err;
@@ -605,7 +651,7 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
         emit(`[V3] Source Model Vertex options: maxOutputTokens=${COMPACT_MAX_OUTPUT_TOKENS} thinkingBudget=${SOURCE_MODEL_THINKING_BUDGET} strategy=compact`);
         const raw = await askModel(engine, 'v3-source-model_compact', baseInput, compactSchema, compactInstruction, await getOverview(), { maxOutputTokens: COMPACT_MAX_OUTPUT_TOKENS, thinkingBudget: SOURCE_MODEL_THINKING_BUDGET });
         const model = normalize(raw, ctx);
-        await persist(cacheDir, model);
+        await persist(cacheDir, model, identity);
         emit('[V3] Source Story Model recovered via compact extraction.');
         return model;
       } catch (err) {
@@ -624,13 +670,13 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
   const model = await chunkedExtract(engine, chunkSchema || compactSchema || schema,
     chunkInstruction || compactInstruction || instruction, ctx, audioEvents, emit,
     { phase, budget, windowPlan, mode: strat.mode, strategyReason: strat.reason });
-  await persist(cacheDir, model);
+  await persist(cacheDir, model, identity);
   emit('[V3] Source Story Model built via chunk-first extraction.');
   return model;
 }
 
 module.exports = {
-  build, normalize, mergeSourceModels, load, loadWithReason, loadCached, persist,
+  build, normalize, mergeSourceModels, load, loadWithReason, loadCached, persist, sourceCacheIdentity,
   tensionForEvent, attachWordWindow, isMaxTokens, isMaxTokensError, isRecoverable, chunkedExtract, extractWindow,
   validateRaw, validateChunk, fingerprint, callLimit,
   selectStrategy, requestBudgetPlan, downstreamReserve, planChunkWindows, makePhase,
