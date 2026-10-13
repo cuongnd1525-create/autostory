@@ -44,4 +44,4 @@ jobs:
           node tests/productionQueueIpc.test.js
           node tests/autoStoryVariantWorker.test.js
           node tests/autoStoryProduction.test.js
-          node tests/autoStoryV4ProductionRepair.test.js
+          AUTOSTORY_SKIP_LIVE_TTS=1 node tests/autoStoryV4ProductionRepair.test.js
