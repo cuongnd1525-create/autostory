@@ -573,7 +573,9 @@ async function extractWindow(engine, schema, instruction, audioEvents, emit, sta
         reason: outputOverflow ? 'schema overflow at minimum leaf' : 'MAX_TOKENS at minimum leaf' });
       throw new (require('./autoStoryRepairRouter').StoryError)(
         outputOverflow ? 'SOURCE_MODEL_SCHEMA_OVERFLOW' : 'SOURCE_MODEL',
-        `Source window ${round1(start)}-${round1(end)}s (${round1(dur)}s) still exceeded ${outputOverflow ? 'the event/quote schema' : 'MAX_TOKENS'} at minimum leaf size. Cannot guarantee full source coverage.`);
+        outputOverflow
+          ? `Source window ${round1(start)}-${round1(end)}s (${round1(dur)}s) still exceeds event/quote schema at the minimum leaf.`
+          : `Source model window ${round1(start)}-${round1(end)}s (${round1(dur)}s) still hit MAX_TOKENS at the minimum leaf size; cannot guarantee full source coverage.`);
     }
     // Non-MAX_TOKENS failure (INPUT_ACCESS, malformed, etc.): a coverage hole we
     // will NOT paper over. Record and fail the whole extraction.

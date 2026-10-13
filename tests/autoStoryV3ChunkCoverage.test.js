@@ -147,7 +147,7 @@ const forceChunk = (args) => (args.maxOutputTokens === S.WHOLE_MAX_OUTPUT_TOKENS
         id: `q${i}`, eventId: events[i % events.length].id,
         speaker: 'Officer', startSec: win.start + i * 4, endSec: win.start + i * 4 + 1,
         text: `Important exchange ${i} at ${Math.round(win.start)}`,
-        epistemic: 'attributed_claim', editorialValue: 0.7
+        epistemic: 'officer_claim', editorialValue: 0.7
       }));
       return { accessGranted: true, people: [], events, quotes };
     });
