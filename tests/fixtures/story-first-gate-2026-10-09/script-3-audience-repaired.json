@@ -1,0 +1,533 @@
+{
+  "artifactType": "highlight_cut_script",
+  "schemaVersion": 1,
+  "workflow": "manual_gemini_pro",
+  "scriptId": 3,
+  "partNumber": 2,
+  "partBadge": "PART 2",
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "suggestedTitle": "DISORIENTED DRIVER SPRINTS OUT OF ER",
+  "title": "DISORIENTED DRIVER SPRINTS OUT OF ER",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 118,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "filename": "source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "filename": "01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_prompt"
+      },
+      {
+        "filename": "series-plan.json",
+        "role": "locked_series_plan"
+      },
+      {
+        "filename": "narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "filename": "story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "filename": "scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "filename": "source-transcript.srt",
+        "role": "transcript"
+      },
+      {
+        "filename": "hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "filename": "action-candidates.json",
+        "role": "action_candidates"
+      },
+      {
+        "filename": "proxy-chunks-manifest.json",
+        "role": "proxy_manifest"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "scriptId": 3,
+    "partNumber": 2,
+    "name": "The Interrogation",
+    "primaryQuestion": "Why was crash driver Billy Bailey so severely disoriented on the Key West roadside, and what hidden criminal contraband inside his vehicle escalated a routine traffic check into a hospital escape and combative assault on officers?",
+    "storyQuestion": "Why was crash driver Billy Bailey so severely disoriented on the Key West roadside, and what hidden criminal contraband inside his vehicle escalated a routine traffic check into a hospital escape and combative assault on officers?",
+    "centralConflict": "A heavily intoxicated and disoriented crash suspect repeatedly resists vital monitoring, attempts a foot escape from hospital custody, and physically lashes out at officers and medical staff.",
+    "hookPromise": "Promises to uncover how an apparently dazed crash victim ended up tackled in a hospital parking lot while trying to flee police custody, and the shocking truth uncovered during his medical detox.",
+    "chapterRole": "Questioning, explanations, lies, contradictions and evidence that surface after the confrontation. Ends on the strongest verified boiling-point turn BEFORE the arrest/verdict (cliffhanger).",
+    "hookRange": {
+      "sourceStartSec": 385.875,
+      "sourceEndSec": 401.75
+    },
+    "sceneAllocation": [
+      {
+        "sourceStartSec": 385.875,
+        "sourceEndSec": 401.75,
+        "purpose": "Suspect brought into hospital ER by first responders."
+      },
+      {
+        "sourceStartSec": 401.75,
+        "sourceEndSec": 453.75,
+        "purpose": "Vehicle search discovers four fraudulent driver's licenses."
+      },
+      {
+        "sourceStartSec": 453.75,
+        "sourceEndSec": 593,
+        "purpose": "Hospital exam room agitation, refusing tests, officer blocking exit."
+      },
+      {
+        "sourceStartSec": 593,
+        "sourceEndSec": 626.375,
+        "purpose": "Dr. Gordon quick check, initial medical clearance, and handcuff arrest."
+      },
+      {
+        "sourceStartSec": 626.375,
+        "sourceEndSec": 694.125,
+        "purpose": "Cruiser cage panic after jail intake rejects Bailey for high vitals."
+      },
+      {
+        "sourceStartSec": 694.125,
+        "sourceEndSec": 760,
+        "purpose": "Return to ER room 5, uncuffing for vitals, and sudden foot escape sprint."
+      }
+    ],
+    "hookHandoff": {
+      "contextNeeded": "Pick up from Bailey arriving at the hospital under police guard while officers return to search his wrecked sedan.",
+      "rewindRequired": false,
+      "bridgePurpose": "Bridge from the combative ambulance ride to the hospital entrance, setting up the vehicle search that exposes his fraudulent identity.",
+      "verifiedPayoffEventIds": [
+        "e12",
+        "e13",
+        "e15",
+        "e16"
+      ]
+    },
+    "causalProgression": [
+      {
+        "eventId": "e11",
+        "sourceStartSec": 385.875,
+        "sourceEndSec": 401.75,
+        "informationGain": "Suspect is brought into the emergency room under police guard for medical evaluation.",
+        "whyNext": "Sets up the concurrent vehicle search while suspect is held at ER."
+      },
+      {
+        "eventId": "e12",
+        "sourceStartSec": 401.75,
+        "sourceEndSec": 453.75,
+        "informationGain": "Officers search the crashed sedan and uncover four fraudulent Louisiana driver's licenses with mismatched names and numbers.",
+        "whyNext": "Proves suspect is intentionally concealing his identity, raising criminal stakes."
+      },
+      {
+        "eventId": "e13",
+        "sourceStartSec": 453.75,
+        "sourceEndSec": 593,
+        "informationGain": "Inside the ER, suspect agitatedly refuses blood pressure tests and attempts to leave the room until blocked by an officer.",
+        "whyNext": "Shows ongoing resistance to medical care and custody."
+      },
+      {
+        "eventId": "e14",
+        "sourceStartSec": 593,
+        "sourceEndSec": 626.375,
+        "informationGain": "Dr. Gordon performs brief exam and clears suspect; officer places Bailey in handcuffs under arrest.",
+        "whyNext": "Appears to resolve the medical phase and transitions to jail transport."
+      },
+      {
+        "eventId": "e15",
+        "sourceStartSec": 626.375,
+        "sourceEndSec": 694.125,
+        "informationGain": "Jail intake rejects Bailey due to spiking vitals; locked in the cruiser cage, Bailey panics, claiming he can't breathe and begging to return to the ER.",
+        "whyNext": "Creates a medical crisis forcing officers to reverse course back to hospital."
+      },
+      {
+        "eventId": "e16",
+        "sourceStartSec": 694.125,
+        "sourceEndSec": 760,
+        "informationGain": "Officer returns Bailey to ER room 5 and removes handcuffs for vitals monitoring; Bailey suddenly bolts off the bed and sprints out of the hospital.",
+        "whyNext": "Delivers the peak cliffhanger turning point before the parking lot pursuit."
+      }
+    ],
+    "plannedNarratorArc": [
+      {
+        "afterEventId": "e11",
+        "beforeEventId": "e12",
+        "narratorFunction": "bridge",
+        "purpose": "Transition from ER arrival to the vehicle search where officers uncover the suspect's fake IDs.",
+        "authenticAudioHandoffEventId": "e12"
+      },
+      {
+        "afterEventId": "e12",
+        "beforeEventId": "e13",
+        "narratorFunction": "reinterpretation",
+        "purpose": "Explain how finding 4 fake IDs reframes Bailey's disorientation as a potential deception strategy as he resists hospital testing.",
+        "authenticAudioHandoffEventId": "e13"
+      },
+      {
+        "afterEventId": "e13",
+        "beforeEventId": "e15",
+        "narratorFunction": "escalation",
+        "purpose": "Detail the shocking turn when jail medical staff refuse intake, causing Bailey to panic in the police cruiser.",
+        "authenticAudioHandoffEventId": "e15"
+      },
+      {
+        "afterEventId": "e15",
+        "beforeEventId": "e16",
+        "narratorFunction": "bridge",
+        "purpose": "Transition from cruiser cage panic back into ER room 5 for vital monitoring.",
+        "authenticAudioHandoffEventId": "e16"
+      },
+      {
+        "afterEventId": "e16",
+        "beforeEventId": "e16",
+        "narratorFunction": "cliffhanger",
+        "purpose": "Articulate the peak cliffhanger turning point as uncuffed Bailey bolts off the hospital bed into the parking lot.",
+        "authenticAudioHandoffEventId": "e16"
+      }
+    ],
+    "engagementIntent": {
+      "emotionalReason": "Tension and disbelief as a routine medical clearance reverses into jail rejection, followed by an audacious escape sprint.",
+      "naturalDiscussionQuestion": "Was the officer justified in removing the suspect's handcuffs inside the ER room given his elevated blood pressure and panicked state?",
+      "factualBasisEventIds": [
+        "e12",
+        "e15",
+        "e16"
+      ]
+    },
+    "endingType": "cliffhanger",
+    "expectedEnding": "Moments after the officer uncuffs Bailey in ER room 5 to check his dangerously spiking vitals, Bailey suddenly leaps off the bed and bolts through the exit doors into the pitch-black parking lot.",
+    "cliffhanger": "Moments after the officer uncuffs Bailey in ER room 5 to check his dangerously spiking vitals, Bailey suddenly leaps off the bed and bolts through the exit doors into the pitch-black parking lot.",
+    "endingRange": {
+      "sourceStartSec": 746.625,
+      "sourceEndSec": 760
+    },
+    "cliffhangerRange": {
+      "sourceStartSec": 746.625,
+      "sourceEndSec": 760
+    },
+    "prohibitedReveals": [
+      "The parking lot taser takedown and physical wrestling on the asphalt.",
+      "The shattered glass door damage and additional felony criminal mischief charge.",
+      "The suspect's biting attack against nurses and officers during detox.",
+      "The final booking citation process and 5-count formal criminal charges."
+    ],
+    "mustNotReveal": [
+      "The parking lot taser takedown and physical wrestling on the asphalt.",
+      "The shattered glass door damage and additional felony criminal mischief charge.",
+      "The suspect's biting attack against nurses and officers during detox.",
+      "The final booking citation process and 5-count formal criminal charges."
+    ],
+    "plannedEvents": [
+      {
+        "beatId": "part2_beat001",
+        "eventId": "e10",
+        "storyFunction": "setup",
+        "sourceStartSec": 325,
+        "sourceEndSec": 385.9,
+        "newInformation": "Inside the ambulance, Bailey aggressively refuses vital signs and glucose monitoring, prompting paramedics to request a police escort and report his heavily dilated pupils.",
+        "narrativePurpose": "Establish where and why the story starts",
+        "sourceGrounding": [
+          "e10"
+        ]
+      },
+      {
+        "beatId": "part2_beat002",
+        "eventId": "e11",
+        "storyFunction": "setup",
+        "sourceStartSec": 385.9,
+        "sourceEndSec": 401.8,
+        "newInformation": "The ambulance arrives at the hospital and first responders escort Bailey inside for medical evaluation.",
+        "narrativePurpose": "Show a verifiable change since the preceding beat",
+        "sourceGrounding": [
+          "e11"
+        ]
+      },
+      {
+        "beatId": "part2_beat003",
+        "eventId": "e12",
+        "storyFunction": "setup",
+        "sourceStartSec": 401.8,
+        "sourceEndSec": 453.8,
+        "newInformation": "Officers searching Bailey's crashed sedan uncover four Louisiana driver's licenses with differing names and identification numbers.",
+        "narrativePurpose": "Show a verifiable change since the preceding beat",
+        "sourceGrounding": [
+          "e12"
+        ]
+      },
+      {
+        "beatId": "part2_beat004",
+        "eventId": "e13",
+        "storyFunction": "conflict",
+        "sourceStartSec": 453.8,
+        "sourceEndSec": 593,
+        "newInformation": "In the hospital ER examination room, medical staff attempt to attach a blood pressure cuff, but Bailey becomes agitated, attempts to leave the room, and refuses basic testing before officers order him to sit down.",
+        "narrativePurpose": "Show a verifiable change since the preceding beat",
+        "sourceGrounding": [
+          "e13"
+        ]
+      },
+      {
+        "beatId": "part2_beat005",
+        "eventId": "e14",
+        "storyFunction": "setup",
+        "sourceStartSec": 593,
+        "sourceEndSec": 626.4,
+        "newInformation": "Dr. Gordon performs a brief stethoscope examination and clears Bailey medically, after which the officer orders Bailey to drop his belongings and places him in handcuffs under arrest.",
+        "narrativePurpose": "Show a verifiable change since the preceding beat",
+        "sourceGrounding": [
+          "e14"
+        ]
+      },
+      {
+        "beatId": "part2_beat006",
+        "eventId": "e15",
+        "storyFunction": "setup",
+        "sourceStartSec": 626.4,
+        "sourceEndSec": 694.1,
+        "newInformation": "After jail intake rejects Bailey due to critically high vitals, Bailey panics inside the police cruiser's rear cage, begging the officer to rush him back to the emergency room.",
+        "narrativePurpose": "Show a verifiable change since the preceding beat",
+        "sourceGrounding": [
+          "e15"
+        ]
+      },
+      {
+        "beatId": "part2_beat007",
+        "eventId": "e16",
+        "storyFunction": "escalation",
+        "sourceStartSec": 694.1,
+        "sourceEndSec": 760,
+        "newInformation": "The officer returns Bailey to hospital ER room 5 and removes his handcuffs for medical monitoring, but Bailey suddenly leaps off the bed and sprints out of the hospital while the officer is distracted.",
+        "narrativePurpose": "Show a verifiable change since the preceding beat",
+        "sourceGrounding": [
+          "e16"
+        ]
+      }
+    ],
+    "narratorInstructions": {
+      "purpose": "Bridge gaps in time, place, causality and meaning; never voice what is already obvious.",
+      "jobs": [
+        "context",
+        "bridge",
+        "escalation",
+        "reinterpretation",
+        "anticipation",
+        "payoff"
+      ],
+      "handoff": "Lead into authentic meaningful original dialogue/action and yield the audio stage to that footage.",
+      "minimumMeaningfulBridges": 1,
+      "style": "Natural US conversational true-crime storytelling. Concise, source-grounded, no repetitive clickbait or administrative report prose.",
+      "prohibited": [
+        "unverified charges or motives",
+        "repeating the same event",
+        "fake stakes",
+        "Follow for Part 2 instead of an actual cliffhanger"
+      ]
+    }
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e11",
+      "beforeEventId": "e12",
+      "narratorFunction": "bridge",
+      "purpose": "Transition from ER arrival to the vehicle search where officers uncover the suspect's fake IDs.",
+      "authenticAudioHandoffEventId": "e12"
+    },
+    {
+      "afterEventId": "e12",
+      "beforeEventId": "e13",
+      "narratorFunction": "reinterpretation",
+      "purpose": "Explain how finding 4 fake IDs reframes Bailey's disorientation as a potential deception strategy as he resists hospital testing.",
+      "authenticAudioHandoffEventId": "e13"
+    },
+    {
+      "afterEventId": "e13",
+      "beforeEventId": "e15",
+      "narratorFunction": "escalation",
+      "purpose": "Detail the shocking turn when jail medical staff refuse intake, causing Bailey to panic in the police cruiser.",
+      "authenticAudioHandoffEventId": "e15"
+    },
+    {
+      "afterEventId": "e15",
+      "beforeEventId": "e16",
+      "narratorFunction": "bridge",
+      "purpose": "Transition from cruiser cage panic back into ER room 5 for vital monitoring.",
+      "authenticAudioHandoffEventId": "e16"
+    },
+    {
+      "afterEventId": "e16",
+      "beforeEventId": "e16",
+      "narratorFunction": "cliffhanger",
+      "purpose": "Articulate the peak cliffhanger turning point as uncuffed Bailey bolts off the hospital bed into the parking lot.",
+      "authenticAudioHandoffEventId": "e16"
+    }
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_001",
+      "sceneId": "scene_0020",
+      "sourceStartSec": 387.25,
+      "sourceEndSec": 394.625,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "narrativeBeat": "BEAT 1 - COLD OPEN HOOK",
+      "actionCandidateId": "action_0006",
+      "macroBlockId": "block_beat_01",
+      "transitionReason": "Cold open hook shows first responders guiding Bailey into the emergency room under police guard."
+    },
+    {
+      "segmentId": "seg_002",
+      "sceneId": "scene_0021",
+      "sourceStartSec": 394.625,
+      "sourceEndSec": 401.75,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "narrativeBeat": "BEAT 1 - COLD OPEN HOOK",
+      "actionCandidateId": "action_0006",
+      "macroBlockId": "block_beat_01",
+      "transitionReason": "Continuous ER arrival footage establishing custody transfer to hospital staff."
+    },
+    {
+      "segmentId": "seg_003",
+      "sceneId": "scene_0022",
+      "sourceStartSec": 405.375,
+      "sourceEndSec": 416.375,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "While Bailey is checked into the emergency room, officers search his wrecked sedan and uncover four fraudulent Louisiana driver's licenses with mismatched names and state numbers.",
+      "storyFunction": "bridge",
+      "narrativeBeat": "BEAT 2 - VEHICLE SEARCH & FAKE IDS",
+      "macroBlockId": "block_beat_02",
+      "transitionReason": "Narrator bridges from hospital intake to concurrent vehicle search exposing fake IDs."
+    },
+    {
+      "segmentId": "seg_004",
+      "sceneId": "scene_0023",
+      "sourceStartSec": 416.375,
+      "sourceEndSec": 425.125,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "evidence",
+      "narrativeBeat": "BEAT 3 - EVIDENCE OF IDENTITY FRAUD",
+      "macroBlockId": "block_beat_03",
+      "transitionReason": "Officer examines fraudulent licenses under flashlight beam discussing mismatched numbers."
+    },
+    {
+      "segmentId": "seg_005",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 425.125,
+      "sourceEndSec": 431.125,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "evidence",
+      "narrativeBeat": "BEAT 3 - EVIDENCE OF IDENTITY FRAUD",
+      "macroBlockId": "block_beat_03",
+      "transitionReason": "Officer documents the multiple fraudulent credentials inside the vehicle."
+    },
+    {
+      "segmentId": "seg_006",
+      "sceneId": "scene_0027",
+      "sourceStartSec": 518,
+      "sourceEndSec": 528.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "With his fraudulent identities uncovered by police, Bailey grows increasingly agitated inside the hospital, fiercely refusing standard monitoring and attempting to walk out.",
+      "storyFunction": "reinterpretation",
+      "narrativeBeat": "BEAT 4 - HOSPITAL EXAM RESISTANCE",
+      "macroBlockId": "block_beat_04",
+      "transitionReason": "Narrator explains how the discovery of fake IDs reframes Bailey's sudden urge to flee ER room."
+    },
+    {
+      "segmentId": "seg_007",
+      "sceneId": "scene_0027",
+      "sourceStartSec": 528.5,
+      "sourceEndSec": 541,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "conflict",
+      "narrativeBeat": "BEAT 4 - HOSPITAL EXAM RESISTANCE",
+      "actionCandidateId": "action_0008",
+      "macroBlockId": "block_beat_04",
+      "transitionReason": "Suspect tries to leave room while officer blocks doorway ordering him to take a seat."
+    },
+    {
+      "segmentId": "seg_008",
+      "sceneId": "scene_0034",
+      "sourceStartSec": 593.5,
+      "sourceEndSec": 604,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "After an emergency physician conducts a quick examination and clears Bailey, officers place him under arrest. But when jail medical intake unexpectedly rejects him, absolute panic erupts.",
+      "storyFunction": "escalation",
+      "narrativeBeat": "BEAT 5 - MEDICAL CLEARANCE & JAIL REJECTION",
+      "macroBlockId": "block_beat_05",
+      "transitionReason": "Narrator details the reversal from ER clearance to jail intake rejection due to spiking vitals."
+    },
+    {
+      "segmentId": "seg_009",
+      "sceneId": "scene_0040",
+      "sourceStartSec": 639.5,
+      "sourceEndSec": 650.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "conflict",
+      "narrativeBeat": "BEAT 6 - CRUISER CAGE PANIC",
+      "actionCandidateId": "action_0010",
+      "macroBlockId": "block_beat_06",
+      "transitionReason": "Handcuffed Bailey panics inside the cruiser cage, begging officer to rush him back to hospital."
+    },
+    {
+      "segmentId": "seg_010",
+      "sceneId": "scene_0042",
+      "sourceStartSec": 698.5,
+      "sourceEndSec": 709,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Speeding back to the hospital, the officer escorts Bailey into examination room five to address his critically elevated blood pressure.",
+      "storyFunction": "bridge",
+      "narrativeBeat": "BEAT 7 - RETURN TO ER ROOM 5",
+      "macroBlockId": "block_beat_07",
+      "transitionReason": "Narrator bridges the return transport to ER room 5 for vital monitoring."
+    },
+    {
+      "segmentId": "seg_011",
+      "sceneId": "scene_0043",
+      "sourceStartSec": 715,
+      "sourceEndSec": 726.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "conflict",
+      "narrativeBeat": "BEAT 7 - RETURN TO ER ROOM 5",
+      "macroBlockId": "block_beat_07",
+      "transitionReason": "Officer explains jail refusal due to high blood pressure inside exam room 5."
+    },
+    {
+      "segmentId": "seg_012",
+      "sceneId": "scene_0045",
+      "sourceStartSec": 748.25,
+      "sourceEndSec": 759.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Inside room five, the officer removes Bailey's handcuffs for medical monitoring. Seizing the opportunity, Bailey suddenly leaps off the bed and sprints straight out the exit doors.",
+      "storyFunction": "cliffhanger",
+      "narrativeBeat": "BEAT 8 - CLIFFHANGER ESCAPE SPRINT",
+      "actionCandidateId": "action_0012",
+      "macroBlockId": "block_beat_08",
+      "transitionReason": "Peak cliffhanger as uncuffed suspect bolts off hospital bed and sprints into dark parking lot."
+    }
+  ],
+  "series_mode": "interleaved_multipart",
+  "part_number": 2,
+  "part_badge": "PART 2",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}

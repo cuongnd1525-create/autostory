@@ -143,10 +143,11 @@ function resolveVoiceVisualFit({
     requiresRewrite = true;
     warningCode = "voice_far_too_long";
   } else if (ratio > Math.max(1, maxVoiceSpeedUp)) {
-    renderDuration = Math.min(
-      actualVoiceDuration / Math.max(1, maxVoiceSpeedUp),
-      plannedDuration / Math.max(0.5, minVisualSpeed)
-    );
+    // The visual is always extended enough for the COMPLETE voice at the maximum
+    // safe speed-up. Capping the extension at minVisualSpeed used to leave voice
+    // longer than the clip, and the mix (-shortest) silently cut the last words.
+    // Exceeding minVisualSpeed is reported below (visual_slowdown_limit_exceeded).
+    renderDuration = actualVoiceDuration / Math.max(1, maxVoiceSpeedUp);
     strategy = "light_voice_speedup_and_visual_extension";
     requiresRewrite = ratio > 1.15;
     warningCode = requiresRewrite ? "voice_too_long" : "";

@@ -11,6 +11,30 @@ function wordCount(value) {
   return text(value).split(/\s+/).filter(Boolean).length;
 }
 
+// A "distant source jump" is a gap LARGER than this between consecutive
+// segments' source ranges. Sub-2s skips inside one continuous moment are
+// micro-cuts, not narrative jumps (real run 2026-10-09: 3-4 of the 11 "far
+// jumps" that blocked Part 1/4 were ~1s gaps such as 160s -> 161s). The same
+// value is given to the writer/repair prompts via resolveProductionConstraints.
+const SOURCE_JUMP_GAP_TOLERANCE_SEC = 2;
+const MAX_JUSTIFIED_EXTRA_SOURCE_JUMPS = 2;
+
+// story_blueprint has two producers: legacy prompts emit macroBlocks; the
+// Story-First Phase B emits primaryQuestion / plannedEvents / causalProgression.
+// Both are real blueprints. Accepting only macroBlocks made every Story-First
+// Part lose 10 total / 15 editorial points (real run 2026-10-09: V1 63 -> 73,
+// repaired 66 -> 76 once the blueprint is recognised).
+function storyBlueprintPresent(script = {}) {
+  const blueprint = script.story_blueprint || script.storyBlueprint;
+  if (!blueprint || typeof blueprint !== "object") return false;
+  if (Array.isArray(blueprint.macroBlocks) && blueprint.macroBlocks.length) return true;
+  const plannedEvents = blueprint.plannedEvents || blueprint.planned_events;
+  if (Array.isArray(plannedEvents) && plannedEvents.length) return true;
+  const progression = blueprint.causalProgression || blueprint.causal_progression;
+  if ((Array.isArray(progression) && progression.length) || (typeof progression === "string" && progression.trim())) return true;
+  return Boolean(text(blueprint.primaryQuestion || blueprint.storyQuestion) && text(blueprint.hookPromise));
+}
+
 function idList(value) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.map((item) => text(item)).filter(Boolean))];
@@ -529,7 +553,7 @@ function scoreManualGeminiVariant({
     const previousRunId = text(previousRaw.sourceRunId || previousRaw.source_run_id || previousEvidence.sourceRunId);
     const currentRunId = text(currentRaw.sourceRunId || currentRaw.source_run_id || currentEvidence.sourceRunId);
     const sameSourceRun = Boolean(previousRunId && currentRunId && previousRunId === currentRunId);
-    if (sameSourceRun || Math.abs(number(current.sourceStartSec) - number(previous.sourceEndSec)) <= 0.35) {
+    if (sameSourceRun || Math.abs(number(current.sourceStartSec) - number(previous.sourceEndSec)) <= SOURCE_JUMP_GAP_TOLERANCE_SEC) {
       contiguousPairs += 1;
     } else {
       sourceJumpCount += 1;
@@ -565,7 +589,7 @@ function scoreManualGeminiVariant({
       audioRuns.push({ mode, duration: number(segment.duration), segmentCount: 1, actionOverride, sustainedBeatOverride });
     }
   });
-  const seriesRunLimit = profile.pacing === "story_first" ? 30 : profile.pacing === "balanced" ? 18 : 15;
+  const seriesRunLimit = seriesAudioRunLimit(profile);
   const oversizedSeriesRuns = profile.seriesMode && profile.interleavedAudioEnabled
     ? audioRuns.filter((run) => run.duration > seriesRunLimit + 0.05 && !run.actionOverride && !run.sustainedBeatOverride)
     : [];
@@ -777,9 +801,7 @@ function scoreManualGeminiVariant({
     if (!macroBlockKeys.includes(key)) macroBlockKeys.push(key);
   });
   const macroBlockCount = macroBlockKeys.length;
-  const hasStoryBlueprint = Boolean(
-    script.story_blueprint?.macroBlocks?.length || script.storyBlueprint?.macroBlocks?.length
-  );
+  const hasStoryBlueprint = storyBlueprintPresent(script);
   const narrativePurposes = rawSegments.map((segment, index) => (
     text(segment.narrativePurpose || segment.narrative_purpose)
       || phaseOf(segment, evidenceById.get(text(segments[index]?.evidenceId)) || {})
@@ -986,7 +1008,7 @@ function scoreManualGeminiVariant({
     return payoffEvidenceIds.has(text(target.evidenceId))
       || structuralBridgePurposes.has(segmentBridgePurpose(raw));
   });
-  const adaptiveSourceJumpMax = profile.maxSourceJumps + Math.min(2, justifiedSourceJumps.length);
+  const adaptiveSourceJumpMax = profile.maxSourceJumps + Math.min(MAX_JUSTIFIED_EXTRA_SOURCE_JUMPS, justifiedSourceJumps.length);
   const semanticCandidates = profile.independent && Array.isArray(script.semantic_must_include_candidates)
     ? script.semantic_must_include_candidates
     : [];
@@ -1895,6 +1917,52 @@ function scoreManualGeminiVariant({
   };
 }
 
+function seriesAudioRunLimit(profile = {}) {
+  return profile.pacing === "story_first" ? 30 : profile.pacing === "balanced" ? 18 : 15;
+}
+
+/**
+ * SINGLE SOURCE OF TRUTH for the numbers the Production Preflight enforces.
+ * Phase B prompts, repair packets/prompts and the render dry-run all read
+ * these values, so the writer is told exactly what the gate measures.
+ */
+function resolveProductionConstraints(script = {}, expectedScriptId = 0, { wordsPerSecond = 0 } = {}) {
+  const profile = resolveScriptProfile(script, expectedScriptId);
+  const wps = number(wordsPerSecond, 0);
+  return {
+    profileLabel: profile.label,
+    scriptId: profile.scriptId,
+    seriesMode: Boolean(profile.seriesMode),
+    minDurationSec: profile.minDuration,
+    maxDurationSec: profile.maxDuration,
+    minRenderableSec: 60.5,
+    maxVoiceoverSegmentSec: profile.maxVoiceoverSec,
+    maxContinuousAudioRunSec: profile.seriesMode && profile.interleavedAudioEnabled ? seriesAudioRunLimit(profile) : null,
+    maxSourceJumps: profile.maxSourceJumps,
+    maxJustifiedExtraSourceJumps: MAX_JUSTIFIED_EXTRA_SOURCE_JUMPS,
+    sourceJumpGapToleranceSec: SOURCE_JUMP_GAP_TOLERANCE_SEC,
+    wordsPerSecond: wps > 0 ? Number(wps.toFixed(3)) : null,
+    maxWordsForSeconds: (seconds) => (wps > 0 ? Math.max(1, Math.floor(number(seconds, 0) * wps)) : null)
+  };
+}
+
+/** Hard, numeric constraint lines for prompts (same numbers as the gate). */
+function describeProductionConstraints(constraints = {}) {
+  const lines = [
+    `- HARD: playable duration ${constraints.minDurationSec}-${constraints.maxDurationSec}s (never under ${constraints.minRenderableSec}s), measured on the normalized timeline.`,
+    `- HARD: every voiceover segment (sourceEndSec - sourceStartSec) <= ${constraints.maxVoiceoverSegmentSec}s.`
+  ];
+  if (constraints.maxContinuousAudioRunSec) {
+    lines.push(`- HARD: consecutive segments with the same audio type (all original_audio, or all voiceover) must not add up to more than ${constraints.maxContinuousAudioRunSec}s; alternate at complete sentence/beat boundaries.`);
+  }
+  lines.push(`- HARD: at most ${constraints.maxSourceJumps} source jumps (+${constraints.maxJustifiedExtraSourceJumps} only when the jump lands on a payoff/bridge). A jump = the next segment starts more than ${constraints.sourceJumpGapToleranceSec}s away (forward or backward) from where the previous segment ended. Narrate OVER contiguous footage instead of hopping to a new moment for every line.`);
+  if (constraints.wordsPerSecond) {
+    lines.push(`- HARD: the narrator speaks ${constraints.wordsPerSecond} words/s (measured voice profile). voiceover_text word count must be <= floor(segment seconds x ${constraints.wordsPerSecond}); e.g. 6s -> ${constraints.maxWordsForSeconds(6)} words, 8s -> ${constraints.maxWordsForSeconds(8)} words, 10s -> ${constraints.maxWordsForSeconds(10)} words, 12s -> ${constraints.maxWordsForSeconds(12)} words. Longer narration cannot be rendered without distorting the video.`);
+  }
+  lines.push("- Fixing one constraint must not break another one that already passes (duration, voiceover length, audio runs, jumps, word budget).");
+  return lines;
+}
+
 function rankManualGeminiVariants(variants = []) {
   return [...variants]
     .sort((left, right) => number(right?.viralPreflight?.score) - number(left?.viralPreflight?.score))
@@ -1902,6 +1970,10 @@ function rankManualGeminiVariants(variants = []) {
 }
 
 module.exports = {
+  SOURCE_JUMP_GAP_TOLERANCE_SEC,
+  storyBlueprintPresent,
+  resolveProductionConstraints,
+  describeProductionConstraints,
   evidenceHasBurnedText,
   measureVoiceGrounding,
   rankManualGeminiVariants,

@@ -463,7 +463,7 @@ function buildEditorialRepairPrompt({
   previousFiles = [], reportPath = "", blueprintPath = "", intelligencePath = "",
   seriesPlanPath = "", transcriptPath = "", sceneManifestPath = "",
   scriptIds = [], partIssues = null, repairPacketPath = "", recoveryFromForbiddenTool = false,
-  targetMinSec = 110, targetMaxSec = 125
+  targetMinSec = 110, targetMaxSec = 125, constraintLines = null, wordBudgetLines = []
 } = {}) {
   const uniquePart = scriptIds.length === 1 ? scriptIds[0] : null;
   // NEVER paste a full script/source intelligence into the --print argv on
@@ -504,9 +504,16 @@ function buildEditorialRepairPrompt({
     "Fix EVERY hard error that is genuinely supported by the evidence, without making up source facts or passing by fake metadata.",
     "Repair priorities based on the live normalized Production Preflight:",
     `- Target playable duration for THIS locked Series Part is ${targetMinSec}-${targetMaxSec}s (never under 60.5s); use actual post-normalization durations, not guessed metadata. If longer, remove low-value source beats; do not truncate an essential exchange or pad duration.`,
-    "- No voiceover segment should exceed 12s of actual spoken narration. Use SHORT contextual bridges and original audio with clear handoffs.",
-    "- Avoid original-audio / voiceover runs over 15s when the series profile requests interleaving; do not cut away mid-sentence or hide evidence.",
-    "- Avoid >7 distant source jumps per Part unless the story genuinely requires them; prioritize causal continuity over arbitrary hop counts.",
+    ...(Array.isArray(constraintLines) && constraintLines.length
+      ? ["HOST PRODUCTION GATE (exact numbers the host measures after your repair; ALL must hold at the same time):", ...constraintLines]
+      : [
+        "- No voiceover segment should exceed 12s of actual spoken narration. Use SHORT contextual bridges and original audio with clear handoffs.",
+        "- Avoid original-audio / voiceover runs over 15s when the series profile requests interleaving; do not cut away mid-sentence or hide evidence.",
+        "- Avoid >7 distant source jumps per Part unless the story genuinely requires them; prioritize causal continuity over arbitrary hop counts."
+      ]),
+    ...(Array.isArray(wordBudgetLines) && wordBudgetLines.length
+      ? ["VOICEOVER LINES THAT ARE TOO LONG FOR THEIR FOOTAGE (measured by the host):", ...wordBudgetLines]
+      : []),
     "- Part 1 must establish the hook conflict and audible context/rewind bridge within the opening ~15s, preserving the selected authentic hook.",
     "- Every Part needs a verified cliffhanger or payoff according to the locked Part ending. No generic 'Follow for Part 2' CTA.",
     "- Set macroBlockId/storyFunction and story_blueprint to reflect the ACTUAL story; do not simply add labels or pass flags.",

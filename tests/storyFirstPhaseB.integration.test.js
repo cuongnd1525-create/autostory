@@ -156,6 +156,13 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
       "exported script must retain Series profile for import-time QA");
     assert.strictEqual(savedPart1.target_duration_min_sec, 110);
     assert.strictEqual(savedPart1.target_duration_max_sec, 125);
+    // Series contract shared with the import: Story-First Parts open with their
+    // own planned hooks, so Stage 1 must declare shared_hook_enabled=false.
+    const savedParts = await Promise.all(good.value.validFiles.map(async (file) => JSON.parse(await fs.readFile(file, "utf8"))));
+    assert.ok(savedParts.every((part) => part.series_mode === "interleaved_multipart"));
+    assert.ok(savedParts.every((part) => part.shared_hook_enabled === false), "Stage 1 must make the cold-open mode explicit");
+    const SeriesContract = require("../electron/services/seriesImportContract");
+    assert.deepStrictEqual(SeriesContract.checkSeriesImportContract(savedParts.map(SeriesContract.contractVariantFromScript)).errors, []);
   } finally { await fs.rm(good.root, { recursive: true, force: true }); }
 
   const poor = await exercise({ repairsFixIssue: false });
@@ -164,7 +171,11 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
     assert(poor.error && poor.error.kind === "editorial_quality", poor.error?.stack);
     assert(!poor.report.accepted);
     assert(poor.attemptedRepair);
-    assert.strictEqual(poor.calls.filter((c) => c.kind === "phase_b").length, 4, "one repair cycle per failed Part");
+    // Default storyFirstMaxRepairRounds=2: round 2 retries only the Parts that
+    // still fail (here all 3), then the gate blocks. Bounded: 1 + 3 + 3.
+    assert.strictEqual(poor.calls.filter((c) => c.kind === "phase_b").length, 7, "at most two bounded repair rounds per still-failing Part");
+    assert.strictEqual(poor.report.repairRounds, 2);
+    assert(/Part \d+: [a-z_]+/.test(poor.error.message), "block message names the failing Parts and codes");
   } finally { await fs.rm(poor.root, { recursive: true, force: true }); }
   const critic = await exercise({ repairsFixIssue: true, coldViewer: true, initialIsValid: true });
   try {
@@ -191,6 +202,16 @@ async function exercise({ repairsFixIssue, coldViewer = false, initialIsValid = 
       x.errors.some((error) => error.code === "production_preflight_failed")
     ), JSON.stringify(normalizedGate.report));
     assert(normalizedGate.attemptedRepair, "production-readiness failure must trigger the same repair path");
+    const writerCall = normalizedGate.calls.find((c) => c.kind === "phase_b" && !c.prompt.includes("EDITORIAL REPAIR"));
+    assert(writerCall.prompt.includes("HOST PRODUCTION GATE") && writerCall.prompt.includes("at most 7 source jumps"),
+      "Phase B writer gets the gate's exact numbers");
+    const repairCall = normalizedGate.calls.find((c) => c.prompt.includes("EDITORIAL REPAIR"));
+    assert(repairCall.prompt.includes("HOST PRODUCTION GATE"), "repair gets the gate's exact numbers");
+    const packet = JSON.parse(await fs.readFile(path.join(normalizedGate.resultDir, "editorial-repair-part-1-packet.json"), "utf8"));
+    assert.strictEqual(packet.qualityPolicy.maxSourceJumps, 7);
+    assert(/more than 2s/.test(packet.qualityPolicy.sourceJumpDefinition));
+    assert(packet.doNotRegress);
+    assert(normalizedGate.report.results.every((x) => x.renderDryRun), "every Part carries a render dry-run result");
   } finally { await fs.rm(normalizedGate.root, {recursive:true,force:true}); }
 
   const rogue = await exercise({ repairsFixIssue: true, rogueRepairCommand: true, hugeRepairEvidence: true });

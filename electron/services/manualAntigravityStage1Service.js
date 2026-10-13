@@ -18,6 +18,10 @@ const {
 const { resetPipelineTiming } = require("./pipelineTimingService");
 const MapReduce = require("./sourceUnderstandingMapReduce");
 const StoryFirst = require("./storyFirstEditorialService");
+// Lazy: both pull in dubbingService (heavy) and are only needed at the gate.
+const loadProductionPreflight = () => require("./manualGeminiViralPreflightService");
+const loadDraftDryRun = () => require("./draftRenderDryRun");
+const loadSeriesImportContract = () => require("./seriesImportContract");
 
 // Lazy: manualGeminiPackService is heavy and only needed for legacy packages
 // whose package-info.json predates cache.sourceFingerprint.
@@ -493,6 +497,27 @@ function detectSeriesProfile(promptText = "") {
   const match = String(promptText).match(/prompt_profile:\s*([a-z0-9_]+)/i);
   const profile = match ? match[1].toLowerCase() : "";
   return SERIES_PROFILES[profile] || null;
+}
+
+/** Production constraints of one Series Part, from the gate's single source of truth. */
+function seriesProductionConstraints(series, wordsPerSecond = 0, scriptId = 1) {
+  const part = series?.parts?.find((item) => Number(item.scriptId) === Number(scriptId)) || series?.parts?.[0] || {};
+  return loadProductionPreflight().resolveProductionConstraints({
+    scriptId: part.scriptId || scriptId,
+    prompt_profile: series?.profile || "",
+    series_mode: "interleaved_multipart",
+    part_number: part.partNumber || 1,
+    target_duration_min_sec: series?.durationMinSec,
+    target_duration_max_sec: series?.durationMaxSec
+  }, part.scriptId || scriptId, { wordsPerSecond });
+}
+
+/** Ordering for "is this candidate better?" (best-of after a repair). */
+function editorialCandidateRank(result = {}) {
+  const preflight = Number(result.productionPreflight?.score ?? result.score ?? 0);
+  const errors = Array.isArray(result.errors) ? result.errors.length : 0;
+  const dryRunIssues = Array.isArray(result.renderDryRun?.issues) ? result.renderDryRun.issues.length : 0;
+  return (result.passed ? 1000 : 0) + preflight - errors * 5 - dryRunIssues * 3;
 }
 
 function assertPrintPromptSize(prompt, label) {
@@ -1081,7 +1106,8 @@ function buildScriptGenerationPrompt({
   resultDir,
   scriptIds = [1, 3, 4],
   coverageSummary = "",
-  series = null
+  series = null,
+  productionConstraintLines = null
 }) {
   return [
     "You are executing Phase B (Script Generation) of RecapTool Studio's manual Gemini draft-review workflow.",
@@ -1119,9 +1145,16 @@ function buildScriptGenerationPrompt({
       "RENDERABLE SERIES PRODUCTION CONSTRAINTS (follow these when constructing each complete Part, not only in repair):",
       `- IMPORTANT: This specific profile requires ${series.durationMinSec}-${series.durationMaxSec}s per Part, NOT the generic 75-110s serialized preset. The HOST scorer uses the locked profile range.`,
       "- Estimate actual combined footage length from selected source ranges. Keep each Part inside its range and above 60.5s; do not stuff redundant procedural footage.",
-      "- Narrator delivery follows the measured voice profile ~2.2 words/s: keep each voiceover bridge comfortably under 12 seconds (~20-24 spoken English words), unless the actual recorded rate justifies a different duration.",
-      "- Keep original audio / narration runs under 15 seconds when this preserves intact dialogue and meaningful authentic action; do not cut away mid-sentence to game the score.",
-      "- Prefer at most 7 distant source jumps per Part; more jumps require genuine narrative value, clear audible context and source grounding.",
+      ...(Array.isArray(productionConstraintLines) && productionConstraintLines.length
+        ? [
+          "HOST PRODUCTION GATE (the exact numbers the host measures; a Part that breaks one is rejected before render):",
+          ...productionConstraintLines
+        ]
+        : [
+          "- Narrator delivery follows the measured voice profile ~2.2 words/s: keep each voiceover bridge comfortably under 12 seconds (~20-24 spoken English words), unless the actual recorded rate justifies a different duration.",
+          "- Keep original audio / narration runs under 15 seconds when this preserves intact dialogue and meaningful authentic action; do not cut away mid-sentence to game the score.",
+          "- Prefer at most 7 distant source jumps per Part; more jumps require genuine narrative value, clear audible context and source grounding."
+        ]),
       "- Story-first: strong cold open, intelligible first-15-second handoff, meaningful narrator contribution, verifiable climax/cliffhanger/payoff. Never pass by merely inventing metadata.",
       ""
     ] : []),
@@ -3286,6 +3319,11 @@ class ManualAntigravityStage1Service {
     const promptText = await fs.readFile(promptPath, "utf8");
     const requestedScriptIds = getRequestedScriptIds(promptText);
     const series = detectSeriesProfile(promptText);
+    // Measured narrator speed from the package prompt (voice profile learned
+    // from real TTS samples). Used by the writer prompt, the gate and the
+    // render dry-run so all three agree on how long a voiceover line is.
+    const measuredWordsPerSecond = loadDraftDryRun().parseMeasuredWordsPerSecond(promptText)
+      || Number(this.settings.manualDraftWordsPerSecond) || 0;
     const resultDir = path.join(resolvedPackageDir, RESULT_DIR_NAME);
     await fs.mkdir(resultDir, { recursive: true });
     // Clean up all existing files in resultDir so Antigravity starts with a pristine workspace.
@@ -3633,7 +3671,10 @@ class ManualAntigravityStage1Service {
       resultDir,
       scriptIds: requestedScriptIds,
       coverageSummary,
-      series
+      series,
+      productionConstraintLines: series
+        ? loadProductionPreflight().describeProductionConstraints(seriesProductionConstraints(series, measuredWordsPerSecond))
+        : null
     }), "Phase B");
     const commandConfigB = this.buildCommand(promptB, schemaPath, pass1Dir, {
       packageInfo,
@@ -3768,7 +3809,9 @@ class ManualAntigravityStage1Service {
             const normalized = normalizeHighlightCutScript(candidate, videoDurationSec);
             const readiness = scoreManualGeminiVariant({
               script: candidate, normalizedScript: normalized,
-              expectedScriptId: scriptId
+              expectedScriptId: scriptId,
+              // Same voice profile the import scorer receives.
+              voiceProfile: measuredWordsPerSecond ? { wordsPerSecond: measuredWordsPerSecond } : null
             });
             result.productionPreflight = {
               score: readiness.score,
@@ -3791,6 +3834,30 @@ class ManualAntigravityStage1Service {
               });
               result.feedback.push(...(readiness.issues || []).slice(0, 12)
                 .map((issue) => `production_preflight: ${issue}`));
+            }
+            // Replay the content-dependent parts of the draft render (block
+            // packing, voice vs. footage length, source ranges) so a script the
+            // renderer would reject never passes the gate.
+            const DraftDryRun = loadDraftDryRun();
+            const dry = DraftDryRun.dryRunManualDraftRender({
+              script: candidate, normalizedScript: normalized, videoDurationSec,
+              wordsPerSecond: measuredWordsPerSecond, settings: this.settings
+            });
+            result.renderDryRun = {
+              ok: dry.ok,
+              wordsPerSecond: measuredWordsPerSecond || null,
+              issues: dry.issues.map(({ code, segmentIndexes, durationSec, words, maxWords, ratio, message }) => ({
+                code, segments: (segmentIndexes || []).map((index) => index + 1), durationSec, words, maxWords, ratio, message
+              })),
+              wordBudgets: DraftDryRun.voiceWordBudgets(dry)
+            };
+            if (!dry.ok) {
+              result.passed = false;
+              result.errors.push({
+                code: "render_dry_run_failed",
+                message: `Draft render dry-run: ${dry.issues.length} issue(s) the renderer would reject or distort (${[...new Set(dry.issues.map((item) => item.code))].join(", ")}).`
+              });
+              result.feedback.push(...dry.issues.slice(0, 10).map((item) => `render_dry_run: ${item.message}`));
             }
           } catch (error) {
             result.passed = false;
@@ -3867,8 +3934,37 @@ class ManualAntigravityStage1Service {
       });
       return validated;
     };
+    // Deterministic host fix BEFORE any AI repair: lengthen the footage of a
+    // voiceover whose narration is longer than its segment, using adjacent
+    // source time inside the Part's locked allocation that no other segment
+    // uses. Narration is never trimmed or rewritten here.
+    const allowedRangesForPart = (scriptId) => {
+      const part = seriesPlan?.parts?.find((item) => Number(item.scriptId) === Number(scriptId));
+      if (!part) return null;
+      const ranges = [...(part.sceneAllocation || []), part.hookRange, ...(part.payoffRanges || []), ...(seriesPlan?.sharedRanges || [])]
+        .map(toRange).filter(Boolean).map((range) => [range.start, range.end]);
+      return ranges.length ? ranges : null;
+    };
+    const applyHostVoiceFit = (map, stageLabel) => {
+      if (!measuredWordsPerSecond) return;
+      const DraftDryRun = loadDraftDryRun();
+      for (const scriptId of requestedScriptIds) {
+        const artifact = map.get(scriptId);
+        if (!artifact?.script) continue;
+        const fit = DraftDryRun.autoFitVoiceFootage({
+          script: artifact.script, videoDurationSec, wordsPerSecond: measuredWordsPerSecond,
+          maxDurationSec: series?.durationMaxSec ?? Infinity, settings: this.settings,
+          allowedRanges: allowedRangesForPart(scriptId)
+        });
+        if (!fit.adjustments.length) continue;
+        map.set(scriptId, { ...artifact, script: fit.script });
+        this.emitLog(onProgress, 82,
+          `[VOICE_FIT] Part ${scriptId} (${stageLabel}): host kéo dài footage ${fit.adjustments.length} đoạn voiceover cho vừa lời đọc (${fit.adjustments.map((item) => `#${item.segmentIndex + 1} +${item.addedSec}s ${item.direction}`).join(", ")}); không cắt lời.`, logs);
+      }
+    };
     let editorialReport = null;
     if (storyFirstEnabled) {
+      applyHostVoiceFit(deduplicated, "initial");
       editorialReport = evaluate(deduplicated);
       for (const item of editorialReport.results) {
         if (item.productionPreflight && !item.productionPreflight.passed) {
@@ -3892,18 +3988,43 @@ class ManualAntigravityStage1Service {
         // encouraged AGY to call run_command to manipulate JSON and tripped the
         // read-only tool guard. Each repair gets its OWN evidence and precise
         // normalized preflight deductions, preserving already accepted Parts.
-        const failedIds = editorialReport.results.filter((entry) => !entry.passed).map((entry) => Number(entry.scriptId));
+        // Up to storyFirstMaxRepairRounds rounds (default 2): round 2 targets
+        // only what is still failing, and a repair that is WORSE than the
+        // version it replaced is reverted (real run 2026-10-09: the single
+        // repair fixed voiceover length but raised jumps 7 -> 11 and blocked).
         let repairProcessCount = 0;
         const perPartRepairs = [];
+        const maxRepairRounds = Math.max(1, Math.min(3, Math.round(Number(this.settings.storyFirstMaxRepairRounds ?? 2) || 2)));
+        let failureReport = editorialReport;
+        let repairRoundsRun = 0;
+        for (let repairRound = 1; repairRound <= maxRepairRounds && !this.cancelled; repairRound += 1) {
+        const failedIds = failureReport.results.filter((entry) => !entry.passed).map((entry) => Number(entry.scriptId));
+        if (!failedIds.length) break;
+        repairRoundsRun = repairRound;
+        if (repairRound > 1) {
+          await writeJsonAtomic(gatePath, failureReport);
+          this.emitLog(onProgress, 84,
+            `[EDITORIAL_REPAIR] Vòng ${repairRound}/${maxRepairRounds}: chỉ sửa lỗi còn lại của ${failedIds.map((id) => `Part ${id}`).join(", ")}; không được phá ràng buộc đang đạt.`, logs);
+        }
+        const versionsBeforeRound = new Map(failedIds.map((id) => [id, deduplicated.get(id)]));
         for (const scriptId of failedIds) {
           if (this.cancelled) break;
           const originalArtifact = deduplicated.get(scriptId);
           if (!originalArtifact) continue;
-          const originalFile = path.join(resultDir, `script-${scriptId}-before-editorial-repair.json`);
-          const issue = editorialReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const originalFile = path.join(resultDir, repairRound === 1
+            ? `script-${scriptId}-before-editorial-repair.json`
+            : `script-${scriptId}-before-editorial-repair-round${repairRound}.json`);
+          if (repairRound > 1) await writeJsonAtomic(originalFile, originalArtifact.script);
+          const issue = failureReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const partConstraints = loadProductionPreflight().resolveProductionConstraints(
+            originalArtifact.script, scriptId, { wordsPerSecond: measuredWordsPerSecond }
+          );
           const conciseFailure = {
             scriptId, score: issue.score, structuralScore: issue.structuralScore ?? issue.score,
             productionPreflight: issue.productionPreflight || null,
+            renderDryRun: issue.renderDryRun
+              ? { ok: issue.renderDryRun.ok, issues: (issue.renderDryRun.issues || []).map((item) => item.message) }
+              : null,
             audienceScore: issue.audienceScore ?? null,
             audienceIssues: issue.audienceIssues || [],
             errors: issue.errors || [], warnings: issue.warnings || []
@@ -3936,14 +4057,25 @@ class ManualAntigravityStage1Service {
             actualQualityGateFailures: conciseFailure,
             lockedPartContext: inlineEvidence,
             sourceEventTimeline: storyIntelligence?.events || [],
+            // Same numbers the gate measures (single source of truth).
             qualityPolicy: {
-              minRenderableSec: 60.5,
-              targetMinSec: series?.durationMinSec ?? 110,
-              targetMaxSec: series?.durationMaxSec ?? 125,
-              maxVoiceoverSec: 12,
-              maxAudioRunSec: 15,
-              maxSourceJumps: 7
-            }
+              minRenderableSec: partConstraints.minRenderableSec,
+              targetMinSec: partConstraints.minDurationSec,
+              targetMaxSec: partConstraints.maxDurationSec,
+              maxVoiceoverSec: partConstraints.maxVoiceoverSegmentSec,
+              maxAudioRunSec: partConstraints.maxContinuousAudioRunSec,
+              maxSourceJumps: partConstraints.maxSourceJumps,
+              maxJustifiedExtraSourceJumps: partConstraints.maxJustifiedExtraSourceJumps,
+              sourceJumpDefinition: `next segment starts more than ${partConstraints.sourceJumpGapToleranceSec}s away from where the previous one ended`,
+              narratorWordsPerSecond: partConstraints.wordsPerSecond,
+              voiceWordBudgetRule: partConstraints.wordsPerSecond
+                ? `voiceover_text words <= floor(segment seconds x ${partConstraints.wordsPerSecond})`
+                : null
+            },
+            currentVoiceWordBudgets: issue.renderDryRun?.wordBudgets || [],
+            currentMeasurements: issue.productionPreflight || null,
+            doNotRegress: "Every constraint in qualityPolicy that the original script already satisfies must still be satisfied by the repaired script.",
+            repairRound
           });
           const buildRepair = (recoveryFromForbiddenTool) => assertPrintPromptSize(
             StoryFirst.buildEditorialRepairPrompt({
@@ -3954,7 +4086,12 @@ class ManualAntigravityStage1Service {
               scriptIds: [scriptId], partIssues: conciseFailure,
               repairPacketPath, recoveryFromForbiddenTool,
               targetMinSec: series?.durationMinSec ?? 110,
-              targetMaxSec: series?.durationMaxSec ?? 125
+              targetMaxSec: series?.durationMaxSec ?? 125,
+              constraintLines: loadProductionPreflight().describeProductionConstraints(partConstraints),
+              wordBudgetLines: (issue.renderDryRun?.wordBudgets || [])
+                .filter((budget) => budget.overBudget)
+                .slice(0, 8)
+                .map((budget) => `- Segment ${budget.segments.join("+")} (${budget.footageSec}s footage): ${budget.currentWords} words now, max ${budget.maxWords}; shorten the line or give it more contiguous footage.`)
             }), `Part ${scriptId} editorial repair`
           );
           const safeReadOnly = buildSeriesPlanReadOnlyGuard([
@@ -3972,7 +4109,7 @@ class ManualAntigravityStage1Service {
               commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, {
                 packageInfo, timeoutMs: Math.min(300000, resolvePhaseTimeoutMs("phase_b", this.settings))
               }), prompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
-              metrics: metricsForPart, logs, logBase: `phaseB-editorial-repair-part-${scriptId}`,
+              metrics: metricsForPart, logs, logBase: `phaseB-editorial-repair-part-${scriptId}${repairRound > 1 ? `-round${repairRound}` : ""}`,
               toolGuard: safeReadOnly
             });
             await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-part-${scriptId}.log`), response.stdout || "", "utf8");
@@ -4025,26 +4162,48 @@ class ManualAntigravityStage1Service {
           const expectedFilename = `script-${scriptId}.json`;
           if (repairedArtifacts.length !== 1 || repairedArtifacts[0]?.filename !== expectedFilename
               || Number(repairedArtifacts[0]?.script?.scriptId) !== scriptId) {
-            const badArtifact = new Error(
-              `[EDITORIAL_REPAIR] Part ${scriptId} không trả đúng một JSON hoàn chỉnh (${expectedFilename}); không dùng lại bản lỗi hoặc chấp nhận nửa vời.`
-            );
-            badArtifact.kind = "editorial_repair_invalid";
-            throw badArtifact;
+            // Keep the previous complete version (never a half artifact) and
+            // let the next round / the final gate decide, instead of aborting
+            // the whole Stage 1 on one malformed repair response.
+            perPartRepairs.push({ scriptId, round: repairRound, processCount: metricsForPart.agyProcessCount, status: "invalid_repair_kept_previous" });
+            this.emitLog(onProgress, 84,
+              `[EDITORIAL_REPAIR] Part ${scriptId} không trả đúng một JSON hoàn chỉnh (${expectedFilename}) ở vòng ${repairRound}; giữ bản trước, không dùng bản nửa vời.`, logs);
+            continue;
           }
           // Reapply the exact same host-locked series metadata that initial
           // Phase B scripts receive. Otherwise a repaired JSON loses its
           // 110-125s profile before import and gets misgraded as 75-110s.
           const normalizedRepair = scriptsFrom({ artifacts: [repairedArtifacts[0]] }).get(scriptId);
           deduplicated.set(scriptId, normalizedRepair);
-          perPartRepairs.push({ scriptId, processCount: metricsForPart.agyProcessCount, status: "replaced" });
+          perPartRepairs.push({ scriptId, round: repairRound, processCount: metricsForPart.agyProcessCount, status: "replaced" });
+        }
+        applyHostVoiceFit(deduplicated, `repair round ${repairRound}`);
+        let roundReport = evaluate(deduplicated);
+        // Best-of: never keep a repair that scores worse than what it replaced.
+        let reverted = false;
+        for (const scriptId of failedIds) {
+          const before = failureReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const after = roundReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const previous = versionsBeforeRound.get(scriptId);
+          if (!before || !after || after.passed || !previous) continue;
+          if (editorialCandidateRank(before) > editorialCandidateRank(after)) {
+            deduplicated.set(scriptId, previous);
+            reverted = true;
+            perPartRepairs.push({ scriptId, round: repairRound, status: "reverted_worse_than_previous" });
+            this.emitLog(onProgress, 84, `[EDITORIAL_REPAIR] Part ${scriptId}: bản sửa vòng ${repairRound} kém hơn bản trước (${editorialCandidateRank(after)} < ${editorialCandidateRank(before)}); giữ bản trước.`, logs);
+          }
+        }
+        if (reverted) roundReport = evaluate(deduplicated);
+        failureReport = roundReport;
         }
         timing.scriptGeneration.editorialRepairProcesses = repairProcessCount;
         timing.scriptGeneration.editorialRepairParts = perPartRepairs;
+        timing.scriptGeneration.editorialRepairRounds = repairRoundsRun;
         let repairedReport = evaluate(deduplicated);
         if (coldViewerEnabled) repairedReport = StoryFirst.attachAudienceReview(
           repairedReport, await critiqueCandidate(deduplicated, "repaired")
         );
-        editorialReport = { ...repairedReport, repairedOnce: true };
+        editorialReport = { ...repairedReport, repairedOnce: true, repairRounds: repairRoundsRun };
         await writeJsonAtomic(gatePath, editorialReport);
       }
       timing.scriptGeneration.editorialReady = editorialReport.accepted;
@@ -4052,12 +4211,42 @@ class ManualAntigravityStage1Service {
       if (!editorialReport.accepted) {
         await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
         const codes = editorialReport.results.filter((x) => !x.passed)
-          .map((x) => `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 4).join(", ")}`).join("; ");
+          .map((x) => {
+            const reasons = [
+              ...(x.productionPreflight?.issues || []).slice(0, 2),
+              ...(x.renderDryRun?.issues || []).slice(0, 2).map((item) => item.message)
+            ].map((reason) => String(reason).replace(/\s+/g, " ").slice(0, 160));
+            return `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 4).join(", ")}${reasons.length ? ` (${reasons.join(" | ")})` : ""}`;
+          }).join("; ");
         const error = new Error(`[EDITORIAL_GATE] V1 bị chặn trước render: ${codes}. Xem ${gatePath}.`);
         error.kind = "editorial_quality";
         throw error;
       }
       this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}: structure=${x.structuralScore ?? x.score}, cold-viewer=${x.audienceScore ?? "disabled"}, production-preflight=${x.productionPreflight?.score ?? "disabled"}`).join("; ")}; bản render thực tế vẫn cần MP4 review.`, logs);
+    }
+    // Series contract shared with the Highlight Cut import: make the cold-open
+    // mode explicit (Story-First plans give each Part its own hookRange) and fail
+    // here, not after the project is created, if the import would reject it.
+    const seriesFinal = loadSeriesImportContract().finalizeSeriesHookMode(
+      requestedScriptIds.map((scriptId) => deduplicated.get(scriptId)?.script).filter(Boolean)
+    );
+    if (seriesFinal.changed) {
+      seriesFinal.scripts.forEach((script) => {
+        const scriptId = Number(script.scriptId ?? script.script_id);
+        const artifact = deduplicated.get(scriptId);
+        if (artifact) deduplicated.set(scriptId, { ...artifact, script });
+      });
+    }
+    if (seriesFinal.sharedHookEnabled !== null) {
+      this.emitLog(onProgress, 88, `[SERIES_CONTRACT] ${seriesFinal.sharedHookEnabled
+        ? "Cold Open dùng chung: chuỗi Hook đầu của các Part trùng khớp."
+        : "Hook riêng từng Part theo Series Plan; shared_hook_enabled=false."}${seriesFinal.narratorRangesMerged ? " Đã hợp nhất source_narrator_ranges cho mọi Part." : ""}`, logs);
+    }
+    if (seriesFinal.contract.errors.length) {
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
+      const error = new Error(`[SERIES_CONTRACT] Bộ Part không qua được kiểm tra import: ${seriesFinal.contract.errors.map((item) => item.message).join(" ")}`);
+      error.kind = "series_contract";
+      throw error;
     }
     const normalized = [...deduplicated.values()];
     const files = [];
