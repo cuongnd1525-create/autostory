@@ -132,6 +132,68 @@ const { serial } = require('../electron/services/autoStoryWorkQueue');
     assert.equal(recovered.project.analysis.highlightVariants.length, 3);
     assert.equal(recovered.project.autoStoryState.phase, 'complete');
     assert.deepEqual(recovered.project.autoStoryState.failures, []);
+    // Real runner sequencing: worker 2 can finish first, but renderer must
+    // receive canonical project snapshots and per-script production status.
+    const isolatedWorker = require('../electron/services/autoStoryVariantWorker');
+    const originalIsolatedRun = isolatedWorker.run;
+    const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+    let isolatedProject = {
+      id: 'isolated', analysisWorkflow: 'vertex_auto_story',
+      autoStoryContractVersion: 4, autoStoryConfig: { outputCount: 2 },
+      analysis: { activeVariantId: 'v1', highlightVariants: [1, 2].map(id => ({
+        id: `v${id}`, scriptId: id, sourceJsonPath: `script-${id}.json`,
+        segments: [], artifacts: { fastDraftVideoPath: `draft-${id}.mp4` }
+      })) }
+    };
+    const isolatedStore = {
+      saveProject: async () => {},
+      getProject: async () => structuredClone(isolatedProject),
+      getProjectPaths: () => ({ analysisDir: path.join(root, 'isolated-analysis') }),
+      updateProject: async (_workspace, _id, patch) => {
+        isolatedProject = { ...isolatedProject, ...patch };
+        return structuredClone(isolatedProject);
+      }
+    };
+    const isoProgress = [];
+    isolatedWorker.run = async ({ scriptId, onProgress }) => {
+      // This represents the one-variant PRIVATE worker snapshot. It must never
+      // replace the parent project's two-variant state in the renderer.
+      onProgress({ stage: 'reviewing', project: {
+        analysis: { highlightVariants: [{ scriptId }] }
+      }, message: 'draft ready' });
+      await delay(scriptId === 1 ? 55 : 4);
+      onProgress({ stage: 'final_export', project: {
+        analysis: { highlightVariants: [{ scriptId }] }
+      }, message: 'final export started' });
+      await delay(scriptId === 1 ? 55 : 4);
+      const current = await isolatedStore.getProject();
+      const variants = current.analysis.highlightVariants.map(v => Number(v.scriptId) === scriptId
+        ? { ...v, artifacts: { ...v.artifacts, finalVideoPath: `final-${scriptId}.mp4` } }
+        : v);
+      await isolatedStore.updateProject(null, null, { analysis: { ...current.analysis, highlightVariants: variants } });
+      return { scriptId, complete: true, finalCheck: { verdict: 'PASS' }, needsUserReview: false };
+    };
+    try {
+      await new Runner({}, isolatedStore, {}, () => ({
+        recoverScriptIds: async () => isolatedStore.getProject(),
+        vertex: { dispatcher: { close: async () => {} } }
+      })).run({ workspaceRoot: root, projectId: 'isolated', onProgress: p => isoProgress.push(p) });
+      const complete = isoProgress.filter(p => p.stage === 'complete' && p.scriptId);
+      assert.deepEqual(complete.map(p => p.scriptId), [2, 1],
+        'shorter script 2 is allowed to finish before script 1');
+      for (const event of isoProgress.filter(p => p.project && !p.overallComplete)) {
+        assert.equal(event.project.analysis?.highlightVariants?.length, 2,
+          'no private one-variant snapshot can reach renderer');
+      }
+      const finalExport = isoProgress.filter(p => p.stage === 'final_export' && p.project);
+      assert.equal(finalExport.length, 2, 'per-worker export phases are persisted to parent project');
+      const script2Done = complete.find(p => p.scriptId === 2);
+      assert.equal(script2Done.project.analysis.highlightVariants[1].artifacts.finalVideoPath,
+        'final-2.mp4', 'completion event sends the latest final artifact to UI');
+      assert.equal(isoProgress.at(-1).overallComplete, true);
+    } finally {
+      isolatedWorker.run = originalIsolatedRun;
+    }
     console.log('Production overlap, failure isolation, patch, retry and usage tests passed');
   } finally { Dubbing.canReuseAutoStoryDraft = oldReuse; await fs.rm(root, { recursive: true, force: true }); }
 })().catch(e => { console.error(e); process.exitCode = 1; });
