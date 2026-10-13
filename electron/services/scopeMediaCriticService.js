@@ -16,6 +16,9 @@ const ISSUE_TYPES = [
   'out_of_scope_branch',       // material from a different branch of the incident
   'hook_spends_payoff',        // the cold open gives away what the story should withhold
   'ending_not_consequence',    // the ending is not a consequence of the central conflict
+  'hook_unfulfilled',          // the actual edit never delivers what the hook promised
+  'ending_without_payoff',     // final seconds show continuing procedure, not a consequence
+  'procedural_repetition',     // repetitive searching/restated questions without new story progress
   'unusable_footage',          // black / blocked / unreadable picture where it matters
   'comprehension_gap',         // the viewer lacks a fact needed to follow the story
   // Delivery (who owns the audio) — judged by watching, never by duration rules.
@@ -35,6 +38,9 @@ const responseSchema = object({
   scopeSurvived: { type: 'boolean' },
   centralQuestionActiveThroughout: { type: 'boolean' },
   endingIsConsequenceOfCentralConflict: { type: 'boolean' },
+  hookPromiseSupported: { type: 'boolean' },
+  observableEndingConsequence: { type: 'boolean' },
+  repetitiveProcedureWithoutProgress: { type: 'boolean' },
   finalFootageUsable: { type: 'boolean' },
   observedStory: { type: 'string' },
   coldViewerCanFollow: { type: 'boolean' },
@@ -127,6 +133,9 @@ Answer from what you actually SEE and HEAR:
 1. scopeSurvived: does the rendered video tell this one mini-story?
 2. centralQuestionActiveThroughout: does the viewer question stay open and relevant from start to end?
 3. endingIsConsequenceOfCentralConflict: is the ending a payoff, or a named forward consequence, of this conflict (not a new question from another branch)?
+3A. hookPromiseSupported: COMPARE the actual opening/hook promise with what the VIEWER literally sees/hears by the END. A claim of a serious discovery cannot pass if the video only shows police still searching. Do not infer a payoff from the script title, plan or transcript. If unsupported, mark false.
+3B. observableEndingConsequence: Does the final scene itself deliver a specific observed change or consequence of the central conflict? A routine search continuing with no finding, admission, contradiction or known outcome is false. An intentionally unresolved Part 1 may pass only if there is a real consequential revelation before the ending and the hook honestly promises an unresolved question.
+3C. repetitiveProcedureWithoutProgress: Is a substantial stretch spent on repeated searches, questioning or handling objects that do not change what the viewer knows or expects? If so mark true even when each camera shot is visually different. Name the region as a blocking procedural_repetition issue. If the repeated actions reveal new evidence, mark false.
 4. finalFootageUsable: LOOK at the picture of the last 3-5 seconds itself. Is the subject/action clearly visible, or is the frame blocked, dark, covered, pointed away or unreadable? Describe what you literally see there in finalSeconds.visualDescription and set finalSeconds.subjectClearlyVisible. The transcript or a resolved story is NOT evidence that the picture is usable.
 5. issues: every genuine problem, with its output-time region: ${ISSUE_TYPES.join(', ')}. 'blocking' means a viewer would lose the story or feel it is assembled from unrelated moments. 'minor' means it could be better. Do not report a problem just because the location or speaker stays the same: a continuous exchange that keeps changing the conflict is fine. A large source-time jump is fine when the edit makes clear why we are there.
 6. transitions: list EVERY major visual, time, place or perspective change you see in the rendered video (outputSec, change, whatViewerSeesAndHears) and for each judge coldViewerUnderstandsWhy — does the picture, dialogue or narration tell a first-time viewer why we are now seeing this? Inspect each transition as you watch; do not rely on the transcript flowing on.
@@ -144,6 +153,9 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     if (typeof raw[k] !== 'boolean') return invalid(`Critic field '${k}' must be boolean.`);
   }
   if (!Array.isArray(raw.issues)) return invalid('Critic issues must be an array.');
+  if (deliveryAware) for (const key of ['hookPromiseSupported', 'observableEndingConsequence', 'repetitiveProcedureWithoutProgress']) {
+    if (typeof raw[key] !== 'boolean') return invalid(`Critic field '${key}' must be boolean for V4 acceptance.`);
+  }
   if (deliveryAware && typeof raw.coldViewerCanFollow !== 'boolean') return invalid("Critic field 'coldViewerCanFollow' must be boolean.");
   if (deliveryAware && !Array.isArray(raw.transitions)) return invalid("Critic field 'transitions' must list the rendered video's transitions.");
   if (deliveryAware && typeof raw.finalSeconds?.subjectClearlyVisible !== 'boolean') return invalid("Critic field 'finalSeconds.subjectClearlyVisible' must be boolean (inspect the last 3-5 seconds visually).");
@@ -177,6 +189,21 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     }
   };
   ensure('endingIsConsequenceOfCentralConflict', 'ending_not_consequence', tail, 'Critic verdict: the ending is not a consequence of the central conflict.');
+  if (raw.hookPromiseSupported === false) issues.push({
+    type: 'hook_unfulfilled', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec,
+    evidence: raw.observedStory || '', whyItFails: 'Viewer was promised a revelation the MP4 never demonstrates.',
+    beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'hookPromiseSupported'
+  });
+  if (raw.observableEndingConsequence === false) issues.push({
+    type: 'ending_without_payoff', severity: 'blocking', outputStartSec: tail[0], outputEndSec: tail[1],
+    evidence: raw.finalSeconds?.visualDescription || '', whyItFails: 'Video ends in routine procedure without an observed consequence.',
+    beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: 'observableEndingConsequence'
+  });
+  if (raw.repetitiveProcedureWithoutProgress === true && !issues.some(x => x.type === 'procedural_repetition' && x.severity === 'blocking')) {
+    issues.push({ type: 'procedural_repetition', severity: 'blocking', outputStartSec: 0, outputEndSec: durationSec,
+      evidence: raw.observedStory || '', whyItFails: 'Multiple procedural moments repeat without meaningful new information.',
+      beatIds: timeline.map(t => t.beatId), derivedFromVerdict: 'repetitiveProcedureWithoutProgress' });
+  }
   ensure('finalFootageUsable', 'unusable_footage', tail, `Critic verdict: the final footage is not clearly observable${raw.finalSeconds?.visualDescription ? ` (${raw.finalSeconds.visualDescription})` : ''}.`);
   // Each transition the critic says a cold viewer does not understand is its own repair region.
   for (const t of lostAt) {
@@ -202,7 +229,9 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   }
   const blocking = issues.filter(x => x.severity === 'blocking');
   const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && verdict.finalFootageUsable
-    && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false && blocking.length === 0;
+    && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false
+    && raw.hookPromiseSupported !== false && raw.observableEndingConsequence !== false
+    && raw.repetitiveProcedureWithoutProgress !== true && blocking.length === 0;
   const weakRegions = blocking.map(x => ({ type: x.type, outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds, reason: x.whyItFails, evidence: x.evidence,
     ...(DELIVERY_ISSUES.has(x.type) ? { deliveryIssue: true } : {}) }));
   return {
@@ -210,6 +239,9 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     scopeSurvived: raw.scopeSurvived, centralQuestionActiveThroughout: raw.centralQuestionActiveThroughout,
     endingIsConsequence: raw.endingIsConsequenceOfCentralConflict, finalFootageUsable: verdict.finalFootageUsable,
     finalFootageUsableReported: raw.finalFootageUsable, finalSeconds: raw.finalSeconds || null,
+    hookPromiseSupported: raw.hookPromiseSupported ?? null,
+    observableEndingConsequence: raw.observableEndingConsequence ?? null,
+    repetitiveProcedureWithoutProgress: raw.repetitiveProcedureWithoutProgress ?? null,
     openingCuriosity: raw.openingCuriosity || null, transitions,
     observedStory: raw.observedStory || '', summary: raw.summary || '', issues, weakRegions,
     coldViewerCanFollow: verdict.coldViewerCanFollow, coldViewerCanFollowReported: typeof raw.coldViewerCanFollow === 'boolean' ? raw.coldViewerCanFollow : null, coldViewerNotes: raw.coldViewerNotes || '',
