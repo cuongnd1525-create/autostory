@@ -162,7 +162,7 @@ class AutoStoryRunner {
     await fs.writeFile(stateFile, JSON.stringify(updated.autoStoryProduction, null, 2));
     for (const service of [this.producer, this.consumer]) await service.vertex?.dispatcher?.close();
     const hasErrors = Boolean(fatal || combined.length || variants.length < requested || Object.values(jobs).some(j => j.phase === 'failed'));
-    onProgress?.({ percent: 100, stage: hasErrors ? 'failed' : 'complete',
+    onProgress?.({ percent: 100, overallComplete: true, stage: hasErrors ? 'failed' : 'complete',
       level: hasErrors ? 'WARNING' : 'INFO', project: updated,
       message: hasErrors ? `Lượt chạy đã kết thúc · Có ${variants.length}/${requested} kịch bản · Xem lỗi trong Thống kê & cảnh báo`
         : `Lượt chạy đã kết thúc · Có ${variants.length}/${requested} kịch bản${needsAttention ? ' · Cần xem kết quả kiểm tra' : ''}` });
