@@ -176,7 +176,10 @@ function normalize(raw = {}, ctx = {}) {
     return true;
   }).slice(0, MAX_QUOTES);
   quotes.sort((a, b) => a.startSec - b.startSec);
-  quotes = quotes.map(q => attachWordWindow(q, words));
+  const activeEventIds = new Set(events.map(e => e.id));
+  quotes = quotes.map(q => attachWordWindow({
+    ...q, eventId: q.eventId && activeEventIds.has(q.eventId) ? q.eventId : null
+  }, words));
 
   const tensionCurve = events.slice().sort((a, b) => a.startSec - b.startSec).map(e => ({ atSec: e.startSec, tension: e.tension }));
 
@@ -218,16 +221,26 @@ function mergeSourceModels(models = []) {
     for (const p of (m.people || [])) people.push(p);
   }
   // dedup events by time-overlap + similar summary (keep higher tension)
-  const dedupEvents = [];
+  const dedupEvents = [], eventAliases = new Map();
   for (const e of events.slice().sort((a, b) => a.startSec - b.startSec)) {
     if (!Number.isFinite(e.startSec) || !Number.isFinite(e.endSec) || e.endSec <= e.startSec) continue;
     const dup = dedupEvents.find(x => overlapRatio(x, e) > 0.6 && similarSummary(x.summary, e.summary));
-    if (dup) { if ((Number(e.tension) || 0) > (Number(dup.tension) || 0)) Object.assign(dup, e, { id: dup.id }); continue; }
+    if (dup) {
+      eventAliases.set(e.id, dup.id);
+      if ((Number(e.tension) || 0) > (Number(dup.tension) || 0)) Object.assign(dup, e, { id: dup.id });
+      continue;
+    }
     dedupEvents.push(e);
   }
-  // dedup quotes by near-time + same text
+  // Preserve quote and causal references after cross-window event dedup.
+  const targetEvent = id => eventAliases.get(id) || id;
+  for (const e of dedupEvents) {
+    e.causalParents = (e.causalParents || []).map(targetEvent);
+    if (e.spoilsEventId) e.spoilsEventId = targetEvent(e.spoilsEventId);
+  }
   const dedupQuotes = [];
-  for (const q of quotes.slice().sort((a, b) => a.startSec - b.startSec)) {
+  for (const item of quotes.slice().sort((a, b) => a.startSec - b.startSec)) {
+    const q = { ...item, eventId: item.eventId ? targetEvent(item.eventId) : null };
     if (!Number.isFinite(q.startSec)) continue;
     const dup = dedupQuotes.find(x => Math.abs(x.startSec - q.startSec) < 1.5 && normText(x.text) === normText(q.text));
     if (!dup) dedupQuotes.push(q);
