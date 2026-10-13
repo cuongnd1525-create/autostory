@@ -635,26 +635,33 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
 // Story Scope -> media-grounded Editorial Director, once per requested output.
 // A failure of one output never discards another output's valid EDL: spines are
 // persisted as each completes and per-script failures are returned.
-const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING', 'UNDER_MIN_SCOPE_INFEASIBLE']);
+const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING', 'UNDER_MIN_SCOPE_INFEASIBLE', 'STORY_SCOPE_PAYOFF_REJECTED']);
 async function directStories(engine, model, root, emit, config) {
   const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit });
   const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model };
   const alternates = StoryScope.alternateScopes(selected.selection, selected.scope.storyScopeId, scopeOpts)
     .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION, targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
-  const scopes = [selected.scope, ...alternates].slice(0, Math.max(1, config.outputCount || 1));
+  const scopes = [selected.scope, ...alternates]; // Try alternatives if one makes an untrue payoff promise.
   await write(path.join(root, 'story-scope.json'), { contract: StoryScope.SCOPE_CONTRACT_VERSION, chosen: selected.scope, reel: selected.reel,
     selectionRationale: selected.selection.selectionRationale, candidates: selected.selection.candidates, attempts: selected.attempts, usedScopes: scopes.map(x => x.storyScopeId) });
   const spines = [], failures = [];
-  for (let i = 0; i < scopes.length; i++) {
+  for (let i = 0; i < scopes.length && spines.length < Math.max(1, config.outputCount || 1); i++) {
+    const scriptId = spines.length + 1;
     try {
-      const directed = await Director.directEdl(engine, { model, scope: scopes[i], root, write, emit, scriptId: i + 1 });
-      spines.push({ ...directed.spine, scriptId: i + 1 });
+      // Do not spend media-director/render calls on a story with no honest payoff.
+      await require('./autoStoryV4PayoffGate').verify(engine, scopes[i],
+        { root, scriptId, emit });
+      const directed = await Director.directEdl(engine,
+        { model, scope: scopes[i], root, write, emit, scriptId });
+      spines.push({ ...directed.spine, scriptId });
       await write(path.join(root, 'story-spine.json'), { spines });
     } catch (err) {
-      // The primary script failing with anything but a director contract failure is fatal (as before).
-      if (!DIRECTOR_FAILURE_KINDS.has(err.kind) && (i === 0 || engine.signal?.aborted)) throw err;
-      failures.push({ scriptId: i + 1, storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR', error: err.message, details: err.details || null });
-      emit('failed', `[Director] Script ${i + 1}: ${err.message}`);
+      if (!DIRECTOR_FAILURE_KINDS.has(err.kind) && err.kind !== 'STORY_SCOPE_PAYOFF_REJECTED') {
+        if (i === 0 || engine.signal?.aborted) throw err;
+      }
+      failures.push({ scriptId, storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR',
+        error: err.message, details: err.details || null });
+      emit('design', `[V4] Scope ${scopes[i].storyScopeId} rejected: ${err.message}`, 'WARNING');
     }
   }
   if (!spines.length) {
@@ -820,7 +827,7 @@ async function run(service, opts) {
       spines = await buildStoryDesign(engine, model, root, emit);
     }
   } catch (err) {
-    if (['STORY_DESIGN_INVALID', 'STORY_DESIGN_HARD_INVALID', 'INPUT_MISSING', 'STORY_SCOPE_INVALID', 'DIRECTOR_EDL_INVALID', 'UNDER_MIN_SCOPE_INFEASIBLE'].includes(err.kind)) {
+    if (['STORY_DESIGN_INVALID', 'STORY_DESIGN_HARD_INVALID', 'INPUT_MISSING', 'STORY_SCOPE_INVALID', 'DIRECTOR_EDL_INVALID', 'UNDER_MIN_SCOPE_INFEASIBLE', 'STORY_SCOPE_PAYOFF_REJECTED'].includes(err.kind)) {
       await update({ autoStoryCapacityWarning: `v3: ${err.message}`, autoStoryState: { phase: 'review_failed', failures: [] } });
       const failures = [{ scriptId: 1, kind: err.kind, error: err.message, details: err.details || null }];
       await write(path.join(root, 'failures.json'), failures);
