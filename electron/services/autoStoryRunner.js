@@ -24,10 +24,11 @@ class AutoStoryRunner {
     const state = async (id, phase, error = '') => require('./autoStoryWorkQueue').serial(`production-state:${stateFile}`, async () => {
       jobs[id] = { ...jobs[id], phase, error, updatedAt: new Date().toISOString() };
       const timing = { startedAt, elapsedMs: Date.now() - startedAt, jobs };
-      await this.store.updateProject(workspaceRoot, projectId, { autoStoryProduction: structuredClone(timing) });
+      const published = await this.store.updateProject(workspaceRoot, projectId, { autoStoryProduction: structuredClone(timing) });
       await fs.mkdir(path.dirname(stateFile), { recursive: true });
       await fs.writeFile(stateFile, JSON.stringify(timing, null, 2));
-      onProgress?.({ stage: phase, message: `Script ${id}: ${phase === 'reviewing' ? 'review draft thật' : phase === 'rendering' ? 'dựng draft' : phase === 'failed' ? error : 'đã xử lý'}` });
+      onProgress?.({ stage: phase, scriptId: id, project: published,
+        message: `Script ${id}: ${phase === 'reviewing' ? 'đang review draft' : phase === 'final_export' ? 'đang xuất MP4 cuối' : phase === 'rendering' ? 'đang dựng draft' : phase === 'needs_attention' ? 'cần kiểm tra kết quả QA' : phase === 'failed' ? error : 'đã xử lý'}` });
     });
     const enqueue = item => { pending.push(item); if (this.isolatedWorkers) dispatch(item); };
     const dispatch = ({ scriptId: id, scriptPath }) => {
@@ -37,10 +38,26 @@ class AutoStoryRunner {
         const work = require('./productionResourcePool').withSlot(`variants:${stateFile}`, 2, signal, async () => {
           try {
             await state(id, 'rendering');
-            const audit = await require('./autoStoryVariantWorker').run({ settings: this.settings, store: this.store,
-              workspaceRoot, projectId, scriptId: id, scriptPath, signal, callBudget: this.callBudget,
-              createDubbing: this.createDubbing, createService: this.createService,
-              onProgress: p => { onProgress?.({ ...p, message: `Script ${id}: ${p.message || p.stage || ''}` }); } });
+            // Worker project snapshots only contain one variant; never let them
+            // replace the canonical multi-variant project in the renderer.
+            // Track only meaningful phase transitions, not every FFmpeg tick.
+            let milestones = Promise.resolve();
+            const workerProgress = p => {
+              const { project: _workerSnapshot, ...event } = p || {};
+              if (event.stage === 'reviewing' || event.stage === 'final_export') {
+                milestones = milestones.then(() => state(id, event.stage));
+              }
+              onProgress?.({ ...event, scriptId: id, message: `Script ${id}: ${event.message || event.stage || ''}` });
+            };
+            let audit;
+            try {
+              audit = await require('./autoStoryVariantWorker').run({ settings: this.settings, store: this.store,
+                workspaceRoot, projectId, scriptId: id, scriptPath, signal, callBudget: this.callBudget,
+                createDubbing: this.createDubbing, createService: this.createService,
+                onProgress: workerProgress });
+            } finally {
+              await milestones;
+            }
             if (!audit?.complete) throw new Error(audit?.error || 'Chưa có review hoàn chỉnh.');
             const finalPhase = audit.finalCheck?.error ? 'failed' : audit.needsUserReview ? 'needs_attention' : 'complete';
             await state(id, finalPhase, audit.finalCheck?.error || '');
@@ -78,12 +95,14 @@ class AutoStoryRunner {
             project: { ...project, analysis: { ...project.analysis, activeVariantId: variant.id, segments: variant.segments } } });
           jobs[id] = { ...jobs[id], draftReadyMs: Date.now() - startedAt };
           onProgress?.({ project: await this.store.getProject(workspaceRoot, projectId), autoStoryDraftReady: true,
-            stage: 'draft_ready', message: `Script ${id}: draft đã sẵn sàng, các script khác tiếp tục xử lý` });
+            stage: 'draft_ready', scriptId: id,
+            message: `Script ${id}: draft đã sẵn sàng, các script khác tiếp tục xử lý` });
           await state(id, 'reviewing');
           const result = await this.consumer.auditDrafts({ workspaceRoot, projectId, scriptId: id, signal, onProgress,
             onDraft: project => onProgress?.({ project, autoStoryDraftReady: true, stage: 'review_ready', message: `Script ${id}: đã có bản sửa` }) });
           let a = result.audits.find(a => a.scriptId === id);
           if (!a?.complete && !a?.error) throw new Error('Chưa có kết quả review hoàn chỉnh cho script này; draft được giữ lại.');
+          await state(id, 'final_export');
           a = await require('./autoStoryReleaseGate').finalizeVariant({
             store: this.store, dubbing: this.dubbing, workspaceRoot, projectId,
             scriptId: id, settings: this.settings, audit: a, onProgress
