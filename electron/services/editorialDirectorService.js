@@ -138,6 +138,8 @@ EVERY BEAT MUST BE BOTH NOVEL AND CAUSALLY COHERENT WITH THE SCOPE.
 - Every text field is ONE short sentence (about 25 words at most). State each point once; never repeat a sentence or restate another field.
 - A different timestamp, speaker or line is not progress. "It is interesting" is not a reason.
 - If removing a beat makes the story clearer with no causal loss, remove it.
+- Do not pad duration with repeated procedural searching, indistinguishable views of the same object or officers restating the same question. Keep a second search shot only if a NEW finding, credible contradiction, direct reaction, or consequence changes viewer knowledge. A timeline of routine searches with no resolution is NOT an escalating story.
+- An unfinished investigation can be interesting only when an observable smaller consequence has been reached and the hook does not promise discoveries that are not shown.
 - A continuous exchange in one place can be excellent when each exchange changes the conflict, exposes a contradiction, raises the stakes or moves toward the consequence. Do not cut away just to get visual variety.
 - Large jumps in source time are fine when the viewer understands why they are now seeing the later moment (a narrated block can bridge it). An unexplained jump from one interesting moment to another is not fine.
 
@@ -360,6 +362,23 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
       add('NARRATION_DISABLED', `Beat '${id}' uses ${b.audioMode} but narration is disabled for this project; use original_audio.`, { beatId: id });
     }
   });
+
+  // Two consecutive beats whose declared NEW information and viewer-state
+  // change are identical are filler, even if the camera or timestamps differ.
+  // Never alter Gemini's EDL in JS; require a focused director repair.
+  const semantic = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  for (let i = 1; i < beats.length; i++) {
+    const prev = beats[i - 1], next = beats[i];
+    const before = semantic(prev.newInformation), after = semantic(next.newInformation);
+    const state0 = semantic(prev.viewerStateAfter), state1 = semantic(next.viewerStateAfter);
+    if (before.length >= 24 && before === after
+        && state0.length >= 12 && state0 === state1
+        && !['hook', 'ending'].includes(prev.scopeMembership)
+        && !['hook', 'ending'].includes(next.scopeMembership)) {
+      add('REPEATED_INFORMATION', `Beat '${next.beatId}' adds the same information and viewer-state as '${prev.beatId}'. Remove or replace it with a consequential discovery, contradictory fact, or meaningful reaction; do not fill the duration with redundant searching.`,
+        { firstBeatId: prev.beatId, secondBeatId: next.beatId });
+    }
+  }
 
   // Exact duplicate guard: identical footage with identical audio treatment.
   for (let i = 0; i < beats.length; i++) {
