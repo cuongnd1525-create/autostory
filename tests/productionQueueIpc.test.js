@@ -27,7 +27,8 @@ const delay = ms => new Promise(r => setTimeout(r, ms));
     const source = path.join(root, 'input.mp4'), second = path.join(root, 'second.mp4');
     await fs.writeFile(source, 'fixture'); await fs.writeFile(second, 'fixture');
     const template = await store.createProject(root, { sourceVideoPath: source, analysisWorkflow: 'vertex_auto_story',
-      autoStoryConfig: { outputCount: 3, minDurationSec: 65, maxDurationSec: 150 }, voiceProvider: 'kokoro', voiceId: 'am_adam',
+      autoStoryConfig: { outputCount: 3, minDurationSec: 65, maxDurationSec: 150, editorialArchitecture: 'scope_media_director' },
+      autoStoryContractVersion: 4, voiceProvider: 'kokoro', voiceId: 'am_adam',
       draftVoiceId: 'am_adam', videoDecoration: { topCaptionText: 'Do not copy this title' } });
     const manager = install({ ipcMain: { handle: (key, fn) => handlers.set(key, fn) },
       dialog: { showOpenDialog: async () => ({ canceled: false, filePaths: [second] }) },
@@ -42,6 +43,8 @@ const delay = ms => new Promise(r => setTimeout(r, ms));
     const created = await store.getProject(root, added.jobs[0].projectId);
     assert.equal(created.sourceVideoPath, second); assert.equal(created.draftVoiceId, 'am_adam');
     assert.deepEqual(created.autoStoryConfig, template.autoStoryConfig);
+    assert.equal(created.autoStoryContractVersion, 4, 'batch jobs keep V4 engine');
+    assert.equal(created.autoStoryConfig.editorialArchitecture, 'scope_media_director');
     assert.equal(created.videoDecoration.topCaptionText, ''); assert.equal(created.analysis, null);
     await call('action', null, 'start');
     for (let i = 0; i < 300 && (await call('list')).jobs[0].status !== 'complete'; i++) await delay(5);

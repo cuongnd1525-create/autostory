@@ -44,7 +44,7 @@ function install({ ipcMain, dialog, app, BrowserWindow, store, dubbing, getSetti
     return project;
   };
   const templateConfig = template => {
-    const fields = ['autoStoryConfig', 'sourceLanguage', 'narrationLanguage', 'targetLanguage', 'voiceProvider', 'voiceId', 'voiceSpeed',
+    const fields = ['autoStoryConfig', 'autoStoryContractVersion', 'autoStoryEditorialArchitecture', 'sourceLanguage', 'narrationLanguage', 'targetLanguage', 'voiceProvider', 'voiceId', 'voiceSpeed',
       'draftVoiceMode', 'draftVoiceProvider', 'draftVoiceId', 'targetDuration', 'framePreset', 'narrationEnabled'];
     const settings = getSettings();
     return { ...Object.fromEntries(fields.map(key => [key, template[key]])), analysisWorkflow: 'vertex_auto_story', mode: 'highlight_cut',

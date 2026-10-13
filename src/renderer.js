@@ -7386,8 +7386,9 @@ function readProjectPayload() {
       }
       : null,
     // AutoStory engine version at PROJECT ROOT (the live service checks project.autoStoryContractVersion).
-    // Only set for an explicit V3 selection; V2/legacy leaves it undefined → existing behavior preserved.
-    autoStoryContractVersion: isAutoStoryMode(setupMode) && Number(el.autoStoryEngineVersion?.value) === 3 ? 3 : undefined,
+    // Preserve an explicit V3/V4 selection; V2 remains the compatibility engine.
+    autoStoryContractVersion: isAutoStoryMode(setupMode) && [3, 4].includes(Number(el.autoStoryEngineVersion?.value))
+      ? Number(el.autoStoryEngineVersion.value) : undefined,
     manualGeminiPackPath: isManualGeminiWorkflowMode(setupMode) ? (el.manualGeminiPackPath?.value || "") : "",
     manualGeminiPromptOptions: isManualGeminiProMode(setupMode)
       ? readManualGeminiPromptOptions()

@@ -11,6 +11,8 @@ const preload = fs.readFileSync(path.join(root, "electron", "preload.js"), "utf8
 assert.match(html, /data-mode="vertex_auto_story"/);
 assert.match(html, /id="auto-story-target-min"[^>]*min="65"[^>]*value="65"/);
 assert.match(html, /id="auto-story-output-count"/);
+assert.match(html, /<option value="4" selected>V4/);
+assert.match(renderer, /\[3, 4\]\.includes\(Number\(el\.autoStoryEngineVersion\?\.value\)\)/);
 assert.match(renderer, /isAutoStoryMode\(setupMode\)[\s\S]{0,120}\? "vertex_auto_story"/);
 assert.match(renderer, /runAutoStoryPipeline\(created\.project\.id\)/);
 assert.match(main, /handleIpc\("autoStory:run"/);
