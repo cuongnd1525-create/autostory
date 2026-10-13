@@ -46,10 +46,12 @@ const sourceModel = object({
 const compactSourceModel = object({
   accessGranted: boolean, people: list(person, 16), events: list(modelEvent, 25), quotes: list(modelQuote, 40)
 });
-// SMALL per-WINDOW schema for chunk-first extraction: one time window contributes
-// only a few events/quotes; the canonical merged model is still globally capped.
+// Per-window schema capacity must be >= the values allocated by chunkedExtract.
+// These are transport-independent LOCAL ceilings; input.maxEvents/maxQuotes are
+// usually lower. If Vertex exceeds even these limits, split only that window
+// and re-extract rather than dropping source evidence.
 const chunkSourceModel = object({
-  accessGranted: boolean, people: list(person, 8), events: list(modelEvent, 12), quotes: list(modelQuote, 16)
+  accessGranted: boolean, people: list(person, 8), events: list(modelEvent, 32), quotes: list(modelQuote, 48)
 });
 
 // ---- Pass 1: Gemini Editorial Director (Exact EDL Output) ----
@@ -194,7 +196,7 @@ const rawInstructions = {
 - people: only named/role-bearing participants (<= 16).
 Do NOT repeat an event's summary inside its quotes. Do NOT include narration, clips, or an EDL. Reference by ids/timestamps, never by pasting prose blocks. Tension/editorialValue: use the full 0-1 range honestly. Confirm accessGranted only after actually watching the video.`,
   sourceModelCompact: `PASS 0 (COMPACT RECOVERY) — the previous attempt exceeded the output limit. Produce a MUCH SMALLER Source Story Model: at most 25 events and at most 40 quotes total (<= 2 quotes per event), keeping ONLY the highest-value state-changing moments and the single most important line per key event. Summaries <= 10 words; verbatim quote lines trimmed to one short sentence. Same fields and epistemic/editorialValue rules. Never output a transcript. This pass IS multimodal: set accessGranted=true only after actually watching the attached source; if you cannot inspect it, return accessGranted=false.`,
-  sourceModelChunk: `PASS 0 (CHUNK) — you are given ONE time window of the source, with the VIDEO for that window ATTACHED. Extract ONLY the state-changing events and the few editorially useful quotes INSIDE this window. Respect the per-window ceilings in the input: at most input.maxEvents events and input.maxQuotes quotes (hard caps 12 events / 16 quotes). Keep only the highest-value moments; do NOT pad to the ceiling. Use ABSOLUTE source SECONDS. Same compact fields (short summary <=12 words, short location, peopleIds, tension/visualQuality/novelty/dialogueImpact, isReveal, audio classification), epistemic and editorialValue rules. Never output a transcript. This pass IS multimodal: you MUST set accessGranted=true after actually watching the attached window video; if (and only if) you truly cannot inspect the attached media, return accessGranted=false. A window with no state-changing moment is valid — return accessGranted=true with an empty events array rather than inventing content.`,
+  sourceModelChunk: `PASS 0 (CHUNK) — you are given ONE time window of the source, with the VIDEO for that window ATTACHED. Extract ONLY the state-changing events and the few editorially useful quotes INSIDE this window. Respect the per-window ceilings in the input: at most input.maxEvents events and input.maxQuotes quotes (local schema hard caps 32 events / 48 quotes; input.maxEvents and input.maxQuotes are the STRICT targets). Keep only the highest-value moments; do NOT pad to the ceiling. Use ABSOLUTE source SECONDS. Same compact fields (short summary <=12 words, short location, peopleIds, tension/visualQuality/novelty/dialogueImpact, isReveal, audio classification), epistemic and editorialValue rules. Never output a transcript. This pass IS multimodal: you MUST set accessGranted=true after actually watching the attached window video; if (and only if) you truly cannot inspect the attached media, return accessGranted=false. A window with no state-changing moment is valid — return accessGranted=true with an empty events array rather than inventing content.`,
   storyDesign: `PASS 1 — GEMINI EDITORIAL DIRECTOR (BODYCAM / TRUE-CRIME VIRAL STORY ENGINE V4).
 You are the EXECUTIVE EDITORIAL DIRECTOR authoring a high-retention viral short-form true-crime video (target duration 65-85 seconds).
 You own the exact EDL: exact timestamps (sourceStartSec, sourceEndSec), beat order, chronologyMode, audioMode, and narrativeRole.

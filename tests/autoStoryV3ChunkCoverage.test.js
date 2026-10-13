@@ -135,5 +135,52 @@ const forceChunk = (args) => (args.maxOutputTokens === S.WHOLE_MAX_OUTPUT_TOKENS
     S.validateChunk({ accessGranted: true, events: [] }); // no throw — empty window is valid
   });
 
+  // Real 924.9s / 4-window production case: 23 events / 30 quotes are
+  // compatible with the local schema (previously maxItems 12 / 16).
+  await ok('E: four-window 924.9s source accepts event/quote density advertised by prompt', async () => {
+    const dir = tmp();
+    const { svc } = makeService((args, win) => {
+      if (forceChunk(args)) return MAX_TOKENS_RAW();
+      const events = Array.from({ length: 23 }, (_, i) =>
+        validEvent(`w${Math.round(win.start)}_e${i}`, win.start + i * 5, win.start + i * 5 + 2));
+      const quotes = Array.from({ length: 30 }, (_, i) => ({
+        id: `q${i}`, eventId: events[i % events.length].id,
+        speaker: 'Officer', startSec: win.start + i * 4, endSec: win.start + i * 4 + 1,
+        text: `Important exchange ${i} at ${Math.round(win.start)}`,
+        epistemic: 'attributed_claim', editorialValue: 0.7
+      }));
+      return { accessGranted: true, people: [], events, quotes };
+    });
+    const engine = makeEngine(svc, dir, 924.9);
+    const model = await S.build(engine, overview, { ...buildOpts, chunkSchema: V3.schemas.chunkSourceModel });
+    const diag = JSON.parse(fs.readFileSync(path.join(dir, 'chunk-coverage.json'), 'utf8'));
+    assert.equal(diag.coverageRatio, 1);
+    assert.equal(diag.plannedInitialWindows, 4);
+    assert.ok(model.events.length >= 80, 'editorial index is populated');
+    const archive = JSON.parse(fs.readFileSync(path.join(dir, 'source-evidence-full.json'), 'utf8'));
+    assert.equal(archive.events.length, 92, 'all 92 source events archived');
+    assert.equal(archive.quotes.length, 120, 'all quotes archived');
+  });
+
+  // If the model ignores the local bound (which Vertex transport omits), split
+  // just the overflowing window instead of truncating evidence or failing all.
+  await ok('F: oversized JSON window subdivides and completes coverage', async () => {
+    const dir = tmp();
+    const { svc } = makeService((args, win) => {
+      if (forceChunk(args)) return MAX_TOKENS_RAW();
+      const many = win.end - win.start > 150;
+      return { accessGranted: true, people: [], events:
+        Array.from({ length: many ? 33 : 1 }, (_, i) =>
+          validEvent(`e${i}`, win.start + i * 2, win.start + i * 2 + 1)), quotes: [] };
+    });
+    const engine = makeEngine(svc, dir, 924.9);
+    const model = await S.build(engine, overview, { ...buildOpts, chunkSchema: V3.schemas.chunkSourceModel });
+    const diag = JSON.parse(fs.readFileSync(path.join(dir, 'chunk-coverage.json'), 'utf8'));
+    assert.equal(diag.coverageRatio, 1);
+    assert.equal(diag.maxSplitDepth, 1);
+    assert.ok(engine.logs.some(x => /schema overflow/.test(x)));
+    assert.ok(model.events.length > 0);
+  });
+
   console.log(`\nAll ${passed} chunk-coverage assertions passed.`);
 })().catch(e => { console.error(e); process.exit(1); });

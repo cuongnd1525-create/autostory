@@ -17,7 +17,7 @@ const { EPISTEMIC } = require('./autoStoryV3Taxonomy');
 const MODEL_VERSION = 7;
 // Bump when the MAX_TOKENS recovery / classifier logic materially changes. Shown
 // in the runtime fingerprint so we can PROVE which build the Electron process loaded.
-const RECOVERY_VERSION = 3;
+const RECOVERY_VERSION = 4;
 
 // Deterministic output caps (enforced in normalize regardless of what the model returns).
 const MAX_PEOPLE = 24;
@@ -34,7 +34,7 @@ const COMPACT_MAX_OUTPUT_TOKENS = 16384;
 // Chunk output ceiling is sized to the SMALL chunk contract (see chunkSourceModel:
 // few events/quotes per window), not the global model — so a normal window fits in
 // one call without recursion.
-const CHUNK_MAX_OUTPUT_TOKENS = 6144;
+const CHUNK_MAX_OUTPUT_TOKENS = 8192;
 // Gemini 2.5 thinking tokens are drawn from maxOutputTokens. The Source Story Model
 // is bounded, schema-constrained JSON extraction that does not need visible chain-of-
 // thought, so we disable thinking (0, valid for gemini-2.5-flash) — otherwise reasoning
@@ -309,6 +309,13 @@ async function persist(cacheDir, model, cacheIdentity = null) {
 // message contains "(MAX_TOKENS)"; some layers also set a flag / finishReason /
 // code. Message match is the reliable signal today; the property checks make this
 // robust to future rethrows that drop the word from the message.
+// The transport strips maxItems to keep Vertex decoding fast; a valid JSON
+// response can exceed the LOCAL chunk schema. This is a recoverable *window
+// density* issue, not an API/authorization failure. Never truncate events.
+function isChunkArrayOverflow(err) {
+  return /\$\.(?:events|quotes|people): array size outside contract/.test(String(err?.message || ''));
+}
+
 function isMaxTokensError(err) {
   if (!err) return false;
   if (err.maxTokens === true) return true;
@@ -533,18 +540,24 @@ async function extractWindow(engine, schema, instruction, audioEvents, emit, sta
     diag.coverageSeconds += dur;
     return [abs];
   } catch (err) {
-    if (isMaxTokensError(err)) {
+    const outputOverflow = isChunkArrayOverflow(err);
+    if (isMaxTokensError(err) || outputOverflow) {
       const canSplit = (dur / 2) >= MIN_LEAF_SEC && depth < MAX_SPLIT_DEPTH;
       if (canSplit) {
         const mid = start + dur / 2;
-        emit(`[V3] Window ${label} hit MAX_TOKENS; subdividing into ${round1(start)}-${round1(mid)}s and ${round1(mid)}-${round1(end)}s.`, 'WARNING');
+        const diagnostic = outputOverflow
+          ? `schema overflow (${err.message}, received ${err.invalidArtifact?.events?.length ?? '?'} events / ${err.invalidArtifact?.quotes?.length ?? '?'} quotes)`
+          : 'MAX_TOKENS';
+        emit(`[V3] Window ${label} hit ${diagnostic}; re-extracting two smaller windows ${round1(start)}-${round1(mid)}s and ${round1(mid)}-${round1(end)}s without discarding evidence.`, 'WARNING');
         const left = await extractWindow(engine, schema, instruction, audioEvents, emit, start, mid, depth + 1, diag, phase, chunkInput);
         const right = await extractWindow(engine, schema, instruction, audioEvents, emit, mid, end, depth + 1, diag, phase, chunkInput);
         return [...left, ...right];
       }
-      diag.failedLeafWindows.push({ start: round1(start), end: round1(end), depth, reason: 'MAX_TOKENS at minimum leaf' });
-      throw new (require('./autoStoryRepairRouter').StoryError)('SOURCE_MODEL',
-        `Source model window ${round1(start)}-${round1(end)}s (${round1(dur)}s) still hit MAX_TOKENS at the minimum leaf size; cannot guarantee full source coverage.`);
+      diag.failedLeafWindows.push({ start: round1(start), end: round1(end), depth,
+        reason: outputOverflow ? 'schema overflow at minimum leaf' : 'MAX_TOKENS at minimum leaf' });
+      throw new (require('./autoStoryRepairRouter').StoryError)(
+        outputOverflow ? 'SOURCE_MODEL_SCHEMA_OVERFLOW' : 'SOURCE_MODEL',
+        `Source window ${round1(start)}-${round1(end)}s (${round1(dur)}s) still exceeded ${outputOverflow ? 'the event/quote schema' : 'MAX_TOKENS'} at minimum leaf size. Cannot guarantee full source coverage.`);
     }
     // Non-MAX_TOKENS failure (INPUT_ACCESS, malformed, etc.): a coverage hole we
     // will NOT paper over. Record and fail the whole extraction.
@@ -564,8 +577,10 @@ async function chunkedExtract(engine, schema, instruction, ctx, audioEvents, emi
   const windowPlan = opts.windowPlan || planChunkWindows(duration, phase.remaining());
   // Small per-window output contract derived from the global caps / window count
   // (with a modest safety surplus) — a chunk need not reproduce the full 40/60 model.
-  const perWindowEvents = Math.min(MAX_EVENTS, Math.ceil(MAX_EVENTS / windowPlan.initialWindows) + 3);
-  const perWindowQuotes = Math.min(MAX_QUOTES, Math.ceil(MAX_QUOTES / windowPlan.initialWindows) + 4);
+  const perWindowEvents = Math.min(MAX_EVENTS, schema?.properties?.events?.maxItems ?? MAX_EVENTS,
+    Math.ceil(MAX_EVENTS / windowPlan.initialWindows) + 3);
+  const perWindowQuotes = Math.min(MAX_QUOTES, schema?.properties?.quotes?.maxItems ?? MAX_QUOTES,
+    Math.ceil(MAX_QUOTES / windowPlan.initialWindows) + 4);
   const diag = { sourceDuration: round1(duration), mode: opts.mode || 'chunk', strategyReason: opts.strategyReason || null,
     global: budget.unbounded ? null : budget.global, sourceModelLimit: phase.bounded ? phase.limit : null,
     downstreamReserved: budget.unbounded ? null : budget.downstreamReserved,
@@ -701,7 +716,7 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
 module.exports = {
   build, normalize, mergeSourceModels, load, loadWithReason, loadCached, persist, sourceCacheIdentity,
   tensionForEvent, attachWordWindow, isMaxTokens, isMaxTokensError, isRecoverable, chunkedExtract, extractWindow,
-  validateRaw, validateChunk, fingerprint, callLimit,
+  validateRaw, validateChunk, isChunkArrayOverflow, fingerprint, callLimit,
   selectStrategy, requestBudgetPlan, downstreamReserve, planChunkWindows, makePhase,
   loadStrategyDiag, recordStrategyDiag,
   MODEL_VERSION, RECOVERY_VERSION, MAX_EVENTS, MAX_QUOTES, MAX_QUOTES_PER_EVENT, MAX_PEOPLE,
