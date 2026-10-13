@@ -564,7 +564,7 @@ async function extractWindow(engine, schema, instruction, audioEvents, emit, sta
         const diagnostic = outputOverflow
           ? `schema overflow (${err.message}, received ${err.invalidArtifact?.events?.length ?? '?'} events / ${err.invalidArtifact?.quotes?.length ?? '?'} quotes)`
           : 'MAX_TOKENS';
-        emit(`[V3] Window ${label} hit ${diagnostic}; re-extracting two smaller windows ${round1(start)}-${round1(mid)}s and ${round1(mid)}-${round1(end)}s without discarding evidence.`, 'WARNING');
+        emit(`[V3] Window ${label} hit ${diagnostic}; subdividing into ${round1(start)}-${round1(mid)}s and ${round1(mid)}-${round1(end)}s without discarding evidence.`, 'WARNING');
         const left = await extractWindow(engine, schema, instruction, audioEvents, emit, start, mid, depth + 1, diag, phase, chunkInput);
         const right = await extractWindow(engine, schema, instruction, audioEvents, emit, mid, end, depth + 1, diag, phase, chunkInput);
         return [...left, ...right];
