@@ -884,8 +884,8 @@ function fakeEngine(asks) {
       ...(i === 0 ? { chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook', payoffTiming: 'part_2' } : {}),
       ...(i === 1 ? { chronologyMode: 'rewind', narrativeRole: 'rewind_context' } : {}),
       ...(i === spans.length - 1 ? { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2', isForwardConsequence: true, expectedNextConsequence: 'detention' } : {}),
-      observedInFootage: prose(150, `b${i + 1} seen`), viewerStateBefore: prose(70, 'before'), viewerStateAfter: prose(110, 'after'),
-      newInformation: prose(90, 'info'), whyNecessaryNow: prose(120, 'needed') }));
+      observedInFootage: prose(150, `b${i + 1} seen`), viewerStateBefore: prose(70, 'before'), viewerStateAfter: prose(110, `after beat ${i} `),
+      newInformation: prose(90, `new information in beat ${i} `), whyNecessaryNow: prose(120, 'needed') }));
     out.spine.deliveryBlocks = autoBlocks(out.spine.beats);
     out.spine.transitionChecks = transitionsFor(out.spine.deliveryBlocks);
     out.spine.openingStrategy = openingFor(out.spine.beats);
@@ -905,23 +905,24 @@ function fakeEngine(asks) {
     assert.ok(Director.timelineSec(out.spine.beats) >= 65);
   });
 
-  await ok('Output fuse 2: every director call carries an explicit finite output ceiling (12k-16k) and explicit thinking budget', async () => {
-    assert.ok(Number.isFinite(Director.DIRECTOR_MAX_OUTPUT_TOKENS) && Director.DIRECTOR_MAX_OUTPUT_TOKENS >= 12000 && Director.DIRECTOR_MAX_OUTPUT_TOKENS <= 16000);
-    assert.strictEqual(Director.DIRECTOR_THINKING_BUDGET, 0);
+  await ok('Output fuse 2: Director calls carry bounded 24k output and 4096 thinking budget', async () => {
+    assert.strictEqual(Director.DIRECTOR_MAX_OUTPUT_TOKENS, 24000);
+    assert.strictEqual(Director.DIRECTOR_THINKING_BUDGET, 4096);
     // multimodal + lightweight duration repair both carry the fuse.
     const e59 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 74), endB(98, 106)]);
     const e75 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 84), endB(96, 110)]);
     const engine = fakeEngine([e59, e75]);
     await Director.directEdl(engine, { model: MODEL, scope: scopeCandidate() });
     assert.strictEqual(engine.lastAsks.length, 2);
-    for (const a of engine.lastAsks) assert.deepStrictEqual(a.options, { maxOutputTokens: Director.DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: 0 }, a.key);
+    for (const a of engine.lastAsks) assert.deepStrictEqual(a.options, Director.DIRECTOR_GENERATION, a.key);
     // End-to-end: the ceiling reaches the provider request.
     const { dir, store, projectId } = await makeProject();
     const vertex = makeVertex({ scope: selection(), director: directorEdl() });
     await Pipeline.run(makeService(store, vertex, makeFfmpeg()), { workspaceRoot: dir, projectId, onProgress: () => {} });
     const d = vertex.calls.find(c => c.kind === 'director');
     assert.strictEqual(d.args.maxOutputTokens, Director.DIRECTOR_MAX_OUTPUT_TOKENS);
-    assert.strictEqual(d.args.thinkingBudget, 0);
+    assert.strictEqual(d.args.thinkingBudget, 4096);
+    assert.strictEqual(d.args.thinkingLevel, 'high');
     await fs.rm(dir, { recursive: true, force: true });
   });
 
