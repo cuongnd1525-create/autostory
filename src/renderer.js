@@ -2369,6 +2369,7 @@ function renderActivity() {
 }
 
 let exportProgressFadeTimer = null;
+let exportProgressHideTimer = null;
 
 function setExportProgress(percent = 0, label = "Đang xuất") {
   const value = Math.max(0, Math.min(100, Number(percent || 0)));
@@ -2377,6 +2378,10 @@ function setExportProgress(percent = 0, label = "Đang xuất") {
   if (exportProgressFadeTimer) {
     clearTimeout(exportProgressFadeTimer);
     exportProgressFadeTimer = null;
+  }
+  if (exportProgressHideTimer) {
+    clearTimeout(exportProgressHideTimer);
+    exportProgressHideTimer = null;
   }
 
   if (value <= 0 && !state.busy) {
@@ -2393,7 +2398,8 @@ function setExportProgress(percent = 0, label = "Đang xuất") {
   if (value >= 100) {
     exportProgressFadeTimer = setTimeout(() => {
       el.exportProgress?.classList.add("fade-out");
-      setTimeout(() => {
+      exportProgressHideTimer = setTimeout(() => {
+        exportProgressHideTimer = null;
         el.exportProgress?.classList.add("hidden");
         el.exportProgress?.classList.remove("fade-out");
         state.exportProgressPercent = 0;
