@@ -145,10 +145,17 @@ function makeVertex(script) {
         : p.includes('PASS 1 — GEMINI EDITORIAL DIRECTOR') ? 'legacy_design'
         : p.includes('PASS 3B — BLOCK NARRATION') ? 'block_narration'
         : p.includes('PASS 3 — NARRATION') ? 'narration'
+        : p.includes('WATCH the complete attached opening clip') ? 'hook'
         : p.includes('reviewing a RENDERED edit') ? 'scope_critic'
         : 'other';
       calls.push({ kind, prompt: p, filePaths: args.filePaths || [], args });
       const handler = script[kind];
+      if (!handler && kind === 'hook') return {
+        accessGranted: true, sourceVerified: true, firstSecondsObserved: 'Officer questions the driver.',
+        immediateCuriosity: true, misleadingOrSpoiled: false, startsMidSentenceWithoutContext: false,
+        specificUnansweredQuestion: 'What will the officer find?', promiseSupportedBySource: true,
+        reason: 'Concrete disagreement on the watched source.'
+      };
       if (!handler) throw new Error(`unscripted provider call: ${kind}`);
       return typeof handler === 'function' ? handler(calls.filter(c => c.kind === kind).length, args) : handler;
     }
@@ -791,7 +798,9 @@ function fakeEngine(asks) {
       },
       renderHighlightFastDraft: async () => { const f = path.join(p.dir, `draft-${renderedFiles.length + 2}.mp4`); await fs.writeFile(f, 'mp4'); renderedFiles.push(f); return { outputPath: f }; }
     };
-    const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
+    const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true,
+      hookPromiseSupported: true, observableEndingConsequence: true, repetitiveProcedureWithoutProgress: false,
+      finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
       openingCuriosity: { firstSecondsDescription: 'the denial at the window', createsCuriosity: true }, transitions: [], finalSeconds: { visualDescription: 'driver in cuffs, clearly lit', subjectClearlyVisible: true },
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
     const clean = { ...blocking, issues: [], summary: 'coherent' };
