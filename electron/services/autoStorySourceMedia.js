@@ -26,7 +26,7 @@ async function prepare(service, project, cache, ranges, evidence, duration, cues
         heartbeat?.unref?.();
         try {
           await service.ffmpeg.createAnalysisProxyChunk({ videoPath: project.sourceVideoPath, outputPath: temp,
-            startSec: r.start, durationSec: r.end-r.start, width: 640, fps, sourceClock: true });
+            startSec: r.start, durationSec: r.end-r.start, width: fps >= 12 ? 960 : 640, fps, sourceClock: true });
           const m = await service.ffmpeg.probeVideo(temp);
           if (Math.abs(m.duration - (r.end-r.start)) > .3) throw new Error('Evidence duration mismatch.');
           await fs.rename(temp, file);

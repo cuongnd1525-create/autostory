@@ -486,6 +486,9 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
   const directorMode = Director.isDirectorSpine(story);
   let retentionArc, cast;
   if (directorMode) {
+    // Review the REAL high-FPS source opening before accepting the Director EDL.
+    // A failed audition returns to the Director through buildDirectorScript().
+    await require('./autoStoryV4HookGate').verify(engine, story, { emit });
     retentionArc = {
       schemaVersion: 1, mode: 'validator_only', owner: Director.DIRECTOR_CONTRACT,
       storyScopeId: story.storyScope?.storyScopeId || null,
