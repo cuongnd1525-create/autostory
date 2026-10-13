@@ -524,4 +524,4 @@ function buildEditorialRepairPrompt({
   ].join("\n");
 }
 
-module.exports = { makeStoryIntelligence, makeHookTournament, makeNarrativeBlueprint, evaluateEditorialScript, buildPhaseBEditorialGuidance, buildEditorialRepairPrompt, buildColdViewerPrompt, validateColdViewerReview, attachAudienceReview, readJson };
+module.exports = { makeStoryIntelligence, makeHookTournament, makeNarrativeBlueprint, evaluateEditorialScript, buildPhaseBEditorialGuidance, buildEditorialRepairPrompt, buildColdViewerPrompt, validateColdViewerReview, attachAudienceReview, readJson, CRITICAL_AUDIENCE_CODES };

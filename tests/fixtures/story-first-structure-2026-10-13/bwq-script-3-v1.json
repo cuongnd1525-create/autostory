@@ -1,0 +1,278 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 3,
+  "suggestedTitle": "SUSPECT CLAIMS FENTANYL BULGE IS HIS ANATOMY",
+  "title": "SUSPECT CLAIMS FENTANYL BULGE IS HIS ANATOMY",
+  "partBadge": "PART 2",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_prompt"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\series-plan.json",
+        "role": "locked_series_plan"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt",
+        "role": "source_transcript"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\action-candidates.json",
+        "role": "action_candidates"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "chapterRole": "Questioning, explanations, lies, contradictions and evidence that surface after the confrontation. Ends on the strongest verified boiling-point turn BEFORE the arrest and verdict.",
+    "storyQuestion": "Will officers discover the concealed fentanyl pills and handgun hidden in the vehicle, and what criminal consequences will the driver and passenger face?",
+    "hookPromise": "Promise the physical extraction of hidden narcotics, fentanyl confession, expanded probable cause vehicle search, handgun recovery, vehicle panel tampering evidence, and interrogation of Leigh regarding the hotel room.",
+    "hookRange": {
+      "sourceStartSec": 428.5,
+      "sourceEndSec": 442
+    },
+    "hookHandoff": {
+      "contextNeeded": "Picks up immediately from Part 1's cliffhanger where officers ordered Genaro handcuffed over a suspected pill bulge.",
+      "rewindRequired": false,
+      "bridgePurpose": "Maintains continuous momentum from the officer's command straight into Genaro's desperate excuse.",
+      "verifiedPayoffEventIds": [
+        "e11",
+        "e12",
+        "e14"
+      ]
+    },
+    "cliffhanger": "With a hidden firearm and modified panels exposed, officers corner Leigh on the shoulder demanding consent to search her hotel room as she stalls and realizes she is out of options.",
+    "cliffhangerRange": {
+      "sourceStartSec": 712,
+      "sourceEndSec": 756.6
+    },
+    "prohibitedReveals": [
+      "The roadside arrest and handcuffing of Leigh.",
+      "Leigh's guilty plea to four felony counts and 8-year probation sentence.",
+      "Genaro's $1,000,000 bond and 10 to 15-year state prison sentence.",
+      "The secondary hotel search evidence involving magic chocolate bars and additional phones."
+    ]
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e11",
+      "beforeEventId": "e12",
+      "narratorFunction": "reinterpretation",
+      "purpose": "Contrasts Genaro's ridiculous claim with the lethal reality of fentanyl pills now lying on the asphalt.",
+      "authenticAudioHandoffEventId": "e12"
+    },
+    {
+      "afterEventId": "e13",
+      "beforeEventId": "e14",
+      "narratorFunction": "bridge",
+      "purpose": "Bridges Leigh's shock at Genaro's arrest to the systematic physical search of the front passenger floorboard.",
+      "authenticAudioHandoffEventId": "e14"
+    },
+    {
+      "afterEventId": "e15",
+      "beforeEventId": "e16",
+      "narratorFunction": "escalation",
+      "purpose": "Elevates the stakes from the roadside search to the suspected hotel stash house as officers confront Leigh.",
+      "authenticAudioHandoffEventId": "e16"
+    }
+  ],
+  "segments": [
+    {
+      "sceneId": "scene_0050",
+      "sourceStartSec": 432,
+      "sourceEndSec": 439.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "macroBlockId": "part2_beat01",
+      "transitionReason": "Cold open resumes directly from Part 1's cliffhanger as the officer questions Genaro about the bulge in his pants."
+    },
+    {
+      "sceneId": "scene_0051",
+      "sourceStartSec": 439.375,
+      "sourceEndSec": 442.25,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "actionCandidateId": "action_0006",
+      "macroBlockId": "part2_beat01",
+      "transitionReason": "Captures Genaro's desperate denial: 'That's my balls.'"
+    },
+    {
+      "sceneId": "scene_0055",
+      "sourceStartSec": 449.5,
+      "sourceEndSec": 457.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Refusing to accept the excuse, officers shake Genaro's pant leg until the concealed narcotics dislodge.",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0007",
+      "macroBlockId": "part2_beat02",
+      "transitionReason": "Bridges the suspect's absurd anatomy excuse to the physical retrieval of the contraband."
+    },
+    {
+      "sceneId": "scene_0055",
+      "sourceStartSec": 457.5,
+      "sourceEndSec": 470,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "climax",
+      "actionCandidateId": "action_0007",
+      "macroBlockId": "part2_beat02",
+      "transitionReason": "Raw audio of the clear bag containing hundreds of blue pressed pills dropping directly onto the pavement."
+    },
+    {
+      "sceneId": "scene_0057",
+      "sourceStartSec": 538,
+      "sourceEndSec": 548.625,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "At the patrol cruiser, faced with severe conveyance penalties, Genaro confesses that the dropped package contains hundreds of lethal pressed fentanyl pills.",
+      "storyFunction": "reveal",
+      "actionCandidateId": "action_0008",
+      "macroBlockId": "part2_beat03",
+      "transitionReason": "Elevates the offense from simple possession to commercial trafficking based on the suspect's confession."
+    },
+    {
+      "sceneId": "scene_0068",
+      "sourceStartSec": 574,
+      "sourceEndSec": 585,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "conflict",
+      "macroBlockId": "part2_beat04",
+      "transitionReason": "Officer notifies Leigh that Genaro is going to jail and announces full probable cause to search the vehicle."
+    },
+    {
+      "sceneId": "scene_0068",
+      "sourceStartSec": 585,
+      "sourceEndSec": 593.875,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "With trafficking confirmed, officers begin systematically tearing apart the vehicle, focusing on the front passenger seat where Genaro sat.",
+      "storyFunction": "escalation",
+      "macroBlockId": "part2_beat04",
+      "transitionReason": "Directs focus back to the vehicle cabin where additional contraband is suspected."
+    },
+    {
+      "sceneId": "scene_0076",
+      "sourceStartSec": 621.375,
+      "sourceEndSec": 626.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "actionCandidateId": "action_0012",
+      "macroBlockId": "part2_beat05",
+      "transitionReason": "Officer reaches under the front passenger seat and pulls out a concealed black crossbody bag."
+    },
+    {
+      "sceneId": "scene_0077",
+      "sourceStartSec": 626.375,
+      "sourceEndSec": 635.25,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "actionCandidateId": "action_0013",
+      "macroBlockId": "part2_beat05",
+      "transitionReason": "Officers open the bag and confirm the presence of an altered handgun: 'That's a gun. Yep.'"
+    },
+    {
+      "sceneId": "scene_0087",
+      "sourceStartSec": 662.375,
+      "sourceEndSec": 670.625,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Officers uncover multiple phones and dismantled interior panels, proving the vehicle was intentionally modified for professional smuggling.",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0015",
+      "macroBlockId": "part2_beat06",
+      "transitionReason": "Contextualizes the modified vehicle interior as evidence of an organized smuggling operation."
+    },
+    {
+      "sceneId": "scene_0088",
+      "sourceStartSec": 670.625,
+      "sourceEndSec": 673,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "actionCandidateId": "action_0015",
+      "macroBlockId": "part2_beat06",
+      "transitionReason": "Officer pries into the center console to inspect compromised clips."
+    },
+    {
+      "sceneId": "scene_0089",
+      "sourceStartSec": 673,
+      "sourceEndSec": 675.125,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "actionCandidateId": "action_0015",
+      "macroBlockId": "part2_beat06",
+      "transitionReason": "Officer demonstrates how the trim components were pulled apart."
+    },
+    {
+      "sceneId": "scene_0090",
+      "sourceStartSec": 675.125,
+      "sourceEndSec": 680,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "actionCandidateId": "action_0015",
+      "macroBlockId": "part2_beat06",
+      "transitionReason": "Officer delivers visual confirmation: 'Dude, this car's been ripped.'"
+    },
+    {
+      "sceneId": "scene_0093",
+      "sourceStartSec": 716.25,
+      "sourceEndSec": 727.25,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Now tying the occupants to an armed drug pipeline, officers confront Leigh roadside, demanding immediate consent to search their rented hotel room.",
+      "storyFunction": "cliffhanger",
+      "macroBlockId": "part2_beat07",
+      "transitionReason": "Sets up the ultimate boiling point as officers corner Leigh regarding her active hotel base."
+    },
+    {
+      "sceneId": "scene_0094",
+      "sourceStartSec": 727.25,
+      "sourceEndSec": 741,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "cliffhanger",
+      "macroBlockId": "part2_beat07",
+      "transitionReason": "Delivers Part 2's cliffhanger as the officer presses Leigh for consent and recites Miranda rights while she stalls."
+    }
+  ],
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "series_mode": "interleaved_multipart",
+  "part_number": 2,
+  "part_badge": "PART 2",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}

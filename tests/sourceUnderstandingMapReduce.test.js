@@ -119,7 +119,7 @@ async function globalCacheFiles(cacheDir) {
   assert.deepStrictEqual(MapReduce.sliceTranscriptForRange(cues, 239.25, 480.5, 4).map((cue) => cue.text), ["b", "c", "d"]);
   assert.deepStrictEqual(MapReduce.sliceScenesForRange([{ sceneId: "s1", startSec: 0, endSec: 100 }, { sceneId: "s2", startSec: 400, endSec: 500 }], 239.25, 300, 4).map((scene) => scene.sceneId), []);
   assert.deepStrictEqual(MapReduce.sliceActionCandidatesForRange([{ sourceStartSec: 236, sourceEndSec: 238 }, { sourceStartSec: 600, sourceEndSec: 610 }], 239.25, 480.5, 4).length, 1);
-  assert.strictEqual(Stage1.resolveMapConcurrency({}), 1, "safe default map concurrency is 1 until a live AGY run proves 2 stable");
+  assert.strictEqual(Stage1.resolveMapConcurrency({}), 2, "default map concurrency is 2 with an adaptive serial fallback for transient failures");
   assert.strictEqual(Stage1.resolveMapConcurrency({ sourceUnderstandingMapConcurrency: 2 }), 2);
   assert.strictEqual(Stage1.resolveMapConcurrency({ sourceUnderstandingMapConcurrency: 99 }), 4, "concurrency is bounded");
   assert.strictEqual(Stage1.resolveSourceUnderstandingArchitecture({}), "chunked_map_reduce", "map/reduce is the normal Phase A");
@@ -343,14 +343,40 @@ async function globalCacheFiles(cacheDir) {
   assert(failed7.error && failed7.error.message.includes("chunk-003"));
   assert.strictEqual(failed7.timing.sourceUnderstanding.map.chunks[2].failureKind, "forbidden_tool");
 
-  // ------------------------------------------------ default concurrency (1) is honoured
+  // ------------------------------------------------ default concurrency (2, adaptive) and explicit serial (1)
   const fixture8 = await createPackage();
-  const serial = await run(fixture8);
+  const parallel = await run(fixture8);
+  assert.ifError(parallel.error);
+  assert.strictEqual(parallel.live.maxActive, 2, "default map concurrency is 2");
+  assert.deepStrictEqual([...parallel.mapChunkIds].sort(), ["chunk-001", "chunk-002", "chunk-003"]);
+  const fixture9 = await createPackage();
+  const serial = await run(fixture9, undefined, { sourceUnderstandingMapConcurrency: 1 });
   assert.ifError(serial.error);
   assert.strictEqual(serial.live.maxActive, 1);
   assert.deepStrictEqual(serial.mapChunkIds, ["chunk-001", "chunk-002", "chunk-003"]);
 
-  for (const item of [fixture, fixture4, fixture5, fixture6, fixture7, fixture8]) await fs.rm(item.root, { recursive: true, force: true });
+  // ---------------------- adaptive fallback: a server-side stream failure in the
+  // parallel pass is re-run ONCE serially; other chunks are not rewatched.
+  const fixture10 = await createPackage();
+  let chunk2Calls = 0;
+  const flaky = (kind, prompt, call) => {
+    if (kind === "map" && mapTaskFromPrompt(prompt).chunkId === "chunk-002") {
+      chunk2Calls += 1;
+      if (chunk2Calls === 1) {
+        return { resultObject: { status: "ERROR", error: "The stream was interrupted" }, exitCode: 1, stderr: "The stream was interrupted\n" };
+      }
+    }
+    return defaultResponder({ durationSec: DURATION })(kind, prompt, call);
+  };
+  const recovered = await run(fixture10, flaky);
+  assert.ifError(recovered.error);
+  assert.deepStrictEqual([...recovered.mapChunkIds].sort(), ["chunk-001", "chunk-002", "chunk-002", "chunk-003"], "only the failed chunk is re-run");
+  assert(recovered.messages.some((message) => message.includes("chạy lại TUẦN TỰ")), "the serial fallback is logged");
+  const chunk2Record = recovered.timing.sourceUnderstanding.map.chunks.find((chunk) => chunk.chunkId === "chunk-002");
+  assert.strictEqual(chunk2Record.serialFallback, true);
+  assert.strictEqual(chunk2Record.ok, true);
+
+  for (const item of [fixture, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10]) await fs.rm(item.root, { recursive: true, force: true });
   console.log("sourceUnderstandingMapReduce tests passed (1 cold, 2 warm, 3 corrupted chunk, 4 chunk timeout, 5 reducer failure, 6 reducer view_file, wrong-proxy guard, concurrency)");
 })().catch((error) => {
   console.error(error);

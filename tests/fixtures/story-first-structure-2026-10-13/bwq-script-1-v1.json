@@ -1,0 +1,264 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 1,
+  "suggestedTitle": "PASSENGER CAUGHT REACHING WAISTBAND ON HIGHWAY",
+  "title": "PASSENGER CAUGHT REACHING WAISTBAND ON HIGHWAY",
+  "partBadge": "PART 1",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_prompt"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\series-plan.json",
+        "role": "locked_series_plan"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt",
+        "role": "source_transcript"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\action-candidates.json",
+        "role": "action_candidates"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "chapterRole": "Cold-open hook, dispatch and traffic stop context, driver cover story interrogation, search consent, passenger escalation, and the first confrontation ending on the discovery of concealed pills.",
+    "storyQuestion": "Will officers discover the concealed fentanyl pills and handgun hidden in the vehicle, and what criminal consequences will the driver and passenger face?",
+    "hookPromise": "Promise the high-stakes physical confrontation where an anxious passenger is caught reaching toward his groin during a traffic stop, withholding the fentanyl drop, handgun discovery, and court sentences for subsequent parts.",
+    "hookRange": {
+      "sourceStartSec": 354,
+      "sourceEndSec": 362
+    },
+    "hookHandoff": {
+      "contextNeeded": "Establish that the high-friction confrontation at the passenger door originated 15 minutes earlier from a routine highway traffic stop.",
+      "rewindRequired": true,
+      "bridgePurpose": "Rewind from the tense pat-down to the initial vehicle pullover at 14.5s, highlighting the stark contrast between a routine traffic stop and the suspect reaching into his waistband.",
+      "verifiedPayoffEventIds": [
+        "e09",
+        "e10"
+      ]
+    },
+    "cliffhanger": "During the pat-down, the officer feels a dense bulge near Genaro's groin, suddenly halts the search, and commands his partner: 'Cuff him. Feels like pills.'",
+    "cliffhangerRange": {
+      "sourceStartSec": 412.5,
+      "sourceEndSec": 428.5
+    },
+    "prohibitedReveals": [
+      "The plastic bag of pills dropping from Genaro's pant leg onto the road.",
+      "Genaro's confession that the dropped contraband is pressed fentanyl pills.",
+      "The discovery of the altered handgun inside the crossbody bag under the passenger seat.",
+      "The dismantled vehicle panels and $65,000 trafficking valuation.",
+      "The arrest of driver Leigh.",
+      "The final court sentences: Genaro's 10-15 year prison term and Leigh's 8-year probation."
+    ]
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e02",
+      "beforeEventId": "e04",
+      "narratorFunction": "context",
+      "purpose": "Contextualizes Leigh's cooperative demeanor on the roadside shoulder as she presents herself as a protective mother.",
+      "authenticAudioHandoffEventId": "e04"
+    },
+    {
+      "afterEventId": "e06",
+      "beforeEventId": "e08",
+      "narratorFunction": "escalation",
+      "purpose": "Bridges the odor of marijuana to Leigh's unhesitating search consent, framing the dramatic irony of her confidence.",
+      "authenticAudioHandoffEventId": "e08"
+    },
+    {
+      "afterEventId": "e08",
+      "beforeEventId": "e09",
+      "narratorFunction": "anticipation",
+      "purpose": "Directs viewer attention to the front passenger seat where Genaro begins fidgeting as officers approach.",
+      "authenticAudioHandoffEventId": "e09"
+    }
+  ],
+  "segments": [
+    {
+      "sceneId": "scene_0034",
+      "sourceStartSec": 354,
+      "sourceEndSec": 358.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "actionCandidateId": "action_0003",
+      "macroBlockId": "beat_01",
+      "transitionReason": "Cold open captures the sudden tension as the officer orders passenger Genaro to step out of the SUV."
+    },
+    {
+      "sceneId": "scene_0035",
+      "sourceStartSec": 358.375,
+      "sourceEndSec": 362.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "actionCandidateId": "action_0003",
+      "macroBlockId": "beat_01",
+      "transitionReason": "Maintains raw authentic focus as the officer catches Genaro reaching toward his groin upon stepping out."
+    },
+    {
+      "sceneId": "scene_0006",
+      "sourceStartSec": 14.5,
+      "sourceEndSec": 24.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Fifteen minutes earlier, what began as a routine highway stop for dark window tint and a cracked windshield seemed completely harmless.",
+      "storyFunction": "context",
+      "macroBlockId": "beat_02",
+      "transitionReason": "Rewinds fifteen minutes to the initial roadside contact to establish the peaceful origin of the stop."
+    },
+    {
+      "sceneId": "scene_0010",
+      "sourceStartSec": 34.875,
+      "sourceEndSec": 45,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "development",
+      "macroBlockId": "beat_03",
+      "transitionReason": "Captures the officer learning front passenger Genaro has no identification while Leigh questions the stop."
+    },
+    {
+      "sceneId": "scene_0024",
+      "sourceStartSec": 114,
+      "sourceEndSec": 125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Separated roadside, driver Leigh insists she is traveling from Las Vegas solely to check her troubled teenage son into a treatment facility.",
+      "storyFunction": "context",
+      "macroBlockId": "beat_04",
+      "transitionReason": "Provides background on Leigh's emotional justification for transporting the teenagers across state lines."
+    },
+    {
+      "sceneId": "scene_0024",
+      "sourceStartSec": 125,
+      "sourceEndSec": 139,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "development",
+      "macroBlockId": "beat_04",
+      "transitionReason": "Presents authentic audio of Leigh explaining her son's background and introducing Genaro as his companion."
+    },
+    {
+      "sceneId": "scene_0029",
+      "sourceStartSec": 226,
+      "sourceEndSec": 237,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "The officer detects the distinct odor of marijuana, prompting Leigh to admit that her passenger had been smoking inside the car earlier.",
+      "storyFunction": "escalation",
+      "macroBlockId": "beat_05",
+      "transitionReason": "Shifts the investigation from a routine traffic citation to suspected illegal narcotics possession."
+    },
+    {
+      "sceneId": "scene_0033",
+      "sourceStartSec": 317,
+      "sourceEndSec": 330,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "macroBlockId": "beat_05",
+      "transitionReason": "Shows Leigh confidently granting search consent while insisting there are no illegal narcotics or weapons."
+    },
+    {
+      "sceneId": "scene_0045",
+      "sourceStartSec": 389,
+      "sourceEndSec": 400.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Returning to the vehicle, officers order twenty-year-old passenger Genaro out for a weapons pat-down, finding marijuana while he acts increasingly evasive and nervous.",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0005",
+      "macroBlockId": "beat_06",
+      "transitionReason": "Narrates the initial physical pat-down of Genaro as officers discover contraband in his pockets."
+    },
+    {
+      "sceneId": "scene_0045",
+      "sourceStartSec": 400.5,
+      "sourceEndSec": 412.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0005",
+      "macroBlockId": "beat_07",
+      "transitionReason": "Captures the officer continuing the weapons check while Genaro stammers about what is concealed on his person."
+    },
+    {
+      "sceneId": "scene_0046",
+      "sourceStartSec": 412.5,
+      "sourceEndSec": 421,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "During the search, the officer spots an abnormal bulge near Genaro's groin and immediately halts the inspection.",
+      "storyFunction": "cliffhanger",
+      "actionCandidateId": "action_0005",
+      "macroBlockId": "beat_08",
+      "transitionReason": "Builds critical suspense as the officer identifies the hidden bulge."
+    },
+    {
+      "sceneId": "scene_0047",
+      "sourceStartSec": 421,
+      "sourceEndSec": 422,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "cliffhanger",
+      "macroBlockId": "beat_08",
+      "transitionReason": "Officer stops patting down the suspect and calls for partner assistance."
+    },
+    {
+      "sceneId": "scene_0048",
+      "sourceStartSec": 422,
+      "sourceEndSec": 426.125,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "cliffhanger",
+      "macroBlockId": "beat_08",
+      "transitionReason": "Officer delivers the pivotal cliffhanger command: 'Cuff him. Feels like pills.'"
+    },
+    {
+      "sceneId": "scene_0049",
+      "sourceStartSec": 426.125,
+      "sourceEndSec": 428.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "cliffhanger",
+      "macroBlockId": "beat_08",
+      "transitionReason": "Concludes Part 1 right as handcuffs are secured, leaving the nature and extent of the contraband unresolved."
+    }
+  ],
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "series_mode": "interleaved_multipart",
+  "part_number": 1,
+  "part_badge": "PART 1",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}

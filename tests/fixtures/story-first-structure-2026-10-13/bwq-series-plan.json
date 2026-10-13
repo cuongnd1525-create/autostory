@@ -1,0 +1,444 @@
+{
+  "artifactType": "series_plan",
+  "schemaVersion": 1,
+  "profile": "viral_tiktok_crime_part1",
+  "centralViewerQuestion": "Will officers discover the concealed fentanyl pills and handgun hidden in the vehicle, and what criminal consequences will the driver and passenger face?",
+  "hookPromise": "Promise the high-stakes physical confrontation where an anxious passenger is caught reaching toward his groin during a traffic stop, withholding the fentanyl drop, handgun discovery, and court sentences for subsequent parts.",
+  "hookSelection": {
+    "candidateId": "candidate_003",
+    "sourceEventId": "e09",
+    "whyItWins": "Candidate_003 (354-362s) delivers immediate visceral suspense as the officer orders the passenger out and spots him reaching for his waistband, winning over candidate_001 (routine license check for window tint) by establishing an urgent curiosity gap without prematurely spoiling the fentanyl drop or the weapon.",
+    "hookTo15SecBridge": "Opens on the sudden passenger pat-down and groin check at 354s, then uses a non-linear narrator bridge rewinding 15 minutes to 0s to explain how a routine highway stop for window tinting and a cracked windshield escalated into an armed interdiction.",
+    "verifiedPayoffEventIds": [
+      "e09",
+      "e10",
+      "e11",
+      "e12",
+      "e14"
+    ]
+  },
+  "parts": [
+    {
+      "scriptId": 1,
+      "partNumber": 1,
+      "partBadge": "PART 1",
+      "scope": "Cold-open hook, traffic stop context, driver interrogation and cover story, vehicle search consent, passenger escalation, and the first physical confrontation ending on the discovery of concealed pills.",
+      "hookRange": {
+        "sourceStartSec": 354,
+        "sourceEndSec": 362
+      },
+      "hookHandoff": {
+        "contextNeeded": "Establish that the high-friction confrontation at the passenger door originated 15 minutes earlier from a routine highway traffic stop.",
+        "rewindRequired": true,
+        "bridgePurpose": "Rewind from the tense pat-down to the initial vehicle pullover at 0s, highlighting the stark contrast between a routine traffic stop and the suspect reaching into his waistband.",
+        "verifiedPayoffEventIds": [
+          "e09",
+          "e10"
+        ]
+      },
+      "causalProgression": [
+        {
+          "eventId": "e01",
+          "sourceStartSec": 0,
+          "sourceEndSec": 34.9,
+          "informationGain": "Officers pull over an orange Hyundai SUV carrying multiple occupants for window tint and windshield violations.",
+          "whyNext": "Establishes the calm origin of the encounter before suspicions arise."
+        },
+        {
+          "eventId": "e02",
+          "sourceStartSec": 34.9,
+          "informationGain": "Officer notes window tint and discovers front passenger Genaro has no identification and acts evasive.",
+          "whyNext": "First sign of deception leads officer to separate occupants for closer questioning."
+        },
+        {
+          "eventId": "e04",
+          "sourceStartSec": 111.9,
+          "informationGain": "Driver Leigh spins a wholesome cover story: driving from Las Vegas to place her son into rehab away from drugs and violence.",
+          "whyNext": "Creates maternal sympathy that will soon clash with physical evidence."
+        },
+        {
+          "eventId": "e06",
+          "sourceStartSec": 226,
+          "informationGain": "Officer detects the distinct smell of marijuana inside the vehicle; Leigh admits the passenger smoked in the car.",
+          "whyNext": "Gives officers legal reasonable suspicion to probe deeper into narcotics possession."
+        },
+        {
+          "eventId": "e08",
+          "sourceStartSec": 267.8,
+          "informationGain": "Leigh confidently grants full consent to search the vehicle, insisting there are no illegal weapons or drugs.",
+          "whyNext": "Sets up the dramatic pivot back to passenger Genaro sitting in the SUV."
+        },
+        {
+          "eventId": "e09",
+          "sourceStartSec": 334.4,
+          "informationGain": "Officer returns to SUV, catches Genaro reaching toward his groin, and finds a bag of weed during pat-down before spotting an abnormal bulge.",
+          "whyNext": "Builds tension directly toward the physical discovery."
+        },
+        {
+          "eventId": "e10",
+          "sourceStartSec": 412.5,
+          "informationGain": "Officer pats the groin bulge, realizes it is not anatomy, and abruptly commands his partner to cuff the suspect because it feels like pills.",
+          "whyNext": "Serves as the ultimate boiling-point cliffhanger for Part 1."
+        }
+      ],
+      "narratorArc": [
+        {
+          "afterEventId": "e02",
+          "beforeEventId": "e04",
+          "narratorFunction": "context",
+          "purpose": "Contextualizes Leigh's cooperative demeanor on the roadside shoulder as she presents herself as a protective mother.",
+          "authenticAudioHandoffEventId": "e04"
+        },
+        {
+          "afterEventId": "e06",
+          "beforeEventId": "e08",
+          "narratorFunction": "escalation",
+          "purpose": "Bridges the odor of marijuana to Leigh's unhesitating search consent, framing the dramatic irony of her confidence.",
+          "authenticAudioHandoffEventId": "e08"
+        },
+        {
+          "afterEventId": "e08",
+          "beforeEventId": "e09",
+          "narratorFunction": "anticipation",
+          "purpose": "Directs viewer attention to the front passenger seat where Genaro begins fidgeting as officers approach.",
+          "authenticAudioHandoffEventId": "e09"
+        }
+      ],
+      "engagementIntent": {
+        "emotionalReason": "A mother claims she drove across state lines to rescue her teenager from drugs and crime, while officers close in on an occupant concealing contraband.",
+        "naturalDiscussionQuestion": "Did Leigh truly believe her car was clean when she granted search consent, or was she bluffing to deflect suspicion?",
+        "factualBasisEventIds": [
+          "e04",
+          "e08",
+          "e09",
+          "e10"
+        ]
+      },
+      "sceneAllocation": [
+        {
+          "sourceStartSec": 0,
+          "sourceEndSec": 75.6,
+          "purpose": "Establish traffic stop initiation and missing passenger identification."
+        },
+        {
+          "sourceStartSec": 111.9,
+          "sourceEndSec": 163.9,
+          "purpose": "Present Leigh's Las Vegas trip explanation and rehab cover story."
+        },
+        {
+          "sourceStartSec": 226,
+          "sourceEndSec": 260.1,
+          "purpose": "Detect marijuana odor and challenge driver regarding narcotics."
+        },
+        {
+          "sourceStartSec": 267.8,
+          "sourceEndSec": 334.4,
+          "purpose": "Secure vehicle search consent from Leigh roadside."
+        },
+        {
+          "sourceStartSec": 334.4,
+          "sourceEndSec": 412.5,
+          "purpose": "Escalate pat-down of passenger Genaro and spot groin concealment."
+        },
+        {
+          "sourceStartSec": 412.5,
+          "sourceEndSec": 428.5,
+          "purpose": "Deliver cliffhanger as officer detects concealed pills and orders handcuffs."
+        }
+      ],
+      "mustNotReveal": [
+        "The plastic bag of pills dropping from Genaro's pant leg onto the road.",
+        "Genaro's confession that the dropped contraband is pressed fentanyl pills.",
+        "The discovery of the altered handgun inside the crossbody bag under the passenger seat.",
+        "The dismantled vehicle panels and $65,000 trafficking valuation.",
+        "The arrest of driver Leigh.",
+        "The final court sentences: Genaro's 10-15 year prison term and Leigh's 8-year probation."
+      ],
+      "cliffhanger": "During the pat-down, the officer feels a dense bulge near Genaro's groin, suddenly halts the search, and commands his partner: 'Cuff him. Feels like pills.'",
+      "cliffhangerRange": {
+        "sourceStartSec": 412.5,
+        "sourceEndSec": 428.5
+      }
+    },
+    {
+      "scriptId": 3,
+      "partNumber": 2,
+      "partBadge": "PART 2",
+      "scope": "The physical extraction of hidden narcotics, fentanyl confession, expanded probable cause vehicle search, handgun recovery, vehicle panel tampering evidence, and interrogation of Leigh regarding the hotel room.",
+      "hookRange": {
+        "sourceStartSec": 428.5,
+        "sourceEndSec": 442
+      },
+      "hookHandoff": {
+        "contextNeeded": "Picks up immediately from Part 1's cliffhanger where officers ordered Genaro handcuffed over a suspected pill bulge.",
+        "rewindRequired": false,
+        "bridgePurpose": "Maintains continuous momentum from the officer's command straight into Genaro's desperate excuse.",
+        "verifiedPayoffEventIds": [
+          "e11",
+          "e12",
+          "e14"
+        ]
+      },
+      "causalProgression": [
+        {
+          "eventId": "e11",
+          "sourceStartSec": 428.5,
+          "sourceEndSec": 477,
+          "informationGain": "Genaro claims the bulge is his anatomy ('That's my balls'), but shaking his pant leg dislodges a clear bag of hundreds of blue pills onto the ground.",
+          "whyNext": "Converts suspicion into verified contraband and shatters the passenger's denial."
+        },
+        {
+          "eventId": "e12",
+          "sourceStartSec": 477,
+          "sourceEndSec": 572,
+          "informationGain": "Faced with conveyance penalties, Genaro confesses the pills are pressed fentanyl in trafficking quantities; officer inspects his pink designer shoes.",
+          "whyNext": "Upgrades the incident from simple possession to felony fentanyl distribution."
+        },
+        {
+          "eventId": "e13",
+          "sourceStartSec": 572,
+          "sourceEndSec": 601.3,
+          "informationGain": "Officer informs Leigh that Genaro is going to jail for narcotics and establishes vehicle-wide probable cause to search all compartments.",
+          "whyNext": "Shifts the investigation back onto the vehicle and driver."
+        },
+        {
+          "eventId": "e14",
+          "sourceStartSec": 601.3,
+          "sourceEndSec": 648.9,
+          "informationGain": "Officers search under the front passenger seat and recover multiple phones and an altered handgun inside a crossbody bag.",
+          "whyNext": "Escalates the criminal enterprise by introducing an illegal concealed firearm."
+        },
+        {
+          "eventId": "e15",
+          "sourceStartSec": 648.9,
+          "sourceEndSec": 703,
+          "informationGain": "Officers dismantle interior panels finding evidence the SUV was ripped apart for concealment, linking it to professional trafficking.",
+          "whyNext": "Disproves any notion of an accidental or isolated incident."
+        },
+        {
+          "eventId": "e16",
+          "sourceStartSec": 703,
+          "sourceEndSec": 756.6,
+          "informationGain": "Officers confront Leigh regarding their active hotel room, pressuring her for consent and reciting Miranda rights as her story collapses.",
+          "whyNext": "Forms the boiling-point cliffhanger right before the arrest decision."
+        }
+      ],
+      "narratorArc": [
+        {
+          "afterEventId": "e11",
+          "beforeEventId": "e12",
+          "narratorFunction": "reinterpretation",
+          "purpose": "Contrasts Genaro's ridiculous claim with the lethal reality of fentanyl pills now lying on the asphalt.",
+          "authenticAudioHandoffEventId": "e12"
+        },
+        {
+          "afterEventId": "e13",
+          "beforeEventId": "e14",
+          "narratorFunction": "bridge",
+          "purpose": "Bridges Leigh's shock at Genaro's arrest to the systematic physical search of the front passenger floorboard.",
+          "authenticAudioHandoffEventId": "e14"
+        },
+        {
+          "afterEventId": "e15",
+          "beforeEventId": "e16",
+          "narratorFunction": "escalation",
+          "purpose": "Elevates the stakes from the roadside search to the suspected hotel stash house as officers confront Leigh.",
+          "authenticAudioHandoffEventId": "e16"
+        }
+      ],
+      "engagementIntent": {
+        "emotionalReason": "The mother who claimed to be fleeing crime is now tied to 153 grams of lethal fentanyl, ripped vehicle panels, and a concealed handgun.",
+        "naturalDiscussionQuestion": "Given the hidden gun and modified SUV panels, was Leigh an active co-conspirator or an exploited family member?",
+        "factualBasisEventIds": [
+          "e11",
+          "e12",
+          "e14",
+          "e15",
+          "e16"
+        ]
+      },
+      "sceneAllocation": [
+        {
+          "sourceStartSec": 428.5,
+          "sourceEndSec": 477,
+          "purpose": "Document the physical drop of fentanyl pills from Genaro's pants."
+        },
+        {
+          "sourceStartSec": 477,
+          "sourceEndSec": 572,
+          "purpose": "Show Genaro's fentanyl confession and detention in the patrol car."
+        },
+        {
+          "sourceStartSec": 572,
+          "sourceEndSec": 601.3,
+          "purpose": "Establish probable cause communication with Leigh roadside."
+        },
+        {
+          "sourceStartSec": 601.3,
+          "sourceEndSec": 648.9,
+          "purpose": "Uncover the concealed handgun in the crossbody bag under the passenger seat."
+        },
+        {
+          "sourceStartSec": 648.9,
+          "sourceEndSec": 703,
+          "purpose": "Inspect dismantled vehicle panels and evidence of professional tampering."
+        },
+        {
+          "sourceStartSec": 703,
+          "sourceEndSec": 756.6,
+          "purpose": "Confront Leigh regarding hotel room consent and read Miranda rights."
+        }
+      ],
+      "mustNotReveal": [
+        "The roadside arrest and handcuffing of Leigh.",
+        "Leigh's guilty plea to four felony counts and 8-year probation sentence.",
+        "Genaro's $1,000,000 bond and 10 to 15-year state prison sentence.",
+        "The secondary hotel search evidence involving magic chocolate bars and additional phones."
+      ],
+      "cliffhanger": "With a hidden firearm and modified panels exposed, officers corner Leigh on the shoulder demanding consent to search her hotel room as she stalls and realizes she is out of options.",
+      "cliffhangerRange": {
+        "sourceStartSec": 712,
+        "sourceEndSec": 756.6
+      }
+    },
+    {
+      "scriptId": 4,
+      "partNumber": 3,
+      "partBadge": "PART 3",
+      "scope": "The formal roadside arrest of Leigh, her denial of ownership, execution of hotel search warrants, judicial indictments, sentencing outcomes for both driver and passenger, and concluding aftermath.",
+      "hookRange": {
+        "sourceStartSec": 756.6,
+        "sourceEndSec": 770.3
+      },
+      "hookHandoff": {
+        "contextNeeded": "Picks up directly from the boiling-point hotel questioning where officers decide to terminate the interview and take Leigh into custody.",
+        "rewindRequired": false,
+        "bridgePurpose": "Transitions immediately from evasive roadside questioning to the definitive arrest command.",
+        "verifiedPayoffEventIds": [
+          "e17",
+          "e19",
+          "e20"
+        ]
+      },
+      "causalProgression": [
+        {
+          "eventId": "e17",
+          "sourceStartSec": 756.6,
+          "sourceEndSec": 770.3,
+          "informationGain": "Officer informs Leigh her car is loaded with drugs and orders her hands behind her back under arrest.",
+          "whyNext": "Delivers the long-awaited arrest payoff to the central viewer question."
+        },
+        {
+          "eventId": "e18",
+          "sourceStartSec": 770.3,
+          "sourceEndSec": 811.4,
+          "informationGain": "Leigh protests her innocence, denies the contraband belongs to her, and complains of shoulder pain while being handcuffed.",
+          "whyNext": "Demonstrates her final reaction before the legal system takes over."
+        },
+        {
+          "eventId": "e19",
+          "sourceStartSec": 811.4,
+          "sourceEndSec": 842,
+          "informationGain": "Court documents show Leigh was indicted on felony drug trafficking counts, pleaded guilty to four counts, and received 8 years of probation.",
+          "whyNext": "Provides the complete verified resolution for the driver."
+        },
+        {
+          "eventId": "e20",
+          "sourceStartSec": 842,
+          "sourceEndSec": 872.4,
+          "informationGain": "Court records confirm 20-year-old Genaro was held on a $1M bond and sentenced to 10 to 15 years in state prison.",
+          "whyNext": "Resolves the fate of the primary passenger carrying the pills and gun."
+        },
+        {
+          "eventId": "e21",
+          "sourceStartSec": 872.4,
+          "sourceEndSec": 924.881,
+          "informationGain": "Host Officer John reveals hotel search evidence (chocolate bars, 7 cell phones) and offers closing reflections on child protection.",
+          "whyNext": "Concludes the 3-part investigative arc with complete thematic closure."
+        }
+      ],
+      "narratorArc": [
+        {
+          "afterEventId": "e17",
+          "beforeEventId": "e18",
+          "narratorFunction": "escalation",
+          "purpose": "Emphasizes Leigh's denial against the physical reality of drugs and weapons seized from her vehicle.",
+          "authenticAudioHandoffEventId": "e18"
+        },
+        {
+          "afterEventId": "e18",
+          "beforeEventId": "e19",
+          "narratorFunction": "payoff",
+          "purpose": "Transitions from roadside custody to the formal courtroom indictments and sentencing dispositions.",
+          "authenticAudioHandoffEventId": "e19"
+        },
+        {
+          "afterEventId": "e20",
+          "beforeEventId": "e21",
+          "narratorFunction": "context",
+          "purpose": "Examines the stark divergence in penalties between driver and passenger, closing the narrative.",
+          "authenticAudioHandoffEventId": "e21"
+        }
+      ],
+      "engagementIntent": {
+        "emotionalReason": "The dramatic divergence in justice: the 20-year-old passenger receives 10-15 years behind bars, while the mother driving the vehicle receives probation.",
+        "naturalDiscussionQuestion": "Was justice served with Genaro receiving up to 15 years in prison while Leigh received probation, or should both have received equal prison time?",
+        "factualBasisEventIds": [
+          "e17",
+          "e19",
+          "e20",
+          "e21"
+        ]
+      },
+      "sceneAllocation": [
+        {
+          "sourceStartSec": 756.6,
+          "sourceEndSec": 770.3,
+          "purpose": "Execute Leigh's arrest for vehicle drug trafficking."
+        },
+        {
+          "sourceStartSec": 770.3,
+          "sourceEndSec": 811.4,
+          "purpose": "Document Leigh's physical placement in custody and protests."
+        },
+        {
+          "sourceStartSec": 811.4,
+          "sourceEndSec": 842,
+          "purpose": "Display court indictment records and Leigh's 8-year probation sentence."
+        },
+        {
+          "sourceStartSec": 842,
+          "sourceEndSec": 872.4,
+          "purpose": "Present Genaro's $1M bond and 10 to 15-year prison sentence."
+        },
+        {
+          "sourceStartSec": 872.4,
+          "sourceEndSec": 924.881,
+          "purpose": "Present hotel search findings and concluding host commentary."
+        }
+      ],
+      "mustNotReveal": [
+        "None; Part 3 is the resolution chapter and delivers all verified legal outcomes and payoffs."
+      ],
+      "payoff": "Delivers the complete payoff to the central viewer question: both suspects are convicted, with passenger Genaro sentenced to 10 to 15 years in prison, while driver Leigh receives 8 years of probation for felony drug trafficking.",
+      "payoffRanges": [
+        {
+          "sourceStartSec": 756.6,
+          "sourceEndSec": 770.3
+        },
+        {
+          "sourceStartSec": 811.4,
+          "sourceEndSec": 872.4
+        },
+        {
+          "sourceStartSec": 872.4,
+          "sourceEndSec": 924.881
+        }
+      ]
+    }
+  ],
+  "sharedRanges": [],
+  "duplicatePrevention": "Strict chronological partitioning with zero overlapping source ranges between Parts 1, 2, and 3; Part 1 terminates at 428.5s with the detection of pills, Part 2 spans 428.5s to 756.6s concluding before the driver's arrest, and Part 3 covers 756.6s to 924.881s delivering all arrests, court dispositions, and final resolution.",
+  "lockedAt": "2026-10-13T03:12:22.828Z",
+  "lockedBy": "host_validator"
+}

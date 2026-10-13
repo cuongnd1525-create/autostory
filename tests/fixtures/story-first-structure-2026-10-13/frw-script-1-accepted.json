@@ -1,0 +1,324 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 1,
+  "suggestedTitle": "DISORIENTED CRASH DRIVER TACKLED AFTER HOSPITAL ESCAPE",
+  "title": "DISORIENTED CRASH DRIVER TACKLED AFTER HOSPITAL ESCAPE",
+  "partBadge": "PART 1",
+  "part_number": 1,
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_rules"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\series-plan.json",
+        "role": "series_plan"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\action-candidates.json",
+        "role": "action_candidates"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt",
+        "role": "transcript"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "partNumber": 1,
+    "name": "The Confrontation",
+    "chapterRole": "Cold-open hook, dispatch/arrival context, scene entry, escalation and the first confrontation. Ends on an unresolved, verified open question (cliffhanger) that makes the viewer need Part 2.",
+    "storyQuestion": "Why was crash driver Billy Bailey so severely disoriented on the Key West roadside, and what hidden criminal contraband inside his vehicle escalated a routine traffic check into a hospital escape and combative assault on officers?",
+    "hookPromise": "Promises to uncover how an apparently dazed crash victim ended up tackled in a hospital parking lot while trying to flee police custody, and the shocking truth uncovered during his medical detox.",
+    "hookRange": {
+      "sourceStartSec": 778,
+      "sourceEndSec": 796
+    },
+    "sceneAllocation": [
+      {
+        "sourceStartSec": 6.125,
+        "sourceEndSec": 27.75,
+        "purpose": "Crash scene overview and destroyed streetlights."
+      },
+      {
+        "sourceStartSec": 27.75,
+        "sourceEndSec": 56.375,
+        "purpose": "911 call audio and cruiser dashcam arrival."
+      },
+      {
+        "sourceStartSec": 56.375,
+        "sourceEndSec": 101.375,
+        "purpose": "First contact with driver sitting cross-legged on grass curb."
+      },
+      {
+        "sourceStartSec": 101.375,
+        "sourceEndSec": 149.5,
+        "purpose": "Discovery of crushed pills in car and curb interrogation."
+      },
+      {
+        "sourceStartSec": 149.5,
+        "sourceEndSec": 227.375,
+        "purpose": "Paramedic orientation test: year, city, and impossible Louisiana drive."
+      },
+      {
+        "sourceStartSec": 253.875,
+        "sourceEndSec": 300.375,
+        "purpose": "Officer explains finding suspect walking across active traffic."
+      },
+      {
+        "sourceStartSec": 300.375,
+        "sourceEndSec": 345.375,
+        "purpose": "Escorting driver to ambulance rig while discussing pills."
+      },
+      {
+        "sourceStartSec": 345.375,
+        "sourceEndSec": 385.875,
+        "purpose": "Ambulance conflict: refusing vitals, swearing, dilated pupils."
+      }
+    ],
+    "endingType": "cliffhanger",
+    "expectedEnding": "Inside the ambulance, Bailey aggressively curses and refuses vital monitoring, while paramedics discover heavily dilated pupils and urgently request police backup for ER transport—leaving his true identity and motives completely unresolved.",
+    "endingRange": {
+      "sourceStartSec": 357.875,
+      "sourceEndSec": 385.875
+    },
+    "prohibitedReveals": [
+      "The discovery of four fraudulent Louisiana driver's licenses with different names and numbers inside the vehicle.",
+      "Dr. Gordon's medical clearance and initial handcuff arrest in the ER.",
+      "Jail intake refusal due to dangerously elevated vitals and subsequent cruiser panic.",
+      "The suspect sprinting out of the ER unhandcuffed through glass doors.",
+      "The biting attack on hospital staff during medical detox and the final 5 criminal charges."
+    ]
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e17",
+      "beforeEventId": "e02",
+      "narratorFunction": "context",
+      "purpose": "Rewind the narrative from the hospital parking lot takedown to the initial crash scene on US-1 in Key West.",
+      "authenticAudioHandoffEventId": "e03"
+    },
+    {
+      "afterEventId": "e04",
+      "beforeEventId": "e05",
+      "narratorFunction": "reinterpretation",
+      "purpose": "Highlight the sudden discovery of crushed amphetamines in the car, shifting the incident from an accident to a criminal drug investigation.",
+      "authenticAudioHandoffEventId": "e05"
+    },
+    {
+      "afterEventId": "e06",
+      "beforeEventId": "e08",
+      "narratorFunction": "escalation",
+      "purpose": "Emphasize how extreme cognitive failure and irrational behavior forced first responders to move the suspect into the ambulance.",
+      "authenticAudioHandoffEventId": "e09"
+    },
+    {
+      "afterEventId": "e09",
+      "beforeEventId": "e10",
+      "narratorFunction": "anticipation",
+      "purpose": "Set up the explosive escalation inside the ambulance as the driver turns combative against medical staff.",
+      "authenticAudioHandoffEventId": "e10"
+    }
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_001",
+      "sceneId": "scene_0052",
+      "sourceStartSec": 784.75,
+      "sourceEndSec": 791.75,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "transitionReason": "Cold open hook capturing peak physical altercation on parking lot asphalt before rewinding to crash origin.",
+      "macroBlockId": "block_hook",
+      "sourceRunId": "run_01",
+      "actionCandidateId": "action_0014",
+      "actionSequenceId": "act_seq_hook",
+      "actionOverride": true
+    },
+    {
+      "segmentId": "seg_002",
+      "sceneId": "scene_0053",
+      "sourceStartSec": 791.75,
+      "sourceEndSec": 796,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "transitionReason": "Continuation of chaotic parking lot confrontation establishing physical stakes.",
+      "macroBlockId": "block_hook",
+      "sourceRunId": "run_01",
+      "actionCandidateId": "action_0014",
+      "actionSequenceId": "act_seq_hook",
+      "actionOverride": true
+    },
+    {
+      "segmentId": "seg_003",
+      "sceneId": "scene_0002",
+      "sourceStartSec": 6.125,
+      "sourceEndSec": 13.125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Hours before this midnight takedown, Key West 911 received reports of a violent highway crash.",
+      "storyFunction": "context",
+      "transitionReason": "Non-linear rewind to the origin of the incident on US-1 entering Key West.",
+      "macroBlockId": "block_dispatch",
+      "sourceRunId": "run_02"
+    },
+    {
+      "segmentId": "seg_004",
+      "sceneId": "scene_0002",
+      "sourceStartSec": 13.125,
+      "sourceEndSec": 20.125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "A speeding sedan obliterated concrete light poles, leaving the vehicle totaled and the roadway blocked.",
+      "storyFunction": "context",
+      "transitionReason": "Detailing the extensive physical wreckage and highway property damage.",
+      "macroBlockId": "block_dispatch",
+      "sourceRunId": "run_02"
+    },
+    {
+      "segmentId": "seg_005",
+      "sceneId": "scene_0005",
+      "sourceStartSec": 58,
+      "sourceEndSec": 71.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "scene_entry",
+      "transitionReason": "First contact with the disoriented driver sitting cross-legged on the roadside grass.",
+      "macroBlockId": "block_arrival",
+      "sourceRunId": "run_03"
+    },
+    {
+      "segmentId": "seg_006",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 104.5,
+      "sourceEndSec": 111.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Inside the wreckage, officers discover crushed amphetamines, turning this crash into a criminal drug investigation.",
+      "storyFunction": "reveal",
+      "transitionReason": "Reinterpreting the accident after finding illicit chemical substances in the vehicle.",
+      "macroBlockId": "block_evidence",
+      "sourceRunId": "run_04"
+    },
+    {
+      "segmentId": "seg_007",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 111.5,
+      "sourceEndSec": 118.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "The twenty-seven-year-old driver, Billy Bailey, is found sitting cross-legged on the grass curb, utterly detached.",
+      "storyFunction": "escalation",
+      "transitionReason": "Focusing attention on Bailey's severe cognitive impairment during initial questioning.",
+      "macroBlockId": "block_evidence",
+      "sourceRunId": "run_04"
+    },
+    {
+      "segmentId": "seg_008",
+      "sceneId": "scene_0008",
+      "sourceStartSec": 160,
+      "sourceEndSec": 173.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "interrogation",
+      "transitionReason": "Paramedics conduct roadside orientation questioning revealing complete mental detachment.",
+      "macroBlockId": "block_curb_exam",
+      "sourceRunId": "run_05"
+    },
+    {
+      "segmentId": "seg_009",
+      "sceneId": "scene_0014",
+      "sourceStartSec": 256,
+      "sourceEndSec": 263,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Bailey cannot name the year, claiming he drove straight from Louisiana in only thirty minutes.",
+      "storyFunction": "escalation",
+      "transitionReason": "Highlighting the absurdity of Bailey's answers and failure of basic mental orientation.",
+      "macroBlockId": "block_escort",
+      "sourceRunId": "run_06"
+    },
+    {
+      "segmentId": "seg_010",
+      "sceneId": "scene_0014",
+      "sourceStartSec": 263,
+      "sourceEndSec": 270,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Seeing him wander into active traffic, responders escort Bailey directly into the ambulance for evaluation.",
+      "storyFunction": "bridge",
+      "transitionReason": "Transitioning from roadside questioning to emergency ambulance transport.",
+      "macroBlockId": "block_escort",
+      "sourceRunId": "run_06"
+    },
+    {
+      "segmentId": "seg_011",
+      "sceneId": "scene_0017",
+      "sourceStartSec": 357.875,
+      "sourceEndSec": 371.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "confrontation",
+      "transitionReason": "Combative escalation inside the ambulance as Bailey curses and aggressively rejects monitoring.",
+      "macroBlockId": "block_ambulance",
+      "sourceRunId": "run_07",
+      "actionCandidateId": "action_0006"
+    },
+    {
+      "segmentId": "seg_012",
+      "sceneId": "scene_0018",
+      "sourceStartSec": 372.75,
+      "sourceEndSec": 379.25,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "As Bailey turns combative with dilated pupils, paramedics urgently request a police hospital escort.",
+      "storyFunction": "cliffhanger",
+      "transitionReason": "Setting up the immediate threat level and medical emergency inside the ambulance.",
+      "macroBlockId": "block_cliffhanger",
+      "sourceRunId": "run_08"
+    },
+    {
+      "segmentId": "seg_013",
+      "sceneId": "scene_0018",
+      "sourceStartSec": 379.25,
+      "sourceEndSec": 385.75,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "What hidden contraband inside his car will soon turn this check into a criminal nightmare?",
+      "storyFunction": "cliffhanger",
+      "transitionReason": "Closing Part 1 on an unresolved cliffhanger leading into Part 2's vehicle search and interrogation.",
+      "macroBlockId": "block_cliffhanger",
+      "sourceRunId": "run_08"
+    }
+  ],
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "series_mode": "interleaved_multipart",
+  "part_badge": "PART 1",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}

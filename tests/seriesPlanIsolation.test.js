@@ -57,7 +57,9 @@ function runner(calls, respond) {
     assert(attempts.every(c=>!c.args.includes("--conversation")),"never resume a contaminated session");
     assert(attempts[1].args.some(a=>a==="--print-timeout"));
     const seconds=Number.parseInt(attempts[1].args[attempts[1].args.indexOf("--print-timeout")+1],10);
-    assert(seconds<=180,"fresh retry has its own 180s hard cap");
+    // 180s was too short to read the evidence and stream a ~20KB plan (real
+    // 2026-10-13 retry took 155s); the retry is bounded to 300-480s.
+    assert(seconds>=300 && seconds<=480,"fresh retry has its own bounded 300-480s cap");
     const diag=JSON.parse(await fs.readFile(path.join(root,"01-ANTIGRAVITY-RESULT","series-plan-validation-diagnostics.json"),"utf8"));
     assert.strictEqual(diag.repairAttempt.success,true);
     assert(diag.firstAttempt.validationErrors.some((e)=>e.includes("series-plan không phải object")),

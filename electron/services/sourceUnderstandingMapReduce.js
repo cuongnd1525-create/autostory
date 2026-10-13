@@ -21,6 +21,13 @@ const path = require("path");
 
 const CHUNK_SCHEMA_VERSION = 1;
 const MAP_PROMPT_VERSION = 3; // v3: durable file-first output + stdout fallback after mandatory video view
+// Scene evidence ledger (2026-10-13): the map worker is the ONLY step that sees
+// the frames. 21 story events for a 15-minute source were too coarse for the
+// writer/critic (real run: narration said pills were "in designer shoes" while
+// the frames showed them falling from a pant leg). With the ledger enabled the
+// map also returns one compact row per scene; it is part of the chunk cache key.
+const SCENE_LEDGER_VERSION = 1;
+const MAX_LEDGER_TEXT = { seen: 180, action: 140, heard: 200, evidence: 80 };
 const REDUCE_PROMPT_VERSION = 3; // v3: compact reducer input (global characters, scene ranges, short flags)
 const DEFAULT_HANDLE_SEC = 4;
 const MAX_CHUNK_EVENTS = 15;
@@ -146,8 +153,22 @@ const CHUNK_SCHEMA_EXAMPLE = {
   openStateAtEnd: ""
 };
 
-function chunkTransportExample(task) {
-  return { ...CHUNK_SCHEMA_EXAMPLE, chunkId: task.chunkId, sourceStartSec: task.sourceStartSec, sourceEndSec: task.sourceEndSec };
+const SCENE_EVIDENCE_EXAMPLE = [{
+  sceneIds: [""],
+  sourceStartSec: 0,
+  sourceEndSec: 0,
+  people: [""],
+  seen: "",
+  action: "",
+  heard: "",
+  evidence: [""]
+}];
+
+function chunkTransportExample(task, { sceneLedger = false } = {}) {
+  return {
+    ...CHUNK_SCHEMA_EXAMPLE, chunkId: task.chunkId, sourceStartSec: task.sourceStartSec, sourceEndSec: task.sourceEndSec,
+    ...(sceneLedger ? { sceneEvidence: SCENE_EVIDENCE_EXAMPLE } : {})
+  };
 }
 
 /**
@@ -158,7 +179,7 @@ function chunkTransportExample(task) {
  * strictCoverage -> the targeted coverage retry after a turn that answered
  *                 without calling view_file on the chunk video.
  */
-function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0, strictCoverage = false, outputPath = "" }) {
+function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineCount = 0, strictCoverage = false, outputPath = "", sceneLedger = false }) {
   const inline = Boolean(contextText);
   const videoCall = `view_file("${task.proxy.absolutePath}")`;
   return [
@@ -186,11 +207,16 @@ function buildMapPrompt({ task, contextText = "", contextPath = "", contextLineC
     "- openStateAtStart: what is already in progress when the interval begins. openStateAtEnd: what is unresolved when it ends. One sentence each.",
     "- candidateMoments: at most 5 (hook|confrontation|interrogation|climax|resolution|context) with exact SOURCE ranges.",
     "- Only facts visible in the frames or audible / present in the transcript. Never invent names, charges, outcomes or motives. Do not copy the transcript.",
-    "- Keep the JSON under ~900 words.",
+    ...(sceneLedger ? [
+      "- sceneEvidence (SCENE EVIDENCE LEDGER, the frame-level ground truth used later to verify every narration line): one row per scene of the SCENES list inside this interval; consecutive scenes of the same continuous shot may share ONE row (list all their sceneIds).",
+      "  Each row: sceneIds, exact SOURCE range, people (who is VISIBLE, by role/name only if shown or said), seen (what the frame shows, <= 25 words), action (what physically happens, <= 18 words), heard (the key line actually spoken in this scene as Speaker: \"short exact quote\", or \"\"), evidence (objects/documents/injuries visibly shown, short nouns).",
+      "  Describe only what is visible/audible in THAT scene. If unsure, leave the field empty. Never copy narration from a source narrator as fact.",
+      "- Keep the JSON under ~1800 words (the ledger rows are short)."
+    ] : ["- Keep the JSON under ~900 words."]),
     "",
     ...(inline ? ["TEXT CONTEXT FOR THIS INTERVAL (already complete; do not open any file for it):", contextText.trim(), ""] : []),
     "JSON SHAPE (root object; no wrapper and no Markdown inside the file/response):",
-    JSON.stringify(chunkTransportExample(task))
+    JSON.stringify(chunkTransportExample(task, { sceneLedger }))
   ].join("\n");
 }
 
@@ -225,13 +251,42 @@ function validateChunkUnderstanding(data, task) {
   if (typeof data.openStateAtEnd !== "string") errors.push("openStateAtEnd phải là chuỗi.");
   if (typeof data.openStateAtStart !== "string") warnings.push("openStateAtStart thiếu.");
   if (events && events.length && events.length < 3) warnings.push(`chỉ có ${events.length} sự kiện.`);
+  // The ledger is advisory input for later steps: a missing/partial ledger
+  // never fails a chunk whose video was watched (that would force a rewatch).
+  if (data.sceneEvidence !== undefined && !Array.isArray(data.sceneEvidence)) warnings.push("sceneEvidence không phải mảng; bỏ qua.");
   return { ok: errors.length === 0, errors, warnings };
+}
+
+function clipLedger(value, max) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/** Keeps only well-formed ledger rows inside the chunk (+handles); never invents. */
+function sanitizeSceneEvidence(rows, task) {
+  if (!Array.isArray(rows)) return [];
+  const minSec = task.sourceStartSec - task.handleSec - 2;
+  const maxSec = task.sourceEndSec + task.handleSec + 2;
+  return rows
+    .filter((row) => row && typeof row === "object" && rangeOk(row, minSec, maxSec))
+    .map((row) => ({
+      sceneIds: (Array.isArray(row.sceneIds) ? row.sceneIds : [row.sceneId]).map((id) => String(id || "").trim()).filter(Boolean),
+      sourceStartSec: num(row.sourceStartSec),
+      sourceEndSec: num(row.sourceEndSec),
+      people: (Array.isArray(row.people) ? row.people : []).map((item) => clipLedger(item, 50)).filter(Boolean).slice(0, 6),
+      seen: clipLedger(row.seen, MAX_LEDGER_TEXT.seen),
+      action: clipLedger(row.action, MAX_LEDGER_TEXT.action),
+      heard: clipLedger(row.heard, MAX_LEDGER_TEXT.heard),
+      evidence: (Array.isArray(row.evidence) ? row.evidence : []).map((item) => clipLedger(item, MAX_LEDGER_TEXT.evidence)).filter(Boolean).slice(0, 6)
+    }))
+    .filter((row) => row.seen || row.action || row.heard || row.evidence.length);
 }
 
 function normalizeChunkUnderstanding(data, task) {
   if (!data || typeof data !== "object") return data;
   return {
     ...data,
+    ...(data.sceneEvidence !== undefined ? { sceneEvidence: sanitizeSceneEvidence(data.sceneEvidence, task) } : {}),
     artifactType: data.artifactType || (Array.isArray(data.importantEvents) ? "source_chunk_understanding" : data.artifactType),
     schemaVersion: CHUNK_SCHEMA_VERSION,
     chunkId: task.chunkId,
@@ -260,6 +315,11 @@ function sanitizeRecoveredChunk(data) {
   recovery.droppedIncompleteItems += candidates.length - result.candidateMoments.length;
   if (!Array.isArray(result.charactersSeen)) { result.charactersSeen = []; recovery.defaultedFields.push("charactersSeen"); }
   if (typeof result.openStateAtEnd !== "string") { result.openStateAtEnd = ""; recovery.defaultedFields.push("openStateAtEnd"); }
+  if (Array.isArray(result.sceneEvidence)) {
+    const rows = result.sceneEvidence;
+    result.sceneEvidence = rows.filter((row) => validRange(row));
+    recovery.droppedIncompleteItems += rows.length - result.sceneEvidence.length;
+  }
   result.hostRecovery = recovery;
   return result;
 }
@@ -267,10 +327,12 @@ function sanitizeRecoveredChunk(data) {
 // ---------------------------------------------------------------------------
 // Per-chunk persistent cache
 // ---------------------------------------------------------------------------
-function computeChunkKey({ task, sourceFingerprint, proxySchemaVersion = 3, mapModel = "" }) {
+function computeChunkKey({ task, sourceFingerprint, proxySchemaVersion = 3, mapModel = "", sceneLedger = false }) {
   const components = {
     chunkSchemaVersion: CHUNK_SCHEMA_VERSION,
     mapPromptVersion: MAP_PROMPT_VERSION,
+    // Only present when enabled, so disabling the ledger keeps old caches valid.
+    ...(sceneLedger ? { sceneLedgerVersion: SCENE_LEDGER_VERSION } : {}),
     mapModel: String(mapModel || ""),
     sourceFingerprint: String(sourceFingerprint),
     chunkId: task.chunkId,
@@ -517,6 +579,52 @@ function validateReducerGrounding(understanding, chunks = []) {
   return errors;
 }
 
+/**
+ * Merges the chunk ledgers into one per-scene table keyed by sceneId, using
+ * the authoritative scene manifest boundaries. A scene described by two
+ * chunks (handle overlap) keeps the row from the chunk that contains the
+ * scene's midpoint. Scenes without a row are listed with empty evidence.
+ */
+function buildSceneEvidenceLedger(chunks = [], scenes = []) {
+  const byScene = new Map();
+  for (const { task, data } of chunks) {
+    if (!data || !Array.isArray(data.sceneEvidence)) continue;
+    for (const row of sanitizeSceneEvidence(data.sceneEvidence, task)) {
+      for (const sceneId of row.sceneIds) {
+        const scene = scenes.find((item) => item.sceneId === sceneId);
+        const mid = scene ? (num(scene.startSec) + num(scene.endSec)) / 2 : (row.sourceStartSec + row.sourceEndSec) / 2;
+        const owns = mid >= task.sourceStartSec && mid < task.sourceEndSec;
+        const existing = byScene.get(sceneId);
+        if (existing && existing.owned && !owns) continue;
+        byScene.set(sceneId, { ...row, sceneId, chunkId: task.chunkId, owned: owns });
+      }
+    }
+  }
+  const rows = scenes.map((scene) => {
+    const row = byScene.get(scene.sceneId);
+    return {
+      sceneId: scene.sceneId,
+      startSec: num(scene.startSec),
+      endSec: num(scene.endSec),
+      people: row?.people || [],
+      seen: row?.seen || "",
+      action: row?.action || "",
+      heard: row?.heard || "",
+      evidence: row?.evidence || [],
+      chunkId: row?.chunkId || null
+    };
+  });
+  const described = rows.filter((row) => row.seen || row.action || row.heard || row.evidence.length).length;
+  return {
+    artifactType: "scene_evidence_ledger",
+    schemaVersion: SCENE_LEDGER_VERSION,
+    sceneCount: rows.length,
+    describedSceneCount: described,
+    coverage: rows.length ? Number((described / rows.length).toFixed(3)) : 0,
+    scenes: rows
+  };
+}
+
 function resolveMapReduceTimeouts(settings = {}, { chunkDurationSec = 240 } = {}) {
   const configured = (key) => {
     const value = Number(settings[key]);
@@ -557,5 +665,8 @@ module.exports = {
   compactSceneIds,
   buildReducePrompt,
   validateReducerGrounding,
-  resolveMapReduceTimeouts
+  resolveMapReduceTimeouts,
+  SCENE_LEDGER_VERSION,
+  sanitizeSceneEvidence,
+  buildSceneEvidenceLedger
 };
