@@ -41,6 +41,8 @@ jobs:
           node tests/autoStoryV3SourceModel.test.js
           node tests/autoStoryReleaseGate.test.js
           node tests/autoStoryV4HookGate.test.js
+          node tests/autoStoryV4PayoffGate.test.js
+          node tests/autoStoryV4StoryQuality.test.js
           node tests/autoStoryV3Routing.test.js
           node tests/autoStoryV4ContractPersistence.test.js
           node tests/productionQueue.test.js
