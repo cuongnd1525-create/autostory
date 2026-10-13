@@ -15,6 +15,12 @@ assert.match(html, /<option value="4" selected>V4/);
 assert.match(renderer, /\[3, 4\]\.includes\(Number\(el\.autoStoryEngineVersion\?\.value\)\)/);
 assert.match(renderer, /"V4 Scope \+ Director"/, 'review screen must display selected V4 engine');
 assert.match(renderer, /"AutoStory V4"/, 'project status must identify V4');
+assert.match(renderer, /project\.autoStoryProduction\?\.jobs\?\.\[String\(variant\.scriptId\)\]/,
+  'Auto Story variant badge should use per-script production jobs');
+assert.match(renderer, /"Đang xuất MP4 cuối"/,
+  'final export must not display Draft sẵn sàng');
+assert.match(renderer, /"Cần kiểm tra QA"/,
+  'failed release QA must remain visible on variant cards');
 assert.match(renderer, /draft\.autoStoryEngineVersion \|\| el\.autoStoryEngineVersion\.value \|\| "4"/);
 assert.match(renderer, /isAutoStoryMode\(setupMode\)[\s\S]{0,120}\? "vertex_auto_story"/);
 assert.match(renderer, /runAutoStoryPipeline\(created\.project\.id\)/);
