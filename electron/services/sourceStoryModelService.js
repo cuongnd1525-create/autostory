@@ -625,6 +625,10 @@ async function chunkedExtract(engine, schema, instruction, ctx, audioEvents, emi
       const start = i * size, end = i === topChunks - 1 ? duration : (i + 1) * size;
       const part = await extractWindow(engine, schema, instruction, audioEvents, emit, start, end, 0, diag, phase, chunkInput);
       models.push(...part);
+      // Overall source phase is 8-25%, regardless of Vertex's per-call progress.
+      // Report validated windows only; this does not claim the whole source passed.
+      engine.onProgress?.({ stage: 'understand', percent: 8 + Math.round(((i + 1) / topChunks) * 16),
+        message: `Source extraction ${i + 1}/${topChunks} windows validated; full coverage still pending.` });
     }
   } finally {
     diag.coverageSeconds = round1(diag.coverageSeconds);
