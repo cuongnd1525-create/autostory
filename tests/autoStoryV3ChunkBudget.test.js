@@ -77,7 +77,7 @@ const buildOpts = {
     const eng = { duration: 924.9, config: { outputCount: 3, editorialArchitecture: 'scope_media_director' }, service: svc };
     const budget = S.requestBudgetPlan(eng);
     const plan = S.planChunkWindows(eng.duration, budget.sourceModelLimit);
-    assert.equal(budget.downstreamReserved, 22);
+    assert.equal(budget.downstreamReserved, 25); // includes payoff verification for each V4 output
     assert.ok(budget.global >= 30, 'source + recovery + downstream all fit');
     assert.equal(budget.global, S.callLimit(svc));
     assert.equal(svc.callBudget.adaptiveLimit, true);
@@ -140,7 +140,7 @@ const buildOpts = {
   // Infeasible upfront (initial windows > phase budget) -> fail BEFORE any call.
   await ok('initial windows exceed phase budget -> fail early, zero source-model calls', async () => {
     const dir = tmp();
-    // outputCount 3 -> downstreamReserved 16 -> sourceModelLimit floored at 4; 1726s needs 8 windows.
+    // outputCount 3 reserves payoff validation + Director + hook + review; 1726s needs 8 windows.
     const { svc, callBudget } = makeService(16, () => windowModel(0));
     const engine = makeEngine(svc, dir, 1726.3, 3);
     await assert.rejects(() => S.build(engine, overview, buildOpts),
