@@ -7861,17 +7861,34 @@ function renderStudioVariantHub(project = state.currentProject) {
     const duration = (variant.segments || []).reduce((sum, s) => sum + getSegmentTimelineDuration(s), 0);
     const title = variant.label || variant.title || `Variant ${index + 1}`;
     const queueItem = queueById.get(variant.id) || (queue[index] && queue[index].id === variant.id ? queue[index] : null);
-
-    const isProcessing = queueItem?.status === "processing" || queueItem?.status === "rendering";
-    const isReviewing = queueItem?.status === "reviewing";
-    const isWaiting = queueItem?.status === "waiting";
-    const isFailed = queueItem?.status === "failed";
-    const isDone = queueItem?.status === "done";
+    // Fully automated Auto Story is scheduled by AutoStoryRunner, NOT the manual
+    // variantExportQueue. This per-script production journal is authoritative.
+    const productionPhase = project?.analysisWorkflow === "vertex_auto_story"
+      ? project.autoStoryProduction?.jobs?.[String(variant.scriptId)]?.phase || ""
+      : "";
+    const isProcessing = productionPhase ? ["rendering", "final_export"].includes(productionPhase)
+      : queueItem?.status === "processing" || queueItem?.status === "rendering";
+    const isReviewing = productionPhase ? productionPhase === "reviewing" : queueItem?.status === "reviewing";
+    const isWaiting = productionPhase ? productionPhase === "waiting" : queueItem?.status === "waiting";
+    const isFailed = productionPhase ? productionPhase === "failed" : queueItem?.status === "failed";
+    const isDone = productionPhase ? productionPhase === "complete" : queueItem?.status === "done";
 
     let badgeText = "Chờ xử lý";
     let badgeClass = "badge-pending";
 
-    if (isProcessing) {
+    if (productionPhase === "final_export") {
+      badgeText = "Đang xuất MP4 cuối";
+      badgeClass = "badge-processing";
+    } else if (productionPhase === "rendering") {
+      badgeText = "Đang dựng draft";
+      badgeClass = "badge-processing";
+    } else if (productionPhase === "reviewing") {
+      badgeText = "Đang AI Review";
+      badgeClass = "badge-reviewing";
+    } else if (productionPhase === "needs_attention") {
+      badgeText = "Cần kiểm tra QA";
+      badgeClass = "badge-warning";
+    } else if (isProcessing) {
       badgeText = "Processing";
       badgeClass = "badge-processing";
     } else if (isReviewing) {
@@ -7883,8 +7900,8 @@ function renderStudioVariantHub(project = state.currentProject) {
     } else if (isFailed) {
       badgeText = "Lỗi";
       badgeClass = "badge-failed";
-    } else if (isDone || variant.artifacts?.finalVideoPath) {
-      badgeText = variant.artifacts?.finalVideoPath ? "Đã xuất" : "Hoàn tất";
+    } else if (isDone || (!productionPhase && variant.artifacts?.finalVideoPath)) {
+      badgeText = variant.artifacts?.finalVideoPath ? "Đã xuất · QA đạt" : "Hoàn tất";
       badgeClass = "badge-pass";
     } else if (variant.draftReview?.verdict === "PASS" || variant.draftReviewReadiness?.grade === "A") {
       badgeText = "V2 PASS";
@@ -7899,7 +7916,7 @@ function renderStudioVariantHub(project = state.currentProject) {
 
     let variantPct = 0;
     let progressMsg = "";
-    if (isProcessing || isReviewing) {
+    if ((isProcessing || isReviewing) && !productionPhase) {
       variantPct = Math.max(0, Math.min(100, Number(queueItem?.percent ?? 0)));
       progressMsg = String(queueItem?.message || "").trim();
       if (!progressMsg && state.variantProgress?.activeIndex === index && state.variantProgress?.message) {
@@ -7932,7 +7949,7 @@ function renderStudioVariantHub(project = state.currentProject) {
             ${escapeHtml(badgeText)}
           </span>
         </div>
-        ${(isProcessing || isReviewing) ? `
+        ${(isProcessing || isReviewing) && !productionPhase ? `
           <div class="variant-hub-card-progress">
             <div class="variant-card-progress-track">
               <div class="variant-card-progress-bar" style="width: ${variantPct}%;"></div>
