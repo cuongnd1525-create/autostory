@@ -730,7 +730,13 @@ async function run(service, opts) {
   config.editorialArchitecture = editorialArchitecture(project, {});
   if (rawCfg.storyMode) config.storyMode = rawCfg.storyMode;
   if (Number.isFinite(Number(rawCfg.maxScopeReelSec)) && Number(rawCfg.maxScopeReelSec) > 0) config.maxScopeReelSec = Number(rawCfg.maxScopeReelSec);
-  const requestedContractVersion = Number(original.autoStoryContractVersion) === 4 ? 4 : 3;
+  // Older V4 runs accidentally persisted contractVersion 3, but retained
+  // scope_media_director in the project. Restore their correct V4 identity on
+  // restart without converting a genuine V3 text-design project.
+  const requestedContractVersion = Number(original.autoStoryContractVersion) === 4
+    || (Number(original.autoStoryContractVersion) === 3
+      && original.autoStoryEditorialArchitecture === SCOPE_MEDIA_DIRECTOR)
+    ? 4 : 3;
   const versionTag = requestedContractVersion === 4 ? 'V4' : 'V3';
   const update = patch => service.store.updateProject(opts.workspaceRoot, opts.projectId, patch);
   const emit = (stage, message, percent) => opts.onProgress?.({
