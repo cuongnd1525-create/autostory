@@ -287,6 +287,20 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
     else if (!windows.some(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0)) {
       add('SCOPE_ENDING_OUTSIDE_SCOPE', `candidateEndingEvents[${i}] ${s}-${e}s is not inside an in-scope window.`, { index: i });
     }
+    // Ground the claimed ending in the canonical source timeline BEFORE paying
+    // for a video verification request. An invented eventId is never an ending.
+    if (Array.isArray(model?.events) && model.events.length) {
+      const event = model.events.find(ev => ev.id === en.eventId);
+      if (!event) {
+        add('SCOPE_ENDING_EVENT_UNVERIFIED',
+          `Ending ${i} references eventId '${en.eventId || ''}' absent from the Source Story Model. Choose an actual observed ending event.`,
+          { index: i, eventId: en.eventId || null });
+      } else if (overlaps(s, e, num(event.startSec), num(event.endSec)) <= TIME_EPS) {
+        add('SCOPE_ENDING_EVENT_MISMATCH',
+          `Ending ${i} source range ${s}-${e}s does not overlap source event '${en.eventId}' at ${event.startSec}-${event.endSec}s.`,
+          { index: i, eventId: en.eventId });
+      }
+    }
   });
 
   const normalizedScope = { ...scope, scopeWindows: windows };
