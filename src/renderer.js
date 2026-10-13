@@ -2428,7 +2428,7 @@ function writeSetupDraft() {
     autoStoryOutputCount: el.autoStoryOutputCount?.value || "2",
     autoStoryNarrationStyle: el.autoStoryNarrationStyle?.value || "investigative",
     autoStoryAudioBalance: el.autoStoryAudioBalance?.value || "balanced",
-    autoStoryEngineVersion: el.autoStoryEngineVersion?.value || "2",
+    autoStoryEngineVersion: el.autoStoryEngineVersion?.value || "4",
     sourceVideoPath: el.sourceVideoPath?.value || "",
     sourceDownloadUrl: el.sourceDownloadUrl?.value || "",
     sourceKind: el.sourceVideoPath?.dataset.sourceKind || "",
@@ -2533,7 +2533,11 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (el.autoStoryOutputCount) el.autoStoryOutputCount.value = draft.autoStoryOutputCount || "2";
   if (el.autoStoryNarrationStyle) el.autoStoryNarrationStyle.value = draft.autoStoryNarrationStyle || "investigative";
   if (el.autoStoryAudioBalance) el.autoStoryAudioBalance.value = draft.autoStoryAudioBalance || "balanced";
-  if (el.autoStoryEngineVersion) { el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || "2"; updateAutoStoryEngineHint(); }
+  if (el.autoStoryEngineVersion) {
+    // Old drafts without an engine field should not silently override V4's HTML default.
+    el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || el.autoStoryEngineVersion.value || "4";
+    updateAutoStoryEngineHint();
+  }
   if (draft.sourceVideoPath && el.sourceVideoPath) el.sourceVideoPath.value = draft.sourceVideoPath;
   if (draft.sourceDownloadUrl && el.sourceDownloadUrl) el.sourceDownloadUrl.value = draft.sourceDownloadUrl;
   if (el.sourceVideoPath) {
@@ -7034,7 +7038,8 @@ function updateReview() {
   if (el.reviewAutoStory) {
     const min = Math.max(65, Number(el.autoStoryTargetMin?.value || 65));
     const max = Math.max(min, Number(el.autoStoryTargetMax?.value || 90));
-    const engineLabel = Number(el.autoStoryEngineVersion?.value) === 3 ? "V3 Story Model" : "V2 Legacy";
+    const engineLabel = Number(el.autoStoryEngineVersion?.value) === 4 ? "V4 Scope + Director"
+      : Number(el.autoStoryEngineVersion?.value) === 3 ? "V3 Story Model" : "V2 Legacy";
     el.reviewAutoStory.textContent = `${engineLabel} · ${Number(el.autoStoryOutputCount?.value || 2)} video · ${min}-${max}s · ${el.autoStoryNarrationStyle?.options[el.autoStoryNarrationStyle.selectedIndex]?.textContent || "Điều tra"}`;
   }
   if (isRecap) {
@@ -7318,10 +7323,12 @@ function renderProjectPicker() {
 
 function updateAutoStoryEngineHint() {
   if (!el.autoStoryEngineHint) return;
-  const v3 = Number(el.autoStoryEngineVersion?.value) === 3;
-  el.autoStoryEngineHint.textContent = v3
-    ? "V3: hiểu toàn bộ nguồn một lần (Source Story Model), thiết kế story beats, kiểm tra narrator (grounding/spoiler) và duck âm gốc thay vì tắt. Nên đặt số kịch bản = 1 khi test lần đầu."
-    : "V2: pipeline production hiện tại (ổn định). Chọn V3 để dùng story-model mới.";
+  const version = Number(el.autoStoryEngineVersion?.value);
+  el.autoStoryEngineHint.textContent = version === 4
+    ? "V4: hiểu toàn bộ nguồn, chọn story scope, dựng bằng Media-Grounded Editorial Director, kiểm chứng hook và review MP4."
+    : version === 3
+      ? "V3: Source Story Model, story beats, kiểm tra narrator (grounding/spoiler) và duck âm gốc."
+      : "V2: pipeline legacy dành cho các project cũ. Chọn V4 để dùng pipeline production mới.";
 }
 
 function readProjectPayload() {
@@ -8600,8 +8607,10 @@ function renderAutoStoryStatus() {
     const open = panel.dataset.projectId !== project.id || !panel.querySelector(".auto-story-script-list") || panel.querySelector(".auto-story-script-list").open;
     const diagnosticsOpen = panel.dataset.projectId === project.id && panel.querySelector(".auto-story-diagnostics")?.open;
     panel.dataset.projectId = project.id;
-    const isV3 = project.autoStoryContractVersion === 3 || project.autoStoryPipelineVersion === "source-story-v3";
-    const engineBadge = { label: isV3 ? "AutoStory V3" : "AutoStory V2", cls: isV3 ? "" : "v2" };
+    const contract = Number(project.autoStoryContractVersion);
+    const isV3 = contract === 3 || (contract !== 4 && project.autoStoryPipelineVersion === "source-story-v3");
+    const engineBadge = { label: contract === 4 ? "AutoStory V4" : isV3 ? "AutoStory V3" : "AutoStory V2",
+      cls: contract === 4 || isV3 ? "" : "v2" };
     panel.innerHTML = `<div class="auto-story-heading"><strong>${escapeHtml(lines[0])}</strong><span class="auto-story-engine-badge ${engineBadge.cls}">${escapeHtml(engineBadge.label)}</span><span>${escapeHtml(lines[2])}</span></div>
       <details class="auto-story-script-list" ${open ? "open" : ""}><summary>${escapeHtml(lines[1])}</summary><div class="auto-story-rows"></div></details>
       <details class="auto-story-diagnostics" ${diagnosticsOpen ? "open" : ""}><summary>Chi phí và chi tiết</summary><div>${lines.slice(3).map(line => `<p>${escapeHtml(line)}</p>`).join("") || "Chưa có thông tin bổ sung."}</div></details>

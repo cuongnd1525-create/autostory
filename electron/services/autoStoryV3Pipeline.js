@@ -1,4 +1,4 @@
-// AutoStory v3 orchestrator (Phases 0-6). Gated behind autoStoryContractVersion===3.
+// Shared AutoStory v3/v4 orchestrator (Phases 0-6); V4 selects Scope + Media Director.
 // Reuses the v2 Engine primitives, the Highlight renderer contract, measured
 // voice-fit, and the deterministic v3 modules. Never runs unless explicitly
 // selected, so v2 is untouched.
@@ -38,8 +38,9 @@ const BlockNarration = require('./blockNarrationService');
 // an explicit 'legacy_v4' opt-out keep the text-only Story Design path unchanged.
 const SCOPE_MEDIA_DIRECTOR = 'scope_media_director';
 function editorialArchitecture(project, config = {}) {
-  // 1. explicit user/project choice; 2. V4 contract; 3. the architecture persisted by a
-  // previous V4 run (run() rewrites the contract to 3 for the renderer); 4. legacy.
+  // Explicit project choice wins; otherwise V4 contract selects Scope + Media Director.
+  // Historical V4 projects that were incorrectly downgraded to 3 are recognized
+  // by their persisted architecture, so they can resume safely.
   const explicit = project?.autoStoryConfig?.editorialArchitecture || config.editorialArchitecture;
   if (explicit) return explicit;
   if (project?.autoStoryContractVersion === 4) return SCOPE_MEDIA_DIRECTOR;
@@ -729,8 +730,16 @@ async function run(service, opts) {
   config.editorialArchitecture = editorialArchitecture(project, {});
   if (rawCfg.storyMode) config.storyMode = rawCfg.storyMode;
   if (Number.isFinite(Number(rawCfg.maxScopeReelSec)) && Number(rawCfg.maxScopeReelSec) > 0) config.maxScopeReelSec = Number(rawCfg.maxScopeReelSec);
+  const requestedContractVersion = Number(original.autoStoryContractVersion) === 4 ? 4 : 3;
+  const versionTag = requestedContractVersion === 4 ? 'V4' : 'V3';
   const update = patch => service.store.updateProject(opts.workspaceRoot, opts.projectId, patch);
-  const emit = (stage, message, percent) => opts.onProgress?.({ stage, message, ...(percent === undefined ? {} : { percent }) });
+  const emit = (stage, message, percent) => opts.onProgress?.({
+    stage,
+    message: versionTag === 'V4' && typeof message === 'string'
+      ? message.replace(/\[V3\]/g, '[V4]').replace(/^v3:/i, 'v4:')
+      : message,
+    ...(percent === undefined ? {} : { percent })
+  });
 
   emit('preprocess', 'v3: đo giọng đọc và nguồn trước khi hiểu toàn bộ video.', 1);
   if (config.narration.enabled) {
@@ -753,7 +762,8 @@ async function run(service, opts) {
 
   // v3 sets duck-by-default (Phase 13): source preserved and ducked, not muted.
   project = await update({
-    autoStoryContractVersion: 3, autoStoryPipelineVersion: 'source-story-v3',
+    // Never downgrade a V4 project to V3 merely because both share this module.
+    autoStoryContractVersion: requestedContractVersion, autoStoryPipelineVersion: 'source-story-v3',
     autoStoryEditorialArchitecture: config.editorialArchitecture,
     autoStoryConfig: { ...project.autoStoryConfig, outputCount: config.outputCount },
     autoStoryEditorialConfig: config, autoStorySourceV3: { identity, cache, duration: probe.duration },

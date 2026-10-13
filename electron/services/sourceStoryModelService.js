@@ -615,7 +615,15 @@ async function chunkedExtract(engine, schema, instruction, ctx, audioEvents, emi
 // overview: the whole-source proxy for staged whole/compact — a prepared clip array
 //   OR a thunk `() => Promise<clips>` so chunk-first can SKIP whole-source prep entirely.
 async function build(engine, overview, { audioEvents = [], words = [], schema, compactSchema, chunkSchema, instruction, compactInstruction, chunkInstruction } = {}) {
-  const emit = (m, level) => { try { engine.onProgress?.({ stage: 'understand', message: m, ...(level ? { level } : {}) }); } catch (_) {} };
+  const versionTag = Number(engine.project?.autoStoryContractVersion) === 4 ? 'V4' : 'V3';
+  const emit = (m, level) => {
+    try {
+      engine.onProgress?.({ stage: 'understand',
+        message: versionTag === 'V4' ? String(m).replace(/\[V3\]/g, '[V4]') : m,
+        ...(level ? { level } : {})
+      });
+    } catch (_) {}
+  };
   const cacheDir = engine.cache;
   const ctx = { duration: engine.duration, audioEvents, words, sourceId: engine.sourceHash };
   const baseInput = { duration: engine.duration, transcript: engine.cues, audioEvents, epistemicValues: EPISTEMIC };
