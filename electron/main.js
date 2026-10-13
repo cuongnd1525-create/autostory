@@ -723,11 +723,8 @@ app.whenReady().then(async () => {
     if (scriptId !== null && (!Number.isInteger(scriptId) || scriptId < 1 || scriptId > 5)) throw new Error("Script ID không hợp lệ.");
     const settings = configStore.getSettings();
     const sendProgress = createPipelineProgressSender(event);
-    let completedPercent = 0;
-    const onProgress = (item) => {
-      completedPercent = Math.max(completedPercent, Math.min(100, Number(item.percent) || 0));
-      sendProgress({ ...item, percent: completedPercent });
-    };
+    const normalizeAutoStory = require("./services/autoStoryProgressPolicy").createAutoStoryProgressTracker();
+    const onProgress = item => sendProgress(normalizeAutoStory(item));
     const controller = new AbortController();
     const token = createCancelToken("vertexAutoStory");
     token.abortController = controller;
