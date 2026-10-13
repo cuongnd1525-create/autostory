@@ -243,8 +243,10 @@ function mergeSourceModels(models = []) {
 function modelPath(cacheDir) { return path.join(cacheDir, 'story-model.json'); }
 
 function sourceCacheIdentity(engine) {
-  const model = engine?.service?.vertex?.getModel?.('auto_story_plan');
-  if (!model) return null; // lightweight unit-test engines
+  const vertex = engine?.service?.vertex;
+  const VertexAiService = require('./vertexAiService');
+  if (!(vertex instanceof VertexAiService)) return null; // deterministic test doubles
+  const model = vertex.getModel('auto_story_plan');
   const V3 = require('./autoStoryV3Contracts');
   return crypto.createHash('sha256').update(JSON.stringify({
     model, sourceHash: engine.sourceHash, modelVersion: MODEL_VERSION,

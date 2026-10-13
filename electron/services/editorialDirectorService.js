@@ -34,10 +34,10 @@ const DUP_EPS = 0.05;
 // generation (e.g. a sentence looping inside one string) now stops after 16k
 // tokens (~2 min, ~$0.04 output) instead of the model default 65,536 (~9 min,
 // ~$0.16). Hitting it never imports partial JSON and is never auto-resent.
-const DIRECTOR_MAX_OUTPUT_TOKENS = 16000;
+const DIRECTOR_MAX_OUTPUT_TOKENS = 24000; // includes room for model reasoning + complete EDL
 // Editorial reasoning is not bounded to zero: Pro uses its supported default;
 // Gemini 3 gets high thinking through the model-aware Vertex request builder.
-const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingLevel: "high" });
+const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: 4096, thinkingLevel: "high" });
 // A single director text field is one sentence (observed max 322 chars). A string
 // this long is generation degeneration, not editorial content: fail fast, no repair.
 const MAX_DIRECTOR_TEXT_CHARS = 2000;

@@ -228,7 +228,7 @@ function buildThinkingConfig(model, thinkingBudget = null, thinkingLevel = null)
   const level = safeText(thinkingLevel).toLowerCase();
   const gemini3 = /^gemini-3(?:[.\-]|$)/.test(name);
   if (gemini3) {
-    if (level && !["low", "medium", "high", "minimal"].includes(level)) throw new Error(`Unsupported Gemini 3 thinkingLevel: ${level}`);
+    if (level && !["low", "medium", "high"].includes(level)) throw new Error(`Unsupported Gemini 3 thinkingLevel: ${level}`);
     if (level) return { thinkingLevel: level };
     if (thinkingBudget == null || thinkingBudget === "") return null;
     if (!Number.isFinite(Number(thinkingBudget)) || Number(thinkingBudget) < 0) throw new Error("Invalid thinkingBudget");
