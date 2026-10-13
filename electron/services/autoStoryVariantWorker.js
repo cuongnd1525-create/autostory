@@ -189,8 +189,13 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     onProgress?.({ stage: 'reviewing', autoStoryDraftReady: true, project: ready, percent: 78, message: `Script ${scriptId}: draft sẵn sàng, đang review` });
     try {
       const result = await service.auditDrafts({ workspaceRoot: workerRoot, projectId, scriptId, signal, onProgress });
+      const audit = result.audits.find(a => Number(a.scriptId) === scriptId);
+      const finalAudit = await require('./autoStoryReleaseGate').finalizeVariant({
+        store: local, dubbing, workspaceRoot: workerRoot, projectId, scriptId,
+        settings, audit, onProgress
+      });
       await publish();
-      return result.audits.find(a => Number(a.scriptId) === scriptId);
+      return finalAudit;
     } catch (err) {
       await publish().catch(() => {});
       throw err;

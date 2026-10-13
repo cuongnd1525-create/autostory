@@ -82,8 +82,12 @@ class AutoStoryRunner {
           await state(id, 'reviewing');
           const result = await this.consumer.auditDrafts({ workspaceRoot, projectId, scriptId: id, signal, onProgress,
             onDraft: project => onProgress?.({ project, autoStoryDraftReady: true, stage: 'review_ready', message: `Script ${id}: đã có bản sửa` }) });
-          const a = result.audits.find(a => a.scriptId === id);
+          let a = result.audits.find(a => a.scriptId === id);
           if (!a?.complete && !a?.error) throw new Error('Chưa có kết quả review hoàn chỉnh cho script này; draft được giữ lại.');
+          a = await require('./autoStoryReleaseGate').finalizeVariant({
+            store: this.store, dubbing: this.dubbing, workspaceRoot, projectId,
+            scriptId: id, settings: this.settings, audit: a, onProgress
+          });
           await state(id, a?.error || a?.finalCheck?.error ? 'failed' : a?.needsUserReview ? 'needs_attention' : 'complete', a?.error || a?.finalCheck?.error || '');
         } catch (error) {
           if (signal?.aborted) throw error;
