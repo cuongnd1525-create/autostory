@@ -221,6 +221,27 @@ function pricingForModel(model = "", inputTokens = 0) {
   return { input: 0.75, output: 3.75 };
 }
 
+// Never turn an omitted budget into 0: Number(null) === 0. Gemini 3 uses
+// thinking levels, while Gemini 2.5 Pro cannot disable reasoning.
+function buildThinkingConfig(model, thinkingBudget = null, thinkingLevel = null) {
+  const name = safeText(model).toLowerCase();
+  const level = safeText(thinkingLevel).toLowerCase();
+  const gemini3 = /^gemini-3(?:[.\-]|$)/.test(name);
+  if (gemini3) {
+    if (level && !["low", "medium", "high", "minimal"].includes(level)) throw new Error(`Unsupported Gemini 3 thinkingLevel: ${level}`);
+    if (level) return { thinkingLevel: level };
+    if (thinkingBudget == null || thinkingBudget === "") return null;
+    if (!Number.isFinite(Number(thinkingBudget)) || Number(thinkingBudget) < 0) throw new Error("Invalid thinkingBudget");
+    return { thinkingLevel: Number(thinkingBudget) === 0 ? "low" : "high" };
+  }
+  if (thinkingBudget == null || thinkingBudget === "") return null;
+  const budget = Number(thinkingBudget);
+  if (!Number.isFinite(budget) || budget < 0) throw new Error("Invalid thinkingBudget");
+  if (name.includes("2.5-pro") && budget === 0) return null;
+  if (name.includes("2.5-pro") && budget < 128) throw new Error("Gemini 2.5 Pro thinkingBudget must be >= 128");
+  return { thinkingBudget: Math.round(budget) };
+}
+
 function estimateUsageCost(model, usageMetadata = {}) {
   const inputTokens = Number(usageMetadata.promptTokenCount || usageMetadata.prompt_token_count || 0);
   const price = pricingForModel(model, inputTokens);
@@ -470,6 +491,7 @@ class VertexAiService {
     responseSchema = null,
     maxOutputTokens = null,
     thinkingBudget = null,
+    thinkingLevel = null,
     strictRootJson = false,
     videoFps = null,
     videoFpsByPath = {},
@@ -486,6 +508,7 @@ class VertexAiService {
     const token = await this.getAccessToken();
     this.validateSettings();
     const model = safeText(modelOverride) || this.getModel(taskType);
+    const thinkingConfig = buildThinkingConfig(model, thinkingBudget, thinkingLevel);
     const startedAt = Date.now();
     let preparedCount = 0;
     // Phase 16: when a Vertex context cache holds the media, don't re-attach
@@ -543,12 +566,7 @@ class VertexAiService {
             responseMimeType: "application/json",
             ...(["MEDIA_RESOLUTION_LOW", "MEDIA_RESOLUTION_MEDIUM", "MEDIA_RESOLUTION_HIGH"].includes(mediaResolution) ? { mediaResolution } : {}),
             ...(Number(maxOutputTokens) > 0 ? { maxOutputTokens: Math.round(Number(maxOutputTokens)) } : {}),
-            // Gemini 2.5 "thinking" tokens are drawn from maxOutputTokens; for bounded
-            // JSON extraction (Source Story Model) we cap/disable them so reasoning can't
-            // starve the JSON output and cause a false MAX_TOKENS truncation. Only sent
-            // when the caller opts in (thinkingBudget >= 0), so other tasks are unchanged.
-            ...(Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0
-              ? { thinkingConfig: { thinkingBudget: Math.round(Number(thinkingBudget)) } } : {}),
+            ...(thinkingConfig ? { thinkingConfig } : {}),
             ...(responseSchema ? { responseSchema: sourceContract
               ? (hookSchema || relaxedSchema ? require('./autoStorySchemaBoundary').hookTransport(responseSchema)
                 : require('./autoStorySchemaBoundary').transport(responseSchema)) : responseSchema } : {})
@@ -586,7 +604,8 @@ class VertexAiService {
         finishReason: payload.candidates?.[0]?.finishReason || "",
         usage: payload.usageMetadata || {}, model,
         requestedMaxOutputTokens: Number(maxOutputTokens) > 0 ? Math.round(Number(maxOutputTokens)) : null,
-        requestedThinkingBudget: Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0 ? Math.round(Number(thinkingBudget)) : null,
+        requestedThinkingBudget: thinkingConfig?.thinkingBudget ?? null,
+        requestedThinkingLevel: thinkingConfig?.thinkingLevel ?? null,
         prepareMs: preparedAt - startedAt, modelMs: completedAt - preparedAt
       };
       const responseText = extractResponseText(payload);
@@ -673,6 +692,7 @@ class VertexAiService {
   }
 }
 
+VertexAiService.buildThinkingConfig = buildThinkingConfig;
 VertexAiService.inferMimeType = inferMimeType;
 VertexAiService.parseFirstJsonValue = parseFirstJsonValue;
 VertexAiService.estimateUsageCost = estimateUsageCost;

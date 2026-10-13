@@ -146,6 +146,7 @@ class AutoStoryFastService {
   async stage(root, key, input, args, validate, onProgress, signal) {
     args = { ...args, taskType: args.sourceContract ? args.taskType : require("./autoStoryCostPolicy").taskFor(key) || args.taskType };
     const fingerprint = hash({ VERSION, ...(args.hookSchema ? { hookSchema:1 } : {}), ...(args.relaxedSchema ? { relaxedSchema:1 } : {}), input, prompt: args.prompt, schema: args.responseSchema, videoFps: args.videoFps, videoFpsByPath: args.videoFpsByPath, mediaResolution: args.mediaResolution,
+      filePaths: args.filePaths, maxOutputTokens: args.maxOutputTokens, thinkingBudget: args.thinkingBudget, thinkingLevel: args.thinkingLevel,
       model: this.vertex.getModel?.(args.taskType) });
     const file = path.join(root, `${key}-${fingerprint.slice(0, 20)}.json`);
     const repairFile = `${file}.repair.json`;

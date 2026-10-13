@@ -8,6 +8,12 @@ const { createAiProvider, VertexTextProvider } = require("../electron/services/a
 const ConfiguredAiWorkflowService = require("../electron/services/configuredAiWorkflowService");
 
 async function run() {
+  assert.strictEqual(VertexAiService.buildThinkingConfig("gemini-2.5-pro"), null);
+  assert.strictEqual(VertexAiService.buildThinkingConfig("gemini-2.5-pro", 0), null);
+  assert.deepStrictEqual(VertexAiService.buildThinkingConfig("gemini-2.5-flash", 0), { thinkingBudget: 0 });
+  assert.deepStrictEqual(VertexAiService.buildThinkingConfig("gemini-3-flash", 0), { thinkingLevel: "low" });
+  assert.deepStrictEqual(VertexAiService.buildThinkingConfig("gemini-3-pro", null, "high"), { thinkingLevel: "high" });
+  assert.throws(() => VertexAiService.buildThinkingConfig("gemini-2.5-pro", 64), />= 128/);
   assert.strictEqual(VertexAiService.inferMimeType("clip.mp4"), "video/mp4");
   assert.strictEqual(VertexAiService.inferMimeType("scene-manifest.json"), "text/plain");
   assert.strictEqual(VertexAiService.inferMimeType("source-transcript.srt"), "text/plain");

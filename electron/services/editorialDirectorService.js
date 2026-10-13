@@ -35,11 +35,9 @@ const DUP_EPS = 0.05;
 // tokens (~2 min, ~$0.04 output) instead of the model default 65,536 (~9 min,
 // ~$0.16). Hitting it never imports partial JSON and is never auto-resent.
 const DIRECTOR_MAX_OUTPUT_TOKENS = 16000;
-// Every recorded director call (successful and failed) ran with thinkingBudget 0;
-// the failure had no thought tokens. Pinned explicitly so the fuse above is spent
-// only on the JSON itself and the behaviour no longer depends on an implicit default.
-const DIRECTOR_THINKING_BUDGET = 0;
-const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: DIRECTOR_THINKING_BUDGET });
+// Editorial reasoning is not bounded to zero: Pro uses its supported default;
+// Gemini 3 gets high thinking through the model-aware Vertex request builder.
+const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingLevel: "high" });
 // A single director text field is one sentence (observed max 322 chars). A string
 // this long is generation degeneration, not editorial content: fail fast, no repair.
 const MAX_DIRECTOR_TEXT_CHARS = 2000;
