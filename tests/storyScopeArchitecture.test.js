@@ -422,7 +422,7 @@ function fakeEngine(asks) {
   await ok('Pack: a broad window is compacted for MEDIA only (event/quote anchored); the logical window is unchanged', async () => {
     const events = Array.from({ length: 8 }, (_, i) => ({ id: `x${i}`, startSec: 60 + i * 20, endSec: 62 + i * 20 }));
     const broad = scopeCandidate({ scopeWindows: [{ windowId: 'broad', startSec: 50, endSec: 230, purposes: ['core'] }, { windowId: 'end', startSec: 230, endSec: 240, purposes: ['ending_material'] }],
-      explicitScopeBoundary: { startSec: 0, endSec: 250, rationale: 'x' }, candidateEndingEvents: [{ sourceStartSec: 232, sourceEndSec: 238, endingType: 'forward_cliffhanger' }],
+      explicitScopeBoundary: { startSec: 0, endSec: 250, rationale: 'x' }, candidateEndingEvents: [{ eventId: 'xEnding', sourceStartSec: 232, sourceEndSec: 238, endingType: 'forward_cliffhanger' }],
       causalSpine: [{ eventId: 'x0', sourceStartSec: 60, sourceEndSec: 62 }, { eventId: 'x5', sourceStartSec: 160, sourceEndSec: 162 }] });
     const reel = Scope.planScopeReel(broad, { durationSec: SOURCE_SEC, maxScopeReelSec: 150, model: { events, quotes: [] } });
     assert.ok(reel.withinBudget && reel.totalSec <= 150, `media ${reel.totalSec}s`);
@@ -435,7 +435,8 @@ function fakeEngine(asks) {
     // Without budget pressure the same window is sent whole.
     assert.deepStrictEqual(Scope.planScopeReel(broad, { durationSec: SOURCE_SEC, model: { events, quotes: [] } }).compactedWindowIds, []);
     // Validation uses the PACKED media: valid when compaction fits the budget.
-    assert.ok(Scope.validateStoryScope(broad, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, maxScopeReelSec: 150, model: { events, quotes: [] } }).valid);
+    assert.ok(Scope.validateStoryScope(broad, { durationSec: SOURCE_SEC, targetDurationMinSec: 65, maxScopeReelSec: 150,
+      model: { events: [...events, { id: 'xEnding', startSec: 232, endSec: 238 }], quotes: [] } }).valid);
   });
 
   await ok('Pack E/F: director receives <= provider-limit packed files + full manifest; the file limit never caps scope windows', async () => {
