@@ -16,7 +16,7 @@ function assess({ audit, media, bytes, file, config = {}, renderQa = null }) {
   const min = Number(config.targetDurationMinSec), max = Number(config.targetDurationMaxSec);
   if (Number.isFinite(min) && min > 0 && media?.duration < min - 0.75) issues.push('Final duration below requested minimum.');
   if (Number.isFinite(max) && max > 0 && media?.duration > max + 0.75) issues.push('Final duration exceeds requested maximum.');
-  if (renderQa?.passed === false) issues.push('Final render QA reported failure.');
+  if (renderQa?.passed !== true) issues.push('Final render QA missing, incomplete, or failed.');
   return { status: issues.length ? 'needs_attention' : 'ready_to_publish', issues,
     finalVideoPath: file || '', media: media || null, bytes: Number(bytes) || 0,
     checkedAt: new Date().toISOString() };
