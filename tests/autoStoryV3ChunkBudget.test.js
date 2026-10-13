@@ -72,6 +72,16 @@ const buildOpts = {
     assert.equal(S.selectStrategy(600, { modelVersion: S.MODEL_VERSION, whole: 'MAX_TOKENS', compact: 'MAX_TOKENS' }).reason, 'prior-max-tokens');
   });
 
+  await ok('dynamic budget covers a 30-minute V4 source with 2 outputs', () => {
+    const svc = { settings: {}, callBudget: { calls: 0 } };
+    const eng = { duration: 1800, config: { outputCount: 2, editorialArchitecture: 'scope_media_director' }, service: svc };
+    const budget = S.requestBudgetPlan(eng);
+    const plan = S.planChunkWindows(eng.duration, budget.sourceModelLimit);
+    assert.ok(budget.global > 16);
+    assert.ok(plan.feasible, 'source windows must fit before writing');
+    assert.ok(budget.sourceModelLimit >= plan.initialWindows);
+  });
+
   // ONE window overflows -> split ONLY that window -> children succeed -> ratio 1.0.
   await ok('one window MAX_TOKENS -> split only that window -> full coverage within phase budget', async () => {
     const dir = tmp();

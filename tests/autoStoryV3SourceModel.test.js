@@ -58,6 +58,16 @@ const buildOpts = {
     assert.ok(engine.progress.some(m => /cache HIT/.test(m)), 'logged cache HIT');
   });
 
+  await ok('preserves complete event and quote archive outside the compact model', async () => {
+    const dir = tmp();
+    const model = S.normalize(rawModel(100, 120), { duration: 1200 });
+    await S.persist(dir, model);
+    const full = JSON.parse(fs.readFileSync(path.join(dir, 'source-evidence-full.json'), 'utf8'));
+    assert.equal(full.events.length, 100);
+    assert.equal(full.quotes.length, 120);
+    assert.ok(model.events.length <= S.MAX_EVENTS);
+  });
+
   await ok('changed source (empty cache) => cache MISS, one whole-source call', async () => {
     const engine = makeEngine(tmp(), () => rawModel(4, 5));
     const model = await S.build(engine, [], buildOpts);
@@ -65,6 +75,13 @@ const buildOpts = {
     assert.equal(engine._calls[0].key, 'v3-source-model');
     assert.ok(engine.progress.some(m => /cache MISS/.test(m)));
     assert.ok(model.events.length >= 1);
+  });
+
+  await ok('changed cache fingerprint forces a source rebuild', async () => {
+    const dir = tmp();
+    await S.persist(dir, S.normalize(rawModel(3, 3), { duration: 1200 }), 'fingerprint-A');
+    assert.ok((await S.loadWithReason(dir, 'fingerprint-A')).model);
+    assert.equal((await S.loadWithReason(dir, 'fingerprint-B')).model, null);
   });
 
   await ok('changed schema version => cache MISS (stale model ignored)', async () => {
