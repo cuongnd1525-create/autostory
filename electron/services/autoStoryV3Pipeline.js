@@ -644,7 +644,7 @@ async function directStories(engine, model, root, emit, config) {
   const scopes = [selected.scope, ...alternates]; // Try alternatives if one makes an untrue payoff promise.
   await write(path.join(root, 'story-scope.json'), { contract: StoryScope.SCOPE_CONTRACT_VERSION, chosen: selected.scope, reel: selected.reel,
     selectionRationale: selected.selection.selectionRationale, candidates: selected.selection.candidates, attempts: selected.attempts, usedScopes: scopes.map(x => x.storyScopeId) });
-  const spines = [], failures = [];
+  const spines = [], failures = [], rejectedScopes = [];
   for (let i = 0; i < scopes.length && spines.length < Math.max(1, config.outputCount || 1); i++) {
     const scriptId = spines.length + 1;
     try {
@@ -659,17 +659,21 @@ async function directStories(engine, model, root, emit, config) {
       if (!DIRECTOR_FAILURE_KINDS.has(err.kind) && err.kind !== 'STORY_SCOPE_PAYOFF_REJECTED') {
         if (i === 0 || engine.signal?.aborted) throw err;
       }
-      failures.push({ scriptId, storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR',
+      // A rejected candidate is NOT a failed video job if another scope is
+      // accepted for that script slot. Save it separately for diagnostics.
+      rejectedScopes.push({ storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR',
         error: err.message, details: err.details || null });
       emit('design', `[V4] Scope ${scopes[i].storyScopeId} rejected: ${err.message}`, 'WARNING');
     }
   }
+  await write(path.join(root, 'rejected-story-scopes.json'), rejectedScopes);
   if (!spines.length) {
-    const first = failures[0] || {};
+    const first = rejectedScopes[0] || {};
     throw new StoryError(first.kind || 'DIRECTOR_EDL_INVALID', first.error || 'No director EDL produced.', first.details || { failures });
   }
   emit('design', `[Director] ${spines.length} media-grounded EDL(s) ready.`, 40);
   spines.failures = failures;
+  spines.rejectedScopes = rejectedScopes;
   return spines;
 }
 
