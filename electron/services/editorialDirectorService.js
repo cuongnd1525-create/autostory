@@ -37,7 +37,8 @@ const DUP_EPS = 0.05;
 const DIRECTOR_MAX_OUTPUT_TOKENS = 24000; // includes room for model reasoning + complete EDL
 // Editorial reasoning is not bounded to zero: Pro uses its supported default;
 // Gemini 3 gets high thinking through the model-aware Vertex request builder.
-const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: 4096, thinkingLevel: "high" });
+const DIRECTOR_THINKING_BUDGET = 4096;
+const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: DIRECTOR_THINKING_BUDGET, thinkingLevel: "high" });
 // A single director text field is one sentence (observed max 322 chars). A string
 // this long is generation degeneration, not editorial content: fail fast, no repair.
 const MAX_DIRECTOR_TEXT_CHARS = 2000;
