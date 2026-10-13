@@ -63,7 +63,7 @@ const STORY_DESIGN_CALLS = 1;
 // budget, like Story Design repairs did). Kept minimal so a long cache-MISS source still
 // gets enough chunk-first windows under the default 16-call cap.
 const SCOPE_SELECTION_CALLS = 1;
-const DIRECTOR_CALLS_PER_SCRIPT = 2; // EDL + independent high-fps hook audition
+const DIRECTOR_CALLS_PER_SCRIPT = 3; // source payoff verification + EDL + high-fps hook audition
 const NARRATION_CALLS_PER_SCRIPT = 5;
 const SOURCE_MODEL_MIN_CALLS = 4;         // floor so a large outputCount can't starve extraction to 0
 // Recursive-subdivision guards for a chunk that STILL hits MAX_TOKENS: keep
