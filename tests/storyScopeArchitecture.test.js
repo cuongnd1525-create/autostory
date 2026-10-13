@@ -303,7 +303,7 @@ function fakeEngine(asks) {
     scopeWindows: nWindows(n), explicitScopeBoundary: { startSec: 0, endSec: 2 + n * 10 + 10, rationale: 'x' },
     causalSpine: [{ eventId: 'e1', sourceStartSec: 2, sourceEndSec: 10 }, { eventId: 'e2', sourceStartSec: 12, sourceEndSec: 20 }],
     candidateEndingEvents: [{ eventId: 'eN', sourceStartSec: 2 + (n - 1) * 10, sourceEndSec: 2 + (n - 1) * 10 + 8, endingType: 'forward_cliffhanger' }], ...extra });
-  const endings = n => Array.from({ length: n }, (_, i) => ({ eventId: `e${i}`, sourceStartSec: 96 + i, sourceEndSec: 97 + i, endingType: 'forward_cliffhanger' }));
+  const endings = n => Array.from({ length: n }, (_, i) => ({ eventId: 'e5', sourceStartSec: 96 + i, sourceEndSec: 97 + i, endingType: 'forward_cliffhanger' }));
 
   await ok('Scope contract: limits have one source of truth (instruction + validator, no opaque schema maxItems); "contains N; maximum M"', async () => {
     assert.ok(Scope.instruction.includes(`candidateEndingEvents 1-${MAXE}`), 'instruction states the limit');
