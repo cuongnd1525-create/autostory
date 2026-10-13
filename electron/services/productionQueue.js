@@ -4,22 +4,34 @@ const crypto = require('crypto');
 const { serial } = require('./autoStoryWorkQueue');
 const { createScopedToken, runWithCancelToken, cancelToken } = require('./cancelToken');
 class ProductionQueue {
-  constructor(file, execute, notify = () => {}) {
+  constructor(file, execute, notify = () => {}, options = {}) {
     this.file = file; this.execute = execute; this.notify = notify; this.jobs = []; this.active = new Map(); this.paused = true;
+    this.limit = Math.max(1, Math.min(4, Number(options.maxConcurrent) || 2));
   }
   async load() {
-    try { this.jobs = JSON.parse(await fs.readFile(this.file, 'utf8')).jobs || []; }
-    catch (e) { if (e.code !== 'ENOENT') throw e; }
-    for (const j of this.jobs) if (j.status === 'running') { j.status = 'interrupted'; j.error = 'Ứng dụng đóng khi đang xử lý. Bấm thử lại để tiếp tục.'; }
-    await this.save(); return this.snapshot();
+    try {
+      const saved = JSON.parse(await fs.readFile(this.file, 'utf8'));
+      this.jobs = saved.jobs || [];
+      this.paused = typeof saved.paused === 'boolean' ? saved.paused : true;
+    } catch (e) { if (e.code !== 'ENOENT') throw e; }
+    for (const j of this.jobs) if (j.status === 'running') {
+      // Active queues resume from per-stage checkpoints. Manually paused queues
+      // remain interrupted so operators retain control over restarting work.
+      j.status = this.paused ? 'interrupted' : 'queued';
+      j.progress = 0;
+      j.error = this.paused ? 'Ứng dụng đóng khi đang xử lý. Bấm thử lại để tiếp tục.' : '';
+    }
+    await this.save();
+    if (!this.paused) this.pump();
+    return this.snapshot();
   }
-  snapshot() { return { paused: this.paused, jobs: structuredClone(this.jobs), active: this.active.size, limit: 2 }; }
+  snapshot() { return { paused: this.paused, jobs: structuredClone(this.jobs), active: this.active.size, limit: this.limit }; }
   publish() { try { this.notify(this.snapshot()); } catch (_) { /* UI disconnection must not interrupt processing. */ } }
   async save() {
     return serial(this.file, async () => {
       await fs.mkdir(path.dirname(this.file), { recursive: true });
       const temp = `${this.file}.tmp`;
-      await fs.writeFile(temp, JSON.stringify({ jobs: this.jobs }, null, 2)); await fs.rename(temp, this.file);
+      await fs.writeFile(temp, JSON.stringify({ paused: this.paused, jobs: this.jobs }, null, 2)); await fs.rename(temp, this.file);
       this.publish();
     });
   }
@@ -47,7 +59,7 @@ class ProductionQueue {
   }
   pump() {
     if (this.paused) return;
-    while (this.active.size < 2) {
+    while (this.active.size < this.limit) {
       const j = this.jobs.find(j => j.status === 'queued' && !this.jobs.some(a => this.active.has(a.id) && (a.sourceKey === j.sourceKey || (a.workspaceRoot === j.workspaceRoot && a.projectId === j.projectId))));
       if (!j) break;
       const token = createScopedToken(j.id); this.active.set(j.id, token); j.status = 'running'; j.startedAt = new Date().toISOString();

@@ -81,6 +81,14 @@ async function main() {
     await restored.load(); assert.equal(restored.paused, true); assert.equal(restored.jobs[0].status, 'interrupted');
     assert.equal(restored.jobs[2].status, 'complete');
     await assert.rejects(restored.add([{ projectId: 'invalid' }]), /Thiếu thông tin/);
+    const resumeFile = path.join(root, 'resume.json');
+    await fs.writeFile(resumeFile, JSON.stringify({ paused: false,
+      jobs: [{ ...item('resume'), id: 'saved-1', status: 'running', progress: 60 }] }));
+    const resumed = new Queue(resumeFile, async () => ({ needsAttention: false }), () => {}, { maxConcurrent: 1 });
+    await resumed.load();
+    await until(() => resumed.jobs[0].status === 'complete' && resumed.active.size === 0);
+    assert.equal(resumed.snapshot().limit, 1);
+    assert.equal(resumed.paused, false, 'unpaused queue resumes after restart');
 
     const disconnected = new Queue(path.join(root, 'disconnect.json'), async () => ({}), () => { throw new Error('Window closed'); });
     await disconnected.load(); await disconnected.add([item('x')]); await disconnected.action(null, 'start');

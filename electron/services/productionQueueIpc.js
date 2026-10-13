@@ -33,7 +33,7 @@ function install({ ipcMain, dialog, app, BrowserWindow, store, dubbing, getSetti
       return { needsAttention, projectId: project.id, error: [...failures.map(f => f.error), ...jobs.filter(j => j.error).map(j => j.error), missing ? 'Chưa đủ số kịch bản yêu cầu.' : ''].filter(Boolean).join('\n') };
     }, snapshot => {
       for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('production:progress', snapshot);
-    });
+    }, { maxConcurrent: getSettings().autoStoryQueueConcurrency || 2 });
     await queue.load(); return queue;
   })();
   const validateProject = async id => {
