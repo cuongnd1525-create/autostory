@@ -8608,9 +8608,10 @@ function renderAutoStoryStatus() {
     const diagnosticsOpen = panel.dataset.projectId === project.id && panel.querySelector(".auto-story-diagnostics")?.open;
     panel.dataset.projectId = project.id;
     const contract = Number(project.autoStoryContractVersion);
-    const isV3 = contract === 3 || (contract !== 4 && project.autoStoryPipelineVersion === "source-story-v3");
-    const engineBadge = { label: contract === 4 ? "AutoStory V4" : isV3 ? "AutoStory V3" : "AutoStory V2",
-      cls: contract === 4 || isV3 ? "" : "v2" };
+    const isV4 = contract === 4 || (contract === 3 && project.autoStoryEditorialArchitecture === "scope_media_director");
+    const isV3 = !isV4 && (contract === 3 || project.autoStoryPipelineVersion === "source-story-v3");
+    const engineBadge = { label: isV4 ? "AutoStory V4" : isV3 ? "AutoStory V3" : "AutoStory V2",
+      cls: isV4 || isV3 ? "" : "v2" };
     panel.innerHTML = `<div class="auto-story-heading"><strong>${escapeHtml(lines[0])}</strong><span class="auto-story-engine-badge ${engineBadge.cls}">${escapeHtml(engineBadge.label)}</span><span>${escapeHtml(lines[2])}</span></div>
       <details class="auto-story-script-list" ${open ? "open" : ""}><summary>${escapeHtml(lines[1])}</summary><div class="auto-story-rows"></div></details>
       <details class="auto-story-diagnostics" ${diagnosticsOpen ? "open" : ""}><summary>Chi phí và chi tiết</summary><div>${lines.slice(3).map(line => `<p>${escapeHtml(line)}</p>`).join("") || "Chưa có thông tin bổ sung."}</div></details>
