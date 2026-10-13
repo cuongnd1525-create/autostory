@@ -44,6 +44,7 @@ jobs:
           node tests/autoStoryV4PayoffGate.test.js
           node tests/autoStoryV4ScopeEvidence.test.js
           node tests/autoStoryV4StoryQuality.test.js
+          node tests/storyScopeArchitecture.test.js
           node tests/autoStoryV3Routing.test.js
           node tests/autoStoryV4ContractPersistence.test.js
           node tests/productionQueue.test.js
