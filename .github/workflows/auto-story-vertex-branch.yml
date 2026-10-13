@@ -1,0 +1,47 @@
+name: Auto Story Vertex branch verification
+on:
+  push:
+    branches:
+      - feature/auto-story-vertex-production-hardening-20261013
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  auto-story-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without Electron download
+        run: npm ci --ignore-scripts
+      - name: Parse changed JavaScript
+        run: |
+          node --check electron/services/vertexAiService.js
+          node --check electron/services/sourceStoryModelService.js
+          node --check electron/services/autoStoryV3Pipeline.js
+          node --check electron/services/autoStoryV4HookGate.js
+          node --check electron/services/autoStoryReleaseGate.js
+          node --check electron/services/productionQueue.js
+          node --check electron/services/autoStoryVariantWorker.js
+          node --check electron/services/autoStoryRunner.js
+          node --check src/renderer.js
+      - name: Auto Story production regressions
+        run: |
+          node tests/vertexAiService.test.js
+          node tests/autoStoryUi.test.js
+          node tests/autoStoryV3ChunkBudget.test.js
+          node tests/autoStoryV3SourceModel.test.js
+          node tests/autoStoryReleaseGate.test.js
+          node tests/autoStoryV4HookGate.test.js
+          node tests/autoStoryV3Routing.test.js
+          node tests/productionQueue.test.js
+          node tests/productionQueueIpc.test.js
+          node tests/autoStoryVariantWorker.test.js
+          node tests/autoStoryProduction.test.js
+          node tests/autoStoryV4ProductionRepair.test.js
