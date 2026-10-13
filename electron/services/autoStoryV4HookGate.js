@@ -6,13 +6,17 @@ const { StoryError } = require('./autoStoryRepairRouter');
 const schema = {
   type: 'object', additionalProperties: false,
   required: ['accessGranted', 'sourceVerified', 'firstSecondsObserved',
-    'immediateCuriosity', 'misleadingOrSpoiled', 'reason'],
+    'immediateCuriosity', 'misleadingOrSpoiled', 'startsMidSentenceWithoutContext',
+    'specificUnansweredQuestion', 'promiseSupportedBySource', 'reason'],
   properties: {
     accessGranted: { type: 'boolean' },
     sourceVerified: { type: 'boolean' },
     firstSecondsObserved: { type: 'string' },
     immediateCuriosity: { type: 'boolean' },
     misleadingOrSpoiled: { type: 'boolean' },
+    startsMidSentenceWithoutContext: { type: 'boolean' },
+    specificUnansweredQuestion: { type: 'string' },
+    promiseSupportedBySource: { type: 'boolean' },
     reason: { type: 'string' }
   }
 };
@@ -24,6 +28,9 @@ function judge(result) {
   if (!result.sourceVerified) reasons.push('Source image/audio does not substantiate the opening claim.');
   if (!result.immediateCuriosity) reasons.push('The first source seconds do not immediately establish curiosity or visible stakes.');
   if (result.misleadingOrSpoiled) reasons.push('Opening distorts the source or spends the protected payoff.');
+  if (result.startsMidSentenceWithoutContext) reasons.push('Opening begins mid-sentence without enough context for a cold viewer.');
+  if (!result.promiseSupportedBySource) reasons.push('Hook promise is not substantiated by the source footage.');
+  if (!String(result.specificUnansweredQuestion || '').trim()) reasons.push('Opening does not establish any specific question or stakes.');
   return { accepted: reasons.length === 0, reasons };
 }
 async function verify(engine, story, { emit = () => {} } = {}) {
@@ -46,7 +53,7 @@ async function verify(engine, story, { emit = () => {} } = {}) {
     mustWithhold: story.storyScope?.mustWithhold || [],
     opening: { sourceStartSec: start, sourceEndSec: actualEnd, narrativeRole: first.narrativeRole, observedInFootage: first.observedInFootage }
   }, schema,
-  'WATCH the complete attached opening clip, including its original audio. Verify ONLY what is actually audible/visible. Describe the FIRST 3 seconds, the observable tension or contradiction, and whether a cold viewer has a compelling question without being misled. A teaser may withhold context; do not demand that the case is fully explained. Set immediateCuriosity=false if the first seconds are silent procedural filler. Set misleadingOrSpoiled=true for an inaccurate quote, misleading action, or a revealed payoff that should be withheld. Do not invent scene evidence.',
+  'WATCH the complete attached opening clip, including its original audio. Verify ONLY what is actually audible/visible. Describe the FIRST 3 seconds, the observable tension or contradiction, and whether a cold viewer has a compelling question without being misled. A teaser may withhold context; do not demand that the case is fully explained. Reject the opening if it begins mid-sentence without intelligible context, if routine searching is shown without a conflict or concrete curiosity, or if a hook promises an unproven discovery. State the SPECIFIC unanswered question a cold viewer would form. Set immediateCuriosity=false for silent procedural filler. Set misleadingOrSpoiled=true for inaccurate quotes, misleading action, or revealing payoff prematurely. The promise must agree with the Story Scope's supported ending, not a hypothetical future reveal. Do not invent scene evidence.',
   evidence, value => { const assessment = judge(value); if (!assessment.accepted) {
     throw new StoryError('DIRECTOR_REPAIR_REQUIRED', assessment.reasons.join(' '), {
       violations: assessment.reasons.map(reason => ({ code: 'HOOK_SOURCE_AUDITION', message: reason })),
