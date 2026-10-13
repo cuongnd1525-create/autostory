@@ -1011,6 +1011,10 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
   // =========================================================================
   // INTEGRATION REPAIR LOOP TEST
   // =========================================================================
+  if (process.env.AUTOSTORY_SKIP_LIVE_TTS === '1') {
+    console.log('Offline CI: V4 structural/unit tests passed; live Edge TTS integration intentionally skipped.');
+    return;
+  }
   console.log('\n--- Running Full AutoStory V4 Production Repair Integration ---');
 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-prod-repair-'));
