@@ -48,7 +48,8 @@ class ConfigStore {
       vertexAutoStoryReviewModel: "",
       vertexAutoStoryRepairModel: "",
       vertexAutoStoryFinalModel: "",
-      vertexAutoStoryMaxCalls: 16,
+      vertexAutoStoryMaxCalls: 16, // legacy default: V4 automatically scales this with duration/output count
+      vertexAutoStoryStrictCallCap: false, // opt in to a hard 16-call cap (may reject long V4 jobs before any API call)
       vertexBudgetUsd: Number(process.env.CINEVIRAL_VERTEX_BUDGET_USD || 240),
       vertexDailyLimitUsd: Number(process.env.CINEVIRAL_VERTEX_DAILY_LIMIT_USD || 5),
       vertexTimeoutMs: Number(process.env.CINEVIRAL_VERTEX_TIMEOUT_MS || 900000),

@@ -72,6 +72,28 @@ const buildOpts = {
     assert.equal(S.selectStrategy(600, { modelVersion: S.MODEL_VERSION, whole: 'MAX_TOKENS', compact: 'MAX_TOKENS' }).reason, 'prior-max-tokens');
   });
 
+  await ok('existing user setting 16 auto-scales a V4 job with 3 outputs and 924.9s source', () => {
+    const svc = { settings: { vertexAutoStoryMaxCalls: 16 }, callBudget: { calls: 0 } };
+    const eng = { duration: 924.9, config: { outputCount: 3, editorialArchitecture: 'scope_media_director' }, service: svc };
+    const budget = S.requestBudgetPlan(eng);
+    const plan = S.planChunkWindows(eng.duration, budget.sourceModelLimit);
+    assert.equal(budget.downstreamReserved, 22);
+    assert.ok(budget.global >= 30, 'source + recovery + downstream all fit');
+    assert.equal(budget.global, S.callLimit(svc));
+    assert.equal(svc.callBudget.adaptiveLimit, true);
+    assert.ok(plan.feasible && plan.splitReserve >= 4, 'the chunk stage can recover oversized outputs');
+  });
+
+  await ok('a strict user-requested 16-call cap fails before consuming Vertex credits', async () => {
+    const dir = tmp();
+    const { svc, callBudget } = makeService(16, () => windowModel(0));
+    svc.settings.vertexAutoStoryStrictCallCap = true;
+    const engine = makeEngine(svc, dir, 924.9, 3);
+    engine.config.editorialArchitecture = 'scope_media_director';
+    await assert.rejects(() => S.build(engine, overview, buildOpts), /Cannot cover|SOURCE_MODEL_RECOVERY_BUDGET/);
+    assert.equal(callBudget.calls, 0, 'no futile Vertex calls');
+  });
+
   await ok('dynamic budget covers a 30-minute V4 source with 2 outputs', () => {
     const svc = { settings: {}, callBudget: { calls: 0 } };
     const eng = { duration: 1800, config: { outputCount: 2, editorialArchitecture: 'scope_media_director' }, service: svc };

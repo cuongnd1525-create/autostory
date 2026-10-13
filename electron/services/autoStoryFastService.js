@@ -188,7 +188,9 @@ class AutoStoryFastService {
     for (let attempt = 0; attempt < 2; attempt++) {
       const explicitLimit = Number(this.settings.vertexAutoStoryMaxCalls);
       const limit = Math.max(1, Math.min(100,
-        Number.isFinite(explicitLimit) && explicitLimit > 0 ? explicitLimit : (this.callBudget.limit || 16)));
+        this.callBudget.adaptiveLimit === true
+          ? (this.callBudget.limit || 16)
+          : Number.isFinite(explicitLimit) && explicitLimit > 0 ? explicitLimit : (this.callBudget.limit || 16)));
       if (this.callBudget.calls >= limit) throw new Error(`Đã đạt giới hạn ${limit} yêu cầu AI của lượt chạy. Giữ tiến độ; Tiếp tục sẽ bắt đầu lượt mới.`);
       let recorded = false;
       let invalidResult;

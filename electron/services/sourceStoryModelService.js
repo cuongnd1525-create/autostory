@@ -390,9 +390,11 @@ async function persistDiag(cacheDir, diag) {
 // goes CHUNK-FIRST with small windows so a normal window extracts in one call.
 // Recursion is an emergency fallback for the odd token-dense window, NOT the plan.
 function callLimit(service) {
+  const budget = service?.callBudget;
+  if (budget?.adaptiveLimit === true) return Math.max(1, Math.min(100, Number(budget.limit) || 16));
   const explicit = Number(service?.settings?.vertexAutoStoryMaxCalls);
   if (Number.isFinite(explicit) && explicit > 0) return Math.max(1, Math.min(100, explicit));
-  return Math.max(16, Math.min(100, Number(service?.callBudget?.limit) || 16));
+  return Math.max(16, Math.min(100, Number(budget?.limit) || 16));
 }
 // Downstream calls the run still needs AFTER the source model, derived from the
 // pipeline's own bounded loops (not a guess).
@@ -411,16 +413,30 @@ function requestBudgetPlan(engine) {
   if (!cb) return { unbounded: true, global: Infinity, downstreamReserved: 0, sourceModelLimit: Infinity };
   const downstreamReserved = downstreamReserve(engine.config);
   const explicit = Number(engine.service.settings?.vertexAutoStoryMaxCalls);
-  if (!(Number.isFinite(explicit) && explicit > 0)) {
-    const planned = engine.duration > LONG_SOURCE_THRESHOLD_SEC
-      ? planChunkWindows(engine.duration, Infinity).initialWindows
-      : Math.max(4, Math.ceil(engine.duration / CHUNK_FIRST_TARGET_SEC));
-    const dynamicLimit = Math.min(100, Math.max(16, downstreamReserved + planned + 4));
-    if (engine.service.callBudget) engine.service.callBudget.limit = Math.max(engine.service.callBudget.limit || 0, dynamicLimit);
+  const configuredCap = Number.isFinite(explicit) && explicit > 0 ? explicit : 0;
+  // 16 was historically stored in every user's settings JSON, so merely
+  // changing ConfigStore defaults does NOT fix existing V4 installations.
+  // Treat that specific legacy value as an adaptive baseline for V4, unless
+  // the user explicitly requests a strict cap. Other positive caps are strict.
+  const legacyV4Cap = engine.config?.editorialArchitecture === 'scope_media_director'
+    && configuredCap === 16 && engine.service.settings?.vertexAutoStoryStrictCallCap !== true;
+  const adaptive = legacyV4Cap || !configuredCap;
+  if (adaptive) {
+    const planned = planChunkWindows(engine.duration, Infinity).initialWindows;
+    const reserveForSplits = Math.max(4, Math.ceil(planned / 2));
+    const required = downstreamReserved + planned + reserveForSplits + (cb.calls || 0);
+    const desired = Math.min(100, Math.max(16, required));
+    cb.adaptiveLimit = true;
+    cb.limit = Math.max(Number(cb.limit) || 0, desired);
+    if (desired > (configuredCap || 16)) {
+      engine.onProgress?.({ stage: 'understand',
+        message: `[V4] Adaptive AI budget: ${configuredCap || 16} -> ${desired} calls (source=${planned}, recovery=${reserveForSplits}, downstream=${downstreamReserved}); USD budget remains enforced.` });
+    }
   }
   const global = callLimit(engine.service);
-  const sourceModelLimit = Math.max(SOURCE_MODEL_MIN_CALLS, Math.min(global, global - downstreamReserved));
-  return { unbounded: false, global, downstreamReserved, sourceModelLimit };
+  const sourceModelLimit = Math.max(0, Math.min(global,
+    global - (cb.calls || 0) - downstreamReserved));
+  return { unbounded: false, global, downstreamReserved, sourceModelLimit, adaptive };
 }
 // Duration- and history-aware strategy. Long sources (or a source that already
 // proved whole+compact overflow at this model version) go straight to chunk-first.
