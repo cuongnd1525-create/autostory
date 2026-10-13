@@ -36,6 +36,7 @@ jobs:
           node tests/vertexAiService.test.js
           node tests/autoStoryUi.test.js
           node tests/autoStoryV3ChunkBudget.test.js
+          node tests/autoStoryV3ChunkCoverage.test.js
           node tests/autoStoryV3SourceModel.test.js
           node tests/autoStoryReleaseGate.test.js
           node tests/autoStoryV4HookGate.test.js
