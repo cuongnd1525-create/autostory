@@ -40,6 +40,7 @@ jobs:
           node tests/autoStoryReleaseGate.test.js
           node tests/autoStoryV4HookGate.test.js
           node tests/autoStoryV3Routing.test.js
+          node tests/autoStoryV4ContractPersistence.test.js
           node tests/productionQueue.test.js
           node tests/productionQueueIpc.test.js
           node tests/autoStoryVariantWorker.test.js
