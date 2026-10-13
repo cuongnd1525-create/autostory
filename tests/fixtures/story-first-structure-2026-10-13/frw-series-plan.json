@@ -1,0 +1,559 @@
+{
+  "artifactType": "series_plan",
+  "schemaVersion": 1,
+  "profile": "viral_tiktok_crime_part1",
+  "centralViewerQuestion": "Why was crash driver Billy Bailey so severely disoriented on the Key West roadside, and what hidden criminal contraband inside his vehicle escalated a routine traffic check into a hospital escape and combative assault on officers?",
+  "hookPromise": "Promises to uncover how an apparently dazed crash victim ended up tackled in a hospital parking lot while trying to flee police custody, and the shocking truth uncovered during his medical detox.",
+  "hookSelection": {
+    "candidateId": "candidate_016",
+    "sourceEventId": "e17",
+    "whyItWins": "Candidate_016 captures the peak kinetic conflict where an officer tackles an escaped detainee onto the hospital parking lot asphalt at night, shouting commands and radioing dispatch. It provides immediate visual urgency and a massive curiosity gap (how did a crash victim end up fleeing a hospital in handcuffs?) while preserving spoiler boundaries. Candidate_021 was rejected because it features lower-stakes repetitive verbal arguing from a hospital bed. Candidate_001 was rejected because at 6.1s it is too brief and lacks visual/geographical context. Candidate_006 was rejected because an ambulance escort lacks urgent dramatic stakes.",
+    "hookTo15SecBridge": "Following the 18-second parking lot takedown hook, narration executes a non-linear causal rewind: 'Hours before this chaotic hospital takedown, Key West 911 received reports of a violent single-car crash entering the city.' The visual immediately cuts to the downed streetlights and the driver sitting cross-legged on the curb.",
+    "verifiedPayoffEventIds": [
+      "e16",
+      "e17",
+      "e19",
+      "e25",
+      "e27"
+    ]
+  },
+  "parts": [
+    {
+      "scriptId": 1,
+      "partNumber": 1,
+      "partBadge": "PART 1",
+      "scope": "Cold-open parking lot takedown hook, rewind to 911 crash report, roadside discovery of crushed pills, paramedic cognitive failure, and combative escalation inside the ambulance.",
+      "hookRange": {
+        "sourceStartSec": 778,
+        "sourceEndSec": 796
+      },
+      "hookHandoff": {
+        "contextNeeded": "Establish that the man pinned in the parking lot was originally an injured driver from a violent single-car crash entering Key West.",
+        "rewindRequired": true,
+        "bridgePurpose": "Rewind from the chaotic midnight hospital takedown to the initial 911 dispatch calls describing a sedan smashing streetlights on US-1.",
+        "verifiedPayoffEventIds": [
+          "e04",
+          "e05",
+          "e06",
+          "e10"
+        ]
+      },
+      "causalProgression": [
+        {
+          "eventId": "e17",
+          "sourceStartSec": 778,
+          "sourceEndSec": 796,
+          "informationGain": "Viewer witnesses an escaped hospital patient tackled and handcuffed on the asphalt at night.",
+          "whyNext": "Establishes extreme stakes before rewinding to reveal how this bizarre confrontation began."
+        },
+        {
+          "eventId": "e02",
+          "sourceStartSec": 6.125,
+          "sourceEndSec": 27.75,
+          "informationGain": "Reveals the origin: a high-speed sedan crash on US-1 destroying streetlights entering Key West.",
+          "whyNext": "Establishes the physical damage and initial crime scene."
+        },
+        {
+          "eventId": "e03",
+          "sourceStartSec": 27.75,
+          "sourceEndSec": 56.375,
+          "informationGain": "911 caller describes reckless speeding and the driver's strange behavior after mounting the curb.",
+          "whyNext": "Prepares for the first visual contact with the driver."
+        },
+        {
+          "eventId": "e04",
+          "sourceStartSec": 56.375,
+          "sourceEndSec": 101.375,
+          "informationGain": "Officers locate driver sitting cross-legged on the grass curb; witness says he asked 'do you feel weird?'",
+          "whyNext": "Shifts focus from the wrecked car to the suspect's suspicious mental state."
+        },
+        {
+          "eventId": "e05",
+          "sourceStartSec": 101.375,
+          "sourceEndSec": 149.5,
+          "informationGain": "Officers discover crushed amphetamine pills inside the car and interrogate the suspect on the curb.",
+          "whyNext": "Provides evidence of illicit chemical intoxication explaining his bizarre demeanor."
+        },
+        {
+          "eventId": "e06",
+          "sourceStartSec": 149.5,
+          "sourceEndSec": 227.375,
+          "informationGain": "Paramedic cognitive testing reveals complete disorientation: suspect doesn't know the year, the city, or how he traveled from Louisiana.",
+          "whyNext": "Demonstrates that the suspect is unfit to remain on scene and requires emergency medical transport."
+        },
+        {
+          "eventId": "e08",
+          "sourceStartSec": 253.875,
+          "sourceEndSec": 300.375,
+          "informationGain": "Officer recounts observing suspect walking into active traffic covering his face after the crash.",
+          "whyNext": "Heightens urgency as first responders escort him to the ambulance rig."
+        },
+        {
+          "eventId": "e10",
+          "sourceStartSec": 345.375,
+          "sourceEndSec": 385.875,
+          "informationGain": "Inside the ambulance, suspect aggressively refuses vitals, curses at EMS, and displays severely dilated pupils.",
+          "whyNext": "Reaches the boiling point where paramedics request police escort to the hospital."
+        }
+      ],
+      "narratorArc": [
+        {
+          "afterEventId": "e17",
+          "beforeEventId": "e02",
+          "narratorFunction": "context",
+          "purpose": "Rewind the narrative from the hospital parking lot takedown to the initial crash scene on US-1 in Key West.",
+          "authenticAudioHandoffEventId": "e03"
+        },
+        {
+          "afterEventId": "e04",
+          "beforeEventId": "e05",
+          "narratorFunction": "reinterpretation",
+          "purpose": "Highlight the sudden discovery of crushed amphetamines in the car, shifting the incident from an accident to a criminal drug investigation.",
+          "authenticAudioHandoffEventId": "e05"
+        },
+        {
+          "afterEventId": "e06",
+          "beforeEventId": "e08",
+          "narratorFunction": "escalation",
+          "purpose": "Emphasize how extreme cognitive failure and irrational behavior forced first responders to move the suspect into the ambulance.",
+          "authenticAudioHandoffEventId": "e09"
+        },
+        {
+          "afterEventId": "e09",
+          "beforeEventId": "e10",
+          "narratorFunction": "anticipation",
+          "purpose": "Set up the explosive escalation inside the ambulance as the driver turns combative against medical staff.",
+          "authenticAudioHandoffEventId": "e10"
+        }
+      ],
+      "engagementIntent": {
+        "emotionalReason": "Shock at the driver's total cognitive detachment and mounting combativeness toward responders trying to help him.",
+        "naturalDiscussionQuestion": "Should officers have immediately handcuffed the disoriented driver at the crash scene instead of treating him solely as a medical patient?",
+        "factualBasisEventIds": [
+          "e05",
+          "e06",
+          "e10"
+        ]
+      },
+      "sceneAllocation": [
+        {
+          "sourceStartSec": 6.125,
+          "sourceEndSec": 27.75,
+          "purpose": "Crash scene overview and destroyed streetlights."
+        },
+        {
+          "sourceStartSec": 27.75,
+          "sourceEndSec": 56.375,
+          "purpose": "911 call audio and cruiser dashcam arrival."
+        },
+        {
+          "sourceStartSec": 56.375,
+          "sourceEndSec": 101.375,
+          "purpose": "First contact with driver sitting cross-legged on grass curb."
+        },
+        {
+          "sourceStartSec": 101.375,
+          "sourceEndSec": 149.5,
+          "purpose": "Discovery of crushed pills in car and curb interrogation."
+        },
+        {
+          "sourceStartSec": 149.5,
+          "sourceEndSec": 227.375,
+          "purpose": "Paramedic orientation test: year, city, and impossible Louisiana drive."
+        },
+        {
+          "sourceStartSec": 253.875,
+          "sourceEndSec": 300.375,
+          "purpose": "Officer explains finding suspect walking across active traffic."
+        },
+        {
+          "sourceStartSec": 300.375,
+          "sourceEndSec": 345.375,
+          "purpose": "Escorting driver to ambulance rig while discussing pills."
+        },
+        {
+          "sourceStartSec": 345.375,
+          "sourceEndSec": 385.875,
+          "purpose": "Ambulance conflict: refusing vitals, swearing, dilated pupils."
+        }
+      ],
+      "mustNotReveal": [
+        "The discovery of four fraudulent Louisiana driver's licenses with different names and numbers inside the vehicle.",
+        "Dr. Gordon's medical clearance and initial handcuff arrest in the ER.",
+        "Jail intake refusal due to dangerously elevated vitals and subsequent cruiser panic.",
+        "The suspect sprinting out of the ER unhandcuffed through glass doors.",
+        "The biting attack on hospital staff during medical detox and the final 5 criminal charges."
+      ],
+      "cliffhanger": "Inside the ambulance, Bailey aggressively curses and refuses vital monitoring, while paramedics discover heavily dilated pupils and urgently request police backup for ER transport—leaving his true identity and motives completely unresolved.",
+      "cliffhangerRange": {
+        "sourceStartSec": 357.875,
+        "sourceEndSec": 385.875
+      }
+    },
+    {
+      "scriptId": 3,
+      "partNumber": 2,
+      "partBadge": "PART 2",
+      "scope": "Vehicle search uncovering multiple fake IDs, ER room standoff as suspect refuses tests, medical clearance and arrest, jail intake rejection, and the suspect's sudden unhandcuffed hospital breakout.",
+      "hookRange": {
+        "sourceStartSec": 385.875,
+        "sourceEndSec": 401.75
+      },
+      "hookHandoff": {
+        "contextNeeded": "Pick up from Bailey arriving at the hospital under police guard while officers return to search his wrecked sedan.",
+        "rewindRequired": false,
+        "bridgePurpose": "Bridge from the combative ambulance ride to the hospital entrance, setting up the vehicle search that exposes his fraudulent identity.",
+        "verifiedPayoffEventIds": [
+          "e12",
+          "e13",
+          "e15",
+          "e16"
+        ]
+      },
+      "causalProgression": [
+        {
+          "eventId": "e11",
+          "sourceStartSec": 385.875,
+          "sourceEndSec": 401.75,
+          "informationGain": "Suspect is brought into the emergency room under police guard for medical evaluation.",
+          "whyNext": "Sets up the concurrent vehicle search while suspect is held at ER."
+        },
+        {
+          "eventId": "e12",
+          "sourceStartSec": 401.75,
+          "sourceEndSec": 453.75,
+          "informationGain": "Officers search the crashed sedan and uncover four fraudulent Louisiana driver's licenses with mismatched names and numbers.",
+          "whyNext": "Proves suspect is intentionally concealing his identity, raising criminal stakes."
+        },
+        {
+          "eventId": "e13",
+          "sourceStartSec": 453.75,
+          "sourceEndSec": 593,
+          "informationGain": "Inside the ER, suspect agitatedly refuses blood pressure tests and attempts to leave the room until blocked by an officer.",
+          "whyNext": "Shows ongoing resistance to medical care and custody."
+        },
+        {
+          "eventId": "e14",
+          "sourceStartSec": 593,
+          "sourceEndSec": 626.375,
+          "informationGain": "Dr. Gordon performs brief exam and clears suspect; officer places Bailey in handcuffs under arrest.",
+          "whyNext": "Appears to resolve the medical phase and transitions to jail transport."
+        },
+        {
+          "eventId": "e15",
+          "sourceStartSec": 626.375,
+          "sourceEndSec": 694.125,
+          "informationGain": "Jail intake rejects Bailey due to spiking vitals; locked in the cruiser cage, Bailey panics, claiming he can't breathe and begging to return to the ER.",
+          "whyNext": "Creates a medical crisis forcing officers to reverse course back to hospital."
+        },
+        {
+          "eventId": "e16",
+          "sourceStartSec": 694.125,
+          "sourceEndSec": 760,
+          "informationGain": "Officer returns Bailey to ER room 5 and removes handcuffs for vitals monitoring; Bailey suddenly bolts off the bed and sprints out of the hospital.",
+          "whyNext": "Delivers the peak cliffhanger turning point before the parking lot pursuit."
+        }
+      ],
+      "narratorArc": [
+        {
+          "afterEventId": "e11",
+          "beforeEventId": "e12",
+          "narratorFunction": "bridge",
+          "purpose": "Transition from ER arrival to the vehicle search where officers uncover the suspect's fake IDs.",
+          "authenticAudioHandoffEventId": "e12"
+        },
+        {
+          "afterEventId": "e12",
+          "beforeEventId": "e13",
+          "narratorFunction": "reinterpretation",
+          "purpose": "Explain how finding 4 fake IDs reframes Bailey's disorientation as a potential deception strategy as he resists hospital testing.",
+          "authenticAudioHandoffEventId": "e13"
+        },
+        {
+          "afterEventId": "e14",
+          "beforeEventId": "e15",
+          "narratorFunction": "escalation",
+          "purpose": "Detail the shocking turn when jail medical staff refuse intake, causing Bailey to panic in the police cruiser.",
+          "authenticAudioHandoffEventId": "e15"
+        },
+        {
+          "afterEventId": "e15",
+          "beforeEventId": "e16",
+          "narratorFunction": "anticipation",
+          "purpose": "Set up the fatal mistake of removing Bailey's handcuffs inside ER room 5 for medical monitoring.",
+          "authenticAudioHandoffEventId": "e16"
+        }
+      ],
+      "engagementIntent": {
+        "emotionalReason": "Tension and disbelief as a routine medical clearance reverses into jail rejection, followed by an audacious escape sprint.",
+        "naturalDiscussionQuestion": "Was the officer justified in removing the suspect's handcuffs inside the ER room given his elevated blood pressure and panicked state?",
+        "factualBasisEventIds": [
+          "e12",
+          "e15",
+          "e16"
+        ]
+      },
+      "sceneAllocation": [
+        {
+          "sourceStartSec": 385.875,
+          "sourceEndSec": 401.75,
+          "purpose": "Suspect brought into hospital ER by first responders."
+        },
+        {
+          "sourceStartSec": 401.75,
+          "sourceEndSec": 453.75,
+          "purpose": "Vehicle search discovers four fraudulent driver's licenses."
+        },
+        {
+          "sourceStartSec": 453.75,
+          "sourceEndSec": 593,
+          "purpose": "Hospital exam room agitation, refusing tests, officer blocking exit."
+        },
+        {
+          "sourceStartSec": 593,
+          "sourceEndSec": 626.375,
+          "purpose": "Dr. Gordon quick check, initial medical clearance, and handcuff arrest."
+        },
+        {
+          "sourceStartSec": 626.375,
+          "sourceEndSec": 694.125,
+          "purpose": "Cruiser cage panic after jail intake rejects Bailey for high vitals."
+        },
+        {
+          "sourceStartSec": 694.125,
+          "sourceEndSec": 760,
+          "purpose": "Return to ER room 5, uncuffing for vitals, and sudden foot escape sprint."
+        }
+      ],
+      "mustNotReveal": [
+        "The parking lot taser takedown and physical wrestling on the asphalt.",
+        "The shattered glass door damage and additional felony criminal mischief charge.",
+        "The suspect's biting attack against nurses and officers during detox.",
+        "The final booking citation process and 5-count formal criminal charges."
+      ],
+      "cliffhanger": "Moments after the officer uncuffs Bailey in ER room 5 to check his dangerously spiking vitals, Bailey suddenly leaps off the bed and bolts through the exit doors into the pitch-black parking lot.",
+      "cliffhangerRange": {
+        "sourceStartSec": 746.625,
+        "sourceEndSec": 760
+      }
+    },
+    {
+      "scriptId": 4,
+      "partNumber": 3,
+      "partBadge": "PART 3",
+      "scope": "Hospital parking lot takedown, shattered glass door consequences, combative detox protocol, biting attack on staff, booking desk processing, and final 5-count criminal charges.",
+      "hookRange": {
+        "sourceStartSec": 746.625,
+        "sourceEndSec": 771.375
+      },
+      "hookHandoff": {
+        "contextNeeded": "Connect seamlessly from Bailey's sprint through ER exit doors directly into the officer drawing his taser and pursuing him into the parking lot.",
+        "rewindRequired": false,
+        "bridgePurpose": "Maintain high-octane chase momentum from the ER breakout into the parking lot tackle.",
+        "verifiedPayoffEventIds": [
+          "e17",
+          "e19",
+          "e20",
+          "e25",
+          "e27"
+        ]
+      },
+      "causalProgression": [
+        {
+          "eventId": "e17",
+          "sourceStartSec": 760,
+          "sourceEndSec": 791.75,
+          "informationGain": "Officer chases Bailey into the dark parking lot, draws taser, tackles him to asphalt, and secures him in handcuffs.",
+          "whyNext": "Direct payoff to the Part 1 cold open and Part 2 breakout cliffhanger."
+        },
+        {
+          "eventId": "e18",
+          "sourceStartSec": 791.75,
+          "sourceEndSec": 810.5,
+          "informationGain": "Pinned on asphalt, Bailey claims he can't breathe while officer verifies his airway is clear and orders him to relax.",
+          "whyNext": "Transitions to walking suspect back inside the facility."
+        },
+        {
+          "eventId": "e19",
+          "sourceStartSec": 810.5,
+          "sourceEndSec": 855.5,
+          "informationGain": "Officer escorts Bailey past shattered glass hospital doors, notifying him of new felony criminal mischief charges.",
+          "whyNext": "Establishes physical property destruction resulting from the breakout."
+        },
+        {
+          "eventId": "e20",
+          "sourceStartSec": 855.5,
+          "sourceEndSec": 922.375,
+          "informationGain": "Hospital staff secure Bailey on the bed, revoke privileges, and officer explains he is undergoing drug detox.",
+          "whyNext": "Sets up the high-tension medical detox monitoring process."
+        },
+        {
+          "eventId": "e21",
+          "sourceStartSec": 922.375,
+          "sourceEndSec": 960,
+          "informationGain": "Bailey argues over handcuff tightness and claims severe allergies to latex and medication to delay monitoring.",
+          "whyNext": "Builds friction between suspect and medical personnel."
+        },
+        {
+          "eventId": "e22",
+          "sourceStartSec": 960,
+          "sourceEndSec": 1002.125,
+          "informationGain": "Staff attempt blood pressure check while Bailey thrashes and complains about glove contact.",
+          "whyNext": "Heightens agitation leading to the final physical clash."
+        },
+        {
+          "eventId": "e24",
+          "sourceStartSec": 1004.375,
+          "sourceEndSec": 1055,
+          "informationGain": "Bailey demands to be taken straight to jail and accuses staff of mistreatment.",
+          "whyNext": "Precedes the final physical altercation during doctor examination."
+        },
+        {
+          "eventId": "e25",
+          "sourceStartSec": 1055,
+          "sourceEndSec": 1121,
+          "informationGain": "During ear exam, Bailey tries to bite officers and nurse ('do not bite stop!'), gets pinned face-down to bed, and is then transferred to booking.",
+          "whyNext": "Delivers the ultimate climax and transitions to legal processing."
+        },
+        {
+          "eventId": "e26",
+          "sourceStartSec": 1121,
+          "sourceEndSec": 1134,
+          "informationGain": "Booking officer explains citation signature procedure and Bailey signs the paperwork.",
+          "whyNext": "Concludes on-scene law enforcement procedures."
+        },
+        {
+          "eventId": "e27",
+          "sourceStartSec": 1134,
+          "sourceEndSec": 1148.141,
+          "informationGain": "Narrator and official graphic confirm 5 criminal charges: Hit-and-Run, Fake IDs, Criminal Mischief, and Resisting.",
+          "whyNext": "Delivers complete verified resolution of the entire case."
+        }
+      ],
+      "narratorArc": [
+        {
+          "afterEventId": "e17",
+          "beforeEventId": "e19",
+          "narratorFunction": "escalation",
+          "purpose": "Explain how the escape attempt caused felony property damage to the hospital's glass entrance doors.",
+          "authenticAudioHandoffEventId": "e19"
+        },
+        {
+          "afterEventId": "e19",
+          "beforeEventId": "e20",
+          "narratorFunction": "bridge",
+          "purpose": "Transition from the parking lot recapture to the strict medical detox protocol inside the ER.",
+          "authenticAudioHandoffEventId": "e20"
+        },
+        {
+          "afterEventId": "e24",
+          "beforeEventId": "e25",
+          "narratorFunction": "anticipation",
+          "purpose": "Set up the final combative boiling point as medical staff attempt an ear examination.",
+          "authenticAudioHandoffEventId": "e25"
+        },
+        {
+          "afterEventId": "e25",
+          "beforeEventId": "e26",
+          "narratorFunction": "payoff",
+          "purpose": "Summarize the end of the hospital standoff and transition to formal booking desk processing.",
+          "authenticAudioHandoffEventId": "e26"
+        },
+        {
+          "afterEventId": "e26",
+          "beforeEventId": "e27",
+          "narratorFunction": "payoff",
+          "purpose": "Deliver the final verified criminal charges and case resolution.",
+          "authenticAudioHandoffEventId": "e27"
+        }
+      ],
+      "engagementIntent": {
+        "emotionalReason": "Satisfaction at seeing law enforcement and medical staff maintain control despite dangerous biting attempts, and accountability for the suspect's rampage.",
+        "naturalDiscussionQuestion": "Given the suspect's severe intoxication and property damage, were the five formal charges sufficient or should stricter penalties apply for assaulting medical staff?",
+        "factualBasisEventIds": [
+          "e19",
+          "e25",
+          "e27"
+        ]
+      },
+      "sceneAllocation": [
+        {
+          "sourceStartSec": 760,
+          "sourceEndSec": 791.75,
+          "purpose": "Hospital parking lot foot pursuit, taser draw, and takedown."
+        },
+        {
+          "sourceStartSec": 791.75,
+          "sourceEndSec": 810.5,
+          "purpose": "Suspect pinned on asphalt complaining of breathing difficulty."
+        },
+        {
+          "sourceStartSec": 810.5,
+          "sourceEndSec": 855.5,
+          "purpose": "Escorting suspect back inside past shattered glass entrance door."
+        },
+        {
+          "sourceStartSec": 855.5,
+          "sourceEndSec": 922.375,
+          "purpose": "ER bed restraint, privileges revoked, and detox monitoring."
+        },
+        {
+          "sourceStartSec": 922.375,
+          "sourceEndSec": 960,
+          "purpose": "Handcuff discomfort and fake allergy protests."
+        },
+        {
+          "sourceStartSec": 960,
+          "sourceEndSec": 1002.125,
+          "purpose": "Blood pressure check resistance and glove contact complaints."
+        },
+        {
+          "sourceStartSec": 1004.375,
+          "sourceEndSec": 1055,
+          "purpose": "Suspect demands jail transport and alleges mistreatment."
+        },
+        {
+          "sourceStartSec": 1055,
+          "sourceEndSec": 1121,
+          "purpose": "Biting attempt on medical staff, bed takedown, and booking desk transfer."
+        },
+        {
+          "sourceStartSec": 1121,
+          "sourceEndSec": 1134,
+          "purpose": "Signing traffic citations at jail booking desk."
+        },
+        {
+          "sourceStartSec": 1134,
+          "sourceEndSec": 1148.141,
+          "purpose": "Concluding breakdown of five formal criminal charges."
+        }
+      ],
+      "mustNotReveal": [],
+      "payoff": "Billy Bailey was recaptured after smashing through ER glass doors, restrained following a violent biting attempt on medical staff during detox, and booked on 5 criminal charges including Hit-and-Run, Possession of Fake IDs, and Criminal Mischief.",
+      "payoffRanges": [
+        {
+          "sourceStartSec": 1055,
+          "sourceEndSec": 1121
+        },
+        {
+          "sourceStartSec": 1121,
+          "sourceEndSec": 1148.141
+        }
+      ]
+    }
+  ],
+  "sharedRanges": [
+    {
+      "sourceStartSec": 778,
+      "sourceEndSec": 796,
+      "parts": [
+        1,
+        3
+      ],
+      "reason": "Cold-open teaser hook in Part 1 establishing the peak parking lot takedown conflict, re-encountered chronologically during Part 3's escape resolution."
+    }
+  ],
+  "duplicatePrevention": "Each part maintains strict chronological boundaries across the source video. Part 1 covers 6.125s-385.875s (plus cold-open teaser 778.0s-796.0s), Part 2 covers 385.875s-760.0s, and Part 3 covers 760.0s-1148.141s. No scenes are duplicated across parts except the explicit 18-second cold open hook in Part 1 listed in sharedRanges.",
+  "lockedAt": "2026-10-09T04:20:05.002Z",
+  "lockedBy": "host_validator"
+}

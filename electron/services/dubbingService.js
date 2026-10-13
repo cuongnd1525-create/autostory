@@ -4,6 +4,7 @@ const { spawn } = require("child_process");
 const crypto = require("crypto");
 
 const FfmpegService = require("./ffmpegService");
+const { checkSeriesImportContract } = require("./seriesImportContract");
 const SceneDetectionService = require("./sceneDetectionService");
 const EdgeTtsService = require("./edgeTtsService");
 const OmniVoiceService = require("./omniVoiceService");
@@ -22,6 +23,7 @@ const {
   resolveVoiceVisualFit
 } = require("./voiceTimingPolicy");
 const { compileResolvedTimeline } = require("./resolvedTimelineService");
+const StoryFirstReadiness = require("./storyFirstReadinessService");
 const { createAiProvider, LocalFallbackProvider } = require("./aiProviderRegistry");
 const { DubbingSpeechPlanner } = require("./dubbingSpeechPlanner");
 const {
@@ -542,6 +544,8 @@ function getHighlightAmbientVolume(segment = {}, project = {}) {
 
 // One 30fps frame plus mp4 container rounding.
 const BLOCK_DURATION_TOLERANCE_SEC = (1 / 30) + 0.02;
+const BLOCK_VOICE_TAIL_PAD_SEC = 0.12;
+const BLOCK_MIN_VISUAL_SPEED = 0.9;
 
 // Ambient bed under a narrated block (voiceover_with_ambient): same policy as a
 // voiced segment, applied once to the whole block.
@@ -555,27 +559,38 @@ function getBlockAmbientVolume(segment = {}, project = {}) {
 // Per-member draft report for a block: visual timing only (the voice belongs to
 // the block, so no member is voice-fitted or retimed on its own).
 function memberReportsFor(pieces = [], blockReport = {}) {
-  return pieces.map((p, offset) => ({
-    index: (blockReport.startIndex || 0) + offset,
-    sceneId: p.segment.sceneId || p.segment.id,
-    startSec: Number(p.sourceStartSec.toFixed(3)),
-    endSec: Number(p.sourceEndSec.toFixed(3)),
-    sourceDurationSec: Number(p.sourceDurationSec.toFixed(3)),
-    requestedTimelineSec: Number(p.durationSec.toFixed(3)),
-    timelineSec: Number(p.durationSec.toFixed(3)),
-    playbackSpeed: Number((p.sourceDurationSec / Math.max(0.3, p.durationSec)).toFixed(4)),
-    mode: "narrated_block_member",
-    deliveryBlockId: blockReport.blockId || p.segment.deliveryBlockId,
-    audioMode: blockReport.sourceAudioTreatment || p.segment.audioMode,
-    visualFitStrategy: "as_requested",
-    voiceFitStrategy: "block_continuous"
-  }));
+  return pieces.map((p, offset) => {
+    const requested = Number(p.plannedDurationSec ?? p.durationSec);
+    const storedTimeline = Number(blockReport.pieceTimelineSec?.[offset]);
+    const timeline = Number.isFinite(storedTimeline) && storedTimeline > 0 ? storedTimeline : Number(p.durationSec);
+    return {
+      index: (blockReport.startIndex || 0) + offset,
+      sceneId: p.segment.sceneId || p.segment.id,
+      startSec: Number(p.sourceStartSec.toFixed(3)),
+      endSec: Number(p.sourceEndSec.toFixed(3)),
+      sourceDurationSec: Number(p.sourceDurationSec.toFixed(3)),
+      requestedTimelineSec: Number(requested.toFixed(3)),
+      timelineSec: Number(timeline.toFixed(3)),
+      playbackSpeed: Number((p.sourceDurationSec / Math.max(0.3, timeline)).toFixed(4)),
+      mode: "narrated_block_member",
+      deliveryBlockId: blockReport.blockId || p.segment.deliveryBlockId,
+      audioMode: blockReport.sourceAudioTreatment || p.segment.audioMode,
+      visualFitStrategy: timeline > requested + 0.03 ? "block_distributed_slowdown_to_voice" : "as_requested",
+      voiceFitStrategy: "block_continuous"
+    };
+  });
 }
 
 // Output placement of each rendered block (visual durations are the EDL's).
-function placeNarratedBlocks(segments = [], blockReports = []) {
+function placeNarratedBlocks(segments = [], blockReports = [], renderedTimelineSec = []) {
+  // Placement follows the RENDERED timeline: a manual draft block may have been
+  // slowed down to keep its full voice, which shifts everything after it.
   const starts = []; let cursor = 0;
-  segments.forEach((segment, index) => { starts[index] = cursor; cursor += Math.max(0.3, safeNumber(segment.duration, 0)); });
+  segments.forEach((segment, index) => {
+    starts[index] = cursor;
+    const rendered = Number(renderedTimelineSec?.[index]);
+    cursor += Number.isFinite(rendered) && rendered > 0 ? rendered : Math.max(0.3, safeNumber(segment.duration, 0));
+  });
   return blockReports.map((report) => {
     const outputStartSec = Number((starts[report.startIndex] || 0).toFixed(3));
     return { ...report, outputStartSec, outputEndSec: Number((outputStartSec + report.blockTimelineSec).toFixed(3)), durationSec: report.blockTimelineSec,
@@ -2154,6 +2169,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
       ? (parsed.on_screen_elements || parsed.onScreenElements)
       : [],
     sharedHookEnabled: parsed.shared_hook_enabled !== false,
+    sharedHookDeclared: typeof parsed.shared_hook_enabled === "boolean",
     interleavedAudioEnabled: parsed.interleaved_audio_enabled !== false,
     cinematicNarratorEnabled: parsed.cinematic_narrator_enabled !== false,
     cliffhangerEnabled: parsed.cliffhanger_enabled !== false,
@@ -4523,6 +4539,22 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           `Viral readiness ${viralPreflight.score}/100 (${viralPreflight.grade}): ${viralPreflight.issues.join(" ")}`
         );
       }
+      const crossStageReadiness = StoryFirstReadiness.preflightReadiness(
+        project, { promptProfile: configuredPromptOptions.profile, viralPreflight }, settings
+      );
+      if (!crossStageReadiness.accepted) {
+        const reportPath = path.join(paths.analysisDir, `story-first-import-rejected-script-${scriptInput.scriptId || variantIndex + 1}.json`);
+        await this.projectStore.writeJson(reportPath, {
+          generatedAt: new Date().toISOString(),
+          whyRejected: "Stage 1 script validation cannot override the normalized timeline's low Viral Preflight.",
+          ...crossStageReadiness
+        }).catch(() => {});
+        throw new Error(
+          `[STORY_FIRST_READINESS] Script ${scriptInput.scriptId || variantIndex + 1} chưa đủ chất lượng để tạo V1: `
+          + crossStageReadiness.reasons.join(" ")
+          + ` Chi tiết: ${reportPath}. Cần sửa kịch bản, không nên render bản thấp điểm.`
+        );
+      }
       const storedSegments = isStoryRecutWorkflow
         ? consolidateStoryRecutSegments(script.segments, { maxSourceGapSec: 4 })
         : script.segments;
@@ -4575,6 +4607,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         topHeader: script.topHeader,
         onScreenElements: script.onScreenElements,
         sharedHookEnabled: script.sharedHookEnabled,
+        sharedHookDeclared: script.sharedHookDeclared === true,
         interleavedAudioEnabled: script.interleavedAudioEnabled,
         cinematicNarratorEnabled: script.cinematicNarratorEnabled,
         cliffhangerEnabled: script.cliffhangerEnabled,
@@ -4641,51 +4674,18 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           );
         }
       });
-      const sharedHookVariants = serializedVariants.filter((variant) => variant.sharedHookEnabled !== false);
-      if (sharedHookVariants.length > 1) {
-        const leadingHookSegments = (variant) => {
-          const result = [];
-          for (const segment of variant.segments || []) {
-            if (!/hook/i.test(safeText(segment.storyFunction || segment.sceneType))) break;
-            result.push(segment);
-          }
-          return result;
-        };
-        const hookSignature = (variant) => leadingHookSegments(variant).map((segment) => ({
-          sceneId: safeText(segment.sceneId),
-          sourceStartSec: Number(safeNumber(segment.sourceStartSec).toFixed(3)),
-          sourceEndSec: Number(safeNumber(segment.sourceEndSec).toFixed(3)),
-          macroBlockId: safeText(segment.macroBlockId),
-          sourceRunId: safeText(segment.sourceRunId),
-          actionSequenceId: safeText(segment.actionSequenceId)
-        }));
-        const reference = hookSignature(sharedHookVariants[0]);
-        const mismatch = sharedHookVariants.find((variant) => {
-          const candidate = hookSignature(variant);
-          return !reference.length || JSON.stringify(candidate) !== JSON.stringify(reference);
-        });
-        if (mismatch) {
-          throw new Error(
-            "Series bật Cold Open dùng chung nhưng toàn bộ chuỗi Hook đầu của ba Part không trùng sceneId, timestamp nguồn và action sequence. Hãy yêu cầu Gemini dùng cùng một Hook hành động hoàn chỉnh 5-30s, chia theo scene khi cần và cắt trước narrator nguồn."
-          );
-        }
+      // Shared with Stage 1 so the AI stage cannot approve a series this import rejects.
+      const seriesContract = checkSeriesImportContract(serializedVariants);
+      if (seriesContract.errors.length) {
+        throw new Error(seriesContract.errors[0].message);
       }
-      const narratorRangeSignature = (variant) => JSON.stringify(
-        (variant.sourceNarratorRanges || []).map((range) => ({
-          startSec: Number(safeNumber(range.startSec ?? range.sourceStartSec).toFixed(3)),
-          endSec: Number(safeNumber(range.endSec ?? range.sourceEndSec).toFixed(3)),
-          replacementText: safeText(range.replacementText || range.text),
-          confidence: safeText(range.confidence)
-        }))
-      );
-      const narratorReference = narratorRangeSignature(serializedVariants[0]);
-      const narratorMismatch = serializedVariants.find(
-        (variant) => narratorRangeSignature(variant) !== narratorReference
-      );
-      if (narratorMismatch) {
-        throw new Error(
-          "Ba Part dùng source_narrator_ranges khác nhau. Hãy yêu cầu Gemini quét narrator nguồn một lần và chép cùng bản đồ timestamp narrator vào cả ba JSON."
-        );
+      if (seriesContract.inferredPerPartHook) {
+        // shared_hook_enabled was never declared and each Part opens with its own
+        // planned hook (Story-First series plan): treat it as per-Part cold opens.
+        serializedVariants.forEach((variant) => {
+          variant.sharedHookEnabled = false;
+          variant.warnings.push("Series dùng Hook riêng cho từng Part theo Series Plan (JSON không khai báo shared_hook_enabled); không áp dụng Cold Open dùng chung.");
+        });
       }
     }
     if (isTwoPassGeminiWorkflow) {
@@ -6367,6 +6367,20 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         previewSubtitleCues: originalAudioCues.length ? originalAudioCues : voiceSubtitleCues
       };
     });
+    const previewLanguage = StoryFirstReadiness.resolvePreviewSubtitleLanguage(
+      project, settings, getActiveHighlightVariant(project)
+    );
+    if (previewLanguage !== "vi") {
+      // Spoken English captions must remain English. Do not feed source
+      // officer names, bodycam transcripts or TTS back through local EN→VI MT.
+      return subtitleSegments.map((segment) => ({
+        ...segment,
+        previewSubtitleVi: previewLanguage === "en" ? (segment.previewSubtitleCues || []).map((c) => c.text).filter(Boolean).join(" ") : "",
+        previewSubtitleCues: (segment.previewSubtitleCues || []).map((cue) => ({
+          ...cue, previewSubtitleVi: previewLanguage === "en" ? safeText(cue.text) : ""
+        }))
+      }));
+    }
     const translationItems = subtitleSegments.flatMap((segment) => (
       segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
@@ -6467,9 +6481,20 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
     const draftStamp = Date.now();
     const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
+    const previewSubtitleLanguage = StoryFirstReadiness.resolvePreviewSubtitleLanguage(
+      project, settings, activeVariant
+    );
+    const readiness = StoryFirstReadiness.preflightReadiness(project, activeVariant, settings);
+    if (!readiness.accepted) {
+      throw new Error(
+        "[STORY_FIRST_READINESS] Không render V1: "
+        + readiness.reasons.join(" ")
+        + " Sửa script trước khi render hoặc dùng chế độ override để kiểm tra nháp lỗi."
+      );
+    }
     const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
     const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
+    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.${previewSubtitleLanguage === "en" ? "en" : "vi"}.srt`);
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
@@ -6509,8 +6534,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           message: `Đang render khối narrator ${blockRun.blockId} (${blockRun.end - blockRun.start + 1} cảnh)` });
         const block = await this.renderNarratedDeliveryBlock({
           ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat,
-          members: renderSegments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics
+          members: renderSegments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics,
+          // Host-built manual draft blocks keep the full voice by slowing visuals
+          // instead of failing the whole draft (AutoStory blocks keep failing fast).
+          overflowPolicy: renderSegments[blockRun.start]?.draftAutoNarrationBlock ? "stretch_visuals" : "fail"
         });
+        if (block.report?.voiceFitWarning) {
+          onProgress?.({ projectId, step: "draft", percent: Math.min(82, 10 + Math.round((index / Math.max(1, renderSegments.length)) * 68)),
+            message: `[VOICE_FIT] ${block.report.voiceFitWarning}` });
+        }
         clipPaths.push(block.clipPath);
         blockVoiceReports.push(block.report);
         block.memberReports.forEach((report, offset) => { draftVoiceReports[blockRun.start + offset] = report; });
@@ -6753,7 +6785,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       effectiveSubtitlePath = assPath;
     }
     const hasPreviewSubtitles = previewSubtitleCues.some((cue) => safeText(cue.translatedText));
-    const embedPreviewSubtitles = (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
+    const embedPreviewSubtitles = previewSubtitleLanguage !== "off"
+      && ((hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke);
     if (embedPreviewSubtitles) {
       onProgress?.({
         projectId,
@@ -6761,7 +6794,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         percent: 96,
         message: isTikTokKaraoke
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
-          : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
+          : `Đang nhúng phụ đề ${previewSubtitleLanguage === "en" ? "tiếng Anh" : "tiếng Việt"} vào bản nháp`
       });
       await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
     } else {
@@ -6772,6 +6805,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       segments,
       draftVoiceReports
     });
+    if (voiceAlignmentReport.warningCount > 0) {
+      const details = voiceAlignmentReport.warnings.map((w) =>
+        `cảnh ${w.sceneNumber}: ${w.status}, voice=${Number(w.rawVoiceSec || 0).toFixed(1)}s / timeline=${Number(w.plannedTimelineSec || 0).toFixed(1)}s`
+      ).join("; ");
+      onProgress?.({
+        projectId, step: "draft", percent: 97,
+        message: `[VOICE_QA] NEEDS_REPAIR: ${details}`.slice(0, 400)
+      });
+    }
     const resolvedTimeline = compileResolvedTimeline({
       mode: "highlight_cut",
       segments,
@@ -6788,7 +6830,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const blockNarrationSubtitlePath = blockVoiceReports.length
       ? path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.narration.srt`) : "";
     if (blockVoiceReports.length) {
-      const blockOutput = placeNarratedBlocks(segments, blockVoiceReports);
+      const blockOutput = placeNarratedBlocks(segments, blockVoiceReports, draftVoiceReports.map((report) => report?.timelineSec));
       await this.projectStore.writeJson(deliveryBlockReportPath, { contract: "continuous-narrated-blocks-v1", generatedAt: new Date().toISOString(), blocks: blockOutput }).catch(() => {});
       await this.projectStore.writeText(blockNarrationSubtitlePath, buildSrt(blockOutput.map((b) => ({
         startSec: b.outputStartSec, endSec: b.outputStartSec + Math.min(b.fittedTtsSec || b.rawTtsSec || b.durationSec, b.durationSec), text: b.narrationText
@@ -6872,7 +6914,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: previewSubtitleLanguage,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
@@ -6892,7 +6934,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: previewSubtitleLanguage,
           fastDraftSubtitlesArePreviewOnly: true,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
@@ -6929,9 +6971,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       internalOutputPath: outputPath,
       subtitlePath,
       variantId,
-      previewSubtitleLanguage: "vi",
+      previewSubtitleLanguage,
       previewOnly: true,
       voiceWarningCount: voiceAlignmentReport.warningCount,
+      editorialStatus: voiceAlignmentReport.warningCount > 0 ? "needs_voice_repair" : "needs_real_video_review",
       voiceWarningReportPath,
       resolvedTimelinePath,
       geminiRewritePromptPath,
@@ -6956,7 +6999,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
   // AutoStory V5 continuous block primitive. members = the consecutive segments
   // of ONE narrated_story delivery block (first member carries the passage).
-  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex, renderMetrics = null }) {
+  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex, renderMetrics = null, overflowPolicy = "fail" }) {
     const lead = members[0];
     const text = safeText(lead.blockNarrationText);
     if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
@@ -6968,9 +7011,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const sourceDurationSec = sourceEndSec - sourceStartSec;
       // Exact EDL timing: a narrated block never retimes a visual beat.
       const durationSec = Math.max(0.3, Number(segment.duration ?? sourceDurationSec));
-      return { segment, sourceStartSec, sourceEndSec, sourceDurationSec, durationSec };
+      return { segment, sourceStartSec, sourceEndSec, sourceDurationSec, durationSec, plannedDurationSec: durationSec };
     });
-    const blockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
+    const plannedBlockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
+    let blockTimelineSec = plannedBlockTimelineSec;
     const ambientVolume = treatment === "voiceover_only" ? 0 : getBlockAmbientVolume(lead, project);
     const duck = project.mixer?.narrationDuckDefault === true;
     const voiceVolume = Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100);
@@ -7012,7 +7056,43 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       renderMetrics.segmentCacheLog.push(`Block ${lead.deliveryBlockId} (beats ${startIndex + 1}-${startIndex + members.length}) MISS`);
     }
 
-    // 1-4. Extract + normalize every visual range exactly as the per-segment path
+    // 1-2. Synthesize the WHOLE passage once and measure it BEFORE any video
+    // work, so an overflow is decided from the real TTS, not from an estimate.
+    const ttsStartedAt = Date.now();
+    const blockVoice = await this.synthesizeFastDraftVoice({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions });
+    if (renderMetrics) {
+      renderMetrics.ttsMs += Date.now() - ttsStartedAt;
+      if (blockVoice?.cacheHit) renderMetrics.ttsCacheHits += 1;
+      else renderMetrics.ttsCacheMisses += 1;
+    }
+    const rawVoiceMeta = await ffmpeg.probeAudio(rawVoicePath);
+    const rawVoiceSec = Number(rawVoiceMeta.duration || 0);
+    let fitRatio = rawVoiceSec / Math.max(0.3, blockTimelineSec);
+    let visualStretchRatio = 1;
+    let voiceFitWarning = "";
+    // Never trim spoken words. A passage longer than the safe speed-up either
+    // fails (AutoStory: the EDL is a contract, the director rewrites upstream) or,
+    // for host-built manual draft blocks, keeps the full voice by slowing the
+    // block's visuals evenly, exactly like the per-segment voice-fit policy.
+    if (fitRatio > 1 + maxStretchRatio + 1e-6) {
+      if (overflowPolicy !== "stretch_visuals") {
+        const error = new Error(`BLOCK_VOICE_OVERFLOW: narrated block ${lead.deliveryBlockId} voice ${rawVoiceSec.toFixed(2)}s exceeds its ${blockTimelineSec.toFixed(2)}s block (ratio ${fitRatio.toFixed(3)} > ${(1 + maxStretchRatio).toFixed(2)}). Rewrite the block narration; words are never trimmed.`);
+        error.code = "BLOCK_VOICE_OVERFLOW";
+        error.details = { blockId: lead.deliveryBlockId, rawVoiceSec, blockTimelineSec, fitRatio };
+        throw error;
+      }
+      const targetTimelineSec = rawVoiceSec / (1 + maxStretchRatio) + BLOCK_VOICE_TAIL_PAD_SEC;
+      visualStretchRatio = targetTimelineSec / Math.max(0.3, plannedBlockTimelineSec);
+      pieces.forEach((p) => { p.durationSec = Number((p.plannedDurationSec * visualStretchRatio).toFixed(3)); });
+      blockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
+      fitRatio = rawVoiceSec / Math.max(0.3, blockTimelineSec);
+      const visualSpeed = 1 / visualStretchRatio;
+      voiceFitWarning = `Khối narrator ${lead.deliveryBlockId}: voice thật ${rawVoiceSec.toFixed(2)}s dài hơn khối ${plannedBlockTimelineSec.toFixed(2)}s; `
+        + `giữ đủ câu, tăng tốc voice tối đa ${Math.round(maxStretchRatio * 100)}% và làm chậm đều hình ${((1 - visualSpeed) * 100).toFixed(1)}%`
+        + (visualSpeed < BLOCK_MIN_VISUAL_SPEED - 1e-3 ? " (vượt mức an toàn 10%, nên rút gọn lời ở bản review)." : ".");
+    }
+
+    // 3-6. Extract + normalize every visual range exactly as the per-segment path
     // does, keeping (or silencing) the source audio, then concat into ONE block video.
     const piecePaths = [];
     for (const [offset, p] of pieces.entries()) {
@@ -7035,24 +7115,6 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     // complete block BEFORE mixing so -shortest can never amputate narration.
     await ffmpeg.normalizeMediaDuration({ inputPath: blockVideoPath, outputPath: timedBlockVideoPath, targetDuration: blockTimelineSec });
 
-    // 5-6. Synthesize the WHOLE passage once; measure it.
-    const ttsStartedAt = Date.now();
-    const blockVoice = await this.synthesizeFastDraftVoice({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions });
-    if (renderMetrics) {
-      renderMetrics.ttsMs += Date.now() - ttsStartedAt;
-      if (blockVoice?.cacheHit) renderMetrics.ttsCacheHits += 1;
-      else renderMetrics.ttsCacheMisses += 1;
-    }
-    const rawVoiceMeta = await ffmpeg.probeAudio(rawVoicePath);
-    const rawVoiceSec = Number(rawVoiceMeta.duration || 0);
-    const fitRatio = rawVoiceSec / Math.max(0.3, blockTimelineSec);
-    // Never trim spoken words: a passage longer than the safe speed-up must be rewritten upstream.
-    if (fitRatio > 1 + maxStretchRatio + 1e-6) {
-      const error = new Error(`BLOCK_VOICE_OVERFLOW: narrated block ${lead.deliveryBlockId} voice ${rawVoiceSec.toFixed(2)}s exceeds its ${blockTimelineSec.toFixed(2)}s block (ratio ${fitRatio.toFixed(3)} > ${(1 + maxStretchRatio).toFixed(2)}). Rewrite the block narration; words are never trimmed.`);
-      error.code = "BLOCK_VOICE_OVERFLOW";
-      error.details = { blockId: lead.deliveryBlockId, rawVoiceSec, blockTimelineSec, fitRatio };
-      throw error;
-    }
     // 7. Fit ONCE against the whole block (light speed-up or natural finish + silence pad).
     const fit = await ffmpeg.fitDubbingClusterAudio({
       inputPath: rawVoicePath, outputPath: fittedVoicePath, targetDuration: blockTimelineSec, maxStretchRatio,
@@ -7091,6 +7153,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       mode: "narrated_block", blockId: lead.deliveryBlockId, beatIds: members.map((m) => m.beatId || ""), segmentIds: members.map((m) => m.id),
       startIndex, memberCount: members.length, narrationText: text, textHash: textHash(text),
       blockTimelineSec: Number(blockTimelineSec.toFixed(3)), rawTtsSec: Number(rawVoiceSec.toFixed(3)),
+      plannedBlockTimelineSec: Number(plannedBlockTimelineSec.toFixed(3)),
+      visualStretchRatio: Number(visualStretchRatio.toFixed(4)),
+      visualFitStrategy: visualStretchRatio > 1 ? "block_distributed_slowdown_to_voice" : "as_requested",
+      voiceFitWarning,
+      requiresRewrite: visualStretchRatio > 1 / BLOCK_MIN_VISUAL_SPEED + 1e-3,
+      pieceTimelineSec: pieces.map((p) => Number(p.durationSec.toFixed(3))),
       fittedTtsSec: Number(Number(fit?.outputDuration || rawVoiceSec).toFixed(3)), fitRatio: Number(fitRatio.toFixed(3)),
       voicedClipSec: Number.isFinite(voicedSec) ? Number(voicedSec.toFixed(3)) : null,
       preCorrectionVoicedClipSec: Number.isFinite(preCorrectionVoicedSec) ? Number(preCorrectionVoicedSec.toFixed(3)) : null,

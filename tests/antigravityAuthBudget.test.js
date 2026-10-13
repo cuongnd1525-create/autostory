@@ -11,8 +11,28 @@ const { createPhaseAwareSpawn, defaultResponder } = require("./helpers/fakeAntig
 
 const ttl = (seconds) => ({ expiresAt: new Date(Date.now() + seconds * 1000), expiredFlag: false });
 
+const STRICT = { antigravityAuthBudgetMode: "strict" };
+
+// Default since 2026-10-13: the CLI renews its token in-process ~5 min before
+// expiry (10:28 run with expiry 10:35 renewed at 10:30 to 11:30, no 401), so
+// text-only phases keep their full timeout; video phases stay strict.
+async function checkRefreshAwareDefault() {
+  const service = new Stage1({}, { authProbe: async () => ttl(150) });
+  const auth = await service.ensureAntigravityAuth({ label: "PHASE_B_COLD_VIEWER", stageTimeoutMs: 900000, textOnly: true });
+  assert.strictEqual(auth.budgetMode, "refresh_aware");
+  const original = { command: "agy", args: ["--print-timeout", "900s", "--print=prompt"], timeoutMs: 900000 };
+  assert.strictEqual(service.boundTextPhaseCommand(original, auth), original, "text-only step keeps its full timeout");
+  await assert.rejects(
+    service.ensureAntigravityAuth({ label: "PHASE_A", stageTimeoutMs: 900000 }),
+    (error) => error.kind === "auth_ttl",
+    "video phase still requires a full safe timeout"
+  );
+  assert.strictEqual(Stage1.resolveAuthBudgetMode({}), "refresh_aware");
+  assert.strictEqual(Stage1.resolveAuthBudgetMode(STRICT), "strict");
+}
+
 async function checkAuthBudget() {
-  const service = new Stage1({}, { authProbe: async () => ttl(777) });
+  const service = new Stage1(STRICT, { authProbe: async () => ttl(777) });
   await assert.rejects(
     service.ensureAntigravityAuth({ label: "PHASE_A", stageTimeoutMs: 900000 }),
     (error) => error.kind === "auth_ttl",
@@ -39,18 +59,18 @@ async function checkAuthBudget() {
   assert.strictEqual(result.stdout, "OK");
   assert(dispatched.timeoutMs < 900000 && dispatched.timeoutMs > 600000);
 
-  const noTime = new Stage1({}, { authProbe: async () => ttl(150) });
+  const noTime = new Stage1(STRICT, { authProbe: async () => ttl(150) });
   await assert.rejects(
     noTime.ensureAntigravityAuth({ label: "PHASE_B", stageTimeoutMs: 900000, textOnly: true }),
     (error) => error.kind === "auth_ttl",
     "no attempt if less than minimum turn time plus safety"
   );
-  const unknown = new Stage1({}, { authProbe: async () => null });
+  const unknown = new Stage1(STRICT, { authProbe: async () => null });
   const missing = await unknown.ensureAntigravityAuth({ label: "PHASE_B", stageTimeoutMs: 900000, textOnly: true });
   assert.strictEqual(unknown.boundTextPhaseCommand(original, missing), original, "unknown expiry retains configured deadline");
 
   let generation = 0;
-  const refreshed = new Stage1({}, { authProbe: async () => ttl(++generation > 1 ? 3600 : 777) });
+  const refreshed = new Stage1(STRICT, { authProbe: async () => ttl(++generation > 1 ? 3600 : 777) });
   const retriedTimeouts = [];
   refreshed.runAgyOnce = async ({ commandConfig }) => {
     retriedTimeouts.push(commandConfig.timeoutMs);
@@ -68,7 +88,7 @@ async function checkAuthBudget() {
   assert.strictEqual(retryMetrics.retryCount, 1);
   assert(retriedTimeouts[1] > retriedTimeouts[0]);
 
-  const notRefreshed = new Stage1({}, { authProbe: async () => ttl(777) });
+  const notRefreshed = new Stage1(STRICT, { authProbe: async () => ttl(777) });
   let unrefreshedAttempts = 0;
   notRefreshed.runAgyOnce = async () => {
     unrefreshedAttempts += 1;
@@ -97,7 +117,7 @@ async function checkSeriesCache() {
     }));
     const firstCalls = [];
     const responder = defaultResponder({ durationSec: 20 });
-    const first = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model" }, {
+    const first = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model", storyFirstEditorialEnabled: false }, {
       authProbe: async () => ttl(3600),
       spawn: createPhaseAwareSpawn({ calls: firstCalls, respond: (kind, prompt, call) => kind === "phase_b"
         ? { resultObject: { status: "ERROR", error: "UNAUTHENTICATED (code 401)" }, exitCode: 1 }
@@ -107,7 +127,7 @@ async function checkSeriesCache() {
     assert(firstCalls.some((call) => call.kind === "series_plan"), "first run must lock a real plan");
 
     const secondCalls = [];
-    const second = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model" }, {
+    const second = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model", storyFirstEditorialEnabled: false, ...STRICT }, {
       authProbe: async () => ttl(777),
       spawn: createPhaseAwareSpawn({ calls: secondCalls, respond: responder })
     });
@@ -121,7 +141,7 @@ async function checkSeriesCache() {
 
     await fs.writeFile(path.join(pass1Dir, "hook-contract.json"), JSON.stringify({ selectedHookId: "changed" }));
     const changedCalls = [];
-    const third = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model" }, {
+    const third = new Stage1({ antigravityCommand: "agy", antigravityModel: "test-model", storyFirstEditorialEnabled: false }, {
       authProbe: async () => ttl(3600),
       spawn: createPhaseAwareSpawn({ calls: changedCalls, respond: responder })
     });
@@ -134,6 +154,7 @@ async function checkSeriesCache() {
 }
 
 (async () => {
+  await checkRefreshAwareDefault();
   await checkAuthBudget();
   await checkSeriesCache();
   console.log("antigravity auth budget and series-plan recovery tests passed");

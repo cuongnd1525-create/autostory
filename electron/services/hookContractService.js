@@ -183,14 +183,19 @@ function buildSeriesHookContractBlock(contract = {}) {
   const v2 = isMulti ? contract.variants.variant_02 : null;
   const v3 = isMulti ? contract.variants.variant_03 : null;
   const sameStart = (a, b) => a && b && Math.abs(Number(a.anchorRange?.startSec) - Number(b.anchorRange?.startSec)) < 0.5;
+  const autoRecommended = contract.isUserLocked === false;
   const lines = [
     "================================================================================",
-    "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)",
+    autoRecommended
+      ? "SERIES HOOK CONTRACT (AUTO-RECOMMENDED ANCHOR; SUBJECT TO STORY-FIRST REVIEW)"
+      : "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)",
     "================================================================================",
     "Script 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.",
     "",
     describeAnchor(v1 || {}, "PART 1 (Script 1) cold-open hook anchor"),
-    "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
+    autoRecommended
+      ? "   - Provisional: compare this hook against verified source events and the complete story. Series Plan may replace it when another REAL sourced hook gives better clarity, cause-and-effect handoff, and payoff."
+      : "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
   ];
   if (v2 && !sameStart(v2, v1)) {
     lines.push("", describeAnchor(v2, "PART 2 (Script 3) opener anchor"), "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.");
@@ -205,7 +210,8 @@ function buildSeriesHookContractBlock(contract = {}) {
     "- Each Part opens on its own strongest verified moment inside its own scope. Never reuse PART 1's hook footage as another Part's opener (a recap of at most 3s is allowed).",
     "- Spoiler boundary: PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Only PART 3 delivers the payoff.",
     "- PART 1 and PART 2 end on verified unresolved cliffhangers that lead into the next Part.",
-    "- When a locked series-plan.json is supplied, it is binding for scope, scene allocation and cliffhangers.",
+    "- When a locked series-plan.json is supplied, it is binding for hook, scope, scene allocation and cliffhangers.",
+    "- An auto-selected hook is only a candidate; do NOT force it when SOURCE_UNDERSTANDING proves a better hook-to-payoff story. User-locked hooks are never overridden.",
     "================================================================================"
   );
   return lines.join("\n");

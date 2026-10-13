@@ -17,6 +17,15 @@ const {
 } = require("./sourceUnderstandingService");
 const { resetPipelineTiming } = require("./pipelineTimingService");
 const MapReduce = require("./sourceUnderstandingMapReduce");
+const StoryFirst = require("./storyFirstEditorialService");
+// Lazy: both pull in dubbingService (heavy) and are only needed at the gate.
+const loadProductionPreflight = () => require("./manualGeminiViralPreflightService");
+const loadDraftDryRun = () => require("./draftRenderDryRun");
+const loadSeriesImportContract = () => require("./seriesImportContract");
+const PartPipeline = require("./storyFirstPartPipeline");
+const BeatCompiler = require("./storyBeatCompiler");
+// Bump when packets/prompts change so cached Part results are not reused.
+const STORY_FIRST_PART_PIPELINE_VERSION = 1;
 
 // Lazy: manualGeminiPackService is heavy and only needed for legacy packages
 // whose package-info.json predates cache.sourceFingerprint.
@@ -58,6 +67,33 @@ const AntigravityModelCatalog = require("../../src/antigravityModelCatalog");
 
 function normalizeAntigravityModel(model, reasoning = "high") {
   return AntigravityModelCatalog.normalizeModel(model, reasoning || "high");
+}
+
+/**
+ * Model for one text step at a given reasoning level, in the SAME family as
+ * the configured model and never above its configured level.
+ *
+ * Real run 2026-10-13 (gemini-3.8-flash-high): every Part writer spent
+ * 52-58K thinking tokens in ONE turn (277-324s), one hit the ~64K output-token
+ * ceiling ("response was cut off because it exceeded the output token limit"),
+ * and all six repairs burned 63K thinking tokens (340-371s) without writing a
+ * single line, then timed out. Writing/repairing one Part from a host packet
+ * does not need maximum reasoning; the host gates and the cold viewer check the
+ * result. Returns "" when the configured model is unknown (keep agy default).
+ */
+const REASONING_ORDER = ["high", "medium", "low"];
+function resolveStepModel(settings = {}, level = "") {
+  const configured = String(settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "").trim();
+  const wanted = String(level || "").trim().toLowerCase();
+  if (!configured || !REASONING_ORDER.includes(wanted)) return "";
+  const parsed = AntigravityModelCatalog.parseModel(configured, settings.antigravityReasoning || "high");
+  if (!parsed.known || !parsed.familyId || !REASONING_ORDER.includes(parsed.reasoning)) return "";
+  const family = AntigravityModelCatalog.findFamily(parsed.familyId);
+  if (!family) return "";
+  for (let index = Math.max(REASONING_ORDER.indexOf(wanted), REASONING_ORDER.indexOf(parsed.reasoning)); index < REASONING_ORDER.length; index += 1) {
+    if (family.reasoning.includes(REASONING_ORDER[index])) return AntigravityModelCatalog.resolveModel(family.id, REASONING_ORDER[index]);
+  }
+  return "";
 }
 
 function modelSupportsEffortFlag(model) {
@@ -152,6 +188,14 @@ function parseJsonCandidate(value) {
         // Try the next representation returned by the CLI.
       }
     }
+  }
+  // Last resort: an otherwise complete artifact with one missing/misplaced
+  // bracket (real series plan 2026-10-13 lacked one "]" and a valid 5-minute
+  // plan was discarded). Only brackets are repaired, never string content.
+  if (firstBrace >= 0) {
+    try {
+      return JSON.parse(sanitizeJsonCandidate(PartPipeline.repairJsonBrackets(text.slice(firstBrace))));
+    } catch (_e3) { /* not JSON */ }
   }
   return null;
 }
@@ -492,6 +536,27 @@ function detectSeriesProfile(promptText = "") {
   const match = String(promptText).match(/prompt_profile:\s*([a-z0-9_]+)/i);
   const profile = match ? match[1].toLowerCase() : "";
   return SERIES_PROFILES[profile] || null;
+}
+
+/** Production constraints of one Series Part, from the gate's single source of truth. */
+function seriesProductionConstraints(series, wordsPerSecond = 0, scriptId = 1) {
+  const part = series?.parts?.find((item) => Number(item.scriptId) === Number(scriptId)) || series?.parts?.[0] || {};
+  return loadProductionPreflight().resolveProductionConstraints({
+    scriptId: part.scriptId || scriptId,
+    prompt_profile: series?.profile || "",
+    series_mode: "interleaved_multipart",
+    part_number: part.partNumber || 1,
+    target_duration_min_sec: series?.durationMinSec,
+    target_duration_max_sec: series?.durationMaxSec
+  }, part.scriptId || scriptId, { wordsPerSecond });
+}
+
+/** Ordering for "is this candidate better?" (best-of after a repair). */
+function editorialCandidateRank(result = {}) {
+  const preflight = Number(result.productionPreflight?.score ?? result.score ?? 0);
+  const errors = Array.isArray(result.errors) ? result.errors.length : 0;
+  const dryRunIssues = Array.isArray(result.renderDryRun?.issues) ? result.renderDryRun.issues.length : 0;
+  return (result.passed ? 1000 : 0) + preflight - errors * 5 - dryRunIssues * 3;
 }
 
 function assertPrintPromptSize(prompt, label) {
@@ -879,12 +944,15 @@ function isPromptBlockedResponse(result) {
 }
 
 function classifyAgyFailure(error = {}) {
-  if (error.kind) return error.kind;
+  // A generic "cli_error" from the CLI wrapper may still carry a specific,
+  // actionable cause in its text (e.g. the output-token ceiling).
+  if (error.kind && error.kind !== "cli_error") return error.kind;
   const info = extractAgyErrorInfo(error);
-  const text = `${info.status} ${info.code || ""} ${info.text}`;
+  const text = `${info.status} ${info.code || ""} ${info.text} ${String(error.message || "").slice(0, 2000)}`;
   if (info.code === 401 || /\bUNAUTHENTICATED\b|\b401\b|not logged into Antigravity|invalid authentication credentials/i.test(text)) return "auth";
   if (info.code === 503 || info.code === 429 || /\bUNAVAILABLE\b|\bRESOURCE_EXHAUSTED\b|No capacity available|high traffic|\(code 503\)|\(code 429\)/i.test(text)) return "capacity";
   if (/stream was interrupted/i.test(text)) return "stream_interrupted";
+  if (/exceeded the output token limit|response was cut off because it exceeded/i.test(text)) return "output_token_limit";
   if (/\[agy\] print timeout after/i.test(text)) return "print_timeout";
   return "cli_error";
 }
@@ -897,6 +965,8 @@ function describeAgyFailure(kind, error) {
       return "Máy chủ AI tạm hết dung lượng (503/UNAVAILABLE).";
     case "stream_interrupted":
       return `Luồng phản hồi AGY bị ngắt phía máy chủ (${error?.message || "The stream was interrupted"}).`;
+    case "output_token_limit":
+      return `AI dùng hết giới hạn token đầu ra (suy luận quá dài) trước khi trả kết quả (${error?.message || "output token limit"}).`;
     case "print_timeout":
     case "hard_timeout":
       return `AGY hết thời gian chờ của giai đoạn (${error?.message || "print timeout"}).`;
@@ -948,12 +1018,16 @@ function resolveSourceUnderstandingArchitecture(settings = {}) {
     : "chunked_map_reduce";
 }
 
-// Default 1 until a live AGY run proves concurrent map sessions are stable
-// (2026-10-07: both concurrent chunks hit server-side 500/503 "stream was
-// interrupted"; host isolation is fixed and tested, the backend is unproven).
+// Default 2 with ADAPTIVE fallback (2026-10-13: 5 sequential chunks took
+// 708s). 2026-10-07 showed concurrent chunks can hit server-side 500/503 /
+// "stream was interrupted"; every chunk that fails with such a transient
+// error in the parallel pass is re-run once SERIALLY before Phase A fails,
+// and successful chunks are cached, so a degraded backend costs one extra
+// serial pass instead of the whole map. Set 1 to force serial mapping.
+const TRANSIENT_MAP_FAILURES = new Set(["capacity", "stream_interrupted", "print_timeout", "hard_timeout", "inactivity_timeout", "cli_error", "map_error"]);
 function resolveMapConcurrency(settings = {}) {
   const value = Number(settings.sourceUnderstandingMapConcurrency);
-  if (!Number.isFinite(value) || value <= 0) return 1;
+  if (!Number.isFinite(value) || value <= 0) return 2;
   return Math.max(1, Math.min(4, Math.floor(value)));
 }
 
@@ -1004,24 +1078,37 @@ async function readAntigravityTokenExpiry({ startedAtMs = 0, logDir = path.join(
   return null;
 }
 
-function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
+function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", hookTournamentPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0, evidencePacketPath = "" }) {
   return [
     "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
     "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
-    `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
-    ...(hookContractPath ? [`HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`] : []),
-    ...(sceneManifestPath ? [`SCENE_MANIFEST (legal source boundaries): ${sceneManifestPath}`] : []),
-    ...(transcriptPath ? [`SOURCE_TRANSCRIPT (exact spoken lines): ${transcriptPath}`] : []),
+    ...(evidencePacketPath
+      ? [
+        `SERIES_PLAN_EVIDENCE_PACKET (read it with view_file; it contains SOURCE_UNDERSTANDING's verified story timeline with spoken quotes, the HOOK_CONTRACT, the STORY_AWARE_HOOK_TOURNAMENT and the SCENE_MANIFEST index): ${evidencePacketPath}`,
+        "The packet is complete. Do NOT open any other file (no transcript, manifest or JSON inputs): every range you need is in the packet."
+      ]
+      : [
+        `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
+        ...(hookContractPath ? [`HOOK_CONTRACT (user-locked or provisional hook candidate): ${hookContractPath}`] : []),
+        ...(hookTournamentPath ? [`STORY_AWARE_HOOK_TOURNAMENT (read the candidate ranking and payoffs): ${hookTournamentPath}`] : []),
+        ...(sceneManifestPath ? [`SCENE_MANIFEST (legal source boundaries): ${sceneManifestPath}`] : []),
+        ...(transcriptPath ? [`SOURCE_TRANSCRIPT (exact spoken lines): ${transcriptPath}`] : [])
+      ]),
     "",
     `Plan ONE continuous true-crime story told as a ${series.parts.length}-part series (profile ${series.profile}, every Part ${series.durationMinSec}-${series.durationMaxSec}s). The Parts are chapters of the SAME story with ONE central viewer question, not ${series.parts.length} separate stories.`,
     ...series.parts.map((part) => `- Script ${part.scriptId} = ${part.partBadge} "${part.name}": ${part.scope}`),
     "",
     "RULES:",
     "- Lock the central viewer question and the hook promise. Part 1 opens on the hook; Parts 2-3 pay it off progressively.",
+    "- STORY DIRECTOR: map a causal escalation path through VERIFIED turning points, not a chronological list of routine police actions. Prefer evidence that reinterprets an earlier statement and keep the key original-audio dialogue.",
+    "- NARRATOR DIRECTOR: each Part needs at least two opportunities for short contextual/causal voice bridges separated by meaningful authentic audio; plan where narration hands off to real footage. Do not write final voice lines yet.",
+    "- OPENING HANDOFF: explicitly explain the relationship between the cold open, the next 15 seconds, and any time rewind. Avoid confusing jumps between AXON bodycam cameras, locations and actors.",
+    "- ENGAGEMENT: choose one evidence-based dilemma, open question or emotional stake where appropriate. Do not invent outrage or add generic 'Follow for Part 2'.",
     "- sceneAllocation: give each Part its own chronological SOURCE ranges. A range may appear in two Parts only if listed in sharedRanges with a reason (e.g. a 'previously on' recap of at most 8s). No other duplicates.",
     "- Spoiler boundaries: Part 1 and Part 2 must not include or narrate the arrest, charges, verdict or final consequence. Put those ranges in Part 3 payoffRanges.",
     "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
-    "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed).",
+    "- When HOOK_CONTRACT.isUserLocked=true, the Part 1 hook MUST match its variant_01 anchor (trimming tolerance allowed). When isUserLocked=false, the auto-suggested hook is provisional: choose the stronger SOURCE-VERIFIED candidate if it better serves the central conflict, clarity, handoff and later payoff; never fabricate a new source interval.",
+    "- When STORY_AWARE_HOOK_TOURNAMENT exists, study ALL its evidence-grounded candidates. Treat its scores as editorial heuristics, NOT audience data. Choose a real hook with a verified payoff and a clear causal handoff; explain why weaker alternatives were rejected.",
     "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
     `- All ranges must lie within 0-${Number(videoDurationSec || 0).toFixed(3)}s.`,
     "",
@@ -1035,12 +1122,17 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
           profile: series.profile,
           centralViewerQuestion: "",
           hookPromise: "",
+          hookSelection: { candidateId: "", sourceEventId: "", whyItWins: "", hookTo15SecBridge: "", verifiedPayoffEventIds: [] },
           parts: series.parts.map((part) => ({
             scriptId: part.scriptId,
             partNumber: part.partNumber,
             partBadge: part.partBadge,
             scope: "",
             hookRange: { sourceStartSec: 0, sourceEndSec: 0 },
+            hookHandoff: { contextNeeded: "", rewindRequired: false, bridgePurpose: "", verifiedPayoffEventIds: [] },
+            causalProgression: [{ eventId: "", sourceStartSec: 0, sourceEndSec: 0, informationGain: "", whyNext: "" }],
+            narratorArc: [{ afterEventId: "", beforeEventId: "", narratorFunction: "context|bridge|escalation|reinterpretation|anticipation|payoff", purpose: "", authenticAudioHandoffEventId: "" }],
+            engagementIntent: { emotionalReason: "", naturalDiscussionQuestion: "", factualBasisEventIds: [] },
             sceneAllocation: [{ sourceStartSec: 0, sourceEndSec: 0, purpose: "" }],
             mustNotReveal: [""],
             ...(part.ending === "payoff"
@@ -1064,9 +1156,13 @@ function buildScriptGenerationPrompt({
   transcriptPath = "",
   hookContractPath = "",
   actionCandidatesPath = "",
+  storyIntelligencePath = "",
+  narrativeBlueprintPath = "",
   resultDir,
   scriptIds = [1, 3, 4],
-  coverageSummary = ""
+  coverageSummary = "",
+  series = null,
+  productionConstraintLines = null
 }) {
   return [
     "You are executing Phase B (Script Generation) of RecapTool Studio's manual Gemini draft-review workflow.",
@@ -1080,6 +1176,9 @@ function buildScriptGenerationPrompt({
     ...(transcriptPath ? [`- source-transcript.srt: ${transcriptPath}`] : []),
     ...(hookContractPath ? [`- hook-contract.json: ${hookContractPath}`] : []),
     ...(actionCandidatesPath ? [`- action-candidates.json: ${actionCandidatesPath}`] : []),
+    ...(narrativeBlueprintPath && storyIntelligencePath
+      ? [StoryFirst.buildPhaseBEditorialGuidance({ intelligencePath: storyIntelligencePath, blueprintPath: narrativeBlueprintPath })]
+      : []),
     `RESULT_FOLDER_FOR_THE_HOST_APP: ${resultDir}`,
     "",
     "================================================================================",
@@ -1095,6 +1194,23 @@ function buildScriptGenerationPrompt({
       "- Each Script is the Part assigned to it in LOCKED_SERIES_PLAN. Use only that Part's sceneAllocation/hookRange (plus declared sharedRanges).",
       "- Respect mustNotReveal and spoiler boundaries; Part 1/2 end on their planned cliffhanger, Part 3 delivers the planned payoff.",
       "- Ignore any '3-VARIANT NARRATIVE DIFFERENTIATION MATRIX' or 'DUPLICATE HOOK DIVERGENCE' text: the Parts are chapters of ONE story.",
+      ""
+    ] : []),
+    ...(series ? [
+      "RENDERABLE SERIES PRODUCTION CONSTRAINTS (follow these when constructing each complete Part, not only in repair):",
+      `- IMPORTANT: This specific profile requires ${series.durationMinSec}-${series.durationMaxSec}s per Part, NOT the generic 75-110s serialized preset. The HOST scorer uses the locked profile range.`,
+      "- Estimate actual combined footage length from selected source ranges. Keep each Part inside its range and above 60.5s; do not stuff redundant procedural footage.",
+      ...(Array.isArray(productionConstraintLines) && productionConstraintLines.length
+        ? [
+          "HOST PRODUCTION GATE (the exact numbers the host measures; a Part that breaks one is rejected before render):",
+          ...productionConstraintLines
+        ]
+        : [
+          "- Narrator delivery follows the measured voice profile ~2.2 words/s: keep each voiceover bridge comfortably under 12 seconds (~20-24 spoken English words), unless the actual recorded rate justifies a different duration.",
+          "- Keep original audio / narration runs under 15 seconds when this preserves intact dialogue and meaningful authentic action; do not cut away mid-sentence to game the score.",
+          "- Prefer at most 7 distant source jumps per Part; more jumps require genuine narrative value, clear audible context and source grounding."
+        ]),
+      "- Story-first: strong cold open, intelligible first-15-second handoff, meaningful narrator contribution, verifiable climax/cliffhanger/payoff. Never pass by merely inventing metadata.",
       ""
     ] : []),
     "TIMELINE RULE: return only sceneId, sourceStartSec, sourceEndSec, audio_mode and voiceover_text (plus the editorial metadata the prompt asks for). Do NOT return startSec/endSec/outputStartSec/outputEndSec/duration; the local compiler derives the output timeline and playback speed.",
@@ -1117,7 +1233,7 @@ function toRange(item) {
   return Number.isFinite(start) && Number.isFinite(end) && end > start ? { start, end } : null;
 }
 
-function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
+function validateSeriesPlan(plan, { series, videoDurationSec = 0, hookContract = null } = {}) {
   const errors = [];
   const warnings = [];
   if (!plan || typeof plan !== "object") return { ok: false, errors: ["series-plan không phải object."], warnings };
@@ -1162,6 +1278,22 @@ function validateSeriesPlan(plan, { series, videoDurationSec = 0 } = {}) {
         }
       }
       if (duplicated > 3) errors.push(`Script ${scriptIds[i]} và Script ${scriptIds[j]} trùng ${duplicated.toFixed(1)}s nguồn ngoài sharedRanges.`);
+    }
+  }
+  // Only user-locked hooks are immutable. Auto-suggested hooks are provisional
+  // and may be replaced with a stronger story-grounded opener by Gemini.
+  if (hookContract?.isUserLocked === true) {
+    const lockedHook = toRange(hookContract.variants?.variant_01?.anchorRange || hookContract.anchorRange || {});
+    const firstPart = series.parts.find((part) => part.partNumber === 1);
+    const plannedHook = toRange((parts.find((p) => Number(p.scriptId) === firstPart?.scriptId) || {}).hookRange || {});
+    const startTolerance = Number(hookContract.trimmingTolerance?.startOffsetMaxSec ?? 2);
+    const endTolerance = Number(hookContract.trimmingTolerance?.endOffsetMaxSec ?? 3);
+    if (!lockedHook || !plannedHook
+      || plannedHook.start < lockedHook.start - Math.max(0, startTolerance) - 0.05
+      || plannedHook.start > lockedHook.end + 0.05
+      || plannedHook.end > lockedHook.end + Math.max(0, endTolerance) + 0.05
+      || plannedHook.end < lockedHook.start - 0.05) {
+      errors.push("Part 1 hookRange vi phạm Hook Contract đã được user khóa; không được tự thay bằng auto hook.");
     }
   }
   const payoffPart = series.parts.find((part) => part.ending === "payoff");
@@ -1253,6 +1385,15 @@ async function extractNamedArtifact(stdout, { filename, artifactType, resultDir 
   if (fromEnvelope) return fromEnvelope;
   const deep = findObjectDeep(stdout, (object) => object.artifactType === artifactType);
   if (deep) return deep;
+  // In real agy stream-json the final response may be streamed as text_delta
+  // steps without a complete "result.response" JSON object.
+  // Reassemble agent text before consuming an expensive regeneration attempt.
+  for (const text of collectAgentTexts(stdout).reverse()) {
+    const fromText = findArtifactEnvelope(text)?.artifacts?.find((entry) => entry.filename === filename);
+    if (fromText?.script && typeof fromText.script === "object") return fromText.script;
+    const recovered = findObjectDeep(text, (object) => object.artifactType === artifactType);
+    if (recovered) return recovered;
+  }
   if (resultDir) {
     try {
       const parsed = parseJsonCandidate(await fs.readFile(path.join(resultDir, filename), "utf8"));
@@ -1399,6 +1540,39 @@ function resolveAntigravityTimeoutMs(settingsTimeout, packageInfo = null) {
     baseTimeout = Math.max(baseTimeout, chunkTimeout, sceneTimeout);
   }
   return Math.max(15000, baseTimeout);
+}
+
+/**
+ * Planning is read-only, NOT an agentic code-editing task. Restrict Antigravity
+ * to the exact evidence input paths that the host supplied for this case.
+ * Reject the tool at its ACTIVE event before the agent can roam or edit source.
+ */
+/**
+ * "refresh_aware" (default): text-only phases are NOT clipped to the token's
+ * remaining lifetime. Real CLI logs 2026-10-13: a process started at 10:28:25
+ * with a token expiring 10:35:12 renewed it in-process at 10:30:12 (expiry
+ * minus 5 min, new expiry 11:30:12) and finished without a 401, while the old
+ * clipping had cut the cold viewer to 462s and a repair to 259s. A genuine
+ * 401 is still caught and retried once after a verified token rotation.
+ * "strict": the previous behaviour (bounded by expiry - margin). Video (map)
+ * phases always stay strict: a failed video turn is expensive to redo.
+ */
+function resolveAuthBudgetMode(settings = {}) {
+  return String(settings.antigravityAuthBudgetMode || "").trim() === "strict" ? "strict" : "refresh_aware";
+}
+
+function buildSeriesPlanReadOnlyGuard(allowedInputPaths = []) {
+  const normalized = (value) => String(value || "").trim().replace(/\\/g, "/").toLowerCase();
+  const allowed = new Set(allowedInputPaths.filter(Boolean).map(normalized));
+  return ({ toolName, file }) => {
+    if (toolName !== "view_file") {
+      return `series plan is read-only; ${toolName || "unknown tool"} is not allowed`;
+    }
+    if (!allowed.has(normalized(file))) {
+      return `not an approved series planning evidence path: ${path.basename(String(file || ""))}`;
+    }
+    return null;
+  };
 }
 
 class ManualAntigravityStage1Service {
@@ -1991,6 +2165,14 @@ class ManualAntigravityStage1Service {
       probeReused: reused
     };
     if (diagnostics?.authChecks) diagnostics.authChecks.push(record);
+    const refreshAwareText = textOnly && resolveAuthBudgetMode(this.settings) === "refresh_aware";
+    record.budgetMode = refreshAwareText ? "refresh_aware" : "strict";
+    if (refreshAwareText) {
+      if (remainingSec !== null && !reused) {
+        this.emitLog(onProgress, 12, `[${label}] AUTH: token còn ${Math.max(0, Math.round(remainingSec / 60))} phút (hết hạn ${record.tokenExpiresAt}); AGY tự gia hạn token ~5 phút trước khi hết hạn nên bước văn bản chạy đủ thời gian, lỗi 401 (nếu có) được thử lại 1 lần sau khi xác minh token mới.`, logs);
+      }
+      return record;
+    }
     if (probe?.expiredFlag === true || (remainingSec !== null && remainingSec < 60)) {
       const error = new Error(
         `[${label}] AUTH: token đăng nhập Antigravity ${remainingSec !== null && remainingSec > 0 ? `chỉ còn ${remainingSec}s` : "đã hết hạn"}`
@@ -2083,6 +2265,7 @@ class ManualAntigravityStage1Service {
    * Never mutate the shared command config (including caller-supplied args).
    */
   boundTextPhaseCommand(commandConfig, authRecord) {
+    if (authRecord?.budgetMode === "refresh_aware") return commandConfig;
     const remainingSec = authRecord?.tokenRemainingSec;
     if (!Number.isFinite(remainingSec)) return commandConfig;
     const safetyMarginMs = authRecord.safetyMarginSec * 1000;
@@ -2111,7 +2294,7 @@ class ManualAntigravityStage1Service {
    * stage's maximum timeout is longer than its remaining TTL.
    * Retry 401 only after verifying a genuinely newer token, never blindly.
    */
-  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase }) {
+  async runAgyPhase({ label, commandConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase, forbiddenTools = [], toolGuard = null }) {
     const maxCapacityRetries = 2;
     let capacityRetries = 0;
     let authRefreshRetries = 0;
@@ -2121,7 +2304,18 @@ class ManualAntigravityStage1Service {
       if (boundedConfig.timeoutMs < commandConfig.timeoutMs) {
         this.emitLog(onProgress, 15, `[${label}] AUTH BUDGET: token còn ${auth.tokenRemainingSec}s; chạy tối đa ${Math.round(boundedConfig.timeoutMs / 1000)}s thay vì ${Math.round(commandConfig.timeoutMs / 1000)}s (dự phòng ${auth.safetyMarginSec}s + host grace).`, logs);
       }
-      const outcome = await this.runAgyOnce({ label, commandConfig: boundedConfig, prompt, resultDir, onProgress, expectedProxyList, viewedProxySet, metrics, logs, logBase });
+      // Series Plan, script generation and editorial repair are text-only.
+      // Block any accidental multimodal rewatch rather than merely logging it.
+      const outcome = await this.runAgyOnce({
+        label, commandConfig: boundedConfig, prompt, resultDir, onProgress,
+        expectedProxyList, viewedProxySet, metrics, logs, logBase,
+        // No text-only creative stage has a legitimate reason to launch a
+        // task manager, run commands, search the app codebase, or edit files.
+        // Restrict tools even if the prompt/model starts improvising.
+        forbiddenTools: ["view_file:video", ...forbiddenTools],
+        toolGuard: toolGuard || (({ toolName }) =>
+          toolName === "view_file" ? null : `text-only planning forbids ${toolName || "unknown tool"}`)
+      });
       if (outcome.ok) return outcome.result;
       if (outcome.kind === "capacity" && capacityRetries < maxCapacityRetries && !this.cancelled) {
         const delaySec = (++capacityRetries) * 8;
@@ -2367,11 +2561,13 @@ class ManualAntigravityStage1Service {
       || ""
       , this.settings.antigravityReasoning
     );
+    const sceneLedger = this.settings.sourceUnderstandingSceneLedger !== false;
     const chunkKeys = tasks.map((task) => MapReduce.computeChunkKey({
       task,
       sourceFingerprint,
       proxySchemaVersion: packageInfo.cache?.proxySchemaVersion,
-      mapModel
+      mapModel,
+      sceneLedger
     }));
     const reducer = MapReduce.computeReducerKey({
       sourceFingerprint,
@@ -2502,7 +2698,8 @@ class ManualAntigravityStage1Service {
           expectedProxyFiles, viewedProxyFiles: cachedCoverage.viewedProxyFiles || expectedProxyFiles, missingProxyFiles: [],
           source: "source_understanding_cache", verifiedAt: globalLoaded.envelope.createdAt, verifiedConversationId: null
         },
-        diagnostics: finalize()
+        diagnostics: finalize(),
+        chunks: tasks.map((task, index) => ({ task, data: chunkLoads[index].status === "hit" ? chunkLoads[index].data : null }))
       };
     }
 
@@ -2535,6 +2732,39 @@ class ManualAntigravityStage1Service {
         };
       }
     });
+    // Adaptive fallback: transient failures of the PARALLEL pass get one
+    // serial re-run (successful chunks are already cached and never rewatched).
+    if (concurrency > 1 && tasks.length > 1 && !this.cancelled && !stopState.kind) {
+      const retryIndexes = mapResults
+        .map((result, index) => ({ result, index }))
+        // Rewatching a chunk is expensive: only server-side capacity/stream
+        // failures, or failures before the video was viewed, are retried.
+        .filter(({ result }) => !result.record.ok && !result.record.skipped
+          && TRANSIENT_MAP_FAILURES.has(result.record.failureKind || "map_error")
+          && (["capacity", "stream_interrupted"].includes(result.record.failureKind) || !(Number(result.record.viewFileCount) > 0)))
+        .map(({ index }) => index);
+      if (retryIndexes.length) {
+        diagnostics.map.serialFallbackChunks = retryIndexes.map((index) => tasks[index].chunkId);
+        this.emitLog(onProgress, 38, `[PHASE_A] MAP song song gặp lỗi tạm thời ở ${retryIndexes.map((index) => `${tasks[index].chunkId} (${mapResults[index].record.failureKind})`).join(", ")}; chạy lại TUẦN TỰ đúng các chunk này (chunk đã đạt giữ cache, không xem lại).`, logs);
+        const retried = await runBounded(retryIndexes, 1, async (index) => {
+          try {
+            return await this.runMapChunk({
+              task: tasks[index], keyInfo: chunkKeys[index], cached: { status: "miss" }, pass1Dir, packageInfo, resultDir, schemaPath, cacheDir,
+              timeouts, onProgress, logs, diagnostics, stopState, pool
+            });
+          } catch (error) {
+            return { ...mapResults[index], record: { ...mapResults[index].record, failureKind: error.kind || "map_error", failureMessage: String(error.message || "").slice(0, 400) } };
+          }
+        });
+        retryIndexes.forEach((index, offset) => {
+          const previous = mapResults[index];
+          const next = retried[offset];
+          mergeMetrics(next.metrics, previous.metrics);
+          next.record = { ...next.record, serialFallback: true, parallelFailureKind: previous.record.failureKind };
+          mapResults[index] = next;
+        });
+      }
+    }
     diagnostics.map.durationMs = Date.now() - mapStartedAt;
     diagnostics.map.maxConcurrentAgyProcesses = pool.maxActive;
     for (const result of mapResults) {
@@ -2627,7 +2857,7 @@ class ManualAntigravityStage1Service {
     this.emitLog(onProgress, 45, `[REDUCE] OK · 0 video view · ${reduced.data.storyTimeline.length} events · cache written (${(diagnostics.reduce.durationMs / 1000).toFixed(1)}s)`, logs);
     (reduced.warnings || []).forEach((warning) => logs.push(`[PHASE_A] warning: ${warning}`));
     this.emitLog(onProgress, 46, `[PHASE_A] DONE (map/reduce): ${reduced.data.storyTimeline.length} sự kiện toàn cục; map ${(diagnostics.map.durationMs / 1000).toFixed(1)}s, reduce ${(diagnostics.reduce.durationMs / 1000).toFixed(1)}s; view_file video ${totals.viewFileVideoCount}; JSON đã kiểm tra và lưu cache: ${saved.path}`, logs);
-    return { data: reduced.data, cacheKey: reducer.key, keyComponents: reducer.components, coverage, diagnostics: finalize() };
+    return { data: reduced.data, cacheKey: reducer.key, keyComponents: reducer.components, coverage, diagnostics: finalize(), chunks };
   }
 
   /**
@@ -2749,10 +2979,11 @@ class ManualAntigravityStage1Service {
       writeJsonAtomic(path.join(workDir, `${task.chunkId}-actions.json`), task.actions),
       fs.writeFile(contextPath, contextText, "utf8")
     ]);
-    let contextMode = MapReduce.buildMapPrompt({ task, contextText, outputPath }).length > MAX_PRINT_PROMPT_CHARS ? "file" : "inline";
+    const sceneLedger = this.settings.sourceUnderstandingSceneLedger !== false;
+    let contextMode = MapReduce.buildMapPrompt({ task, contextText, outputPath, sceneLedger }).length > MAX_PRINT_PROMPT_CHARS ? "file" : "inline";
     const buildPrompt = ({ strictCoverage = false } = {}) => (contextMode === "inline"
-      ? MapReduce.buildMapPrompt({ task, contextText, strictCoverage, outputPath })
-      : MapReduce.buildMapPrompt({ task, contextPath, contextLineCount, strictCoverage, outputPath }));
+      ? MapReduce.buildMapPrompt({ task, contextText, strictCoverage, outputPath, sceneLedger })
+      : MapReduce.buildMapPrompt({ task, contextPath, contextLineCount, strictCoverage, outputPath, sceneLedger }));
     const allowedVideo = path.basename(String(task.proxy.absolutePath).replace(/\\/g, "/")).toLowerCase();
     const baseOf = (value) => path.basename(String(value || "").replace(/\\/g, "/")).toLowerCase();
     const toolGuard = ({ toolName, file, stepUpdate }) => {
@@ -3082,51 +3313,111 @@ class ManualAntigravityStage1Service {
     return { data: normalized, validation: validateSourceUnderstanding(normalized, { videoDurationSec }) };
   }
 
-  async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics, logs }) {
+
+  async runSeriesPlan({ series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, hookTournamentPath = "", inputPaths, videoDurationSec, onProgress, metrics, logs, storyIntelligence = null, storyHookTournament = null }) {
+    // One compact evidence packet instead of six files: the 95KB transcript
+    // alone was paged through view_file 10 times by the 2026-10-13 plan.
+    let evidencePacketPath = "";
+    if (storyIntelligence && this.settings.storyFirstCompactPackets !== false) {
+      const manifest = await StoryFirst.readJson(inputPaths.sceneManifestPath);
+      evidencePacketPath = path.join(path.dirname(understandingPath), "series-plan-evidence-packet.txt");
+      await fs.writeFile(evidencePacketPath, PartPipeline.buildSeriesPlanPacket({
+        intelligence: storyIntelligence,
+        hookContract: await StoryFirst.readJson(inputPaths.hookContractPath),
+        hookTournament: storyHookTournament,
+        scenes: Array.isArray(manifest?.scenes) ? manifest.scenes : [],
+        videoDurationSec
+      }), "utf8");
+    }
     const prompt = assertPrintPromptSize(buildSeriesPlanPrompt({
       series,
       understandingPath,
       hookContractPath: inputPaths.hookContractPath,
+      hookTournamentPath,
       transcriptPath: inputPaths.transcriptPath,
       sceneManifestPath: inputPaths.sceneManifestPath,
-      videoDurationSec
+      videoDurationSec,
+      evidencePacketPath
     }), "Series plan");
     const commandConfig = this.buildCommand(prompt, schemaPath, pass1Dir, {
       packageInfo,
       timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
     });
     const videoViews = new Set();
+    const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
+    // Any non-video input of THIS package may be read; everything else
+    // (commands, writes, code, video) still stops the process.
+    const readOnlyGuard = PartPipeline.buildPackageReadOnlyGuard({
+      roots: [pass1Dir, resultDir],
+      files: [understandingPath, inputPaths.hookContractPath, hookTournamentPath, inputPaths.sceneManifestPath, inputPaths.transcriptPath, evidencePacketPath],
+      stepLabel: "series plan"
+    });
     const result = await this.runAgyPhase({
       label: "SERIES_PLAN", commandConfig, prompt, resultDir, onProgress,
-      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan"
+      expectedProxyList: [], viewedProxySet: videoViews, metrics, logs,
+      logBase: "seriesPlan", toolGuard: readOnlyGuard
     });
     let stdout = result.stdout || "";
     let conversationId = result.conversationId;
     const parse = async () => {
       const plan = await extractNamedArtifact(stdout, { filename: "series-plan.json", artifactType: "series_plan", resultDir });
       const normalized = plan ? { ...plan, artifactType: plan.artifactType || "series_plan", profile: series.profile } : null;
-      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec }) };
+      return { plan: normalized, validation: validateSeriesPlan(normalized, { series, videoDurationSec, hookContract }) };
     };
     let parsed = await parse();
-    if (!parsed.validation.ok && conversationId) {
-      metrics.retryCount += 1;
-      this.emitLog(onProgress, 56, `[SERIES_PLAN] Plan chưa hợp lệ (${parsed.validation.errors.slice(0, 2).join(" ")}). Yêu cầu sửa trong cùng hội thoại...`, logs);
-      const repairPrompt = [
-        "Your series plan was rejected by the host validator:",
-        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
-        "Return the COMPLETE corrected series-plan envelope now, exactly one JSON object, no prose. Do not open any .mp4 file."
-      ].join("\n");
-      const retryConfig = this.buildRetryCommand(conversationId, repairPrompt, pass1Dir, {
-        packageInfo,
-        timeoutMs: resolvePhaseTimeoutMs("series_plan", this.settings)
+    if (!parsed.validation.ok) {
+      // A malformed/empty first response may be a contaminated conversation.
+      // NEVER resume that session: it can start debugging and writing app code.
+      // Start one fresh, tightly bounded, read-only planning turn instead.
+      const diagnosticsPath = path.join(resultDir, "series-plan-validation-diagnostics.json");
+      const firstAttemptDiagnostics = {
+        validationErrors: [...parsed.validation.errors],
+        streamBytes: Buffer.byteLength(stdout, "utf8"),
+        agentTextCount: collectAgentTexts(stdout).length
+      };
+      await writeJsonAtomic(diagnosticsPath, {
+        firstAttempt: firstAttemptDiagnostics,
+        action: "fresh_isolated_read_only_regeneration"
       });
+      metrics.retryCount += 1;
+      this.emitLog(onProgress, 56,
+        `[SERIES_PLAN] Invalid output: ${parsed.validation.errors.slice(0, 2).join(" ")}. Tạo lại kế hoạch trong tiến trình MỚI, chỉ được đọc dữ liệu nguồn; cấm sửa code.`, logs);
+      const repairPrompt = assertPrintPromptSize([
+        "FRESH, ISOLATED SERIES PLAN REGENERATION. You are NOT debugging code.",
+        "The previous planning result was rejected or not serialized. Do not resume the old session or inspect its logs.",
+        "Do NOT read, inspect or modify source code, project files, Git, renderer.js or manualAntigravityStage1Service.js.",
+        "Do NOT use manage_task, write_to_file, run_command, search, shell or any tool except view_file on the EXACT evidence paths listed below.",
+        "Do not write the output into any file; put the complete JSON in your final response ONLY.",
+        "Problems to address:",
+        ...parsed.validation.errors.slice(0, 12).map((error) => `- ${error}`),
+        "",
+        "REISSUED ORIGINAL PLANNING INSTRUCTIONS (complete and authoritative):",
+        prompt,
+        "",
+        "Return the COMPLETE artifacts envelope with filename series-plan.json, correct script JSON, three Parts, verified source ranges.",
+        "FINAL RESPONSE MUST START WITH { AND END WITH }. No explanation, code edits, Markdown or files."
+      ].join("\n"), "Series plan isolated regeneration");
+      const retryConfig = this.buildCommand(repairPrompt, schemaPath, pass1Dir, {
+        packageInfo,
+        timeoutMs: Math.max(300000, Math.min(resolvePhaseTimeoutMs("series_plan", this.settings), 480000))
+      });
+      // The CLI still permits non-interactive input reading, but any non-evidence
+      // access or code-editing tool immediately stops this process.
       const retry = await this.runAgyPhase({
-        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt, resultDir, onProgress,
-        expectedProxyList: [], viewedProxySet: videoViews, metrics, logs, logBase: "seriesPlan-retry"
+        label: "SERIES_PLAN_REPAIR", commandConfig: retryConfig, prompt: repairPrompt,
+        resultDir, onProgress, expectedProxyList: [], viewedProxySet: videoViews,
+        metrics, logs, logBase: "seriesPlan-retry", toolGuard: readOnlyGuard
       });
       stdout += `\n--- SERIES_PLAN_REPAIR ---\n${retry.stdout || ""}`;
       conversationId = retry.conversationId || conversationId;
       parsed = await parse();
+      await writeJsonAtomic(diagnosticsPath, {
+        firstAttempt: firstAttemptDiagnostics,
+        repairAttempt: {
+          validationErrors: [...parsed.validation.errors],
+          isolated: true, success: parsed.validation.ok
+        }
+      });
     }
     await fs.writeFile(path.join(resultDir, "antigravity-output-seriesPlan.log"), stdout, "utf8");
     if (!parsed.validation.ok) {
@@ -3161,6 +3452,11 @@ class ManualAntigravityStage1Service {
     const promptText = await fs.readFile(promptPath, "utf8");
     const requestedScriptIds = getRequestedScriptIds(promptText);
     const series = detectSeriesProfile(promptText);
+    // Measured narrator speed from the package prompt (voice profile learned
+    // from real TTS samples). Used by the writer prompt, the gate and the
+    // render dry-run so all three agree on how long a voiceover line is.
+    const measuredWordsPerSecond = loadDraftDryRun().parseMeasuredWordsPerSecond(promptText)
+      || Number(this.settings.manualDraftWordsPerSecond) || 0;
     const resultDir = path.join(resolvedPackageDir, RESULT_DIR_NAME);
     await fs.mkdir(resultDir, { recursive: true });
     // Clean up all existing files in resultDir so Antigravity starts with a pristine workspace.
@@ -3180,6 +3476,7 @@ class ManualAntigravityStage1Service {
       sceneManifestPath: [packageInfo.manifestPath, path.join(pass1Dir, "scene-manifest.json")].find((item) => item && fsSync.existsSync(item)) || "",
       transcriptPath: [packageInfo.transcriptPath, path.join(pass1Dir, "source-transcript.srt")].find((item) => item && fsSync.existsSync(item)) || "",
       hookContractPath: [packageInfo.hookContractPath, path.join(pass1Dir, "hook-contract.json")].find((item) => item && fsSync.existsSync(item)) || "",
+      hookCandidatesPath: [packageInfo.hookCandidatesPath, path.join(pass1Dir, "hook-candidates.json")].find((item) => item && fsSync.existsSync(item)) || "",
       actionCandidatesPath: [packageInfo.actionCandidatesPath, path.join(pass1Dir, "action-candidates.json")].find((item) => item && fsSync.existsSync(item)) || ""
     };
     let videoDurationSec = 0;
@@ -3235,6 +3532,7 @@ class ManualAntigravityStage1Service {
       scriptGeneration: { durationMs: 0, agyProcessCount: 0 }
     };
 
+    let phaseAChunks = [];
     if (architecture === "chunked_map_reduce") {
       try {
         const chunked = await this.runChunkedSourceUnderstanding({
@@ -3242,6 +3540,7 @@ class ManualAntigravityStage1Service {
           sourceFingerprint, cacheDir, onProgress, logs
         });
         understanding = chunked.data;
+        phaseAChunks = Array.isArray(chunked.chunks) ? chunked.chunks : [];
         coverage = chunked.coverage;
         understandingKey = chunked.cacheKey;
         understandingComponents = chunked.keyComponents;
@@ -3385,6 +3684,43 @@ class ManualAntigravityStage1Service {
     const understandingPath = path.join(phaseBInputDir, "source-understanding.json");
     await writeJsonAtomic(understandingPath, understanding);
     const coverageSummary = `${coverage.viewedProxyFiles.length}/${expectedProxyList.length} proxy chunks, ${coverage.source}${coverage.verifiedAt ? ` verified ${coverage.verifiedAt}` : ""}`;
+    // Frame-level scene evidence ledger assembled by the host from the map
+    // chunks (no AI call). Older chunk caches have no ledger: empty rows.
+    let sceneEvidenceLedger = null;
+    try {
+      const manifestForLedger = await StoryFirst.readJson(inputPaths.sceneManifestPath);
+      sceneEvidenceLedger = MapReduce.buildSceneEvidenceLedger(
+        phaseAChunks.filter((chunk) => chunk?.data),
+        Array.isArray(manifestForLedger?.scenes) ? manifestForLedger.scenes : []
+      );
+      await writeJsonAtomic(path.join(phaseBInputDir, "scene-evidence-ledger.json"), sceneEvidenceLedger);
+      this.emitLog(onProgress, 47, `[SCENE_LEDGER] ${sceneEvidenceLedger.describedSceneCount}/${sceneEvidenceLedger.sceneCount} cảnh có bằng chứng khung hình${sceneEvidenceLedger.describedSceneCount ? "" : " (cache Phase A cũ không có ledger; dùng sự kiện + transcript)"}.`, logs);
+    } catch (error) {
+      this.emitLog(onProgress, 47, `[SCENE_LEDGER] bỏ qua: ${String(error.message || "").slice(0, 160)}`, logs);
+    }
+
+    // ---------------------------------------------------------------------
+    // Story-aware Hook Tournament runs only AFTER multimodal source understanding.
+    // The auto-audition winner is provisional; a user-locked hook stays binding.
+    // ---------------------------------------------------------------------
+    const storyFirstEnabled = Boolean(series && this.settings.storyFirstEditorialEnabled !== false);
+    let storyIntelligence = null;
+    let storyIntelligencePath = "";
+    let storyHookTournament = null;
+    let storyHookTournamentPath = "";
+    if (storyFirstEnabled) {
+      const hookContract = await StoryFirst.readJson(inputPaths.hookContractPath);
+      const candidates = await StoryFirst.readJson(inputPaths.hookCandidatesPath);
+      storyIntelligence = StoryFirst.makeStoryIntelligence(understanding, { hookContract, sourceDurationSec: videoDurationSec });
+      storyHookTournament = StoryFirst.makeHookTournament(storyIntelligence, { hookCandidates: candidates, hookContract });
+      storyIntelligencePath = path.join(phaseBInputDir, "story-intelligence.json");
+      storyHookTournamentPath = path.join(phaseBInputDir, "story-hook-tournament.json");
+      await writeJsonAtomic(storyIntelligencePath, storyIntelligence);
+      await writeJsonAtomic(storyHookTournamentPath, storyHookTournament);
+      await writeJsonAtomic(path.join(resultDir, "story-intelligence.json"), storyIntelligence);
+      await writeJsonAtomic(path.join(resultDir, "story-hook-tournament.json"), storyHookTournament);
+      this.emitLog(onProgress, 49, `[STORY_HOOK] So sánh ${storyHookTournament.candidates.length} hook theo xung đột, độ rõ và payoff; ${storyHookTournament.userLocked ? "giữ nguyên hook user khóa" : "tự đề xuất có thể được tối ưu"}.`, logs);
+    }
 
     // ---------------------------------------------------------------------
     // Phase B1: lock the series plan before any Part is written.
@@ -3399,7 +3735,7 @@ class ManualAntigravityStage1Service {
         ? await fs.readFile(inputPaths.hookContractPath, "utf8").catch(() => "")
         : "";
       const planCacheKey = crypto.createHash("sha256").update(JSON.stringify({
-        version: 1, understandingKey, understanding,
+        version: 2, understandingKey, understanding, storyHookTournament,
         promptText, hookContractText, sourceFingerprint,
         profile: series.profile, parts: series.parts,
         command: this.settings.antigravityCommand || process.env.ANTIGRAVITY_COMMAND || "agy",
@@ -3415,14 +3751,18 @@ class ManualAntigravityStage1Service {
       let cached = null;
       try { cached = JSON.parse(await fs.readFile(planCachePath, "utf8")); } catch (_error) {}
       if (cached?.key === planCacheKey && cached?.plan?.lockedBy === "host_validator"
-          && validateSeriesPlan(cached.plan, { series, videoDurationSec }).ok) {
+          && validateSeriesPlan(cached.plan, {
+            series, videoDurationSec, hookContract: await StoryFirst.readJson(inputPaths.hookContractPath)
+          }).ok) {
         seriesPlan = cached.plan;
         cacheHit = true;
         this.emitLog(onProgress, 56, `[SERIES_PLAN] CACHE HIT: dùng lại kế hoạch đã khóa và xác minh (${planCachePath}).`, logs);
       } else {
         this.emitLog(onProgress, 50, `[SERIES_PLAN] START: khóa kế hoạch ${series.parts.length} Part (${series.profile}) trước khi viết kịch bản.`, logs);
         const planned = await this.runSeriesPlan({
-          series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs
+          series, pass1Dir, packageInfo, resultDir, schemaPath, understandingPath, hookTournamentPath: storyHookTournamentPath,
+          inputPaths, videoDurationSec, onProgress, metrics: planMetrics, logs,
+          storyIntelligence, storyHookTournament
         });
         seriesPlan = planned.plan;
         try {
@@ -3449,6 +3789,218 @@ class ManualAntigravityStage1Service {
     }
 
     // ---------------------------------------------------------------------
+    // Story-first creative direction: host-generated from verified source
+    // understanding and locked Part allocation, NOT from invented dialogue.
+    // ---------------------------------------------------------------------
+    let storyBlueprint = null;
+    let narrativeBlueprintPath = "";
+    if (storyFirstEnabled) {
+      storyBlueprint = StoryFirst.makeNarrativeBlueprint(storyIntelligence, { seriesPlan, series });
+      narrativeBlueprintPath = path.join(phaseBInputDir, "narrative-blueprint.json");
+      await writeJsonAtomic(narrativeBlueprintPath, storyBlueprint);
+      await writeJsonAtomic(path.join(resultDir, "narrative-blueprint.json"), storyBlueprint);
+      this.emitLog(onProgress, 59, `[STORY_FIRST] Đã khóa ${storyIntelligence.events.length} sự kiện nguồn, ${storyBlueprint.seriesParts.length} Story Blueprint và hướng dẫn Narrator Director.`, logs);
+    }
+
+    // ---------------------------------------------------------------------
+    // Shared by both Phase B modes: host metadata normalization, the unified
+    // editorial/production gate and the deterministic voice-footage fit.
+    // ---------------------------------------------------------------------
+    const planHookRanges = (seriesPlan?.parts || []).map((part) => toRange(part.hookRange || {}));
+    const planSharedHook = planHookRanges.length > 1 && planHookRanges.every(Boolean)
+      ? planHookRanges.every((range) => Math.abs(range.start - planHookRanges[0].start) < 0.05 && Math.abs(range.end - planHookRanges[0].end) < 0.05)
+      : (seriesPlan ? false : null);
+    const scriptsFrom = (rawEnvelope) => {
+      const artifacts = (rawEnvelope?.artifacts || [])
+        .filter((a) => /^script-\d+\.json$/i.test(a.filename || "") || a.script?.scriptId)
+        .map(normalizeArtifact)
+        .map((artifact) => {
+          if (!series) return artifact;
+          const part = series.parts.find((item) => item.scriptId === Number(artifact.script.scriptId));
+          // Persist host-locked metadata into the files we actually import,
+          // rather than relying on optional AI output or UI config.
+          return {
+            ...artifact,
+            script: {
+              ...artifact.script, prompt_profile: series.profile,
+              series_mode: "interleaved_multipart",
+              part_number: part?.partNumber || 1,
+              part_badge: part?.partBadge || "",
+              target_duration_min_sec: series.durationMinSec,
+              target_duration_max_sec: series.durationMaxSec,
+              // A Story-First plan gives each Part its own hookRange. Declare the
+              // cold-open mode from the LOCKED plan before any gate runs, so the
+              // shared-cold-open 5-30s rule is not applied to per-Part hooks
+              // (real run 2026-10-13: Part 2 blocked by "Cold Open dùng chung dài 4.9s").
+              ...(planSharedHook === null ? {} : { shared_hook_enabled: planSharedHook })
+            }
+          };
+        });
+      const map = new Map();
+      for (const artifact of artifacts) map.set(Number(artifact.script.scriptId), artifact);
+      return map;
+    };
+    const gatePath = path.join(resultDir, "editorial-quality-report.json");
+    const evaluate = (map) => {
+      const results = requestedScriptIds.map((scriptId) => {
+        const script = map.get(scriptId)?.script;
+        if (!script) return { scriptId, passed: false, score: 0, errors: [{ code: "missing_script", message: "Missing requested Part" }], warnings: [], feedback: ["Missing script."] };
+        const result = StoryFirst.evaluateEditorialScript(script, storyBlueprint, { minScore: 80 });
+        // Instant, deterministic story-structure gate against the LOCKED plan:
+        // missing planned events/payoff ranges, a skipped flash-forward hook
+        // moment and timeline ping-pong (all three slipped through to the AI
+        // cold viewer in the real 2026-10-13 run).
+        // Beat-plan compile problems (unknown/non-consecutive scenes, missing
+        // narration, duplicated footage) are reported by the host compiler.
+        const compileErrors = Array.isArray(script.hostCompile?.errors) ? script.hostCompile.errors : [];
+        if (compileErrors.length) {
+          result.passed = false;
+          result.errors.push(...compileErrors.map((item) => ({ code: item.code, message: item.message, segmentIndex: -1, beatId: item.beatId })));
+          result.feedback.push(...compileErrors.map((item) => `beat_compile/${item.code}: ${item.message}`));
+        }
+        if (seriesPlan && this.settings.storyFirstStructureGateEnabled !== false) {
+          const structure = PartPipeline.evaluateStoryStructure(script, { seriesPlan, scriptId });
+          result.storyStructure = { ...structure.metrics, errorCodes: structure.errors.map((item) => item.code), warningCodes: structure.warnings.map((item) => item.code) };
+          if (structure.warnings.length) {
+            result.warnings.push(...structure.warnings);
+            result.feedback.push(...structure.warnings.map((item) => `story_structure/${item.code} (advisory): ${item.message}`));
+          }
+          if (structure.errors.length) {
+            result.passed = false;
+            result.errors.push(...structure.errors);
+            result.feedback.push(...structure.errors.map((item) => `story_structure/${item.code}: ${item.message}`));
+          }
+        }
+        // Use exactly the SAME production scorer/normalizer as import.
+        // Stage 1 must not say "PASS 95" if import would subsequently score
+        // this V1 at 41 and proceed to render.
+        if (this.settings.storyFirstUnifiedPreflightEnabled !== false) {
+          try {
+            const { normalizeHighlightCutScript } = require("./dubbingService");
+            const { scoreManualGeminiVariant } = require("./manualGeminiViralPreflightService");
+            const plannedPart = series?.parts?.find((p) => p.scriptId === scriptId);
+            const candidate = {
+              ...script, prompt_profile: series?.profile || "viral_tiktok_crime_part1",
+              part_number: plannedPart?.partNumber || 1
+            };
+            const normalized = normalizeHighlightCutScript(candidate, videoDurationSec);
+            const readiness = scoreManualGeminiVariant({
+              script: candidate, normalizedScript: normalized,
+              expectedScriptId: scriptId,
+              // Same voice profile the import scorer receives.
+              voiceProfile: measuredWordsPerSecond ? { wordsPerSecond: measuredWordsPerSecond } : null
+            });
+            result.productionPreflight = {
+              score: readiness.score,
+              passed: readiness.passed,
+              editorialReadiness: readiness.scoreBreakdown?.editorialReadiness?.score ?? null,
+              technicalReadiness: readiness.scoreBreakdown?.technicalReadiness?.score ?? null,
+              // Never truncate the canonical QA evidence in the report. Only
+              // the short UI progress message is abridged.
+              issues: readiness.issues || [],
+              editorialIssues: readiness.scoreBreakdown?.editorialReadiness?.issues || [],
+              technicalIssues: readiness.scoreBreakdown?.technicalReadiness?.issues || []
+            };
+            if (readiness.score < 72 || !readiness.passed
+              || (readiness.scoreBreakdown?.editorialReadiness?.score ?? 100) < 72
+              || (readiness.scoreBreakdown?.technicalReadiness?.score ?? 100) < 80) {
+              result.passed = false;
+              result.errors.push({
+                code: "production_preflight_failed",
+                message: `Production Viral Preflight ${readiness.score}/100 (editorial ${result.productionPreflight.editorialReadiness}, technical ${result.productionPreflight.technicalReadiness}) would reject this V1.`
+              });
+              result.feedback.push(...(readiness.issues || []).slice(0, 12)
+                .map((issue) => `production_preflight: ${issue}`));
+            }
+            // Replay the content-dependent parts of the draft render (block
+            // packing, voice vs. footage length, source ranges) so a script the
+            // renderer would reject never passes the gate.
+            const DraftDryRun = loadDraftDryRun();
+            const dry = DraftDryRun.dryRunManualDraftRender({
+              script: candidate, normalizedScript: normalized, videoDurationSec,
+              wordsPerSecond: measuredWordsPerSecond, settings: this.settings
+            });
+            result.renderDryRun = {
+              ok: dry.ok,
+              wordsPerSecond: measuredWordsPerSecond || null,
+              issues: dry.issues.map(({ code, segmentIndexes, durationSec, words, maxWords, ratio, message }) => ({
+                code, segments: (segmentIndexes || []).map((index) => index + 1), durationSec, words, maxWords, ratio, message
+              })),
+              wordBudgets: DraftDryRun.voiceWordBudgets(dry)
+            };
+            if (!dry.ok) {
+              result.passed = false;
+              result.errors.push({
+                code: "render_dry_run_failed",
+                message: `Draft render dry-run: ${dry.issues.length} issue(s) the renderer would reject or distort (${[...new Set(dry.issues.map((item) => item.code))].join(", ")}).`
+              });
+              result.feedback.push(...dry.issues.slice(0, 10).map((item) => `render_dry_run: ${item.message}`));
+            }
+          } catch (error) {
+            result.passed = false;
+            result.errors.push({ code: "production_preflight_error", message: String(error.message || "") });
+            result.feedback.push("Production normalized timeline could not be scored: " + String(error.message || ""));
+          }
+        }
+        return result;
+      });
+      const adherence = evaluateScriptsAgainstSeriesPlan([...map.values()].map((item) => item.script), seriesPlan);
+      for (const item of adherence.report) {
+        if (item.adherence < 0.80) {
+          const target = results.find((result) => result.scriptId === item.scriptId);
+          if (target) {
+            target.passed = false;
+            target.errors.push({ code: "series_allocation", message: `Only ${Math.round(item.adherence * 100)}% of footage matches the locked series allocation.` });
+            target.feedback.push("Source segments violate the locked Series Plan.");
+          }
+        }
+      }
+      return { artifactType: "editorial_quality_report", schemaVersion: 1, accepted: results.every((result) => result.passed), results, seriesAdherence: adherence };
+    };
+    // Deterministic host fix BEFORE any AI repair: lengthen the footage of a
+    // voiceover whose narration is longer than its segment, using adjacent
+    // source time inside the Part's locked allocation that no other segment
+    // uses. Narration is never trimmed or rewritten here.
+    const allowedRangesForPart = (scriptId) => {
+      const part = seriesPlan?.parts?.find((item) => Number(item.scriptId) === Number(scriptId));
+      if (!part) return null;
+      const ranges = [...(part.sceneAllocation || []), part.hookRange, ...(part.payoffRanges || []), ...(seriesPlan?.sharedRanges || [])]
+        .map(toRange).filter(Boolean).map((range) => [range.start, range.end]);
+      return ranges.length ? ranges : null;
+    };
+    const applyHostVoiceFit = (map, stageLabel) => {
+      if (!measuredWordsPerSecond) return;
+      const DraftDryRun = loadDraftDryRun();
+      for (const scriptId of requestedScriptIds) {
+        const artifact = map.get(scriptId);
+        if (!artifact?.script) continue;
+        const fit = DraftDryRun.autoFitVoiceFootage({
+          script: artifact.script, videoDurationSec, wordsPerSecond: measuredWordsPerSecond,
+          maxDurationSec: series?.durationMaxSec ?? Infinity, settings: this.settings,
+          allowedRanges: allowedRangesForPart(scriptId)
+        });
+        if (!fit.adjustments.length) continue;
+        map.set(scriptId, { ...artifact, script: fit.script });
+        this.emitLog(onProgress, 82,
+          `[VOICE_FIT] Part ${scriptId} (${stageLabel}): host kéo dài footage ${fit.adjustments.length} đoạn voiceover cho vừa lời đọc (${fit.adjustments.map((item) => `#${item.segmentIndex + 1} +${item.addedSec}s ${item.direction}`).join(", ")}); không cắt lời.`, logs);
+      }
+    };
+    let deduplicated = null;
+    let editorialReport = null;
+    let conversationId = null;
+    // Story-First series: one compact, Part-scoped writer per Part (parallel,
+    // cached, resumable) instead of one 38-turn conversation for all Parts.
+    const usePartPipeline = Boolean(storyFirstEnabled && seriesPlan && storyBlueprint && this.settings.storyFirstPartWriter !== false);
+    if (usePartPipeline) {
+      ({ deduplicated, editorialReport } = await this.runStoryFirstPartPipeline({
+        resolvedPackageDir, resultDir, pass1Dir, phaseBInputDir, packageInfo, schemaPath, requestedScriptIds, series, seriesPlan,
+        storyIntelligence, storyBlueprint, promptText, inputPaths, videoDurationSec, measuredWordsPerSecond, understandingKey,
+        cacheDir, timing, logs, onProgress, stage1StartedAt, expectedProxyList, gatePath,
+        scriptsFrom, evaluate, applyHostVoiceFit, sceneEvidenceLedger
+      }));
+    } else {
+    // Legacy single-conversation Phase B (non-series profiles or storyFirstPartWriter=false).
+    // ---------------------------------------------------------------------
     // Phase B2: script generation from the verified understanding (text only).
     // ---------------------------------------------------------------------
     const phaseBMetrics = newMetrics();
@@ -3462,9 +4014,15 @@ class ManualAntigravityStage1Service {
       transcriptPath: inputPaths.transcriptPath,
       hookContractPath: inputPaths.hookContractPath,
       actionCandidatesPath: inputPaths.actionCandidatesPath,
+      storyIntelligencePath,
+      narrativeBlueprintPath,
       resultDir,
       scriptIds: requestedScriptIds,
-      coverageSummary
+      coverageSummary,
+      series,
+      productionConstraintLines: series
+        ? loadProductionPreflight().describeProductionConstraints(seriesProductionConstraints(series, measuredWordsPerSecond))
+        : null
     }), "Phase B");
     const commandConfigB = this.buildCommand(promptB, schemaPath, pass1Dir, {
       packageInfo,
@@ -3495,7 +4053,7 @@ class ManualAntigravityStage1Service {
 
     const accumulatedStdout = cliResultB.stdout || "";
     const accumulatedStderr = cliResultB.stderr || "";
-    const conversationId = cliResultB.conversationId;
+    conversationId = cliResultB.conversationId;
     await fs.writeFile(path.join(resultDir, "antigravity-output.log"), accumulatedStdout, "utf8");
     if (accumulatedStderr) await fs.writeFile(path.join(resultDir, "antigravity-stderr.log"), accumulatedStderr, "utf8");
     const phaseBProxyViews = expectedProxyList.filter((proxy) => (
@@ -3549,10 +4107,363 @@ class ManualAntigravityStage1Service {
       throw new Error(`Antigravity không trả về artifacts JSON hợp lệ. Xem log tại ${resultDir}.`);
     }
 
-    const scriptArtifacts = envelope.artifacts.filter((a) => /^script-\d+\.json$/.test(a.filename) || a.script?.scriptId);
-    const normalized = scriptArtifacts.map(normalizeArtifact);
-    const deduplicated = new Map();
-    for (const artifact of normalized) deduplicated.set(artifact.script.scriptId, artifact);
+    // The first Phase B response is a candidate, not an accepted V1.
+    // A weak narrator/story is repaired ONCE using only structured text;
+    // if still weak, preserve diagnostics and block importing the script.
+    deduplicated = scriptsFrom(envelope);
+    // Cold viewer is an independent text-only Gemini turn, without Writer
+    // scores or the host's QA grade. Every review is persisted for diagnosis.
+    const coldViewerEnabled = storyFirstEnabled && this.settings.storyFirstColdViewerEnabled !== false;
+    const critiqueCandidate = async (map, suffix) => {
+      const candidateFiles = [];
+      for (const id of requestedScriptIds) {
+        const artifact = map.get(id);
+        if (!artifact) continue;
+        const candidate = path.join(resultDir, `script-${id}-audience-${suffix}.json`);
+        await writeJsonAtomic(candidate, artifact.script);
+        candidateFiles.push(candidate);
+      }
+      const criticPrompt = assertPrintPromptSize(StoryFirst.buildColdViewerPrompt({
+        scriptPaths: candidateFiles, blueprintPath: narrativeBlueprintPath,
+        intelligencePath: storyIntelligencePath, scriptIds: requestedScriptIds
+      }), "Audience review");
+      const criticConfig = this.buildCommand(criticPrompt, schemaPath, pass1Dir, {
+        packageInfo, timeoutMs: resolvePhaseTimeoutMs("phase_b", this.settings)
+      });
+      const reviewMetrics = newMetrics();
+      this.emitLog(onProgress, 83, `[COLD_VIEWER] Đang đánh giá độc lập mạch truyện, hook, narrator và payoff (${suffix}), không xem lại proxy video.`, logs);
+      let reviewed = null;
+      try {
+        const response = await this.runAgyPhase({
+          label: "PHASE_B_COLD_VIEWER", commandConfig: criticConfig, prompt: criticPrompt,
+          resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+          metrics: reviewMetrics, logs, logBase: `phaseB-cold-viewer-${suffix}`
+        });
+        await fs.writeFile(path.join(resultDir, `audience-review-${suffix}-raw.log`), response.stdout || "", "utf8");
+        const artifact = findArtifactEnvelope(response.stdout || "")?.artifacts
+          ?.find((item) => item.filename === "audience-review.json");
+        reviewed = artifact?.script || null;
+      } catch (error) {
+        // Auth/timeout/capacity problems are infrastructure failures, NOT
+        // editorial criticism. Do not burn a repair attempt on a transport error.
+        this.emitLog(onProgress, 83, `[COLD_VIEWER] CLI ERROR: ${String(error.message || "").slice(0, 200)}`, logs);
+        await writeJsonAtomic(path.join(resultDir, `audience-review-${suffix}.json`), {
+          artifactType: "audience_review_validation", accepted: false,
+          errorKind: error.kind || "cli_failure", errorMessage: String(error.message || "")
+        });
+        await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+        throw error;
+      }
+      const validated = StoryFirst.validateColdViewerReview(reviewed, requestedScriptIds);
+      await writeJsonAtomic(path.join(resultDir, `audience-review-${suffix}.json`), {
+        ...validated, rawReview: reviewed
+      });
+      timing.scriptGeneration.audienceReviews ||= [];
+      timing.scriptGeneration.audienceReviews.push({
+        suffix, accepted: validated.accepted, processCount: reviewMetrics.agyProcessCount,
+        tokens: tokenSummary(reviewMetrics)
+      });
+      return validated;
+    };
+    if (storyFirstEnabled) {
+      applyHostVoiceFit(deduplicated, "initial");
+      editorialReport = evaluate(deduplicated);
+      for (const item of editorialReport.results) {
+        if (item.productionPreflight && !item.productionPreflight.passed) {
+          const firstReasons = (item.productionPreflight.issues || []).slice(0, 3)
+            .map((reason) => String(reason).replace(/\s+/g, " ").slice(0, 180));
+          this.emitLog(onProgress, 82,
+            `[PRODUCTION_PREFLIGHT] Part ${item.scriptId} = ${item.productionPreflight.score}/100, editorial=${item.productionPreflight.editorialReadiness}, technical=${item.productionPreflight.technicalReadiness}; lỗi chính: ${firstReasons.join(" | ")}`, logs);
+        }
+      }
+      if (coldViewerEnabled) editorialReport = StoryFirst.attachAudienceReview(
+        editorialReport, await critiqueCandidate(deduplicated, "initial")
+      );
+      await writeJsonAtomic(gatePath, editorialReport);
+      if (!editorialReport.accepted && !this.cancelled) {
+        for (const [id, artifact] of deduplicated) {
+          await writeJsonAtomic(path.join(resultDir, `script-${id}-before-editorial-repair.json`), artifact.script);
+        }
+        this.emitLog(onProgress, 83,
+          `[EDITORIAL_GATE] V1 chưa đạt: ${editorialReport.results.filter((x) => !x.passed).map((x) => `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 3).join(", ")}`).join("; ")}. Gemini đang sửa cấu trúc và narrator từ bằng chứng đã khóa.`, logs);
+        // Repair only the failing Part(s): a monolithic three-Part rewrite
+        // encouraged AGY to call run_command to manipulate JSON and tripped the
+        // read-only tool guard. Each repair gets its OWN evidence and precise
+        // normalized preflight deductions, preserving already accepted Parts.
+        // Up to storyFirstMaxRepairRounds rounds (default 2): round 2 targets
+        // only what is still failing, and a repair that is WORSE than the
+        // version it replaced is reverted (real run 2026-10-09: the single
+        // repair fixed voiceover length but raised jumps 7 -> 11 and blocked).
+        let repairProcessCount = 0;
+        const perPartRepairs = [];
+        const maxRepairRounds = Math.max(1, Math.min(3, Math.round(Number(this.settings.storyFirstMaxRepairRounds ?? 2) || 2)));
+        let failureReport = editorialReport;
+        let repairRoundsRun = 0;
+        for (let repairRound = 1; repairRound <= maxRepairRounds && !this.cancelled; repairRound += 1) {
+        const failedIds = failureReport.results.filter((entry) => !entry.passed).map((entry) => Number(entry.scriptId));
+        if (!failedIds.length) break;
+        repairRoundsRun = repairRound;
+        if (repairRound > 1) {
+          await writeJsonAtomic(gatePath, failureReport);
+          this.emitLog(onProgress, 84,
+            `[EDITORIAL_REPAIR] Vòng ${repairRound}/${maxRepairRounds}: chỉ sửa lỗi còn lại của ${failedIds.map((id) => `Part ${id}`).join(", ")}; không được phá ràng buộc đang đạt.`, logs);
+        }
+        const versionsBeforeRound = new Map(failedIds.map((id) => [id, deduplicated.get(id)]));
+        for (const scriptId of failedIds) {
+          if (this.cancelled) break;
+          const originalArtifact = deduplicated.get(scriptId);
+          if (!originalArtifact) continue;
+          const originalFile = path.join(resultDir, repairRound === 1
+            ? `script-${scriptId}-before-editorial-repair.json`
+            : `script-${scriptId}-before-editorial-repair-round${repairRound}.json`);
+          if (repairRound > 1) await writeJsonAtomic(originalFile, originalArtifact.script);
+          const issue = failureReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const partConstraints = loadProductionPreflight().resolveProductionConstraints(
+            originalArtifact.script, scriptId, { wordsPerSecond: measuredWordsPerSecond }
+          );
+          const conciseFailure = {
+            scriptId, score: issue.score, structuralScore: issue.structuralScore ?? issue.score,
+            productionPreflight: issue.productionPreflight || null,
+            renderDryRun: issue.renderDryRun
+              ? { ok: issue.renderDryRun.ok, issues: (issue.renderDryRun.issues || []).map((item) => item.message) }
+              : null,
+            audienceScore: issue.audienceScore ?? null,
+            audienceIssues: issue.audienceIssues || [],
+            errors: issue.errors || [], warnings: issue.warnings || []
+          };
+          const partBlueprint = (storyBlueprint?.seriesParts || []).find((part) => Number(part.scriptId) === scriptId) || null;
+          const partRanges = (partBlueprint?.sceneAllocation || []).map(toRange).filter(Boolean);
+          const partHookRange = toRange(partBlueprint?.hookRange || {});
+          const partEvents = (storyIntelligence?.events || []).filter((event) => {
+            const eventRange = toRange(event);
+            return partRanges.some((allowed) => eventRange && overlapSec(eventRange, allowed) > 0)
+              || Boolean(eventRange && partHookRange && overlapSec(eventRange, partHookRange) > 0);
+          });
+          const inlineEvidence = {
+            caseSummary: storyIntelligence?.caseSummary,
+            centralViewerQuestion: storyIntelligence?.centralViewerQuestion,
+            centralConflict: storyIntelligence?.centralConflict,
+            characters: storyIntelligence?.characters,
+            partBlueprint,
+            sourceEvents: partEvents,
+            immutableSeriesPlan: seriesPlan?.parts?.find((part) => Number(part.scriptId) === scriptId) || null
+          };
+          // Windows passes --print in argv (24k safe limit). Never inline the
+          // potentially >100kB original script/evidence. Write the FULL packet
+          // once, then reference its absolute path for both repair attempts.
+          const repairPacketPath = path.join(resultDir, `editorial-repair-part-${scriptId}-packet.json`);
+          await writeJsonAtomic(repairPacketPath, {
+            artifactType: "host_editorial_repair_packet",
+            schemaVersion: 1, scriptId,
+            originalScript: originalArtifact.script,
+            actualQualityGateFailures: conciseFailure,
+            lockedPartContext: inlineEvidence,
+            sourceEventTimeline: storyIntelligence?.events || [],
+            // Same numbers the gate measures (single source of truth).
+            qualityPolicy: {
+              minRenderableSec: partConstraints.minRenderableSec,
+              targetMinSec: partConstraints.minDurationSec,
+              targetMaxSec: partConstraints.maxDurationSec,
+              maxVoiceoverSec: partConstraints.maxVoiceoverSegmentSec,
+              maxAudioRunSec: partConstraints.maxContinuousAudioRunSec,
+              maxSourceJumps: partConstraints.maxSourceJumps,
+              maxJustifiedExtraSourceJumps: partConstraints.maxJustifiedExtraSourceJumps,
+              sourceJumpDefinition: `next segment starts more than ${partConstraints.sourceJumpGapToleranceSec}s away from where the previous one ended`,
+              narratorWordsPerSecond: partConstraints.wordsPerSecond,
+              voiceWordBudgetRule: partConstraints.wordsPerSecond
+                ? `voiceover_text words <= floor(segment seconds x ${partConstraints.wordsPerSecond})`
+                : null
+            },
+            currentVoiceWordBudgets: issue.renderDryRun?.wordBudgets || [],
+            currentMeasurements: issue.productionPreflight || null,
+            doNotRegress: "Every constraint in qualityPolicy that the original script already satisfies must still be satisfied by the repaired script.",
+            repairRound
+          });
+          const buildRepair = (recoveryFromForbiddenTool) => assertPrintPromptSize(
+            StoryFirst.buildEditorialRepairPrompt({
+              previousFiles: [originalFile], reportPath: gatePath,
+              blueprintPath: narrativeBlueprintPath, intelligencePath: storyIntelligencePath,
+              seriesPlanPath, transcriptPath: inputPaths.transcriptPath,
+              sceneManifestPath: inputPaths.sceneManifestPath,
+              scriptIds: [scriptId], partIssues: conciseFailure,
+              repairPacketPath, recoveryFromForbiddenTool,
+              targetMinSec: series?.durationMinSec ?? 110,
+              targetMaxSec: series?.durationMaxSec ?? 125,
+              constraintLines: loadProductionPreflight().describeProductionConstraints(partConstraints),
+              wordBudgetLines: (issue.renderDryRun?.wordBudgets || [])
+                .filter((budget) => budget.overBudget)
+                .slice(0, 8)
+                .map((budget) => `- Segment ${budget.segments.join("+")} (${budget.footageSec}s footage): ${budget.currentWords} words now, max ${budget.maxWords}; shorten the line or give it more contiguous footage.`)
+            }), `Part ${scriptId} editorial repair`
+          );
+          // Any non-video package input is readable (2026-10-13: a repair was
+          // killed for opening action-candidates.json); commands/writes/video
+          // still stop the process.
+          const safeReadOnly = PartPipeline.buildPackageReadOnlyGuard({
+            roots: [pass1Dir, resultDir], files: [understandingPath, repairPacketPath], stepLabel: "editorial repair"
+          });
+          const repairTimeoutMs = PartPipeline.estimateWriteTimeoutMs({
+            outputChars: JSON.stringify(originalArtifact.script).length * 1.1, minSec: 300,
+            maxSec: Math.max(300, Math.round(resolvePhaseTimeoutMs("phase_b", this.settings) / 1000))
+          });
+          const metricsForPart = newMetrics();
+          let payload = null;
+          try {
+            const prompt = buildRepair(false);
+            const response = await this.runAgyPhase({
+              label: `PHASE_B_EDITORIAL_REPAIR_PART_${scriptId}`,
+              commandConfig: this.buildCommand(prompt, schemaPath, pass1Dir, {
+                packageInfo, timeoutMs: repairTimeoutMs
+              }), prompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+              metrics: metricsForPart, logs, logBase: `phaseB-editorial-repair-part-${scriptId}${repairRound > 1 ? `-round${repairRound}` : ""}`,
+              toolGuard: safeReadOnly
+            });
+            await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-part-${scriptId}.log`), response.stdout || "", "utf8");
+            payload = findArtifactEnvelope(response.stdout || "");
+            if (!payload?.artifacts?.length) {
+              const recoveredScript = await extractNamedArtifact(response.stdout || "", {
+                filename: `script-${scriptId}.json`, artifactType: "story_recut_script"
+              });
+              if (recoveredScript) payload = { artifacts: [{ filename: `script-${scriptId}.json`, script: recoveredScript }] };
+            }
+          } catch (error) {
+            if (error.kind === "cancelled" || this.cancelled) throw error;
+            if (error.kind !== "forbidden_tool") {
+              // A timeout/stream/capacity failure of ONE repair must not
+              // discard the whole Stage 1: keep this Part's previous complete
+              // version and let the next round / final gate decide.
+              perPartRepairs.push({ scriptId, round: repairRound, processCount: metricsForPart.agyProcessCount, status: "repair_failed_kept_previous", failureKind: error.kind || "cli_error" });
+              this.emitLog(onProgress, 84,
+                `[EDITORIAL_REPAIR] Part ${scriptId} lỗi ở vòng ${repairRound} (${error.kind || "cli_error"}: ${String(error.message || "").slice(0, 160)}); giữ bản trước, tiếp tục các Part khác.`, logs);
+              continue;
+            }
+            // The former fallback inlined the whole script into --print and
+            // crashed Windows at 35,102 characters (>24k). Isolated recovery
+            // now reads ONE host-owned packet via view_file, never shell/edits.
+            this.emitLog(onProgress, 84,
+              `[EDITORIAL_REPAIR] Part ${scriptId} thử dùng công cụ ngoài phạm vi. Phục hồi ở phiên mới qua JSON FILE (${path.basename(repairPacketPath)}), chỉ cho phép view_file; không chạy lệnh hệ thống.`, logs);
+            const fallbackPrompt = buildRepair(true);
+            const fallbackMetrics = newMetrics();
+            try {
+              const recovered = await this.runAgyPhase({
+                label: `PHASE_B_EDITORIAL_REPAIR_RECOVERY_PART_${scriptId}`,
+                commandConfig: this.buildCommand(fallbackPrompt, schemaPath, pass1Dir, {
+                  packageInfo, timeoutMs: repairTimeoutMs
+                }), prompt: fallbackPrompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+                metrics: fallbackMetrics, logs, logBase: `phaseB-editorial-repair-recovery-${scriptId}`,
+                toolGuard: safeReadOnly
+              });
+              await fs.writeFile(path.join(resultDir, `phaseB-editorial-repair-recovery-part-${scriptId}.log`), recovered.stdout || "", "utf8");
+              payload = findArtifactEnvelope(recovered.stdout || "");
+              if (!payload?.artifacts?.length) {
+                const recoveredScript = await extractNamedArtifact(recovered.stdout || "", {
+                  filename: `script-${scriptId}.json`, artifactType: "story_recut_script"
+                });
+                if (recoveredScript) payload = { artifacts: [{ filename: `script-${scriptId}.json`, script: recoveredScript }] };
+              }
+            } catch (recoveryError) {
+              if (recoveryError.kind === "cancelled" || this.cancelled) throw recoveryError;
+              this.emitLog(onProgress, 84,
+                `[EDITORIAL_REPAIR] Part ${scriptId} phục hồi lỗi (${recoveryError.kind || "cli_error"}); giữ bản trước, không dừng Stage 1.`, logs);
+              payload = null;
+            } finally {
+              repairProcessCount += fallbackMetrics.agyProcessCount;
+            }
+          } finally {
+            repairProcessCount += metricsForPart.agyProcessCount;
+          }
+          const repairedArtifacts = payload?.artifacts || [];
+          const expectedFilename = `script-${scriptId}.json`;
+          if (repairedArtifacts.length !== 1 || repairedArtifacts[0]?.filename !== expectedFilename
+              || Number(repairedArtifacts[0]?.script?.scriptId) !== scriptId) {
+            // Keep the previous complete version (never a half artifact) and
+            // let the next round / the final gate decide, instead of aborting
+            // the whole Stage 1 on one malformed repair response.
+            perPartRepairs.push({ scriptId, round: repairRound, processCount: metricsForPart.agyProcessCount, status: "invalid_repair_kept_previous" });
+            this.emitLog(onProgress, 84,
+              `[EDITORIAL_REPAIR] Part ${scriptId} không trả đúng một JSON hoàn chỉnh (${expectedFilename}) ở vòng ${repairRound}; giữ bản trước, không dùng bản nửa vời.`, logs);
+            continue;
+          }
+          // Reapply the exact same host-locked series metadata that initial
+          // Phase B scripts receive. Otherwise a repaired JSON loses its
+          // 110-125s profile before import and gets misgraded as 75-110s.
+          const normalizedRepair = scriptsFrom({ artifacts: [repairedArtifacts[0]] }).get(scriptId);
+          deduplicated.set(scriptId, normalizedRepair);
+          perPartRepairs.push({ scriptId, round: repairRound, processCount: metricsForPart.agyProcessCount, status: "replaced" });
+        }
+        applyHostVoiceFit(deduplicated, `repair round ${repairRound}`);
+        let roundReport = evaluate(deduplicated);
+        // Best-of: never keep a repair that scores worse than what it replaced.
+        let reverted = false;
+        for (const scriptId of failedIds) {
+          const before = failureReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const after = roundReport.results.find((entry) => Number(entry.scriptId) === scriptId);
+          const previous = versionsBeforeRound.get(scriptId);
+          if (!before || !after || after.passed || !previous) continue;
+          if (editorialCandidateRank(before) > editorialCandidateRank(after)) {
+            deduplicated.set(scriptId, previous);
+            reverted = true;
+            perPartRepairs.push({ scriptId, round: repairRound, status: "reverted_worse_than_previous" });
+            this.emitLog(onProgress, 84, `[EDITORIAL_REPAIR] Part ${scriptId}: bản sửa vòng ${repairRound} kém hơn bản trước (${editorialCandidateRank(after)} < ${editorialCandidateRank(before)}); giữ bản trước.`, logs);
+          }
+        }
+        if (reverted) roundReport = evaluate(deduplicated);
+        failureReport = roundReport;
+        }
+        timing.scriptGeneration.editorialRepairProcesses = repairProcessCount;
+        timing.scriptGeneration.editorialRepairParts = perPartRepairs;
+        timing.scriptGeneration.editorialRepairRounds = repairRoundsRun;
+        let repairedReport = evaluate(deduplicated);
+        if (coldViewerEnabled) repairedReport = StoryFirst.attachAudienceReview(
+          repairedReport, await critiqueCandidate(deduplicated, "repaired")
+        );
+        editorialReport = { ...repairedReport, repairedOnce: true, repairRounds: repairRoundsRun };
+        await writeJsonAtomic(gatePath, editorialReport);
+      }
+      timing.scriptGeneration.editorialReady = editorialReport.accepted;
+      timing.scriptGeneration.editorialScores = editorialReport.results.map((x) => ({ scriptId: x.scriptId, score: x.score, passed: x.passed }));
+      if (!editorialReport.accepted) {
+        await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
+        const codes = editorialReport.results.filter((x) => !x.passed)
+          .map((x) => {
+            const reasons = [
+              ...(x.productionPreflight?.issues || []).slice(0, 2),
+              ...(x.renderDryRun?.issues || []).slice(0, 2).map((item) => item.message)
+            ].map((reason) => String(reason).replace(/\s+/g, " ").slice(0, 160));
+            return `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 4).join(", ")}${reasons.length ? ` (${reasons.join(" | ")})` : ""}`;
+          }).join("; ");
+        const error = new Error(`[EDITORIAL_GATE] V1 bị chặn trước render: ${codes}. Xem ${gatePath}.`);
+        error.kind = "editorial_quality";
+        throw error;
+      }
+      this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${editorialReport.results.map((x) => `Part ${x.scriptId}: structure=${x.structuralScore ?? x.score}, cold-viewer=${x.audienceScore ?? "disabled"}, production-preflight=${x.productionPreflight?.score ?? "disabled"}`).join("; ")}; bản render thực tế vẫn cần MP4 review.`, logs);
+    }
+    }
+    // Series contract shared with the Highlight Cut import: make the cold-open
+    // mode explicit (Story-First plans give each Part its own hookRange) and fail
+    // here, not after the project is created, if the import would reject it.
+    const seriesFinal = loadSeriesImportContract().finalizeSeriesHookMode(
+      requestedScriptIds.map((scriptId) => deduplicated.get(scriptId)?.script).filter(Boolean)
+    );
+    if (seriesFinal.changed) {
+      seriesFinal.scripts.forEach((script) => {
+        const scriptId = Number(script.scriptId ?? script.script_id);
+        const artifact = deduplicated.get(scriptId);
+        if (artifact) deduplicated.set(scriptId, { ...artifact, script });
+      });
+    }
+    if (seriesFinal.sharedHookEnabled !== null) {
+      this.emitLog(onProgress, 88, `[SERIES_CONTRACT] ${seriesFinal.sharedHookEnabled
+        ? "Cold Open dùng chung: chuỗi Hook đầu của các Part trùng khớp."
+        : "Hook riêng từng Part theo Series Plan; shared_hook_enabled=false."}${seriesFinal.narratorRangesMerged ? " Đã hợp nhất source_narrator_ranges cho mọi Part." : ""}`, logs);
+    }
+    if (seriesFinal.contract.errors.length) {
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
+      const error = new Error(`[SERIES_CONTRACT] Bộ Part không qua được kiểm tra import: ${seriesFinal.contract.errors.map((item) => item.message).join(" ")}`);
+      error.kind = "series_contract";
+      throw error;
+    }
+    const normalized = [...deduplicated.values()];
     const files = [];
     for (const scriptId of requestedScriptIds) {
       const artifact = deduplicated.get(scriptId);
@@ -3627,6 +4538,654 @@ class ManualAntigravityStage1Service {
         cacheKey: understandingKey
       }
     };
+  }
+
+  /**
+   * Story-First Phase B, one Part at a time (real run 2026-10-13: the single
+   * three-Part conversation took 38 turns / 12.6 min and a failed repair then
+   * discarded the whole 45-minute Stage 1).
+   *
+   *  1. Writer: one AGY process per Part over ONE compact host packet
+   *     (Part contract, verified events, Part-scoped transcript/scenes,
+   *     editorial rules, gates), run in parallel (default 3).
+   *  2. Instant host gates: story structure + production preflight + render
+   *     dry-run (shared `evaluate`).
+   *  3. Cold viewer per Part, in parallel, cached by script content.
+   *  4. Repairs per failing Part in parallel; any AI/transport failure keeps
+   *     that Part's previous complete version; best-of revert per Part.
+   *  5. Every writer result, best version and review is content-addressed in
+   *     the source cache, so a rerun resumes where the last run stopped.
+   */
+  async runStoryFirstPartPipeline(ctx) {
+    const {
+      resolvedPackageDir, resultDir, pass1Dir, phaseBInputDir, packageInfo, schemaPath, requestedScriptIds, series, seriesPlan,
+      storyIntelligence, promptText, inputPaths, videoDurationSec, measuredWordsPerSecond, understandingKey,
+      cacheDir, timing, logs, onProgress, stage1StartedAt, expectedProxyList, gatePath, scriptsFrom, evaluate, applyHostVoiceFit,
+      sceneEvidenceLedger = null
+    } = ctx;
+    const ids = [...requestedScriptIds];
+    const settings = this.settings;
+    const concurrency = Math.max(1, Math.min(3, Math.round(Number(settings.storyFirstPartConcurrency ?? 3)) || 3));
+    const phaseBTimeoutSec = Math.round(resolvePhaseTimeoutMs("phase_b", settings) / 1000);
+    const startedAt = Date.now();
+    const totals = newMetrics();
+    const throwIfCancelled = () => {
+      if (!this.cancelled) return;
+      const error = new Error("Đã dừng theo yêu cầu.");
+      error.kind = "cancelled";
+      throw error;
+    };
+
+    // ---- shared, host-built inputs ----------------------------------------
+    const transcriptText = inputPaths.transcriptPath ? await fs.readFile(inputPaths.transcriptPath, "utf8").catch(() => "") : "";
+    const cues = parseSrtForContext(transcriptText);
+    const manifest = await StoryFirst.readJson(inputPaths.sceneManifestPath);
+    const scenes = Array.isArray(manifest?.scenes) ? manifest.scenes : [];
+    const actionsDoc = await StoryFirst.readJson(inputPaths.actionCandidatesPath);
+    const actionCandidates = Array.isArray(actionsDoc?.candidates) ? actionsDoc.candidates : [];
+    const rulesText = PartPipeline.extractEditorialRules(promptText);
+    // "AI chooses, host computes": the writer returns a beat plan (scene ids,
+    // audio, narration, role) and repairs return edit operations; the host
+    // compiles exact source ranges (storyBeatCompiler). "segments" keeps the
+    // previous full-script contract.
+    const outputMode = settings.storyFirstOutputMode === "segments" ? "segments" : "beats";
+    const ledgerById = new Map((sceneEvidenceLedger?.scenes || [])
+      .filter((row) => row.seen || row.action || row.heard || (row.evidence || []).length)
+      .map((row) => [row.sceneId, row]));
+    const contexts = new Map(ids.map((id) => [id, PartPipeline.buildPartContextPack({
+      scriptId: id, seriesPlan, intelligence: storyIntelligence, cues, scenes, actionCandidates,
+      ledgerById, beatMode: outputMode === "beats"
+    })]));
+    let plans = new Map();
+    const partOf = (id) => (seriesPlan?.parts || []).find((item) => Number(item.scriptId) === Number(id)) || null;
+    const compileFor = (id, plan) => BeatCompiler.compileBeatPlan(plan, {
+      scriptId: id, scenes, cues, wordsPerSecond: measuredWordsPerSecond, part: partOf(id), seriesPlan,
+      maxDurationSec: series?.durationMaxSec ?? Infinity
+    });
+    const constraintLinesFor = (id) => loadProductionPreflight().describeProductionConstraints(
+      seriesProductionConstraints(series, measuredWordsPerSecond, id)
+    );
+    const partCacheDir = path.join(cacheDir, "story-first-parts");
+    await fs.mkdir(partCacheDir, { recursive: true }).catch(() => {});
+    const { lockedAt: _lockedAt, ...planForKey } = seriesPlan || {};
+    const baseKey = PartPipeline.stableHash({
+      version: STORY_FIRST_PART_PIPELINE_VERSION, understandingKey, plan: planForKey,
+      prompt: PartPipeline.stableHash(promptText), profile: series?.profile,
+      model: settings.antigravityModel || process.env.ANTIGRAVITY_MODEL || "",
+      reasoning: settings.antigravityReasoning || "high", wordsPerSecond: measuredWordsPerSecond || 0
+    });
+    const partKey = (id) => PartPipeline.stableHash({ baseKey, id });
+    const cachePath = (kind, id, key = partKey(id)) => path.join(partCacheDir, `part-${id}-${kind}-${key}.json`);
+    const readCache = async (file) => {
+      try { return JSON.parse(await fs.readFile(file, "utf8")); } catch (_error) { return null; }
+    };
+    const writeCache = async (file, payload) => {
+      try { await writeJsonAtomic(file, payload); } catch (error) {
+        this.emitLog(onProgress, 61, `[PHASE_B] CACHE WARNING: ${error.message}`, logs);
+      }
+    };
+    const guard = PartPipeline.buildPackageReadOnlyGuard({ roots: [pass1Dir, resultDir], stepLabel: "Phase B Part step" });
+    const pickScript = (stdout, id) => {
+      const envelope = findArtifactEnvelope(stdout || "");
+      const artifact = (envelope?.artifacts || []).find((item) => item?.filename === `script-${id}.json`)
+        || (envelope?.artifacts || []).find((item) => Number((item?.script || item)?.scriptId) === Number(id));
+      return artifact ? (artifact.script || artifact) : null;
+    };
+    const parseOutput = async (stdout, id) => {
+      const envelope = findArtifactEnvelope(stdout || "");
+      const mine = (envelope?.artifacts || []).map((item) => item?.script || item)
+        .filter((item) => item && typeof item === "object" && (!Number(item.scriptId) || Number(item.scriptId) === Number(id)));
+      let edits = mine.find(BeatCompiler.isBeatEdits) || null;
+      let plan = mine.find(BeatCompiler.isBeatPlan) || null;
+      let script = mine.find((item) => Array.isArray(item.segments) && item.segments.length) || null;
+      if (!edits && !plan && !script) {
+        edits = findObjectDeep(stdout || "", (object) => object.artifactType === "story_beat_edits" && Array.isArray(object.edits));
+        plan = edits ? null : findObjectDeep(stdout || "", (object) => BeatCompiler.isBeatPlan(object));
+        if (!edits && !plan) {
+          script = pickScript(stdout, id)
+            || await extractNamedArtifact(stdout || "", { filename: `script-${id}.json`, artifactType: "highlight_cut_script" });
+        }
+      }
+      return { edits, plan, script };
+    };
+    const runText = async ({ label, prompt, timeoutMs, logBase, metrics, modelOverride = "" }) => {
+      const commandConfig = this.buildCommand(prompt, schemaPath, pass1Dir, { packageInfo, timeoutMs, ...(modelOverride ? { modelOverride } : {}) });
+      return this.runAgyPhase({
+        label, commandConfig, prompt, resultDir, onProgress, expectedProxyList: [], viewedProxySet: new Set(),
+        metrics, logs, logBase, toolGuard: guard
+      });
+    };
+    const TRANSIENT = new Set(["capacity", "stream_interrupted", "print_timeout", "hard_timeout", "inactivity_timeout", "cli_error", "invalid_output", "forbidden_tool", "output_token_limit"]);
+    // Reasoning per step (see resolveStepModel): writer/repair default
+    // "medium"; any failed attempt is retried ONE level lower ("low"), which
+    // bounds thinking further instead of repeating the same runaway turn.
+    const writerModel = resolveStepModel(settings, settings.storyFirstWriterReasoning || "medium");
+    const repairModel = resolveStepModel(settings, settings.storyFirstRepairReasoning || "medium");
+    const fallbackModel = resolveStepModel(settings, "low");
+    const criticModel = settings.storyFirstColdViewerReasoning ? resolveStepModel(settings, settings.storyFirstColdViewerReasoning) : "";
+    if (writerModel || repairModel) {
+      this.emitLog(onProgress, 60, `[PHASE_B] Model theo bước: viết=${writerModel || "(mặc định)"}, sửa=${repairModel || "(mặc định)"}, thử lại=${fallbackModel || "(mặc định)"}, cold viewer=${criticModel || settings.antigravityModel || "(mặc định)"}.`, logs);
+    }
+
+    // ---- 1. writers ----------------------------------------------------------
+    this.emitLog(onProgress, 60, `[PHASE_B] START (từng Part): ${ids.length} Part, song song tối đa ${concurrency}; mỗi Part đọc 1 gói ngữ cảnh gọn (${ids.map((id) => `Part ${id} ${Math.round(contexts.get(id).chars / 1000)}K`).join(", ")}), không đọc transcript/manifest toàn bộ.`, logs);
+    const scripts = new Map();
+    const partRecords = new Map(ids.map((id) => [id, { scriptId: id, source: null, durationMs: 0, processCount: 0, attempts: [] }]));
+    for (const id of ids) {
+      const best = await readCache(cachePath("best", id));
+      if (best?.script && Number(best.script.scriptId) === id) {
+        scripts.set(id, best.script);
+        if (best.plan) plans.set(id, best.plan);
+        partRecords.get(id).source = best.passed ? "best_cache_passed" : "best_cache";
+        continue;
+      }
+      const written = await readCache(cachePath("writer", id));
+      if (written?.script && Number(written.script.scriptId) === id) {
+        scripts.set(id, written.script);
+        if (written.plan) plans.set(id, written.plan);
+        partRecords.get(id).source = "writer_cache";
+      }
+    }
+    const cachedIds = ids.filter((id) => scripts.has(id));
+    if (cachedIds.length) {
+      this.emitLog(onProgress, 61, `[PHASE_B] CACHE HIT: ${cachedIds.map((id) => `Part ${id} (${partRecords.get(id).source})`).join(", ")}; không viết lại.`, logs);
+    }
+    const writeOne = async (id, { modelOverride = writerModel, attempt = 1 } = {}) => {
+      const record = partRecords.get(id);
+      const metrics = newMetrics();
+      const partStartedAt = Date.now();
+      const part = (seriesPlan?.parts || []).find((item) => Number(item.scriptId) === id) || {};
+      const packetPath = path.join(phaseBInputDir, `part-${id}-writer-packet.txt`);
+      const packet = PartPipeline.buildPartWriterPacket({
+        scriptId: id, contextText: contexts.get(id).text, rulesText, constraintLines: constraintLinesFor(id),
+        measuredWordsPerSecond, durationMinSec: series?.durationMinSec ?? 110, durationMaxSec: series?.durationMaxSec ?? 125,
+        outputMode
+      });
+      await fs.writeFile(packetPath, packet, "utf8");
+      const prompt = assertPrintPromptSize(PartPipeline.buildPartWriterPrompt({ scriptId: id, partBadge: part.partBadge, packetPath, outputMode }), `Phase B Part ${id}`);
+      const timeoutMs = PartPipeline.estimateWriteTimeoutMs({ outputChars: 14000, inputChars: packet.length, minSec: 420, maxSec: Math.max(420, phaseBTimeoutSec) });
+      this.emitLog(onProgress, 62, `[PHASE_B Part ${id}] START: gói ${Math.round(packet.length / 1000)}K ký tự, timeout ${Math.round(timeoutMs / 1000)}s.`, logs);
+      try {
+        const result = await runText({ label: `PHASE_B_PART_${id}`, prompt, timeoutMs, logBase: `phaseB-part-${id}-try${attempt}`, metrics, modelOverride });
+        await fs.writeFile(path.join(resultDir, `antigravity-output-phaseB-part-${id}.log`), result.stdout || "", "utf8").catch(() => {});
+        const out = await parseOutput(result.stdout, id);
+        let normalized = null;
+        let plan = null;
+        if (out.plan) {
+          const compiled = compileFor(id, out.plan);
+          plan = compiled.plan;
+          if (compiled.script.segments.length) normalized = compiled.script;
+          this.emitLog(onProgress, 70, `[PHASE_B Part ${id}] host biên dịch ${compiled.plan.beats.length} beat → ${compiled.script.segments.length} segment${compiled.errors.length ? `; ${compiled.errors.length} lỗi beat sẽ được sửa (${[...new Set(compiled.errors.map((item) => item.code))].join(", ")})` : ""}.`, logs);
+        } else if (out.script) {
+          try { normalized = normalizeArtifact({ filename: `script-${id}.json`, script: { ...out.script, scriptId: id } }).script; } catch (_error) { normalized = null; }
+        }
+        if (!normalized) return { ok: false, kind: "invalid_output", message: `Part ${id}: AI không trả beat plan/script hợp lệ.`, metrics };
+        return { ok: true, script: normalized, plan, metrics };
+      } catch (error) {
+        if (error.kind === "cancelled" || this.cancelled) throw error;
+        return { ok: false, kind: error.kind || classifyAgyFailure(error), message: String(error.message || "").slice(0, 300), metrics };
+      } finally {
+        record.durationMs += Date.now() - partStartedAt;
+      }
+    };
+    const pending = ids.filter((id) => !scripts.has(id));
+    const settle = async (list, limit, options = {}) => {
+      const outcomes = await runBounded(list, limit, async (id) => {
+        try { return await writeOne(id, options); } catch (error) { return { ok: false, kind: error.kind || "cli_error", message: String(error.message || ""), metrics: newMetrics(), fatal: error }; }
+      });
+      outcomes.forEach((outcome, index) => {
+        const id = list[index];
+        mergeMetrics(totals, outcome.metrics);
+        const record = partRecords.get(id);
+        record.processCount += outcome.metrics?.agyProcessCount || 0;
+        record.attempts.push({ ok: outcome.ok, kind: outcome.kind || null });
+        if (outcome.ok) {
+          scripts.set(id, outcome.script);
+          if (outcome.plan) plans.set(id, outcome.plan); else plans.delete(id);
+          record.source = "writer";
+          this.emitLog(onProgress, 70, `[PHASE_B Part ${id}] DONE: ${PartPipeline.segmentsOf(outcome.script).length} segment (${(record.durationMs / 1000).toFixed(1)}s).`, logs);
+        } else {
+          this.emitLog(onProgress, 70, `[PHASE_B Part ${id}] FAILED (${outcome.kind}): ${String(outcome.message || "").slice(0, 200)}`, logs);
+        }
+      });
+      const fatal = outcomes.find((outcome) => outcome.fatal && (outcome.fatal.kind === "cancelled" || this.cancelled));
+      if (fatal) throw fatal.fatal;
+      return outcomes;
+    };
+    if (pending.length) {
+      const first = await settle(pending, concurrency);
+      throwIfCancelled();
+      const retry = pending.filter((id, index) => !first[index].ok && TRANSIENT.has(first[index].kind));
+      if (retry.length) {
+        totals.retryCount += retry.length;
+        this.emitLog(onProgress, 71, `[PHASE_B] Viết lại TUẦN TỰ ${retry.map((id) => `Part ${id}`).join(", ")} sau lỗi tạm thời; các Part đã xong giữ nguyên.`, logs);
+        await settle(retry, 1, { modelOverride: fallbackModel || writerModel, attempt: 2 });
+      }
+    }
+    for (const id of ids) {
+      if (partRecords.get(id).source === "writer") await writeCache(cachePath("writer", id), { schemaVersion: 1, key: partKey(id), script: scripts.get(id), plan: plans.get(id) || null });
+    }
+    const missing = ids.filter((id) => !scripts.has(id));
+    const fileReads = Object.entries(totals.fileReads);
+    timing.scriptGeneration = {
+      mode: "per_part",
+      durationMs: Date.now() - startedAt,
+      writerDurationMs: Date.now() - startedAt,
+      concurrency,
+      agyProcessCount: totals.agyProcessCount,
+      retryCount: totals.retryCount,
+      viewFileCount: totals.viewFileTextCount + totals.viewFileVideoCount,
+      videoViewFileCount: totals.viewFileVideoCount,
+      sourceProxyViewCount: 0,
+      fullSourceRewatched: false,
+      transcriptReadCount: fileReads.filter(([name]) => /transcript|\.srt$/i.test(name)).reduce((sum, [, count]) => sum + count, 0),
+      manifestReadCount: fileReads.filter(([name]) => /manifest/i.test(name)).reduce((sum, [, count]) => sum + count, 0),
+      agentTurnCount: totals.agentTurns,
+      parts: [...partRecords.values()].map((item) => ({ ...item, packetChars: contexts.get(item.scriptId)?.chars || 0 })),
+      tokens: tokenSummary(totals)
+    };
+    if (missing.length) {
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+      const error = new Error(`[PHASE_B] Không viết được ${missing.map((id) => `Part ${id}`).join(", ")}. Các Part đã viết xong được lưu cache; chạy lại chỉ viết các Part còn thiếu.`);
+      error.kind = "phase_b_part_failed";
+      throw error;
+    }
+    this.emitLog(onProgress, 80, `[PHASE_B] DONE (từng Part) sau ${((Date.now() - startedAt) / 1000).toFixed(1)}s: ${totals.agyProcessCount} tiến trình AGY, ${totals.agentTurns} lượt AI, 0 view_file video.`, logs);
+    onProgress?.({ step: "antigravity_stage1", percent: 82, message: "Đang kiểm tra các JSON variant" });
+
+    // Every Part gets a beat plan, including legacy/cached full scripts (one
+    // beat per segment), so all repairs can be edit operations.
+    if (outputMode === "beats") {
+      for (const id of ids) {
+        if (plans.has(id) || !scripts.get(id)) continue;
+        const lifted = BeatCompiler.segmentsToBeatPlan(scripts.get(id), scenes);
+        if (!lifted.beats.length) continue;
+        const compiled = compileFor(id, lifted);
+        if (compiled.script.segments.length === lifted.beats.length) {
+          scripts.set(id, { ...scripts.get(id), ...compiled.script, title: scripts.get(id).title || compiled.script.title });
+          plans.set(id, compiled.plan);
+        }
+      }
+    }
+    let current = scriptsFrom({ artifacts: ids.map((id) => ({ filename: `script-${id}.json`, script: scripts.get(id) })) });
+    for (const [id, artifact] of current) {
+      await writeJsonAtomic(path.join(resultDir, `script-${id}-v1-candidate.json`), artifact.script);
+    }
+    applyHostVoiceFit(current, "initial");
+
+    // ---- 3. cold viewer per Part (cached by content) ----------------------------
+    const coldViewerEnabled = settings.storyFirstColdViewerEnabled !== false;
+    const reviewMetrics = newMetrics();
+    const reviewPart = async (id, script, suffix) => {
+      const contextText = contexts.get(id).text;
+      const key = PartPipeline.stableHash({ version: STORY_FIRST_PART_PIPELINE_VERSION, contextText, script });
+      const cacheFile = path.join(partCacheDir, `part-${id}-cold-viewer-${key}.json`);
+      const cached = await readCache(cacheFile);
+      if (cached?.review) return { ...cached.review, fromCache: true };
+      const packetPath = path.join(resultDir, `part-${id}-cold-viewer-${suffix}-packet.txt`);
+      await fs.writeFile(packetPath, PartPipeline.buildColdViewerPartPacket({ scriptId: id, script, contextText, cues, ledgerById }), "utf8");
+      const prompt = assertPrintPromptSize(PartPipeline.buildColdViewerPartPrompt({
+        scriptId: id, packetPath, criticalCodes: [...(StoryFirst.CRITICAL_AUDIENCE_CODES || [])]
+      }), `Cold viewer Part ${id}`);
+      let lastError = null;
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        throwIfCancelled();
+        const metrics = newMetrics();
+        try {
+          const response = await runText({
+            label: `PHASE_B_COLD_VIEWER_PART_${id}`, prompt, logBase: `phaseB-cold-viewer-part-${id}-${suffix}-try${attempt}`, metrics, modelOverride: criticModel,
+            timeoutMs: PartPipeline.estimateWriteTimeoutMs({ outputChars: 6000, minSec: 240, maxSec: Math.max(240, Math.min(phaseBTimeoutSec, 600)) })
+          });
+          mergeMetrics(reviewMetrics, metrics);
+          const artifact = findArtifactEnvelope(response.stdout || "")?.artifacts?.find((item) => item.filename === "audience-review.json");
+          const raw = artifact?.script
+            || findObjectDeep(response.stdout || "", (object) => object.artifactType === "audience_review");
+          const validated = StoryFirst.validateColdViewerReview(raw, [id]);
+          await writeJsonAtomic(path.join(resultDir, `audience-review-part-${id}-${suffix}.json`), { ...validated, rawReview: raw });
+          if (!validated.errors.length) {
+            await writeCache(cacheFile, { schemaVersion: 1, review: validated });
+            return validated;
+          }
+          lastError = new Error(`malformed review: ${validated.errors.slice(0, 2).join(" ")}`);
+          lastError.kind = "invalid_output";
+        } catch (error) {
+          mergeMetrics(reviewMetrics, metrics);
+          if (error.kind === "cancelled" || this.cancelled) throw error;
+          lastError = error;
+        }
+        this.emitLog(onProgress, 83, `[COLD_VIEWER Part ${id}] lần ${attempt} lỗi (${lastError.kind || "cli_error"}: ${String(lastError.message || "").slice(0, 140)})${attempt < 2 ? "; thử lại phiên mới." : "."}`, logs);
+      }
+      const error = new Error(`[COLD_VIEWER] Part ${id}: không nhận được đánh giá hợp lệ sau 2 lần (${lastError?.kind || "cli_error"}). Kịch bản đã lưu cache; chạy lại sẽ tiếp tục từ bước này.`);
+      error.kind = lastError?.kind === "auth" ? "auth" : "cold_viewer_unavailable";
+      throw error;
+    };
+    const reviewAll = async (map, suffix, onlyIds = null) => {
+      const targets = ids.filter((id) => map.has(id) && (!onlyIds || onlyIds.includes(id)));
+      this.emitLog(onProgress, 83, `[COLD_VIEWER] Đánh giá độc lập ${targets.map((id) => `Part ${id}`).join(", ")} (${suffix}), song song, không xem video.`, logs);
+      const reviews = await runBounded(targets, concurrency, async (id) => {
+        try { return { id, review: await reviewPart(id, map.get(id).script, suffix) }; } catch (error) { return { id, error }; }
+      });
+      const fatal = reviews.find((item) => item.error && (["auth", "cancelled"].includes(item.error.kind) || this.cancelled || settings.storyFirstColdViewerRequired === true));
+      if (fatal) {
+        mergeMetrics(totals, reviewMetrics);
+        await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }).catch(() => {});
+        throw fatal.error;
+      }
+      // The cold viewer is an AI opinion, not a gate the host can verify. When
+      // it cannot produce a valid review twice (transport/format), the Part is
+      // judged by the deterministic host gates alone and this is reported,
+      // instead of discarding the run (set storyFirstColdViewerRequired=true
+      // to block instead).
+      for (const item of reviews.filter((entry) => entry.error)) {
+        this.emitLog(onProgress, 83, `[COLD_VIEWER] Part ${item.id} KHÔNG KHẢ DỤNG (${item.error.kind || "cli_error"}): Part này chỉ được chấm bằng cổng host (cấu trúc, production preflight, render dry-run); vẫn nên xem kỹ ở bước review MP4.`, logs);
+        item.review = { unavailable: true, errors: [], parts: [{ scriptId: item.id, score: null, accepted: true, unavailable: true, issues: [] }] };
+      }
+      const cachedCount = reviews.filter((item) => item.review.fromCache).length;
+      if (cachedCount) this.emitLog(onProgress, 83, `[COLD_VIEWER] ${cachedCount} Part dùng lại đánh giá đã cache (kịch bản không đổi).`, logs);
+      return reviews;
+    };
+    const combineAudience = (reviewsById) => {
+      const parts = ids.map((id) => reviewsById.get(id)?.parts?.[0]).filter(Boolean);
+      const errors = ids.flatMap((id) => reviewsById.get(id)?.errors || []);
+      return { artifactType: "audience_review_validation", accepted: errors.length === 0 && parts.length === ids.length && parts.every((part) => part.accepted), errors, parts };
+    };
+    const reviewsById = new Map();
+    const evaluateWithAudience = async (map, suffix, changedIds = null) => {
+      let report = evaluate(map);
+      if (!coldViewerEnabled) return report;
+      const reviews = await reviewAll(map, suffix, changedIds);
+      for (const item of reviews) reviewsById.set(item.id, item.review);
+      report = StoryFirst.attachAudienceReview(report, combineAudience(reviewsById));
+      const unavailable = ids.filter((id) => reviewsById.get(id)?.unavailable);
+      if (unavailable.length) {
+        report.results = report.results.map((item) => (unavailable.includes(Number(item.scriptId))
+          ? { ...item, score: item.structuralScore ?? item.score, audienceScore: null, audienceReviewUnavailable: true,
+            warnings: [...(item.warnings || []), { code: "audience_review_unavailable", message: "Cold viewer could not return a valid review; host gates only." }] }
+          : item));
+        report.audienceReviewUnavailableParts = unavailable;
+      }
+      return report;
+    };
+    const logPreflight = (report) => {
+      for (const item of report.results) {
+        if (item.productionPreflight && !item.productionPreflight.passed) {
+          const firstReasons = (item.productionPreflight.issues || []).slice(0, 3).map((reason) => String(reason).replace(/\s+/g, " ").slice(0, 180));
+          this.emitLog(onProgress, 82, `[PRODUCTION_PREFLIGHT] Part ${item.scriptId} = ${item.productionPreflight.score}/100, editorial=${item.productionPreflight.editorialReadiness}, technical=${item.productionPreflight.technicalReadiness}; lỗi chính: ${firstReasons.join(" | ")}`, logs);
+        }
+      }
+    };
+    const saveBest = async (map, report) => {
+      for (const id of ids) {
+        const artifact = map.get(id);
+        if (!artifact) continue;
+        const result = report.results.find((item) => Number(item.scriptId) === id);
+        await writeCache(cachePath("best", id), { schemaVersion: 1, key: partKey(id), passed: Boolean(result?.passed), score: result?.score ?? null, script: artifact.script, plan: plans.get(id) || null, updatedAt: new Date().toISOString() });
+      }
+    };
+
+    let report = await evaluateWithAudience(current, "initial");
+    logPreflight(report);
+    await writeJsonAtomic(gatePath, report);
+    await saveBest(current, report);
+
+    // ---- 4. repairs per failing Part, in parallel ---------------------------------
+    // Cold-viewer taste issues become advisory after the repairs (see below);
+    // host-gate and factual problems stay blocking and may get a 3rd round.
+    const advisoryCodes = new Set([...(StoryFirst.CRITICAL_AUDIENCE_CODES || [])].filter((code) => !["false_claim", "wrong_actor"].includes(code)));
+    advisoryCodes.add("audience_review_rejected");
+    const coldViewerAdvisory = coldViewerEnabled && settings.storyFirstColdViewerBlocking !== true;
+    const blockingErrorsOf = (item) => {
+      if (!coldViewerAdvisory) return item.errors || [];
+      const fromAudience = new Set((item.audienceIssues || []).map((issue) => issue.code));
+      return (item.errors || []).filter((error) => !(advisoryCodes.has(error.code) && (fromAudience.has(error.code) || error.code === "audience_review_rejected")));
+    };
+    const advisoryRounds = Math.max(1, Math.min(3, Math.round(Number(settings.storyFirstMaxRepairRounds ?? 2) || 2)));
+    const maxRepairRounds = Math.max(advisoryRounds, Math.min(3, Math.round(Number(settings.storyFirstMaxBlockingRepairRounds ?? 3) || 3)));
+    const perPartRepairs = [];
+    let repairRoundsRun = 0;
+    let repairProcessCount = 0;
+    for (let round = 1; round <= maxRepairRounds && !report.accepted; round += 1) {
+      throwIfCancelled();
+      const failedIds = report.results.filter((item) => !item.passed)
+        // Past the normal rounds, only Parts with BLOCKING problems get more work.
+        .filter((item) => round <= advisoryRounds || blockingErrorsOf(item).length > 0)
+        .map((item) => Number(item.scriptId));
+      if (!failedIds.length) break;
+      repairRoundsRun = round;
+      this.emitLog(onProgress, 84, `[EDITORIAL_GATE] ${round === 1 ? "V1 chưa đạt" : `Vòng sửa ${round}/${maxRepairRounds}`}: ${report.results.filter((x) => !x.passed).map((x) => `Part ${x.scriptId}: ${x.errors.map((e) => e.code).slice(0, 4).join(", ")}`).join("; ")}. Sửa song song từng Part từ bằng chứng đã khóa.`, logs);
+      const repairOne = async (id) => {
+        const artifact = current.get(id);
+        // Edit operations need the beat plan; a legacy full script repairs as before.
+        const repairMode = outputMode === "beats" && plans.get(id) ? "beats" : "segments";
+        const result = report.results.find((item) => Number(item.scriptId) === id);
+        await writeJsonAtomic(path.join(resultDir, round === 1 ? `script-${id}-before-editorial-repair.json` : `script-${id}-before-editorial-repair-round${round}.json`), artifact.script);
+        const packetPath = path.join(resultDir, `part-${id}-repair-round${round}-packet.txt`);
+        const packet = PartPipeline.buildPartRepairPacket({
+          scriptId: id, script: artifact.script, result, contextText: contexts.get(id).text, cues,
+          constraintLines: constraintLinesFor(id),
+          wordBudgetLines: (result?.renderDryRun?.wordBudgets || []).filter((budget) => budget.overBudget).slice(0, 8)
+            .map((budget) => `- Segment ${budget.segments.join("+")} (${budget.footageSec}s footage): ${budget.currentWords} words now, max ${budget.maxWords}.`),
+          measuredWordsPerSecond, durationMinSec: series?.durationMinSec ?? 110, durationMaxSec: series?.durationMaxSec ?? 125, repairRound: round,
+          outputMode: repairMode, beatPlan: plans.get(id) || null, ledgerById
+        });
+        await fs.writeFile(packetPath, packet, "utf8");
+        const prompt = assertPrintPromptSize(PartPipeline.buildPartRepairPrompt({ scriptId: id, packetPath, outputMode: repairMode }), `Repair Part ${id}`);
+        const timeoutMs = PartPipeline.estimateWriteTimeoutMs({
+          outputChars: repairMode === "beats" ? 5000 : JSON.stringify(artifact.script).length * 1.1, inputChars: packet.length, minSec: 300, maxSec: Math.max(300, phaseBTimeoutSec)
+        });
+        let lastKind = null;
+        for (let attempt = 1; attempt <= 2; attempt += 1) {
+          throwIfCancelled();
+          const metrics = newMetrics();
+          try {
+            const response = await runText({
+              label: `PHASE_B_REPAIR_PART_${id}`, prompt, timeoutMs, logBase: `phaseB-repair-part-${id}-round${round}-try${attempt}`, metrics,
+              modelOverride: attempt === 1 ? repairModel : (fallbackModel || repairModel)
+            });
+            repairProcessCount += metrics.agyProcessCount;
+            mergeMetrics(totals, metrics);
+            const out = await parseOutput(response.stdout, id);
+            let compiledScript = null;
+            let nextPlan = null;
+            let editInfo = null;
+            if (out.edits && plans.get(id)) {
+              const edited = BeatCompiler.applyBeatEdits(plans.get(id), out.edits);
+              editInfo = { applied: edited.applied.length, rejected: edited.rejected.length, rejectedReasons: edited.rejected.slice(0, 4).map((item) => item.reason) };
+              if (edited.applied.length) {
+                const compiled = compileFor(id, edited.plan);
+                if (compiled.script.segments.length) { compiledScript = compiled.script; nextPlan = compiled.plan; }
+              }
+            } else if (out.plan) {
+              const compiled = compileFor(id, out.plan);
+              if (compiled.script.segments.length) { compiledScript = compiled.script; nextPlan = compiled.plan; }
+            } else if (out.script) {
+              compiledScript = { ...out.script, scriptId: id };
+            }
+            let repaired = null;
+            try { repaired = compiledScript ? scriptsFrom({ artifacts: [{ filename: `script-${id}.json`, script: compiledScript }] }).get(id) : null; } catch (_error) { repaired = null; }
+            if (repaired) {
+              if (editInfo) {
+                this.emitLog(onProgress, 84, `[EDITORIAL_REPAIR] Part ${id} vòng ${round}: áp dụng ${editInfo.applied} thao tác${editInfo.rejected ? `, bỏ ${editInfo.rejected} thao tác không hợp lệ (${editInfo.rejectedReasons.join("; ")})` : ""}; host biên dịch lại timeline.`, logs);
+              }
+              return { id, status: "replaced", artifact: repaired, plan: nextPlan, editInfo, attempts: attempt };
+            }
+            lastKind = "invalid_output";
+          } catch (error) {
+            repairProcessCount += metrics.agyProcessCount;
+            mergeMetrics(totals, metrics);
+            if (error.kind === "cancelled" || this.cancelled) throw error;
+            lastKind = error.kind || classifyAgyFailure(error);
+          }
+          if (attempt < 2 && TRANSIENT.has(lastKind)) {
+            this.emitLog(onProgress, 84, `[EDITORIAL_REPAIR] Part ${id} vòng ${round}: lỗi ${lastKind}; thử lại 1 lần trong phiên mới${fallbackModel ? ` với ${fallbackModel}` : ""}.`, logs);
+            continue;
+          }
+          break;
+        }
+        return { id, status: "repair_failed_kept_previous", failureKind: lastKind };
+      };
+      const outcomes = await runBounded(failedIds, concurrency, async (id) => {
+        try { return await repairOne(id); } catch (error) {
+          if (error.kind === "cancelled" || this.cancelled) return { id, status: "cancelled", fatal: error };
+          return { id, status: "repair_failed_kept_previous", failureKind: error.kind || "cli_error" };
+        }
+      });
+      const cancelled = outcomes.find((item) => item.fatal);
+      if (cancelled) throw cancelled.fatal;
+      const candidate = new Map(current);
+      const candidatePlans = new Map(plans);
+      const changedIds = [];
+      for (const outcome of outcomes) {
+        perPartRepairs.push({ scriptId: outcome.id, round, status: outcome.status, failureKind: outcome.failureKind || null, edits: outcome.editInfo || null });
+        if (outcome.status === "replaced") {
+          candidate.set(outcome.id, outcome.artifact);
+          if (outcome.plan) candidatePlans.set(outcome.id, outcome.plan); else candidatePlans.delete(outcome.id);
+          changedIds.push(outcome.id);
+        } else {
+          this.emitLog(onProgress, 84, `[EDITORIAL_REPAIR] Part ${outcome.id} vòng ${round}: không nhận được bản sửa hợp lệ (${outcome.failureKind || "invalid_output"}); giữ bản trước, các Part khác vẫn tiếp tục.`, logs);
+        }
+      }
+      if (!changedIds.length) continue;
+      applyHostVoiceFit(candidate, `repair round ${round}`);
+      let roundReport = await evaluateWithAudience(candidate, `repaired-round${round}`, changedIds);
+      // Best-of per Part: never keep a repair that ranks worse than before.
+      let reverted = false;
+      for (const id of changedIds) {
+        const before = report.results.find((item) => Number(item.scriptId) === id);
+        const after = roundReport.results.find((item) => Number(item.scriptId) === id);
+        if (before && after && editorialCandidateRank(after) < editorialCandidateRank(before)) {
+          candidate.set(id, current.get(id));
+          if (plans.has(id)) candidatePlans.set(id, plans.get(id)); else candidatePlans.delete(id);
+          reverted = true;
+          perPartRepairs.push({ scriptId: id, round, status: "reverted_worse_than_previous" });
+          this.emitLog(onProgress, 84, `[EDITORIAL_REPAIR] Part ${id} vòng ${round}: bản sửa kém hơn bản trước; giữ bản trước.`, logs);
+        }
+      }
+      if (reverted) {
+        // Reviews of the restored versions are cached: no extra AI turn.
+        roundReport = await evaluateWithAudience(candidate, `repaired-round${round}`, ids);
+      }
+      current = candidate;
+      plans = candidatePlans;
+      report = { ...roundReport, repairedOnce: true, repairRounds: round };
+      logPreflight(report);
+      await writeJsonAtomic(gatePath, report);
+      await saveBest(current, report);
+    }
+    // After the bounded repairs, the AI cold viewer is ADVISORY for narrative
+    // taste (hook clarity, bridges, pacing): such a Part proceeds to the MP4
+    // draft review (V2) with its issues recorded. Host gates (structure,
+    // production preflight, render dry-run, editorial structure) and factual
+    // problems about real people (false_claim, wrong_actor) stay blocking.
+    // storyFirstColdViewerBlocking=true restores the fully blocking behaviour.
+    // Last resort for factual problems the repairs could not fix: the cold
+    // viewer names the exact beat. If that beat is NARRATION, the host removes
+    // the unverified narration (the beat keeps its authentic source audio)
+    // rather than shipping a false statement or blocking the whole run. Host
+    // gates are re-checked; nothing is invented.
+    if (!report.accepted && coldViewerAdvisory && settings.storyFirstStripFalseNarration !== false) {
+      const FACTUAL = new Set(["false_claim", "wrong_actor"]);
+      let stripped = false;
+      const candidate = new Map(current);
+      const strippedPlans = new Map();
+      for (const item of report.results.filter((entry) => !entry.passed)) {
+        const blocking = blockingErrorsOf(item);
+        if (!blocking.length || !blocking.every((error) => FACTUAL.has(error.code))) continue;
+        const id = Number(item.scriptId);
+        const artifact = candidate.get(id);
+        const segments = PartPipeline.segmentsOf(artifact?.script);
+        const beats = [...new Set((item.audienceIssues || []).filter((issue) => FACTUAL.has(issue.code)).map((issue) => issue.segmentIndex))];
+        if (!beats.length || !beats.every((index) => segments[index] && PartPipeline.voiceOf(segments[index]))) continue;
+        const nextSegments = segments.map((segment, index) => (beats.includes(index)
+          ? { ...segment, voiceover_text: "", voiceoverText: "", audio_mode: "original_audio", audioMode: "original_audio", hostStrippedNarration: PartPipeline.voiceOf(segment) }
+          : segment));
+        candidate.set(id, { ...artifact, script: { ...artifact.script, segments: nextSegments } });
+        const strippedBeatIds = new Set(beats.map((index) => segments[index]?.beatId).filter(Boolean));
+        if (plans.get(id) && strippedBeatIds.size) {
+          strippedPlans.set(id, { ...plans.get(id), beats: plans.get(id).beats.map((beat) => (strippedBeatIds.has(beat.beatId)
+            ? { ...beat, audio: "original", narration: "", hostStrippedNarration: beat.narration } : beat)) });
+        }
+        stripped = true;
+        this.emitLog(onProgress, 85, `[EDITORIAL_GATE] Part ${id}: sửa không hết lỗi sự thật; host GỠ lời dẫn chưa kiểm chứng ở beat ${beats.join(", ")} (giữ âm thanh gốc), rồi kiểm tra lại cổng host.`, logs);
+      }
+      if (stripped) {
+        const hostReport = evaluate(candidate);
+        const strippedIds = [...candidate.keys()].filter((id) => candidate.get(id) !== current.get(id)).filter((id) => {
+          // Keep the strip only if the host gates still pass without that
+          // narration (e.g. no new >15s audio run or unbridged jump).
+          const host = hostReport.results.find((entry) => Number(entry.scriptId) === id);
+          if (host?.passed) return true;
+          candidate.set(id, current.get(id));
+          this.emitLog(onProgress, 85, `[EDITORIAL_GATE] Part ${id}: gỡ lời dẫn sẽ làm hỏng cổng host (${(host?.errors || []).map((error) => error.code).slice(0, 3).join(", ")}); giữ nguyên bản cũ.`, logs);
+          return false;
+        });
+        report = {
+          ...report,
+          results: report.results.map((item) => {
+            const id = Number(item.scriptId);
+            if (!strippedIds.includes(id)) return item;
+            const host = hostReport.results.find((entry) => Number(entry.scriptId) === id);
+            const FACTUAL_CODES = new Set(["false_claim", "wrong_actor"]);
+            const remainingAudience = (item.audienceIssues || []).filter((issue) => !FACTUAL_CODES.has(issue.code));
+            return {
+              ...host, structuralScore: host.score, audienceScore: item.audienceScore, audienceIssues: remainingAudience,
+              passed: false, hostStrippedFactualNarration: true,
+              errors: [...(host.errors || []), ...remainingAudience.map((issue) => ({ code: issue.code, segmentIndex: issue.segmentIndex, message: `${issue.whyViewerLeaves} Required: ${issue.requiredChange}` }))]
+            };
+          })
+        };
+        current = candidate;
+        for (const id of strippedIds) if (strippedPlans.has(id)) plans.set(id, strippedPlans.get(id));
+        await saveBest(current, report);
+      }
+    }
+    if (!report.accepted && coldViewerAdvisory) {
+      let softened = false;
+      report = {
+        ...report,
+        results: report.results.map((item) => {
+          if (item.passed) return item;
+          if (blockingErrorsOf(item).length) return item;
+          softened = true;
+          this.emitLog(onProgress, 85, `[EDITORIAL_GATE] Part ${item.scriptId}: cổng host đều đạt; góp ý cold viewer còn lại (${(item.errors || []).map((error) => error.code).join(", ")}) chuyển thành CẢNH BÁO để xử lý ở bước review MP4, không chặn V1.`, logs);
+          return { ...item, passed: true, acceptedWithAudienceWarnings: true, advisoryAudienceIssues: item.audienceIssues || [],
+            warnings: [...(item.warnings || []), ...(item.errors || []).map((error) => ({ ...error, advisory: true }))], errors: [] };
+        })
+      };
+      if (softened) report.accepted = report.results.every((item) => item.passed);
+    }
+    report = { ...report, repairRounds: repairRoundsRun, partPipeline: true };
+    await writeJsonAtomic(gatePath, report);
+    Object.assign(timing.scriptGeneration, {
+      durationMs: Date.now() - startedAt,
+      agyProcessCount: totals.agyProcessCount + reviewMetrics.agyProcessCount,
+      editorialRepairProcesses: repairProcessCount,
+      editorialRepairParts: perPartRepairs,
+      editorialRepairRounds: repairRoundsRun,
+      audienceReviewProcesses: reviewMetrics.agyProcessCount,
+      editorialReady: report.accepted,
+      editorialScores: report.results.map((item) => ({ scriptId: item.scriptId, score: item.score, passed: item.passed })),
+      tokens: tokenSummary(mergeMetrics(mergeMetrics(newMetrics(), totals), reviewMetrics))
+    });
+    if (!report.accepted) {
+      await this.writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt });
+      const codes = report.results.filter((x) => !x.passed)
+        .map((x) => {
+          const reasons = [
+            ...(x.productionPreflight?.issues || []).slice(0, 2),
+            ...(x.renderDryRun?.issues || []).slice(0, 2).map((item) => item.message),
+            ...(x.errors || []).filter((item) => /^(missing_planned_event|missing_payoff_range|hook_moment_skipped|temporal_ping_pong)$/.test(item.code)).slice(0, 2).map((item) => item.message)
+          ].map((reason) => String(reason).replace(/\s+/g, " ").slice(0, 160));
+          const blockingCodes = blockingErrorsOf(x).map((e) => e.code);
+          const advisory = (x.errors || []).map((e) => e.code).filter((code) => !blockingCodes.includes(code));
+          return `Part ${x.scriptId}: chặn bởi ${blockingCodes.slice(0, 4).join(", ") || "?"}${advisory.length ? ` (góp ý thêm: ${[...new Set(advisory)].slice(0, 3).join(", ")})` : ""}${reasons.length ? ` (${reasons.join(" | ")})` : ""}`;
+        }).join("; ");
+      const error = new Error(`[EDITORIAL_GATE] V1 bị chặn trước render: ${codes}. Bản tốt nhất của từng Part đã lưu cache; chạy lại sẽ sửa tiếp từ đó. Xem ${gatePath}.`);
+      error.kind = "editorial_quality";
+      throw error;
+    }
+    this.emitLog(onProgress, 85, `[EDITORIAL_GATE] PASS: ${report.results.map((x) => `Part ${x.scriptId}: structure=${x.structuralScore ?? x.score}, cold-viewer=${x.audienceScore ?? "disabled"}, production-preflight=${x.productionPreflight?.score ?? "disabled"}`).join("; ")}; bản render thực tế vẫn cần MP4 review.`, logs);
+    return { deduplicated: current, editorialReport: report };
   }
 
   async writeTimingReport({ resolvedPackageDir, resultDir, timing, logs, stage1StartedAt }) {
@@ -3761,6 +5320,8 @@ ManualAntigravityStage1Service.recoverTruncatedUnderstanding = recoverTruncatedU
 ManualAntigravityStage1Service.buildSourceUnderstandingSerializationPrompt = buildSourceUnderstandingSerializationPrompt;
 ManualAntigravityStage1Service.resolveSourceUnderstandingArchitecture = resolveSourceUnderstandingArchitecture;
 ManualAntigravityStage1Service.resolveMapConcurrency = resolveMapConcurrency;
+ManualAntigravityStage1Service.resolveAuthBudgetMode = resolveAuthBudgetMode;
+ManualAntigravityStage1Service.resolveStepModel = resolveStepModel;
 ManualAntigravityStage1Service.parseSrtForContext = parseSrtForContext;
 
 module.exports = ManualAntigravityStage1Service;

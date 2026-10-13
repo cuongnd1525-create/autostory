@@ -1,0 +1,314 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 4,
+  "suggestedTitle": "MOTHER AND PASSENGER SENTENCED FOR FENTANYL",
+  "title": "MOTHER AND PASSENGER SENTENCED FOR FENTANYL",
+  "partBadge": "PART 3",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_prompt"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\series-plan.json",
+        "role": "locked_series_plan"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt",
+        "role": "source_transcript"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "filePath": "D:\\Video\\source-bwqdruna5pa-gemini-analysis-pack\\01-GUI-GEMINI\\action-candidates.json",
+        "role": "action_candidates"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "chapterRole": "The officers' decision, arrest/charges and the verified consequence. Delivers the payoff to the central viewer question. Only this Part may reveal the outcome.",
+    "storyQuestion": "Will officers discover the concealed fentanyl pills and handgun hidden in the vehicle, and what criminal consequences will the driver and passenger face?",
+    "hookPromise": "Promise the complete resolution to the central viewer question: both suspects are convicted, with passenger Genaro sentenced to 10 to 15 years in prison, while driver Leigh receives 8 years of probation for felony drug trafficking.",
+    "hookRange": {
+      "sourceStartSec": 756.6,
+      "sourceEndSec": 770.3
+    },
+    "hookHandoff": {
+      "contextNeeded": "Picks up directly from the boiling-point hotel questioning where officers decide to terminate the interview and take Leigh into custody.",
+      "rewindRequired": false,
+      "bridgePurpose": "Transitions immediately from evasive roadside questioning to the definitive arrest command.",
+      "verifiedPayoffEventIds": [
+        "e17",
+        "e19",
+        "e20"
+      ]
+    },
+    "payoff": "Delivers the complete payoff to the central viewer question: both suspects are convicted, with passenger Genaro sentenced to 10 to 15 years in prison, while driver Leigh receives 8 years of probation for felony drug trafficking.",
+    "payoffRanges": [
+      {
+        "sourceStartSec": 756.6,
+        "sourceEndSec": 770.3
+      },
+      {
+        "sourceStartSec": 811.4,
+        "sourceEndSec": 872.4
+      },
+      {
+        "sourceStartSec": 872.4,
+        "sourceEndSec": 924.881
+      }
+    ],
+    "prohibitedReveals": [
+      "None; Part 3 is the resolution chapter and delivers all verified legal outcomes and payoffs."
+    ]
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e17",
+      "beforeEventId": "e18",
+      "narratorFunction": "escalation",
+      "purpose": "Emphasizes Leigh's denial against the physical reality of drugs and weapons seized from her vehicle.",
+      "authenticAudioHandoffEventId": "e18"
+    },
+    {
+      "afterEventId": "e18",
+      "beforeEventId": "e19",
+      "narratorFunction": "payoff",
+      "purpose": "Transitions from roadside custody to the formal courtroom indictments and sentencing dispositions.",
+      "authenticAudioHandoffEventId": "e19"
+    },
+    {
+      "afterEventId": "e20",
+      "beforeEventId": "e21",
+      "narratorFunction": "context",
+      "purpose": "Examines the stark divergence in penalties between driver and passenger, closing the narrative.",
+      "authenticAudioHandoffEventId": "e21"
+    }
+  ],
+  "segments": [
+    {
+      "sceneId": "scene_0095",
+      "sourceStartSec": 756.625,
+      "sourceEndSec": 770.25,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "actionCandidateId": "action_0016",
+      "macroBlockId": "part3_beat01",
+      "transitionReason": "Cold open captures the sudden arrest command as the officer confirms: 'Your car is loaded with drugs.'"
+    },
+    {
+      "sceneId": "scene_0104",
+      "sourceStartSec": 812,
+      "sourceEndSec": 819.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Court records reveal driver Leigh was indicted on multiple felonies, including drug trafficking and child endangerment.",
+      "storyFunction": "reveal",
+      "macroBlockId": "part3_beat02",
+      "transitionReason": "Transitions from roadside custody to the formal courtroom indictments filed against driver Leigh."
+    },
+    {
+      "sceneId": "scene_0104",
+      "sourceStartSec": 819.5,
+      "sourceEndSec": 827,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Prosecutors charged her after finding fentanyl and a concealed firearm inside her family vehicle.",
+      "storyFunction": "reveal",
+      "macroBlockId": "part3_beat02",
+      "transitionReason": "Details the underlying contraband linking Leigh to commercial trafficking and child endangerment."
+    },
+    {
+      "sceneId": "scene_0096",
+      "sourceStartSec": 770.25,
+      "sourceEndSec": 773.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "escalation",
+      "macroBlockId": "part3_beat03",
+      "transitionReason": "Authentic roadside audio as Leigh reacts in disbelief and begins asking about specific charges."
+    },
+    {
+      "sceneId": "scene_0097",
+      "sourceStartSec": 773.5,
+      "sourceEndSec": 776.125,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0017",
+      "macroBlockId": "part3_beat03",
+      "transitionReason": "Leigh vehemently denies ownership of the contraband: 'It's really not mine.'"
+    },
+    {
+      "sceneId": "scene_0098",
+      "sourceStartSec": 776.125,
+      "sourceEndSec": 778.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0017",
+      "macroBlockId": "part3_beat03",
+      "transitionReason": "Officers instruct Leigh to keep still as handcuffs are adjusted on her wrists."
+    },
+    {
+      "sceneId": "scene_0099",
+      "sourceStartSec": 778.5,
+      "sourceEndSec": 782.875,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0017",
+      "macroBlockId": "part3_beat03",
+      "transitionReason": "Officers secure both wrists behind Leigh's back while maintaining roadside safety."
+    },
+    {
+      "sceneId": "scene_0100",
+      "sourceStartSec": 782.875,
+      "sourceEndSec": 784.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "escalation",
+      "actionCandidateId": "action_0018",
+      "macroBlockId": "part3_beat03",
+      "transitionReason": "Officers turn Leigh around to prepare her for transport to the patrol vehicle."
+    },
+    {
+      "sceneId": "scene_0104",
+      "sourceStartSec": 827,
+      "sourceEndSec": 834.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Leigh negotiated a plea deal, pleading guilty to four counts to avoid prison time.",
+      "storyFunction": "payoff",
+      "macroBlockId": "part3_beat04",
+      "transitionReason": "Presents Leigh's plea agreement disposition on felony charges."
+    },
+    {
+      "sceneId": "scene_0104",
+      "sourceStartSec": 834.5,
+      "sourceEndSec": 842,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "The judge sentenced her to eight years of probation, releasing her back into the public.",
+      "storyFunction": "payoff",
+      "macroBlockId": "part3_beat04",
+      "transitionReason": "Displays the eight-year probation sentence Leigh received in court."
+    },
+    {
+      "sceneId": "scene_0101",
+      "sourceStartSec": 784.375,
+      "sourceEndSec": 786.25,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "development",
+      "actionCandidateId": "action_0018",
+      "macroBlockId": "part3_beat05",
+      "transitionReason": "Officers guide Leigh across the gravel shoulder toward the open patrol car door."
+    },
+    {
+      "sceneId": "scene_0102",
+      "sourceStartSec": 786.25,
+      "sourceEndSec": 798.25,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "development",
+      "actionCandidateId": "action_0018",
+      "macroBlockId": "part3_beat05",
+      "transitionReason": "Leigh turns and complains about shoulder pain as officers carefully seat her inside."
+    },
+    {
+      "sceneId": "scene_0105",
+      "sourceStartSec": 842,
+      "sourceEndSec": 849.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Her twenty-year-old passenger Genaro faced far harsher justice, initially held on a one-million-dollar bond.",
+      "storyFunction": "payoff",
+      "macroBlockId": "part3_beat06",
+      "transitionReason": "Transitions to the criminal case and bond hearing for passenger Genaro."
+    },
+    {
+      "sceneId": "scene_0105",
+      "sourceStartSec": 849.5,
+      "sourceEndSec": 857,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "He pleaded guilty to felony trafficking and improperly handling firearms in a motor vehicle.",
+      "storyFunction": "payoff",
+      "macroBlockId": "part3_beat06",
+      "transitionReason": "Outlines the specific felony weapons and drug trafficking counts Genaro admitted to."
+    },
+    {
+      "sceneId": "scene_0102",
+      "sourceStartSec": 798.25,
+      "sourceEndSec": 804.25,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "consequence",
+      "actionCandidateId": "action_0018",
+      "macroBlockId": "part3_beat07",
+      "transitionReason": "Officers permit Leigh to sit sideways inside the patrol vehicle to relieve pressure on her shoulder."
+    },
+    {
+      "sceneId": "scene_0103",
+      "sourceStartSec": 804.25,
+      "sourceEndSec": 811.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "consequence",
+      "actionCandidateId": "action_0019",
+      "macroBlockId": "part3_beat07",
+      "transitionReason": "Officers close and secure the cruiser door as roadside procedures wrap up."
+    },
+    {
+      "sceneId": "scene_0105",
+      "sourceStartSec": 857,
+      "sourceEndSec": 864.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Genaro was sentenced to ten to fifteen years in prison at Lorain Correctional Institution.",
+      "storyFunction": "payoff",
+      "macroBlockId": "part3_beat08",
+      "transitionReason": "Delivers the prison term handed down to Genaro by the court."
+    },
+    {
+      "sceneId": "scene_0105",
+      "sourceStartSec": 864.5,
+      "sourceEndSec": 872,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "A routine window tint stop concluded with an armed trafficking ring permanently dismantled by police.",
+      "storyFunction": "payoff",
+      "macroBlockId": "part3_beat08",
+      "transitionReason": "Concludes the 3-part investigative arc with complete thematic resolution."
+    }
+  ],
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "series_mode": "interleaved_multipart",
+  "part_number": 3,
+  "part_badge": "PART 3",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}

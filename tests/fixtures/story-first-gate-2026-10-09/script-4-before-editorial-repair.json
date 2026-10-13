@@ -1,0 +1,229 @@
+{
+  "artifactType": "highlight_cut_script",
+  "schemaVersion": 1,
+  "workflow": "manual_gemini_pro",
+  "scriptId": 4,
+  "partNumber": 3,
+  "partBadge": "PART 3",
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "suggestedTitle": "ESCAPED DRIVER TACKLED IN PARKING LOT",
+  "title": "ESCAPED DRIVER TACKLED IN PARKING LOT",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "filename": "source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "filename": "01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_prompt"
+      },
+      {
+        "filename": "series-plan.json",
+        "role": "locked_series_plan"
+      },
+      {
+        "filename": "narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "filename": "story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "filename": "scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "filename": "source-transcript.srt",
+        "role": "transcript"
+      },
+      {
+        "filename": "hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "filename": "action-candidates.json",
+        "role": "action_candidates"
+      },
+      {
+        "filename": "proxy-chunks-manifest.json",
+        "role": "proxy_manifest"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "primaryQuestion": "Why was crash driver Billy Bailey so severely disoriented on the Key West roadside, and what hidden criminal contraband inside his vehicle escalated a routine traffic check into a hospital escape and combative assault on officers?",
+    "centralConflict": "A heavily intoxicated and disoriented crash suspect repeatedly resists vital monitoring, attempts a foot escape from hospital custody, and physically lashes out at officers and medical staff.",
+    "hookPromise": "Promises to uncover how an apparently dazed crash victim ended up tackled in a hospital parking lot while trying to flee police custody, and the shocking truth uncovered during his medical detox.",
+    "chapterRole": "The officers' decision, arrest/charges and the verified consequence. Delivers the payoff to the central viewer question. Only this Part may reveal the outcome.",
+    "endingType": "payoff",
+    "expectedEnding": "Billy Bailey was recaptured after smashing through ER glass doors, restrained following a violent biting attempt on medical staff during detox, and booked on 5 criminal charges including Hit-and-Run, Possession of Fake IDs, and Criminal Mischief."
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e17",
+      "beforeEventId": "e19",
+      "narratorFunction": "escalation",
+      "purpose": "Explain how the escape attempt caused felony property damage to the hospital's glass entrance doors.",
+      "authenticAudioHandoffEventId": "e19"
+    },
+    {
+      "afterEventId": "e19",
+      "beforeEventId": "e20",
+      "narratorFunction": "bridge",
+      "purpose": "Transition from the parking lot recapture to the strict medical detox protocol inside the ER.",
+      "authenticAudioHandoffEventId": "e20"
+    },
+    {
+      "afterEventId": "e24",
+      "beforeEventId": "e25",
+      "narratorFunction": "anticipation",
+      "purpose": "Set up the final combative boiling point as medical staff attempt an ear examination.",
+      "authenticAudioHandoffEventId": "e25"
+    },
+    {
+      "afterEventId": "e25",
+      "beforeEventId": "e26",
+      "narratorFunction": "payoff",
+      "purpose": "Summarize the end of the hospital standoff and transition to formal booking desk processing.",
+      "authenticAudioHandoffEventId": "e26"
+    },
+    {
+      "afterEventId": "e26",
+      "beforeEventId": "e27",
+      "narratorFunction": "payoff",
+      "purpose": "Deliver the final verified criminal charges and case resolution.",
+      "authenticAudioHandoffEventId": "e27"
+    }
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_001",
+      "sceneId": "scene_0047",
+      "sourceStartSec": 760,
+      "sourceEndSec": 771.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "narrativeBeat": "BEAT 1 - COLD OPEN HOOK",
+      "actionCandidateId": "action_0012",
+      "macroBlockId": "block_beat_01",
+      "transitionReason": "Cold open hook captures officer drawing taser and pursuing fleeing suspect out ER doors."
+    },
+    {
+      "segmentId": "seg_002",
+      "sceneId": "scene_0048",
+      "sourceStartSec": 771.375,
+      "sourceEndSec": 775.375,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "narrativeBeat": "BEAT 1 - COLD OPEN HOOK",
+      "actionCandidateId": "action_0013",
+      "macroBlockId": "block_beat_01",
+      "transitionReason": "Officer tackles suspect to parking lot asphalt and commands him to stop resisting."
+    },
+    {
+      "segmentId": "seg_003",
+      "sceneId": "scene_0063",
+      "sourceStartSec": 811,
+      "sourceEndSec": 828.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "After violently tackling Bailey onto the parking lot asphalt, officers escort him back inside. During his desperate breakout, Bailey had shattered the hospital's glass entrance doors, instantly adding felony criminal mischief to his mounting charges.",
+      "storyFunction": "escalation",
+      "narrativeBeat": "BEAT 2 - INCIDENT SETUP & DISPATCH",
+      "actionCandidateId": "action_0015",
+      "macroBlockId": "block_beat_02",
+      "transitionReason": "Narrator details the felony property damage caused by Bailey crashing through glass doors."
+    },
+    {
+      "segmentId": "seg_004",
+      "sceneId": "scene_0063",
+      "sourceStartSec": 832,
+      "sourceEndSec": 844,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "consequence",
+      "narrativeBeat": "BEAT 3 - SCENE ENTRY & RAW REALITY",
+      "macroBlockId": "block_beat_03",
+      "transitionReason": "Officer escorts Bailey past broken glass, confronting him about thinking the door was unlocked."
+    },
+    {
+      "segmentId": "seg_005",
+      "sceneId": "scene_0067",
+      "sourceStartSec": 922.375,
+      "sourceEndSec": 938.125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Placed on strict medical detox, Bailey has all room privileges revoked. Handcuffed to the bed, he continuously argues with staff, making claims of extreme allergies in an effort to obstruct mandatory vital checks.",
+      "storyFunction": "bridge",
+      "narrativeBeat": "BEAT 4 - ESCALATION & DISCOVERY",
+      "actionCandidateId": "action_0019",
+      "macroBlockId": "block_beat_04",
+      "transitionReason": "Narrator transitions to the strict detox protocol and Bailey's obstructive allergy protests."
+    },
+    {
+      "segmentId": "seg_006",
+      "sceneId": "scene_0073",
+      "sourceStartSec": 1060,
+      "sourceEndSec": 1074,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "climax",
+      "narrativeBeat": "BEAT 5 - CLIMACTIC CONFRONTATION",
+      "actionCandidateId": "action_0020",
+      "macroBlockId": "block_beat_05",
+      "transitionReason": "Bailey attempts to bite medical staff during ear exam, prompting officers to pin him down."
+    },
+    {
+      "segmentId": "seg_007",
+      "sceneId": "scene_0074",
+      "sourceStartSec": 1092,
+      "sourceEndSec": 1110.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "After the violent biting attempt is contained, medical staff finally clear Bailey for discharge. Transferred under heavy guard to the Monroe County jail booking desk, Bailey is presented with formal citations from the night's chaotic rampage.",
+      "storyFunction": "payoff",
+      "narrativeBeat": "BEAT 6 - CONFLICT BREAKDOWN & MORAL CONTRAST",
+      "macroBlockId": "block_beat_06",
+      "transitionReason": "Narrator summarizes end of ER detox and transfer to jail booking desk."
+    },
+    {
+      "segmentId": "seg_008",
+      "sceneId": "scene_0074",
+      "sourceStartSec": 1122,
+      "sourceEndSec": 1131,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "reveal",
+      "narrativeBeat": "BEAT 7 - RAW DIALOGUE EVIDENCE",
+      "macroBlockId": "block_beat_07",
+      "transitionReason": "Booking officer clarifies citation signature rules as Bailey signs paperwork."
+    },
+    {
+      "segmentId": "seg_009",
+      "sceneId": "scene_0075",
+      "sourceStartSec": 1134,
+      "sourceEndSec": 1148.141,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Billy Bailey was formally booked on five criminal counts, including Hit-and-Run, Possession of Fraudulent Identification, Felony Criminal Mischief for shattering the hospital doors, and Resisting Law Enforcement.",
+      "storyFunction": "payoff",
+      "narrativeBeat": "BEAT 8 - CLIFFHANGER & PART 2 OPEN LOOP",
+      "macroBlockId": "block_beat_08",
+      "transitionReason": "Official charges graphic and case conclusion deliver complete verified payoff."
+    }
+  ],
+  "series_mode": "interleaved_multipart",
+  "part_number": 3,
+  "part_badge": "PART 3",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}

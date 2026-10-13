@@ -960,7 +960,18 @@ ${hasTranscript ? "- Transcript: use review-context.json.transcriptInput.locatio
 ${semanticDialogueAuditRules({ hasTranscript, transcriptInputName })}
 
 PRIMARY GOAL:
-Create a revised script that is more coherent, more emotionally compelling, and better aligned with the actual pictures and audio while remaining fully source-grounded. The final duration must remain at least 60.5 seconds. ${isIndependent ? "This is an independent re-edit, not a patch: replace the complete V1 structure whenever a different source selection tells a stronger verified story." : ""}
+Create a revised script that is more coherent, more emotionally compelling, and better aligned with the actual pictures and audio while remaining fully source-grounded.
+
+AUDIENCE-FIRST V1 CONTENT AUDIT (RUN BEFORE PROPOSING ANY REPAIRS):
+- First experience the rendered draft as a first-time viewer. Do NOT judge the script's schema or producer intent first.
+- HOOK: At second 0-3, identify the first actual trigger and the concrete unanswered viewer question. Note any setup/visual pre-roll before the trigger.
+- HOOK HANDOFF: At 3-20s, verify the viewer understands the actors, conflict, and causal or temporal relationship. An unexplained flash-forward/flashback is a critical error even if the footage is intense.
+- STORY: At every major source jump and long dialogue stretch, report exact output timecodes where the viewer receives no new meaningful information or cannot follow the chain of events.
+- NARRATOR AS DIRECTOR: For each narrator block, ask whether the spoken sentence supplies verified new context, meaning, tension, or a bridge to the next authentic original-audio beat. Reject voice that merely describes visible actions, repeats a previous sentence, or produces generic 'what happens next' filler.
+- HANDOFF: Preserve impactful officer/suspect/witness dialogue and action sound, instead of talking over key evidence.
+- ENDING: Confirm the verified payoff or cliffhanger was actually shown, not replaced by a generic CTA, unsupported charge, or unrelated outcome.
+- ENGAGEMENT: Identify an authentic emotion/discussion point supported by the video (or none); never manufacture outrage, moral judgment, or bait for comments.
+- Give timestamped concrete issues in the existing review.issues and make the revisedScript solve those issues. A high numeric grade MUST NOT overrule an unresolved critical content error. The final duration must remain at least 60.5 seconds. ${isIndependent ? "This is an independent re-edit, not a patch: replace the complete V1 structure whenever a different source selection tells a stronger verified story." : ""}
 
 OUTPUT TIMELINE IS DERIVED, NOT EDITORIAL:
 - Choose verified sourceStartSec/sourceEndSec (and playbackSpeed only for a justified speed change; default 1). Do not return output timestamps.

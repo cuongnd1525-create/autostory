@@ -1,0 +1,707 @@
+{
+  "schemaVersion": 1,
+  "timelineType": "source_timeline",
+  "sourceVideo": "source-bwqdruna5pa.mp4",
+  "videoDurationSec": 924.881,
+  "width": 1920,
+  "height": 1080,
+  "hasAudio": true,
+  "sceneDetector": "ffmpeg_scene_fallback+max_window",
+  "instructions": {
+    "timestamps": "All scene startSec/endSec values refer to the original source video.",
+    "selection": "Gemini must select an existing sceneId and keep source timestamps inside that scene range.",
+    "outputTimeline": "Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec. The local tool derives the contiguous output timeline and playback speed from sourceStartSec/sourceEndSec."
+  },
+  "scenes": [
+    {
+      "sceneId": "scene_0001",
+      "startSec": 0,
+      "endSec": 5.625,
+      "durationSec": 5.625
+    },
+    {
+      "sceneId": "scene_0002",
+      "startSec": 5.625,
+      "endSec": 7.875,
+      "durationSec": 2.25
+    },
+    {
+      "sceneId": "scene_0003",
+      "startSec": 7.875,
+      "endSec": 10.125,
+      "durationSec": 2.25
+    },
+    {
+      "sceneId": "scene_0004",
+      "startSec": 10.125,
+      "endSec": 12.375,
+      "durationSec": 2.25
+    },
+    {
+      "sceneId": "scene_0005",
+      "startSec": 12.375,
+      "endSec": 14.5,
+      "durationSec": 2.125
+    },
+    {
+      "sceneId": "scene_0006",
+      "startSec": 14.5,
+      "endSec": 24.875,
+      "durationSec": 10.375
+    },
+    {
+      "sceneId": "scene_0007",
+      "startSec": 24.875,
+      "endSec": 26.375,
+      "durationSec": 1.5
+    },
+    {
+      "sceneId": "scene_0008",
+      "startSec": 26.375,
+      "endSec": 30.375,
+      "durationSec": 4
+    },
+    {
+      "sceneId": "scene_0009",
+      "startSec": 30.375,
+      "endSec": 34.875,
+      "durationSec": 4.5
+    },
+    {
+      "sceneId": "scene_0010",
+      "startSec": 34.875,
+      "endSec": 45,
+      "durationSec": 10.125
+    },
+    {
+      "sceneId": "scene_0011",
+      "startSec": 45,
+      "endSec": 47,
+      "durationSec": 2
+    },
+    {
+      "sceneId": "scene_0012",
+      "startSec": 47,
+      "endSec": 63.875,
+      "durationSec": 16.875
+    },
+    {
+      "sceneId": "scene_0013",
+      "startSec": 63.875,
+      "endSec": 70.75,
+      "durationSec": 6.875
+    },
+    {
+      "sceneId": "scene_0014",
+      "startSec": 70.75,
+      "endSec": 75.625,
+      "durationSec": 4.875
+    },
+    {
+      "sceneId": "scene_0015",
+      "startSec": 75.625,
+      "endSec": 78,
+      "durationSec": 2.375
+    },
+    {
+      "sceneId": "scene_0016",
+      "startSec": 78,
+      "endSec": 82.25,
+      "durationSec": 4.25
+    },
+    {
+      "sceneId": "scene_0017",
+      "startSec": 82.25,
+      "endSec": 85.375,
+      "durationSec": 3.125
+    },
+    {
+      "sceneId": "scene_0018",
+      "startSec": 85.375,
+      "endSec": 86.375,
+      "durationSec": 1
+    },
+    {
+      "sceneId": "scene_0019",
+      "startSec": 86.375,
+      "endSec": 89.75,
+      "durationSec": 3.375
+    },
+    {
+      "sceneId": "scene_0020",
+      "startSec": 89.75,
+      "endSec": 100.75,
+      "durationSec": 11
+    },
+    {
+      "sceneId": "scene_0021",
+      "startSec": 100.75,
+      "endSec": 104.375,
+      "durationSec": 3.625
+    },
+    {
+      "sceneId": "scene_0022",
+      "startSec": 104.375,
+      "endSec": 109.125,
+      "durationSec": 4.75
+    },
+    {
+      "sceneId": "scene_0023",
+      "startSec": 109.125,
+      "endSec": 111.875,
+      "durationSec": 2.75
+    },
+    {
+      "sceneId": "scene_0024",
+      "startSec": 111.875,
+      "endSec": 141,
+      "durationSec": 29.125
+    },
+    {
+      "sceneId": "scene_0025",
+      "startSec": 141,
+      "endSec": 145.625,
+      "durationSec": 4.625
+    },
+    {
+      "sceneId": "scene_0026",
+      "startSec": 145.625,
+      "endSec": 163.875,
+      "durationSec": 18.25
+    },
+    {
+      "sceneId": "scene_0027",
+      "startSec": 163.875,
+      "endSec": 176.125,
+      "durationSec": 12.25
+    },
+    {
+      "sceneId": "scene_0028",
+      "startSec": 176.125,
+      "endSec": 198.5,
+      "durationSec": 22.375
+    },
+    {
+      "sceneId": "scene_0029",
+      "startSec": 198.5,
+      "endSec": 243.5,
+      "durationSec": 45
+    },
+    {
+      "sceneId": "scene_0030",
+      "startSec": 243.5,
+      "endSec": 260.125,
+      "durationSec": 16.625
+    },
+    {
+      "sceneId": "scene_0031",
+      "startSec": 260.125,
+      "endSec": 267.75,
+      "durationSec": 7.625
+    },
+    {
+      "sceneId": "scene_0032",
+      "startSec": 267.75,
+      "endSec": 312.75,
+      "durationSec": 45
+    },
+    {
+      "sceneId": "scene_0033",
+      "startSec": 312.75,
+      "endSec": 334.375,
+      "durationSec": 21.625
+    },
+    {
+      "sceneId": "scene_0034",
+      "startSec": 334.375,
+      "endSec": 358.375,
+      "durationSec": 24
+    },
+    {
+      "sceneId": "scene_0035",
+      "startSec": 358.375,
+      "endSec": 363,
+      "durationSec": 4.625
+    },
+    {
+      "sceneId": "scene_0036",
+      "startSec": 363,
+      "endSec": 365.375,
+      "durationSec": 2.375
+    },
+    {
+      "sceneId": "scene_0037",
+      "startSec": 365.375,
+      "endSec": 366,
+      "durationSec": 0.625
+    },
+    {
+      "sceneId": "scene_0038",
+      "startSec": 366,
+      "endSec": 367.75,
+      "durationSec": 1.75
+    },
+    {
+      "sceneId": "scene_0039",
+      "startSec": 367.75,
+      "endSec": 369.375,
+      "durationSec": 1.625
+    },
+    {
+      "sceneId": "scene_0040",
+      "startSec": 369.375,
+      "endSec": 371.5,
+      "durationSec": 2.125
+    },
+    {
+      "sceneId": "scene_0041",
+      "startSec": 371.5,
+      "endSec": 373.25,
+      "durationSec": 1.75
+    },
+    {
+      "sceneId": "scene_0042",
+      "startSec": 373.25,
+      "endSec": 374.75,
+      "durationSec": 1.5
+    },
+    {
+      "sceneId": "scene_0043",
+      "startSec": 374.75,
+      "endSec": 380.875,
+      "durationSec": 6.125
+    },
+    {
+      "sceneId": "scene_0044",
+      "startSec": 380.875,
+      "endSec": 382.875,
+      "durationSec": 2
+    },
+    {
+      "sceneId": "scene_0045",
+      "startSec": 382.875,
+      "endSec": 412.5,
+      "durationSec": 29.625
+    },
+    {
+      "sceneId": "scene_0046",
+      "startSec": 412.5,
+      "endSec": 421,
+      "durationSec": 8.5
+    },
+    {
+      "sceneId": "scene_0047",
+      "startSec": 421,
+      "endSec": 422,
+      "durationSec": 1
+    },
+    {
+      "sceneId": "scene_0048",
+      "startSec": 422,
+      "endSec": 426.125,
+      "durationSec": 4.125
+    },
+    {
+      "sceneId": "scene_0049",
+      "startSec": 426.125,
+      "endSec": 428.5,
+      "durationSec": 2.375
+    },
+    {
+      "sceneId": "scene_0050",
+      "startSec": 428.5,
+      "endSec": 439.375,
+      "durationSec": 10.875
+    },
+    {
+      "sceneId": "scene_0051",
+      "startSec": 439.375,
+      "endSec": 442.25,
+      "durationSec": 2.875
+    },
+    {
+      "sceneId": "scene_0052",
+      "startSec": 442.25,
+      "endSec": 444.75,
+      "durationSec": 2.5
+    },
+    {
+      "sceneId": "scene_0053",
+      "startSec": 444.75,
+      "endSec": 446.875,
+      "durationSec": 2.125
+    },
+    {
+      "sceneId": "scene_0054",
+      "startSec": 446.875,
+      "endSec": 449.5,
+      "durationSec": 2.625
+    },
+    {
+      "sceneId": "scene_0055",
+      "startSec": 449.5,
+      "endSec": 477,
+      "durationSec": 27.5
+    },
+    {
+      "sceneId": "scene_0056",
+      "startSec": 477,
+      "endSec": 522,
+      "durationSec": 45
+    },
+    {
+      "sceneId": "scene_0057",
+      "startSec": 522,
+      "endSec": 548.625,
+      "durationSec": 26.625
+    },
+    {
+      "sceneId": "scene_0058",
+      "startSec": 548.625,
+      "endSec": 550,
+      "durationSec": 1.375
+    },
+    {
+      "sceneId": "scene_0059",
+      "startSec": 550,
+      "endSec": 552,
+      "durationSec": 2
+    },
+    {
+      "sceneId": "scene_0060",
+      "startSec": 552,
+      "endSec": 555.75,
+      "durationSec": 3.75
+    },
+    {
+      "sceneId": "scene_0061",
+      "startSec": 555.75,
+      "endSec": 559.75,
+      "durationSec": 4
+    },
+    {
+      "sceneId": "scene_0062",
+      "startSec": 559.75,
+      "endSec": 562.875,
+      "durationSec": 3.125
+    },
+    {
+      "sceneId": "scene_0063",
+      "startSec": 562.875,
+      "endSec": 565.125,
+      "durationSec": 2.25
+    },
+    {
+      "sceneId": "scene_0064",
+      "startSec": 565.125,
+      "endSec": 568.5,
+      "durationSec": 3.375
+    },
+    {
+      "sceneId": "scene_0065",
+      "startSec": 568.5,
+      "endSec": 569.25,
+      "durationSec": 0.75
+    },
+    {
+      "sceneId": "scene_0066",
+      "startSec": 569.25,
+      "endSec": 570.625,
+      "durationSec": 1.375
+    },
+    {
+      "sceneId": "scene_0067",
+      "startSec": 570.625,
+      "endSec": 572,
+      "durationSec": 1.375
+    },
+    {
+      "sceneId": "scene_0068",
+      "startSec": 572,
+      "endSec": 593.875,
+      "durationSec": 21.875
+    },
+    {
+      "sceneId": "scene_0069",
+      "startSec": 593.875,
+      "endSec": 601.25,
+      "durationSec": 7.375
+    },
+    {
+      "sceneId": "scene_0070",
+      "startSec": 601.25,
+      "endSec": 603.625,
+      "durationSec": 2.375
+    },
+    {
+      "sceneId": "scene_0071",
+      "startSec": 603.625,
+      "endSec": 607,
+      "durationSec": 3.375
+    },
+    {
+      "sceneId": "scene_0072",
+      "startSec": 607,
+      "endSec": 612.75,
+      "durationSec": 5.75
+    },
+    {
+      "sceneId": "scene_0073",
+      "startSec": 612.75,
+      "endSec": 617.875,
+      "durationSec": 5.125
+    },
+    {
+      "sceneId": "scene_0074",
+      "startSec": 617.875,
+      "endSec": 619.875,
+      "durationSec": 2
+    },
+    {
+      "sceneId": "scene_0075",
+      "startSec": 619.875,
+      "endSec": 621.375,
+      "durationSec": 1.5
+    },
+    {
+      "sceneId": "scene_0076",
+      "startSec": 621.375,
+      "endSec": 626.375,
+      "durationSec": 5
+    },
+    {
+      "sceneId": "scene_0077",
+      "startSec": 626.375,
+      "endSec": 635.25,
+      "durationSec": 8.875
+    },
+    {
+      "sceneId": "scene_0078",
+      "startSec": 635.25,
+      "endSec": 636.75,
+      "durationSec": 1.5
+    },
+    {
+      "sceneId": "scene_0079",
+      "startSec": 636.75,
+      "endSec": 639.25,
+      "durationSec": 2.5
+    },
+    {
+      "sceneId": "scene_0080",
+      "startSec": 639.25,
+      "endSec": 642.5,
+      "durationSec": 3.25
+    },
+    {
+      "sceneId": "scene_0081",
+      "startSec": 642.5,
+      "endSec": 644.375,
+      "durationSec": 1.875
+    },
+    {
+      "sceneId": "scene_0082",
+      "startSec": 644.375,
+      "endSec": 646.25,
+      "durationSec": 1.875
+    },
+    {
+      "sceneId": "scene_0083",
+      "startSec": 646.25,
+      "endSec": 648.875,
+      "durationSec": 2.625
+    },
+    {
+      "sceneId": "scene_0084",
+      "startSec": 648.875,
+      "endSec": 654.25,
+      "durationSec": 5.375
+    },
+    {
+      "sceneId": "scene_0085",
+      "startSec": 654.25,
+      "endSec": 658.375,
+      "durationSec": 4.125
+    },
+    {
+      "sceneId": "scene_0086",
+      "startSec": 658.375,
+      "endSec": 662.375,
+      "durationSec": 4
+    },
+    {
+      "sceneId": "scene_0087",
+      "startSec": 662.375,
+      "endSec": 670.625,
+      "durationSec": 8.25
+    },
+    {
+      "sceneId": "scene_0088",
+      "startSec": 670.625,
+      "endSec": 673,
+      "durationSec": 2.375
+    },
+    {
+      "sceneId": "scene_0089",
+      "startSec": 673,
+      "endSec": 675.125,
+      "durationSec": 2.125
+    },
+    {
+      "sceneId": "scene_0090",
+      "startSec": 675.125,
+      "endSec": 680,
+      "durationSec": 4.875
+    },
+    {
+      "sceneId": "scene_0091",
+      "startSec": 680,
+      "endSec": 680.75,
+      "durationSec": 0.75
+    },
+    {
+      "sceneId": "scene_0092",
+      "startSec": 680.75,
+      "endSec": 682.25,
+      "durationSec": 1.5
+    },
+    {
+      "sceneId": "scene_0093",
+      "startSec": 682.25,
+      "endSec": 727.25,
+      "durationSec": 45
+    },
+    {
+      "sceneId": "scene_0094",
+      "startSec": 727.25,
+      "endSec": 756.625,
+      "durationSec": 29.375
+    },
+    {
+      "sceneId": "scene_0095",
+      "startSec": 756.625,
+      "endSec": 770.25,
+      "durationSec": 13.625
+    },
+    {
+      "sceneId": "scene_0096",
+      "startSec": 770.25,
+      "endSec": 773.5,
+      "durationSec": 3.25
+    },
+    {
+      "sceneId": "scene_0097",
+      "startSec": 773.5,
+      "endSec": 776.125,
+      "durationSec": 2.625
+    },
+    {
+      "sceneId": "scene_0098",
+      "startSec": 776.125,
+      "endSec": 778.5,
+      "durationSec": 2.375
+    },
+    {
+      "sceneId": "scene_0099",
+      "startSec": 778.5,
+      "endSec": 782.875,
+      "durationSec": 4.375
+    },
+    {
+      "sceneId": "scene_0100",
+      "startSec": 782.875,
+      "endSec": 784.375,
+      "durationSec": 1.5
+    },
+    {
+      "sceneId": "scene_0101",
+      "startSec": 784.375,
+      "endSec": 786.25,
+      "durationSec": 1.875
+    },
+    {
+      "sceneId": "scene_0102",
+      "startSec": 786.25,
+      "endSec": 804.25,
+      "durationSec": 18
+    },
+    {
+      "sceneId": "scene_0103",
+      "startSec": 804.25,
+      "endSec": 811.375,
+      "durationSec": 7.125
+    },
+    {
+      "sceneId": "scene_0104",
+      "startSec": 811.375,
+      "endSec": 842,
+      "durationSec": 30.625
+    },
+    {
+      "sceneId": "scene_0105",
+      "startSec": 842,
+      "endSec": 872.375,
+      "durationSec": 30.375
+    },
+    {
+      "sceneId": "scene_0106",
+      "startSec": 872.375,
+      "endSec": 891.125,
+      "durationSec": 18.75
+    },
+    {
+      "sceneId": "scene_0107",
+      "startSec": 891.125,
+      "endSec": 897.125,
+      "durationSec": 6
+    },
+    {
+      "sceneId": "scene_0108",
+      "startSec": 897.125,
+      "endSec": 899.125,
+      "durationSec": 2
+    },
+    {
+      "sceneId": "scene_0109",
+      "startSec": 899.125,
+      "endSec": 903.875,
+      "durationSec": 4.75
+    },
+    {
+      "sceneId": "scene_0110",
+      "startSec": 903.875,
+      "endSec": 906.125,
+      "durationSec": 2.25
+    },
+    {
+      "sceneId": "scene_0111",
+      "startSec": 906.125,
+      "endSec": 908.375,
+      "durationSec": 2.25
+    },
+    {
+      "sceneId": "scene_0112",
+      "startSec": 908.375,
+      "endSec": 910.375,
+      "durationSec": 2
+    },
+    {
+      "sceneId": "scene_0113",
+      "startSec": 910.375,
+      "endSec": 915,
+      "durationSec": 4.625
+    },
+    {
+      "sceneId": "scene_0114",
+      "startSec": 915,
+      "endSec": 921,
+      "durationSec": 6
+    },
+    {
+      "sceneId": "scene_0115",
+      "startSec": 921,
+      "endSec": 924.881,
+      "durationSec": 3.881
+    }
+  ]
+}

@@ -1,0 +1,326 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 3,
+  "suggestedTitle": "WRECKED DRIVER CAUGHT WITH FAKE IDS SPRINTS FROM ER",
+  "title": "WRECKED DRIVER CAUGHT WITH FAKE IDS SPRINTS FROM ER",
+  "partBadge": "PART 2",
+  "part_number": 2,
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "structured_locked",
+    "inspectedInputs": [
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\source-understanding.json",
+        "role": "evidence"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\01-gemini-highlight-scripts-prompt.txt",
+        "role": "editorial_rules"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\series-plan.json",
+        "role": "series_plan"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\narrative-blueprint.json",
+        "role": "narrative_blueprint"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-ANTIGRAVITY-RESULT\\phase-b-input\\story-intelligence.json",
+        "role": "story_intelligence"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+        "role": "scene_manifest"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\hook-contract.json",
+        "role": "hook_contract"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\action-candidates.json",
+        "role": "action_candidates"
+      },
+      {
+        "path": "D:\\Video\\source-frw3ogqg7-8-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt",
+        "role": "transcript"
+      }
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "story_blueprint": {
+    "partNumber": 2,
+    "name": "The Interrogation",
+    "chapterRole": "Questioning, explanations, lies, contradictions and evidence that surface after the confrontation. Ends on the strongest verified boiling-point turn BEFORE the arrest/verdict (cliffhanger).",
+    "storyQuestion": "Why was crash driver Billy Bailey so severely disoriented on the Key West roadside, and what hidden criminal contraband inside his vehicle escalated a routine traffic check into a hospital escape and combative assault on officers?",
+    "hookPromise": "Promises to uncover how an apparently dazed crash victim ended up tackled in a hospital parking lot while trying to flee police custody, and the shocking truth uncovered during his medical detox.",
+    "hookRange": {
+      "sourceStartSec": 385.875,
+      "sourceEndSec": 401.75
+    },
+    "sceneAllocation": [
+      {
+        "sourceStartSec": 385.875,
+        "sourceEndSec": 401.75,
+        "purpose": "Suspect brought into hospital ER by first responders."
+      },
+      {
+        "sourceStartSec": 401.75,
+        "sourceEndSec": 453.75,
+        "purpose": "Vehicle search discovers four fraudulent driver's licenses."
+      },
+      {
+        "sourceStartSec": 453.75,
+        "sourceEndSec": 593,
+        "purpose": "Hospital exam room agitation, refusing tests, officer blocking exit."
+      },
+      {
+        "sourceStartSec": 593,
+        "sourceEndSec": 626.375,
+        "purpose": "Dr. Gordon quick check, initial medical clearance, and handcuff arrest."
+      },
+      {
+        "sourceStartSec": 626.375,
+        "sourceEndSec": 694.125,
+        "purpose": "Cruiser cage panic after jail intake rejects Bailey for high vitals."
+      },
+      {
+        "sourceStartSec": 694.125,
+        "sourceEndSec": 760,
+        "purpose": "Return to ER room 5, uncuffing for vitals, and sudden foot escape sprint."
+      }
+    ],
+    "endingType": "cliffhanger",
+    "expectedEnding": "Moments after the officer uncuffs Bailey in ER room 5 to check his dangerously spiking vitals, Bailey suddenly leaps off the bed and bolts through the exit doors into the pitch-black parking lot.",
+    "endingRange": {
+      "sourceStartSec": 746.625,
+      "sourceEndSec": 760
+    },
+    "prohibitedReveals": [
+      "The parking lot taser takedown and physical wrestling on the asphalt.",
+      "The shattered glass door damage and additional felony criminal mischief charge.",
+      "The suspect's biting attack against nurses and officers during detox.",
+      "The final booking citation process and 5-count formal criminal charges."
+    ]
+  },
+  "narration_arc": [
+    {
+      "afterEventId": "e11",
+      "beforeEventId": "e12",
+      "narratorFunction": "bridge",
+      "purpose": "Transition from ER arrival to the vehicle search where officers uncover the suspect's fake IDs.",
+      "authenticAudioHandoffEventId": "e12"
+    },
+    {
+      "afterEventId": "e12",
+      "beforeEventId": "e13",
+      "narratorFunction": "reinterpretation",
+      "purpose": "Explain how finding 4 fake IDs reframes Bailey's disorientation as a potential deception strategy as he resists hospital testing.",
+      "authenticAudioHandoffEventId": "e13"
+    },
+    {
+      "afterEventId": "e14",
+      "beforeEventId": "e15",
+      "narratorFunction": "escalation",
+      "purpose": "Detail the shocking turn when jail medical staff refuse intake, causing Bailey to panic in the police cruiser.",
+      "authenticAudioHandoffEventId": "e15"
+    },
+    {
+      "afterEventId": "e15",
+      "beforeEventId": "e16",
+      "narratorFunction": "anticipation",
+      "purpose": "Set up the fatal mistake of removing Bailey's handcuffs inside ER room 5 for medical monitoring.",
+      "authenticAudioHandoffEventId": "e16"
+    }
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_001",
+      "sceneId": "scene_0020",
+      "sourceStartSec": 387.25,
+      "sourceEndSec": 394.625,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "transitionReason": "Opening Part 2 with Bailey arriving at the hospital ER under police guard.",
+      "macroBlockId": "block_hospital_arrival",
+      "sourceRunId": "run_01"
+    },
+    {
+      "segmentId": "seg_002",
+      "sceneId": "scene_0021",
+      "sourceStartSec": 394.625,
+      "sourceEndSec": 400.625,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "hook",
+      "transitionReason": "Establishing custody as first responders escort Bailey into the facility.",
+      "macroBlockId": "block_hospital_arrival",
+      "sourceRunId": "run_01"
+    },
+    {
+      "segmentId": "seg_003",
+      "sceneId": "scene_0023",
+      "sourceStartSec": 416.375,
+      "sourceEndSec": 423.375,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "While Bailey is escorted into the emergency room, officers search his sedan and find contraband.",
+      "storyFunction": "bridge",
+      "transitionReason": "Bridging from the hospital entrance to the concurrent vehicle search.",
+      "macroBlockId": "block_vehicle_search",
+      "sourceRunId": "run_02"
+    },
+    {
+      "segmentId": "seg_004",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 427.375,
+      "sourceEndSec": 434.375,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Hidden inside the vehicle are four fraudulent driver's licenses bearing different names and numbers.",
+      "storyFunction": "reveal",
+      "transitionReason": "Exposing Bailey's intentional deception and possession of multiple fake IDs.",
+      "macroBlockId": "block_vehicle_search",
+      "sourceRunId": "run_02"
+    },
+    {
+      "segmentId": "seg_005",
+      "sceneId": "scene_0025",
+      "sourceStartSec": 434.375,
+      "sourceEndSec": 447.875,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "evidence",
+      "transitionReason": "Raw dialogue as the officer discovers four fraudulent Louisiana licenses with mismatched numbers.",
+      "macroBlockId": "block_vehicle_search",
+      "sourceRunId": "run_02",
+      "actionCandidateId": "action_0007"
+    },
+    {
+      "segmentId": "seg_006",
+      "sceneId": "scene_0031",
+      "sourceStartSec": 566.25,
+      "sourceEndSec": 572.625,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Back in the examination room, Bailey repeatedly attempts to bolt, refusing routine vitals monitoring.",
+      "storyFunction": "escalation",
+      "transitionReason": "Reframing Bailey's ER agitation in light of the fake ID discoveries.",
+      "macroBlockId": "block_er_exam",
+      "sourceRunId": "run_03",
+      "actionCandidateId": "action_0008"
+    },
+    {
+      "segmentId": "seg_007",
+      "sceneId": "scene_0033",
+      "sourceStartSec": 574.125,
+      "sourceEndSec": 581.125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "After an emergency physician clears him medically, the officer places Bailey in handcuffs under arrest.",
+      "storyFunction": "arrest",
+      "transitionReason": "Narrating the initial medical clearance and transition to formal police arrest.",
+      "macroBlockId": "block_er_exam",
+      "sourceRunId": "run_03"
+    },
+    {
+      "segmentId": "seg_008",
+      "sceneId": "scene_0034",
+      "sourceStartSec": 595,
+      "sourceEndSec": 608.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "confrontation",
+      "transitionReason": "Authentic dialogue as Dr. Gordon performs the exam and officer secures Bailey in handcuffs.",
+      "macroBlockId": "block_arrest",
+      "sourceRunId": "run_04"
+    },
+    {
+      "segmentId": "seg_009",
+      "sceneId": "scene_0040",
+      "sourceStartSec": 638.5,
+      "sourceEndSec": 645.5,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "When they arrive at jail, medical intake refuses custody due to Bailey's spiking high vitals.",
+      "storyFunction": "escalation",
+      "transitionReason": "Explaining the sudden jail rejection that reverses the course of the transport.",
+      "macroBlockId": "block_jail_refusal",
+      "sourceRunId": "run_05",
+      "actionCandidateId": "action_0010"
+    },
+    {
+      "segmentId": "seg_010",
+      "sceneId": "scene_0040",
+      "sourceStartSec": 645.5,
+      "sourceEndSec": 651.125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Locked in the cruiser, Bailey panics, begging to return to the hospital.",
+      "storyFunction": "escalation",
+      "transitionReason": "Detailing Bailey's sudden panic and claims of medical distress inside the cruiser.",
+      "macroBlockId": "block_jail_refusal",
+      "sourceRunId": "run_05",
+      "actionCandidateId": "action_0010"
+    },
+    {
+      "segmentId": "seg_011",
+      "sceneId": "scene_0041",
+      "sourceStartSec": 651.125,
+      "sourceEndSec": 664.625,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "confrontation",
+      "transitionReason": "Raw footage of Bailey sweating and pleading for help inside the police cruiser cage.",
+      "macroBlockId": "block_cruiser_panic",
+      "sourceRunId": "run_06",
+      "actionCandidateId": "action_0010"
+    },
+    {
+      "segmentId": "seg_012",
+      "sceneId": "scene_0043",
+      "sourceStartSec": 718,
+      "sourceEndSec": 725,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Returned to the ER, the officer removes Bailey's handcuffs so nurses can attach vital monitors.",
+      "storyFunction": "bridge",
+      "transitionReason": "Setting up the critical decision to remove handcuffs inside ER room 5.",
+      "macroBlockId": "block_escape_setup",
+      "sourceRunId": "run_07"
+    },
+    {
+      "segmentId": "seg_013",
+      "sceneId": "scene_0043",
+      "sourceStartSec": 725,
+      "sourceEndSec": 732,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "It proves a critical mistake: the second he's freed, Bailey bolts for the exit doors!",
+      "storyFunction": "cliffhanger",
+      "transitionReason": "Building suspense toward Bailey's sudden hospital breakout sprint.",
+      "macroBlockId": "block_escape_setup",
+      "sourceRunId": "run_07"
+    },
+    {
+      "segmentId": "seg_014",
+      "sceneId": "scene_0045",
+      "sourceStartSec": 746.625,
+      "sourceEndSec": 759.5,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "storyFunction": "cliffhanger",
+      "transitionReason": "Peak cliffhanger as Bailey sprints out of the ER into the darkness, leaving Part 2 on a cliffhanger.",
+      "macroBlockId": "block_escape_action",
+      "sourceRunId": "run_08",
+      "actionCandidateId": "action_0012",
+      "actionSequenceId": "act_seq_escape",
+      "actionOverride": true
+    }
+  ],
+  "prompt_profile": "viral_tiktok_crime_part1",
+  "series_mode": "interleaved_multipart",
+  "part_badge": "PART 2",
+  "target_duration_min_sec": 110,
+  "target_duration_max_sec": 125
+}
