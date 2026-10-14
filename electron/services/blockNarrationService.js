@@ -38,7 +38,7 @@ const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the r
 Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction and narrationIntent, and carries the viewer from viewerStateEntering to viewerStateLeaving.
 The narrator owns comprehension, compression, orientation, causal connection, anticipation and momentum. It is the guide joining apparently disconnected source clips into ONE intelligible True Crime story, not a commentator reading actions aloud. When transitioning to another time, person, discovery or location, establish what changed and WHY the next clip matters; a hook -> rewind must orient the viewer to the earlier events. Hand the viewer to the real moment that follows (followingRawBlock / handoffTargetBeatId) without paraphrasing what that moment will say. Where an original officer/suspect line is emotionally or evidentially essential, stop talking and let the original line play.
 Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their ids in newInformationRefs. A quote whose epistemic status is not known_fact is attributed or hedged ("the caller said/reported...", "according to her"), never stated as fact. The attribution must appear in narrationText itself, not only in metadata. Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
-safeWords is an ADVISORY first-pass target for the whole block, never a quota. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
+Read input.blocks[].narrationArc as the GLOBAL story and audio-ownership plan; use it to avoid repetitive mini-introductions and unnatural narration fragments. Respect input.blocks[].deliveryGuidance. Every passage must be a complete, conversational thought, never a 2-4-word fragment pretending to explain a complex event. Preserve natural cadence, clear pronouns and meaningful pauses; never narrate over a raw_evidence payoff. If a block is too short to express its required truth, prefer a minimal grounded orientation; deterministic checks may route the block back to the Director for more duration. safeWords is an ADVISORY first-pass target for the whole block, never a quota. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
 Active voice, spoken English, grounded and specific. previewVi is a natural Vietnamese rendering of the passage.`;
 
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
@@ -155,7 +155,28 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   if (!narrated.length) return { blocks: timeline, audit };
   if (engine.config?.narration?.enabled === false) throw repairRequest(narrated[0].b.blockId, 'NARRATION_DISABLED', 'narration is disabled for this project.');
 
-  const payloads = new Map(narrated.map(({ b, k }) => [b.blockId, blockPayload(timeline, k, model, wps)]));
+  // Global narration map: every local passage sees where it sits in the
+  // complete story, and which real dialogue must remain the dramatic payoff.
+  // This is editorial context only; never invents narration or source facts.
+  const narrationArc = timeline.map(b => ({
+    blockId: b.blockId, mode: b.mode, storyFunction: b.storyFunction || '',
+    narratorFunction: b.mode === 'narrated_story' ? b.narratorFunction || '' : '',
+    narrationIntent: b.mode === 'narrated_story' ? b.narrationIntent || '' : '',
+    evidenceFunction: b.mode === 'raw_evidence' ? b.evidenceFunction || '' : '',
+    outputStartSec: b.outputStartSec, outputEndSec: b.outputEndSec,
+    visualDurationSec: b.durationSec,
+    sourceMoments: b.beats.map(beat => ({
+      beatId: beat.beatId, narrativeRole: beat.narrativeRole || '',
+      observedInFootage: beat.observedInFootage || ''
+    }))
+  }));
+  const payloads = new Map(narrated.map(({ b, k }) => [b.blockId, {
+    ...blockPayload(timeline, k, model, wps),
+    narrationArc,
+    deliveryGuidance: b.durationSec < 2.5
+      ? 'VERY SHORT BLOCK: do not cram a full explanation or unnatural sentence into this window. A brief complete bridge only; if its required factual context cannot be delivered intelligibly, the Director must allocate more time in delivery repair.'
+      : 'One natural spoken passage. Preserve a coherent handoff to neighbouring blocks; no repeated setup or premature answer.'
+  }]));
   // Delivery-only repairs keep the source EDL locked. Re-running the WHOLE
   // narration pass for unchanged blocks burns Vertex calls and can exhaust the
   // run budget before the edited block is validated. Cache only individually
