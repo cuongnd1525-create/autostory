@@ -811,6 +811,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     narrationEnabled: baseInput.narrationEnabled, preferredDurationSec: targets.targetDurationSec,
     targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec, requireDeliveryBlocks: true };
   const attempts = [];
+  emit('design', `[Director] Output policy: maxOutputTokens=${DIRECTOR_GENERATION.maxOutputTokens}, thinkingLevel=${DIRECTOR_GENERATION.thinkingLevel}, thoughtRecovery=one bounded LOW attempt if telemetry shows reasoning saturation.`);
   // current = the EDL the next repair starts from. lastAccepted = the last EDL whose
   // ONLY problem is its total duration (structurally valid). A duration repair that
   // returns a structurally invalid EDL is diagnostic only and is never promoted.
