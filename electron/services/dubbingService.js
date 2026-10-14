@@ -6977,7 +6977,11 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const maxStretchRatio = project.analysisWorkflow === "manual_gemini_draft_review"
       ? Math.min(0.04, Math.max(0, safeNumber(project.manualDraftMaxVoiceStretch ?? settings.manualDraftMaxVoiceStretch, 0.04)))
       : Math.min(0.08, project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08);
-    const voiceRenderOptions = getSegmentVoiceRenderOptions(lead);
+    // A narrated block owns one continuous passage. Its emotion belongs to the
+    // block, not the first visual beat (which may carry unrelated beat emotion).
+    const voiceRenderOptions = getSegmentVoiceRenderOptions({
+      ...lead, emotionTag: lead.blockEmotionTag || lead.emotionTag || 'NEUTRAL'
+    });
     const rawVoicePath = path.join(paths.audioDir, `${tag}${draftVoiceExt}`);
     const fittedVoicePath = path.join(paths.audioDir, `${tag}.m4a`);
     const blockVideoPath = path.join(paths.clipsDir, `${tag}-video.mp4`);
