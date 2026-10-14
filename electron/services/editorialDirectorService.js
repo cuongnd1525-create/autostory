@@ -27,18 +27,18 @@ const DUR_EPS = 0.25;
 const DUP_EPS = 0.05;
 
 // ---------------------------------------------------------------- generation fuse
-// TECHNICAL safety fuse, not an editorial rule. Valid director EDLs observed on
-// the benchmark are 3,649-4,252 candidate tokens for 14 beats (~260 tokens/beat
-// + ~400 header). The schema's hard beat ceiling (40) would need ~11k tokens, so
-// 16,000 admits every contract-legal EDL with headroom, while a degenerate
-// generation (e.g. a sentence looping inside one string) now stops after 16k
-// tokens (~2 min, ~$0.04 output) instead of the model default 65,536 (~9 min,
-// ~$0.16). Hitting it never imports partial JSON and is never auto-resent.
-const DIRECTOR_MAX_OUTPUT_TOKENS = 24000; // includes room for model reasoning + complete EDL
-// Editorial reasoning is not bounded to zero: Pro uses its supported default;
-// Gemini 3 gets high thinking through the model-aware Vertex request builder.
-const DIRECTOR_THINKING_BUDGET = 4096;
-const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS, thinkingBudget: DIRECTOR_THINKING_BUDGET, thinkingLevel: "high" });
+// Vertex counts both thinking AND JSON candidates against maxOutputTokens.
+// The prior 24k/HIGH setting spent 19,850 thoughts + 4,136 candidates on a
+// 20-beat story and truncated otherwise useful JSON. Gemini 3.1 Pro supports
+// MEDIUM; preserve reasoning for editorial judgment but reserve room for the EDL.
+// Provider limit is 65,536. A single bounded LOW fallback is permitted only
+// when actual usage proves reasoning saturation (never for malformed/looped JSON).
+const DIRECTOR_MAX_OUTPUT_TOKENS = 32768;
+const DIRECTOR_THINKING_BUDGET = 4096; // Gemini 2.x only; Gemini 3 honors thinkingLevel
+const DIRECTOR_GENERATION = Object.freeze({ maxOutputTokens: DIRECTOR_MAX_OUTPUT_TOKENS,
+  thinkingBudget: DIRECTOR_THINKING_BUDGET, thinkingLevel: "medium" });
+const DIRECTOR_THOUGHT_RECOVERY = Object.freeze({ maxOutputTokens: 49152,
+  thinkingBudget: DIRECTOR_THINKING_BUDGET, thinkingLevel: "low" });
 // A single director text field is one sentence (observed max 322 chars). A string
 // this long is generation degeneration, not editorial content: fail fast, no repair.
 const MAX_DIRECTOR_TEXT_CHARS = 2000;
@@ -602,24 +602,54 @@ function outputLimitError(engine, key, cause) {
   const diagnosis = diagnoseDirectorOutput(vertex.lastResponseText || '');
   const telemetry = { finishReason: meta.finishReason || 'MAX_TOKENS', promptTokenCount: u.promptTokenCount ?? null,
     candidatesTokenCount: u.candidatesTokenCount ?? null, thoughtsTokenCount: u.thoughtsTokenCount ?? 0, totalTokenCount: u.totalTokenCount ?? null,
-    requestedMaxOutputTokens: meta.requestedMaxOutputTokens ?? null, requestedThinkingBudget: meta.requestedThinkingBudget ?? null, modelMs: meta.modelMs ?? null };
+    requestedMaxOutputTokens: meta.requestedMaxOutputTokens ?? null,
+    requestedThinkingBudget: meta.requestedThinkingBudget ?? null,
+    requestedThinkingLevel: meta.requestedThinkingLevel ?? null, modelMs: meta.modelMs ?? null };
   return new StoryError('DIRECTOR_OUTPUT_LIMIT',
-    `Editorial Director hit the output ceiling (${telemetry.finishReason}; candidates ${telemetry.candidatesTokenCount}, thoughts ${telemetry.thoughtsTokenCount}, max ${telemetry.requestedMaxOutputTokens}). Raw response kept as ${key}-raw-response.txt (${diagnosis.chars} chars, ${diagnosis.beatIdCount} beat id(s), ${diagnosis.classification}${diagnosis.topRepeatedSentence.count > 1 ? `, top sentence x${diagnosis.topRepeatedSentence.count}` : ''}). Partial JSON not imported; the request is not resent automatically.`,
+    `Editorial Director hit the output ceiling (${telemetry.finishReason}; candidates ${telemetry.candidatesTokenCount}, thoughts ${telemetry.thoughtsTokenCount}, max ${telemetry.requestedMaxOutputTokens}). Raw response kept as ${key}-raw-response.txt (${diagnosis.chars} chars, ${diagnosis.beatIdCount} beat id(s), ${diagnosis.classification}${diagnosis.topRepeatedSentence.count > 1 ? `, top sentence x${diagnosis.topRepeatedSentence.count}` : ''}). Partial JSON not imported; identical requests are never resent.`,
     { key, telemetry, diagnosis, cause: cause?.message || String(cause) });
 }
 
-// Schema/shape failures are repairable like any other violation: the invalid
-// artifact is handed back to the director instead of aborting the run.
-// Output-limit / degenerate generations are NOT: they fail fast.
+// Re-attempt only when the provider telemetry proves the output was truncated
+// by EXCESSIVE REASONING, not by repetitive/degenerate JSON. The second request
+// has a fresh key, a lower thinking level and more room for visible JSON.
+// Never parse, splice, promote, or feed an incomplete first response to Gemini.
+function shouldRecoverThinkingLimit(metadata, diagnosis, options = DIRECTOR_GENERATION) {
+  const usage = metadata?.usage || {};
+  const thoughts = Number(usage.thoughtsTokenCount);
+  const cap = Number(metadata?.requestedMaxOutputTokens || options.maxOutputTokens);
+  return metadata?.finishReason === 'MAX_TOKENS'
+    && diagnosis?.classification === 'truncated'
+    && Number.isFinite(thoughts) && Number.isFinite(cap) && cap > 0
+    && thoughts >= 10000 && thoughts / cap >= 0.5;
+}
+
+// Schema/shape failures are repairable like any other violation; output
+// degeneration remains non-repairable. One thought-saturation recovery is safe
+// because it discards the first response and re-watches the original reel.
 async function callDirector(engine, key, input, instr, evidence, shape) {
-  try {
-    return { result: await engine.ask(key, input, schemas.directorEdl, instr, evidence, shape, 'auto_story_edit', { ...DIRECTOR_GENERATION }) };
-  } catch (e) {
-    if (NON_REPAIRABLE_OUTPUT.has(e?.kind)) throw e;
-    if (/MAX_TOKENS/.test(e?.message || '')) throw outputLimitError(engine, key, e);
-    if (e?.invalidArtifact === undefined && e?.kind !== 'INVALID_RESPONSE') throw e;
-    return { result: e.invalidArtifact || null, schemaError: e.message };
+  for (let pass = 0; pass < 2; pass++) {
+    const callKey = pass ? `${key}-thought-recovery` : key;
+    const generation = pass ? DIRECTOR_THOUGHT_RECOVERY : DIRECTOR_GENERATION;
+    try {
+      return { result: await engine.ask(callKey, input, schemas.directorEdl, instr, evidence, shape, 'auto_story_edit', { ...generation }) };
+    } catch (e) {
+      if (NON_REPAIRABLE_OUTPUT.has(e?.kind)) throw e;
+      if (/MAX_TOKENS/.test(e?.message || '')) {
+        const vertex = engine?.service?.vertex;
+        const diagnosis = diagnoseDirectorOutput(vertex?.lastResponseText || '');
+        if (pass === 0 && shouldRecoverThinkingLimit(vertex?.lastResponseMetadata, diagnosis, generation)) {
+          engine.onProgress?.({ stage: 'design', level: 'WARNING',
+            message: `[Director] ${key}: model spent most output tokens reasoning; trying one bounded LOW-thinking recovery (49152 tokens), original partial JSON discarded.` });
+          continue;
+        }
+        throw outputLimitError(engine, callKey, e);
+      }
+      if (e?.invalidArtifact === undefined && e?.kind !== 'INVALID_RESPONSE') throw e;
+      return { result: e.invalidArtifact || null, schemaError: e.message };
+    }
   }
+  throw new StoryError('DIRECTOR_OUTPUT_LIMIT', `Director ${key} used both bounded output attempts without valid JSON.`);
 }
 const askDirector = (engine, key, input, instr, evidence) => callDirector(engine, key, input, instr, evidence, validateShape);
 
@@ -1086,5 +1116,5 @@ module.exports = {
   directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
-  deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
+  deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, DIRECTOR_THOUGHT_RECOVERY, shouldRecoverThinkingLimit, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };
