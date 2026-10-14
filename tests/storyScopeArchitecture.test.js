@@ -802,6 +802,14 @@ function fakeEngine(asks) {
     const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true,
       hookPromiseSupported: true, observableEndingConsequence: true, repetitiveProcedureWithoutProgress: false,
       finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
+      productionQuality: {
+        narratorSoundsNatural: true, narratorAddsNecessaryContext: true,
+        narratorHandoffsClean: true, essentialDialogueClear: true,
+        activeFootageReadable: true, importantVisualTextReadable: true, pacingMaintainsProgress: true,
+        audibleObservation: 'Spoken bridge and final original dialogue are clear.',
+        visualObservation: 'The active police footage is readable in the portrait draft.',
+        pacingObservation: 'Only the named 30-40s repetitive stretch needs recutting.'
+      },
       openingCuriosity: { firstSecondsDescription: 'the denial at the window', createsCuriosity: true },
       transitions: [{ outputSec: 6, change: 'time', whatViewerSeesAndHears: 'The next scene establishes the earlier roadside encounter.', coldViewerUnderstandsWhy: true }], finalSeconds: { visualDescription: 'driver in cuffs, clearly lit', subjectClearlyVisible: true },
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
