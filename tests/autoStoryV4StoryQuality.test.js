@@ -122,4 +122,32 @@ const infoResult = Director.validateDirectorEdl({ beats: nonAdjacentRepeat }, {}
   { durationSec: 120, targetDurationMinSec: 65, targetDurationMaxSec: 100, reel: { ranges: [] } });
 assert.ok(infoResult.violations.some(v => v.code === 'REPEATED_INFORMATION' && v.secondBeatId === 'c'),
   'same search repeated after an intervening question must not count as story progress');
+// A "repair" returning the same H.264 source cuts cannot satisfy a pacing fault.
+const sameEdl = {
+  beats: [
+    { beatId:'hook', sourceStartSec:420, sourceEndSec:424, narrativeRole:'hook' },
+    { beatId:'search', sourceStartSec:300, sourceEndSec:360, narrativeRole:'escalation' },
+    { beatId:'payoff', sourceStartSec:500, sourceEndSec:510, narrativeRole:'ending' }
+  ],
+  deliveryBlocks: [
+    { blockId:'hook', mode:'raw_evidence', beatIds:['hook'] },
+    { blockId:'middle', mode:'narrated_story', beatIds:['search'], narrationIntent:'give context' },
+    { blockId:'payoff', mode:'raw_evidence', beatIds:['payoff'] }
+  ]
+};
+assert.throws(() => Director.assertMediaRepairProgress(sameEdl, structuredClone(sameEdl),
+  [{ type:'pacing_without_progress', beatIds:['search'] }]),
+  e => e.kind === 'EDITORIAL_REPAIR_NOOP', 'an identical EDL cannot fix a low-retention stretch');
+const newEdl = structuredClone(sameEdl);
+newEdl.beats[1].sourceStartSec = 320;
+assert.doesNotThrow(() => Director.assertMediaRepairProgress(sameEdl, newEdl,
+  [{ type:'pacing_without_progress', beatIds:['search'] }]),
+  'a real source-footage recut is an eligible attempt');
+assert.throws(() => Director.assertMediaRepairProgress(sameEdl, structuredClone(sameEdl),
+  [{ type:'narration_fragmented', beatIds:['search'] }]),
+  e => e.kind === 'EDITORIAL_REPAIR_NOOP', 'identical narrated delivery is not a fix');
+const newDelivery = structuredClone(sameEdl);
+newDelivery.deliveryBlocks[1].narrationIntent = 'clarify the causal jump in one sentence';
+assert.doesNotThrow(() => Director.assertMediaRepairProgress(sameEdl, newDelivery,
+  [{ type:'narration_fragmented', beatIds:['search'] }]));
 console.log('V4 story quality: payoff, repetition, and media release gates passed');
