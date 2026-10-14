@@ -77,7 +77,7 @@ const buildOpts = {
     const eng = { duration: 924.9, config: { outputCount: 3, editorialArchitecture: 'scope_media_director' }, service: svc };
     const budget = S.requestBudgetPlan(eng);
     const plan = S.planChunkWindows(eng.duration, budget.sourceModelLimit);
-    assert.equal(budget.downstreamReserved, 31); // V4: payoff, EDL, hook, 2 possible narration-bridge repairs and remaining downstream checks
+    assert.equal(budget.downstreamReserved, 43); // V4: payoff + Director + hook + narrator repair + two hook/EDL re-auditions
     assert.ok(budget.global >= 30, 'source + recovery + downstream all fit');
     assert.equal(budget.global, S.callLimit(svc));
     assert.equal(svc.callBudget.adaptiveLimit, true);
@@ -92,6 +92,16 @@ const buildOpts = {
     engine.config.editorialArchitecture = 'scope_media_director';
     await assert.rejects(() => S.build(engine, overview, buildOpts), /Cannot cover|SOURCE_MODEL_RECOVERY_BUDGET/);
     assert.equal(callBudget.calls, 0, 'no futile Vertex calls');
+  });
+
+  await ok('cached V4 source reserves only downstream AI calls and adapts old 16-call setting', () => {
+    const svc = { settings: { vertexAutoStoryMaxCalls: 16 }, callBudget: { calls: 0 } };
+    const eng = { duration: 924.9, config: { outputCount: 3, editorialArchitecture: 'scope_media_director' }, service: svc };
+    const budget = S.requestBudgetPlan(eng, { sourceCached: true });
+    assert.equal(budget.downstreamReserved, 43);
+    assert.equal(budget.global, 43);
+    assert.equal(budget.sourceModelLimit, 0);
+    assert.equal(svc.callBudget.adaptiveLimit, true);
   });
 
   await ok('dynamic budget covers a 30-minute V4 source with 2 outputs', () => {
