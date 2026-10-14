@@ -92,7 +92,13 @@ async function askBlockNarration(engine, story, payloads, evidence, repair = nul
   const instruction = repair
     ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks failed a deterministic narration check (input.blocks[].rewriteReason). Return a complete, SHORTER or corrected passage for that block that still serves its narrationIntent. If rewriteTargetWords is present, stay at or below that many words. If rewriteReason contains "epistemic", narrationText MUST explicitly attribute the non-fact claim (for example "the caller said...", "the caller reported...", or "according to her..."); changing only newInformationRefs is not a fix. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
     : INSTRUCTION;
-  const attachedEvidence = repair ? [] : evidence;
+  // Source Story Model + the verified Director EDL already supplied the
+  // evidence excerpts and exact timestamps in payloads[].sourceContext.
+  // This is an EDITORIAL TEXT pass, not a multimodal source inspection.
+  // Re-attaching seven videos to a Pro Preview model dramatically inflates the
+  // request and makes capacity-related 429s more painful. The Director, payoff
+  // verifier and hook audition remain fully multimodal.
+  const attachedEvidence = [];
   const result = await engine.ask(`v5-block-narration${repair ? `_rewrite${attempt}` : ''}-${story.scriptId}`,
     { spine: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise },
       mustWithhold: story.storyScope?.mustWithhold || [], blocks: payloads },
