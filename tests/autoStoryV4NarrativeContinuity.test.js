@@ -40,7 +40,13 @@ const mediaReply = {
   coldViewerCanFollow:true, coldViewerNotes:'', observedStory:'Clear rewind and payoff.',
   openingCuriosity:{firstSecondsDescription:'The denial',createsCuriosity:true},
   finalSeconds:{visualDescription:'Known result',subjectClearlyVisible:true},
-  transitions:[], issues:[], summary:'Coherent'
+  transitions:[], issues:[], summary:'Coherent',
+  productionQuality: { narratorSoundsNatural:true, narratorAddsNecessaryContext:true,
+    narratorHandoffsClean:true, essentialDialogueClear:true, activeFootageReadable:true,
+    importantVisualTextReadable:true, pacingMaintainsProgress:true,
+    audibleObservation:'Audible narrator clearly orients the rewind',
+    visualObservation:'Officer and action remain readable in the frame',
+    pacingObservation:'Each moment adds a new consequence' }
 };
 let report = Critic.normalizeCritique(mediaReply,{timeline,durationSec:20,deliveryAware:true});
 assert.equal(report.status,'MEDIA_CRITIC_INVALID','AI cannot omit the important rewind');
