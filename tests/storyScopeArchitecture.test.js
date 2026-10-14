@@ -145,7 +145,7 @@ function makeVertex(script) {
         : p.includes('PASS 1 — GEMINI EDITORIAL DIRECTOR') ? 'legacy_design'
         : p.includes('PASS 3B — BLOCK NARRATION') ? 'block_narration'
         : p.includes('PASS 3 — NARRATION') ? 'narration'
-        : p.includes('WATCH the complete attached opening clip') ? 'hook'
+        : /v4-hook-audition-\d+/.test(p) || p.includes('WATCH the attached 6s opening clip') ? 'hook'
         : p.includes('reviewing a RENDERED edit') ? 'scope_critic'
         : 'other';
       calls.push({ kind, prompt: p, filePaths: args.filePaths || [], args });
