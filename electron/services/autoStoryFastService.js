@@ -162,7 +162,7 @@ class AutoStoryFastService {
     // A successful fall-back passage is still fully schema-validated and
     // evidence-gated. On a new run, reuse it BEFORE retrying the overloaded
     // Pro Preview pool; otherwise each resume pays for another 429.
-    const blockNarrationStage = /^v5-block-narration(?:_rewrite\\d+)?-\\d+$/.test(key);
+    const blockNarrationStage = /^v5-block-narration(?:_rewrite\d+)?-\d+$/.test(key);
     const fallbackModel = String(this.settings.vertexAutoStoryNarrationFallbackModel || 'gemini-3.5-flash').trim();
     if (!args.noCache && blockNarrationStage && args.sourceContract === true
         && !args.narrationFallback && this.settings.vertexAutoStoryNarrationFailoverEnabled !== false
