@@ -146,6 +146,9 @@ EVERY BEAT MUST BE BOTH NOVEL AND CAUSALLY COHERENT WITH THE SCOPE.
 DELIVERY: THE NARRATOR AND THE REAL MOMENT SHARE THE STORY.
 The NARRATOR owns comprehension, compression, orientation, causal connection, anticipation and momentum.
 SOURCE AUDIO owns proof, confrontation, emotion, authenticity, the strongest quote, reaction, discovery and consequence.
+The narrator is a STORY GUIDE rather than a generic explainer: orient a cold viewer when a scene starts midway through events, connect a cause to its consequence, identify a changed location/person/timeline, then hand off to the strongest ORIGINAL police/suspect exchange. Do not let disconnected exciting clips explain themselves.
+A source-time jump or hook teaser -> rewind needs an intelligible handoff. If both adjoining beats rely only on original audio, verify the ACTUAL dialogue itself explains WHY the next moment follows; otherwise assign an adjacent narrated_story block whose narrationIntent names the necessary missing connection.
+Never solve continuity by merely forcing a narrator line into every scene, by talking over the strongest original quote, or by restating what the footage already tells the viewer.
 For each stretch of the EDL decide: does the viewer need to UNDERSTAND this section? A narrated_story block may own it. Does the viewer need to EXPERIENCE or BELIEVE this moment? A raw_evidence block should own it.
 Useful grammar when it fits: NARRATE TO THE MOMENT -> LET THE REAL MOMENT SPEAK -> NARRATE OUT OF IT.
 Narration may: set up or rewind context, identify people, compress procedural or repetitive explanation, bridge a meaningful time jump, establish whose account we are hearing, frame a contradiction, build anticipation, set up a reveal, open an unresolved question.
@@ -169,6 +172,7 @@ DELIVERY SELF-CHECK (answer in the block fields before finalizing spine.delivery
 
 TRANSITIONS (spine.transitionChecks, one per boundary between consecutive blocks).
 - For each boundary answer: could a cold viewer understand why the next scene is being shown (coldViewerUnderstandsWhy) and how they know (howTheViewerKnows: the picture, the dialogue, or the narration)? Judge from what the viewer sees and hears, not from how far apart the timestamps are.
+- Also inspect EACH cut inside a raw_evidence block. A single all-raw block is NOT a loophole for skipping transitions. If there is a significant source-time jump, reverse-chronology hook rewind or unexplained switch of person/place, orient the viewer through a narrated block or an actual unambiguous original exchange. Describe the exact handoff in narrationIntent; avoid relying on the audience to have watched the original long video.
 - If the honest answer is no, fix it before returning: change delivery ownership, narrationIntent or the block boundary. Do not return coldViewerUnderstandsWhy=false.
 
 OPENING STRATEGY (spine.openingStrategy) — compare BOTH before choosing the first beat:
@@ -953,6 +957,7 @@ The EDL is LOCKED. input.currentEdl.beats are already media-grounded and MUST re
 Repair ONLY input.currentEdl.deliveryBlocks and transitionChecks to resolve input.violations.
 Preserve every unaffected block exactly when possible. Every existing beat must belong to exactly one block; block membership is consecutive in EDL order; blocks follow EDL order.
 
+For an UNBRIDGED_EDL_TIME_JUMP violation, the footage jumps significantly in source time with raw_audio on both sides and no narrator-guided handoff. PRESERVE the footage and strongest raw exchanges; turn an adjacent non-essential raw beat (or a continuous group of such beats) into narrated_story with a specific, evidence-grounded narrationIntent explaining the time/causal change. A teaser -> earlier context needs explicit rewind orientation. The narrator MUST bridge cause, time and viewer understanding, not just describe a visual or repeat the next raw quote.
 For a NARRATED_BLOCK_VOICE_OVERFLOW / NARRATED_BLOCK_UNFIT failure, the block writer has already attempted focused text rewrites and measured the real TTS. Do not trigger a whole-story rewrite.
 Choose the smallest delivery-layer fix that preserves the story:
 - shorten the failing narrated block's narrationIntent to only the indispensable context;
