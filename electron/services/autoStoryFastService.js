@@ -147,7 +147,7 @@ class AutoStoryFastService {
     args = { ...args, taskType: args.sourceContract ? args.taskType : require("./autoStoryCostPolicy").taskFor(key) || args.taskType };
     const fingerprint = hash({ VERSION, ...(args.hookSchema ? { hookSchema:1 } : {}), ...(args.relaxedSchema ? { relaxedSchema:1 } : {}), input, prompt: args.prompt, schema: args.responseSchema, videoFps: args.videoFps, videoFpsByPath: args.videoFpsByPath, mediaResolution: args.mediaResolution,
       filePaths: args.filePaths, maxOutputTokens: args.maxOutputTokens, thinkingBudget: args.thinkingBudget, thinkingLevel: args.thinkingLevel,
-      model: this.vertex.getModel?.(args.taskType) });
+      model: args.modelOverride || this.vertex.getModel?.(args.taskType) });
     const file = path.join(root, `${key}-${fingerprint.slice(0, 20)}.json`);
     const repairFile = `${file}.repair.json`;
     const originalArgs = args;
@@ -178,7 +178,7 @@ class AutoStoryFastService {
       }
     } catch (error) { if (error.invalidArtifact) throw error; /* No compatible repair checkpoint. */ }
     if (this.metricsRoot) {
-      const estimate = await metrics.estimate(this.metricsRoot, key, this.vertex.getModel?.(args.taskType));
+      const estimate = await metrics.estimate(this.metricsRoot, key, args.modelOverride || this.vertex.getModel?.(args.taskType));
       const budget = await this.vertex.budgetStatus?.();
       const remaining = budget ? Math.max(0, Math.min(budget.budgetUsd ? budget.budgetUsd - budget.totalSpentUsd : Infinity,
         budget.dailyLimitUsd ? budget.dailyLimitUsd - budget.dailySpentUsd : Infinity)) : null;
@@ -197,7 +197,7 @@ class AutoStoryFastService {
       this.vertex.lastUsage = null;
       try {
         this.apiCalls = ++this.callBudget.calls;
-        onProgress?.({ stage: key, message: `${key} · ${this.vertex.getModel?.(args.taskType) || args.taskType} · yêu cầu ${this.apiCalls}/${limit}` });
+        onProgress?.({ stage: key, message: `${key} · ${args.modelOverride || this.vertex.getModel?.(args.taskType) || args.taskType} · yêu cầu ${this.apiCalls}/${limit}` });
         const queuedAt = Date.now();
         let queueMs;
         const result = await require('./productionResourcePool').withSlot('auto-story-ai', 2, signal, () => {
@@ -226,6 +226,23 @@ class AutoStoryFastService {
         const providerErrors = require('./autoStoryProviderErrors');
         if (providerErrors.isRateLimit(error)) {
           if (signal?.aborted) throw error;
+          // An overloaded Pro Preview pool cannot be repaired by repeatedly
+          // sending the same editorial text request to the same model.
+          // Fail over ONLY the evidence-grounded, schema-validated V4 block
+          // narration stage. Never silently downgrade source understanding,
+          // Director, hook/payoff verification, or visual review.
+          const blockNarrationStage = /^v5-block-narration(?:_rewrite\\d+)?-\\d+$/.test(key);
+          const fallbackModel = String(this.settings.vertexAutoStoryNarrationFallbackModel || 'gemini-3.5-flash').trim();
+          const currentModel = String(args.modelOverride || this.vertex.getModel?.(args.taskType) || '').trim();
+          if (blockNarrationStage && args.sourceContract === true && !args.narrationFallback
+              && this.settings.vertexAutoStoryNarrationFailoverEnabled !== false
+              && fallbackModel && fallbackModel !== currentModel) {
+            onProgress?.({ stage: key, level: 'WARNING',
+              message: `${key}: Vertex 429 trên ${currentModel}; tự chuyển riêng bước viết narration sang ${fallbackModel} (bản GA). Story Scope, footage, EDL và kiểm tra fact vẫn giữ nguyên.` });
+            return this.stage(root, key, input,
+              { ...originalArgs, modelOverride: fallbackModel, narrationFallback: true },
+              validate, onProgress, signal);
+          }
           const delay = providerErrors.retryDelay(error, rateLimitRetries);
           if (delay === null) throw providerErrors.exhausted(error, key);
           rateLimitRetries++;
