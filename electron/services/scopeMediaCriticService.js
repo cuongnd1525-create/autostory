@@ -128,10 +128,15 @@ function buildPrompt(spine, timeline, durationSec, delivery = null) {
     return `- ${t.outputStartSec.toFixed(1)}-${t.outputEndSec.toFixed(1)}s [${b.beatId}] ${b.scopeMembership || ''} ${b.audioMode || ''}: intended "${String(b.newInformation || b.whyNecessaryNow || '').slice(0, 160)}"`;
   }).join('\n');
   const majorJumps = majorSourceJumps(timeline);
+  const everyCut = timeline.slice(1).map((t, i) => ({
+    outputSec: t.outputStartSec, previous: timeline[i], current: t
+  }));
   return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS only: scope, causal flow, dialogue function, hook, ending. Ignore captions, fonts, framing, blur, music, colour and FPS.
 MANDATORY MAJOR SOURCE CUT CHECK (${majorJumps.length} boundary/boundaries):
 ${majorJumps.map(g => `- At OUTPUT ${g.outputSec.toFixed(1)}s, source jumps ${g.sourceGapSec > 0 ? 'forward' : 'backward'} ${Math.abs(g.sourceGapSec)}s: ${g.fromBeatId} -> ${g.toBeatId}. Check whether what is actually SPOKEN (narrator or original participants) or SHOWN explains this change.`).join('\n') || '- No major >20s source jumps in this EDL.'}
-For EACH listed source cut include a transitions[] entry near the OUTPUT timestamp above, with the actual spoken/visible bridge in whatViewerSeesAndHears and your real coldViewerUnderstandsWhy judgment. Do not blindly mark understood merely because a narrator block was planned. If a narrator has unrelated words or no audible voice, the jump is NOT bridged. Judge from the MP4, not the delivery plan.
+MANDATORY COLD-VIEWER AUDIT OF EVERY EDL CUT (${everyCut.length} boundaries, even when the time gap is short):
+${everyCut.map(c => `- OUTPUT ${Number(c.outputSec).toFixed(1)}s: ${c.previous.beatId} -> ${c.current.beatId}. Source ${c.previous.sourceEndSec}s -> ${c.current.sourceStartSec}s. What ACTUAL words or pictures explain the relationship and new information?`).join('\n') || '- One continuous shot.'}
+For EVERY CUT above return a DISTINCT transitions[] entry at exactly that output time, with whatViewerSeesAndHears (literal, from the MP4), change (scene/time/place/perspective) and coldViewerUnderstandsWhy. Never skip a cut only because the source clocks are nearby. Do not assume the narrator actually speaks just because a delivery block claims one. The first 1-3 seconds AFTER a cut must orient a cold viewer or genuinely continue an intelligible raw conversation; if not, mark false and explain where the narration/causal handoff is missing. If the same hook footage is replayed with no new information, report a blocking repeated_dialogue_function issue rather than calling it a payoff.
 
 INTENDED STORY SCOPE
 - Central conflict: ${scope.centralConflict || ''}
@@ -183,13 +188,22 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
   // clearly visible is unusable, and a cold viewer cannot follow past a transition
   // the critic itself says is not understood.
   const transitions = (Array.isArray(raw.transitions) ? raw.transitions : []).filter(t => t && Number.isFinite(Number(t.outputSec)));
-  const expected = deliveryAware ? (expectedMajorJumps || majorSourceJumps(timeline)) : [];
-  for (const jump of expected) {
-    const match = transitions.find(t => Math.abs(Number(t.outputSec) - jump.outputSec) <= 2);
-    if (!match || typeof match.coldViewerUnderstandsWhy !== 'boolean'
-        || !String(match.whatViewerSeesAndHears || '').trim()) {
-      return invalid(`Media Critic omitted mandatory source cut at output ${jump.outputSec.toFixed(1)}s (${jump.fromBeatId} -> ${jump.toBeatId}); cannot certify story continuity.`);
+  // The MP4 must be audited at EVERY EDL cut. One answer must not serve
+  // multiple cuts, and a short jump can be semantically as confusing as a long.
+  const expected = deliveryAware
+    ? (expectedMajorJumps || timeline.slice(1).map((t, i) => ({
+      outputSec: t.outputStartSec, fromBeatId: timeline[i].beatId, toBeatId: t.beatId
+    }))) : [];
+  const matchedTransitions = new Set();
+  for (const cut of expected) {
+    const index = transitions.findIndex((t, i) => !matchedTransitions.has(i)
+      && Math.abs(Number(t.outputSec) - Number(cut.outputSec)) <= 0.75
+      && typeof t.coldViewerUnderstandsWhy === 'boolean'
+      && String(t.whatViewerSeesAndHears || '').trim());
+    if (index < 0) {
+      return invalid(`Media Critic omitted mandatory source cut at output ${Number(cut.outputSec).toFixed(1)}s (${cut.fromBeatId} -> ${cut.toBeatId}); cannot certify story continuity.`);
     }
+    matchedTransitions.add(index);
   }
   const lostAt = transitions.filter(t => t.coldViewerUnderstandsWhy === false);
   const verdict = {
