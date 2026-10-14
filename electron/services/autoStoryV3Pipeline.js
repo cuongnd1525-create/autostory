@@ -690,8 +690,33 @@ const deliveryOnlyViolationSet = violations =>
 
 async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical, deliveryRepair = Director.repairDeliveryTechnical } = {}) {
   const { engine, service, opts, model, root, emit, scriptId } = ctx;
+  let continuityRepair = null;
+  // Mandatory for fully automatic V4, and ONLY when narration is enabled.
+  // The Director's own transition self-evaluation can miss time jumps INSIDE
+  // one raw_evidence block. Prevent such edits from reaching the renderer.
+  if (Number(engine?.project?.autoStoryContractVersion) === 4
+      && engine.config?.narration?.enabled !== false && Director.isDirectorSpine(story)) {
+    const continuity = require('./autoStoryV4NarrativeContinuityGate');
+    let report = continuity.check(story);
+    await write(path.join(root, `narrative-continuity-${scriptId}.json`), report);
+    for (let pass = 1; pass <= 2 && !report.passed; pass++) {
+      emit('design', `[V4] Script ${scriptId}: ${report.violations.length} unbridged source jumps; narrator continuity repair ${pass}/2 (source cuts locked).`, 'WARNING');
+      const fixed = await deliveryRepair(engine, { model, spine: story, violations: report.violations,
+        root, write, emit, scriptId });
+      story = { ...story, ...fixed.spine };
+      continuityRepair = fixed.spine;
+      report = continuity.check(story);
+      await write(path.join(root, `narrative-continuity-${scriptId}-repair-${pass}.json`), report);
+    }
+    if (!report.passed) {
+      throw new StoryError('DIRECTOR_EDL_INVALID',
+        `Script ${scriptId}: unbridged scene transitions remain after two delivery repairs; do not render disconnected footage.`,
+        { violations: report.violations });
+    }
+  }
   try {
-    return { built: await build(engine, service, opts, story, model, root, emit), story };
+    return { built: await build(engine, service, opts, story, model, root, emit), story,
+      ...(continuityRepair ? { repairedSpine: continuityRepair } : {}) };
   } catch (e) {
     if (!Director.isDirectorSpine(story) || !DIRECTOR_ROUTABLE_KINDS.has(e.kind)) throw e;
     const firstViolations = e.details?.violations || [{ code: e.kind, message: e.message, details: e.details || null }];
