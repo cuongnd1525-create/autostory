@@ -1002,21 +1002,7 @@ async function directEdl(engine, { model, scope, root = null, write = null, emit
 
 // Repair from the RENDERED MP4 critique. Receives scope + complete current EDL +
 // weak regions + the SAME scope reel media (cached proxies, not the whole source).
-async function repairEdl(engine, { model, spine, critique, weakRegions = [], root = null, write = null, emit = () => {}, pass = 1, scriptId = 1 }) {
-  if (!isDirectorSpine(spine)) throw new StoryError('INPUT_MISSING', 'repairEdl requires a director-owned spine.');
-  const scope = spine.storyScope;
-  const { reel, evidence } = await prepareReel(engine, scope, model);
-  const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
-  const out = await runDirector(engine, {
-    model, scope, reel, evidence, key: `v5-editorial-director-repair-${scriptId}-${pass}`,
-    extraInput: {
-      currentEdl,
-      weakRegions,
-      criticFindings: { summary: critique?.summary || '', issues: critique?.issues || [], scopeSurvived: critique?.scopeSurvived, endingIsConsequence: critique?.endingIsConsequence }
-    },
-    repairText: repairInstruction('critic'),
-    root, write, emit
-  });
+function assertMediaRepairProgress(original, candidate, weakRegions = []) {
   // Prevent a model from claiming a serious EDITING fault was repaired while
   // returning the same source cuts / same narration ownership. This happened
   // in production: a second MP4 had bit-identical H.264 video after "repair".
@@ -1038,17 +1024,36 @@ async function repairEdl(engine, { model, spine, critique, weakRegions = [], roo
   const audioSignature = edl => JSON.stringify((edl?.deliveryBlocks || []).map(x => [
     x.blockId, x.mode, x.beatIds, x.narrationIntent, x.sourceAudioTreatment
   ]));
-  if (needsFootageChange && cutSignature(out.spine) === cutSignature(spine)) {
+  if (needsFootageChange && cutSignature(candidate) === cutSignature(original)) {
     throw new StoryError('EDITORIAL_REPAIR_NOOP',
       'Media Critic rejected the rendered edit for weak footage or pacing, but Director returned an identical EDL. Rejecting the fake repair; choose different in-scope source moments.',
       { weakRegions: observed });
   }
   if (needsDeliveryChange && !needsFootageChange
-      && audioSignature(out.spine) === audioSignature(spine)) {
+      && audioSignature(candidate) === audioSignature(original)) {
     throw new StoryError('EDITORIAL_REPAIR_NOOP',
       'Media Critic rejected narrator delivery, but Director returned identical narration blocks. Re-rendering would preserve the same weak passages.',
       { weakRegions: observed });
   }
+  return true;
+}
+
+async function repairEdl(engine, { model, spine, critique, weakRegions = [], root = null, write = null, emit = () => {}, pass = 1, scriptId = 1 }) {
+  if (!isDirectorSpine(spine)) throw new StoryError('INPUT_MISSING', 'repairEdl requires a director-owned spine.');
+  const scope = spine.storyScope;
+  const { reel, evidence } = await prepareReel(engine, scope, model);
+  const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
+  const out = await runDirector(engine, {
+    model, scope, reel, evidence, key: `v5-editorial-director-repair-${scriptId}-${pass}`,
+    extraInput: {
+      currentEdl,
+      weakRegions,
+      criticFindings: { summary: critique?.summary || '', issues: critique?.issues || [], scopeSurvived: critique?.scopeSurvived, endingIsConsequence: critique?.endingIsConsequence }
+    },
+    repairText: repairInstruction('critic'),
+    root, write, emit
+  });
+  assertMediaRepairProgress(spine, out.spine, weakRegions);
   const repaired = stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, repairPass: pass });
   return { spine: repaired, evidence, reel, report: out.report, request: { scope, currentEdl, weakRegions, reel, evidenceFiles: evidence.map(e => e.file) } };
 }
@@ -1159,7 +1164,7 @@ function assertEdlIntact(directorBeats, finalBeats, durationSec = Infinity) {
 module.exports = {
   DIRECTOR_CONTRACT, SCOPE_MEMBERSHIP, schemas, instruction, repairInstruction,
   validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
-  directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
+  directEdl, repairEdl, assertMediaRepairProgress, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
   deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, DIRECTOR_THOUGHT_RECOVERY, shouldRecoverThinkingLimit, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
