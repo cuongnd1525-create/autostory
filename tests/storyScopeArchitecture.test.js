@@ -125,7 +125,7 @@ function directorEdlNoBlocks({ beats } = {}) {
         beat('b2', 4, 14, { chronologyMode: 'rewind', narrativeRole: 'rewind_context' }),
         beat('b3', 16, 30),
         beat('b4', 36, 50, { narrativeRole: 'contradiction' }),
-        beat('b5', 58, 82, { narrativeRole: 'escalation' }),
+        beat('b5', 66, 82, { narrativeRole: 'escalation' }),
         beat('b6', 98, 106, { narrativeRole: 'cliffhanger', scopeMembership: 'ending', payoffTiming: 'part_2', isForwardConsequence: true, expectedNextConsequence: 'detention' })
       ]
     }
