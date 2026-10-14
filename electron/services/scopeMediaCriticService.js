@@ -271,12 +271,22 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
     issues.push({ ...it, outputStartSec: s, outputEndSec: e, beatIds: beatsInRegion(timeline, s, e) });
   }
   // A blanket "sounds bad" or "tiny video" verdict is insufficient for a
-  // repair: demand a local MP4 observation with output timestamps. If missing,
-  // withhold PASS rather than accepting an ungrounded quality score.
-  if (deliveryAware) for (const [flag, issueType] of Object.entries(qualityFlags)) {
+  // repair: demand a local MP4 observation with output timestamps. Related
+  // issue codes also count: narration can be BOTH robotic and fragmented;
+  // pacing may be reported as procedural repetition rather than dead air.
+  const qualityEvidenceTypes = {
+    narratorSoundsNatural: ['narration_robotic', 'narration_fragmented'],
+    narratorAddsNecessaryContext: ['narration_unnecessary', 'narration_underused', 'narration_handoff_confusing'],
+    narratorHandoffsClean: ['narration_handoff_confusing', 'weak_narrator_to_raw_handoff', 'weak_raw_to_narrator_handoff', 'narration_masks_dialogue'],
+    essentialDialogueClear: ['raw_dialogue_unintelligible', 'narration_masks_dialogue'],
+    activeFootageReadable: ['small_active_footage', 'unusable_footage'],
+    importantVisualTextReadable: ['unreadable_on_screen_text', 'small_active_footage'],
+    pacingMaintainsProgress: ['pacing_without_progress', 'procedural_repetition', 'low_value_stretch', 'repeated_dialogue_function']
+  };
+  if (deliveryAware) for (const [flag, allowed] of Object.entries(qualityEvidenceTypes)) {
     if (raw.productionQuality[flag] === false && !issues.some(it =>
-      it.type === issueType && it.severity === 'blocking' && String(it.evidence || '').trim())) {
-      return invalid(`productionQuality.${flag}=false lacks a timed blocking ${issueType} issue with observed evidence.`);
+      allowed.includes(it.type) && it.severity === 'blocking' && String(it.evidence || '').trim())) {
+      return invalid(`productionQuality.${flag}=false lacks an observed, timed blocking issue (${allowed.join('/')}).`);
     }
   }
   // A false verdict with no matching issue still needs a repairable region.
