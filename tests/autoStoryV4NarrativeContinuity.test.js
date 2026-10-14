@@ -49,6 +49,14 @@ report = Critic.normalizeCritique({ ...mediaReply, transitions:[{
   coldViewerUnderstandsWhy:true
 }] },{timeline,durationSec:20,deliveryAware:true});
 assert.equal(report.isCompliant,true,'verified audible transition allows the edit');
+// Even a 2s source-time gap may create an unexplained topic/person switch.
+const shortCut = [
+  { beatId: 'context', sourceStartSec: 10, sourceEndSec: 14, outputStartSec: 0, outputEndSec: 4 },
+  { beatId: 'conflict', sourceStartSec: 16, sourceEndSec: 22, outputStartSec: 4, outputEndSec: 10 }
+];
+assert.equal(Critic.majorSourceJumps(shortCut).length, 0);
+assert.equal(Critic.normalizeCritique(mediaReply, { timeline: shortCut, durationSec: 10, deliveryAware: true }).status,
+  'MEDIA_CRITIC_INVALID', 'a short but omitted scene transition must not be accepted');
 
 const audit = Continuity.check(original);
 assert.equal(audit.passed, false, 'real 88s video with 18 all-raw beats is unacceptable');
@@ -62,6 +70,12 @@ const continuous = { ...original, beats: [{ beatId:'a',sourceStartSec:10,sourceE
   {beatId:'b',sourceStartSec:20,sourceEndSec:27}],
   deliveryBlocks:[{blockId:'raw',mode:'raw_evidence',beatIds:['a','b']}] };
 assert.equal(Continuity.check(continuous).passed,true);
+const shortRewind = { ...continuous, beats: [
+  { beatId: 'a', chronologyMode: 'teaser', sourceStartSec: 20, sourceEndSec: 26 },
+  { beatId: 'b', chronologyMode: 'rewind', sourceStartSec: 17, sourceEndSec: 19 }
+] };
+assert.equal(Continuity.check(shortRewind).passed, false,
+  'an explicit rewind needs a handoff even if the source time gap is under 20s');
 
 (async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(),'v4-continuity-'));
