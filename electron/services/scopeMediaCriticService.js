@@ -102,6 +102,21 @@ function outputTimeline(spine, script) {
   });
 }
 
+// Audit every major source-time discontinuity, including two raw beats inside
+// the SAME delivery block (previously invisible to the Critic transition list).
+function majorSourceJumps(timeline = []) {
+  const out = [];
+  for (let i = 1; i < timeline.length; i++) {
+    const before = timeline[i - 1], after = timeline[i];
+    const gap = Number(after.sourceStartSec) - Number(before.sourceEndSec);
+    if (Number.isFinite(gap) && Math.abs(gap) >= 20) out.push({
+      outputSec: after.outputStartSec, fromBeatId: before.beatId,
+      toBeatId: after.beatId, sourceGapSec: Math.round(gap * 10) / 10
+    });
+  }
+  return out;
+}
+
 function beatsInRegion(timeline, s, e) {
   return timeline.filter(t => Math.min(e, t.outputEndSec) - Math.max(s, t.outputStartSec) > 0.05).map(t => t.beatId);
 }
@@ -112,7 +127,11 @@ function buildPrompt(spine, timeline, durationSec, delivery = null) {
     const b = spine.beats[i] || {};
     return `- ${t.outputStartSec.toFixed(1)}-${t.outputEndSec.toFixed(1)}s [${b.beatId}] ${b.scopeMembership || ''} ${b.audioMode || ''}: intended "${String(b.newInformation || b.whyNecessaryNow || '').slice(0, 160)}"`;
   }).join('\n');
+  const majorJumps = majorSourceJumps(timeline);
   return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS only: scope, causal flow, dialogue function, hook, ending. Ignore captions, fonts, framing, blur, music, colour and FPS.
+MANDATORY MAJOR SOURCE CUT CHECK (${majorJumps.length} boundary/boundaries):
+${majorJumps.map(g => `- At OUTPUT ${g.outputSec.toFixed(1)}s, source jumps ${g.sourceGapSec > 0 ? 'forward' : 'backward'} ${Math.abs(g.sourceGapSec)}s: ${g.fromBeatId} -> ${g.toBeatId}. Check whether what is actually SPOKEN (narrator or original participants) or SHOWN explains this change.`).join('\\n') || '- No major >20s source jumps in this EDL.'}
+For EACH listed source cut include a transitions[] entry near the OUTPUT timestamp above, with the actual spoken/visible bridge in whatViewerSeesAndHears and your real coldViewerUnderstandsWhy judgment. Do not blindly mark understood merely because a narrator block was planned. If a narrator has unrelated words or no audible voice, the jump is NOT bridged. Judge from the MP4, not the delivery plan.
 
 INTENDED STORY SCOPE
 - Central conflict: ${scope.centralConflict || ''}
@@ -146,7 +165,7 @@ Answer from what you actually SEE and HEAR:
 Return JSON only.`;
 }
 
-function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }) {
+function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, expectedMajorJumps = null }) {
   const invalid = summary => ({ status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary, issues: [], weakWindows: [], weakRegions: [] });
   if (!raw || typeof raw !== 'object') return invalid('Critic returned no object.');
   for (const k of ['scopeSurvived', 'centralQuestionActiveThroughout', 'endingIsConsequenceOfCentralConflict', 'finalFootageUsable']) {
@@ -164,6 +183,14 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   // clearly visible is unusable, and a cold viewer cannot follow past a transition
   // the critic itself says is not understood.
   const transitions = (Array.isArray(raw.transitions) ? raw.transitions : []).filter(t => t && Number.isFinite(Number(t.outputSec)));
+  const expected = deliveryAware ? (expectedMajorJumps || majorSourceJumps(timeline)) : [];
+  for (const jump of expected) {
+    const match = transitions.find(t => Math.abs(Number(t.outputSec) - jump.outputSec) <= 2);
+    if (!match || typeof match.coldViewerUnderstandsWhy !== 'boolean'
+        || !String(match.whatViewerSeesAndHears || '').trim()) {
+      return invalid(`Media Critic omitted mandatory source cut at output ${jump.outputSec.toFixed(1)}s (${jump.fromBeatId} -> ${jump.toBeatId}); cannot certify story continuity.`);
+    }
+  }
   const lostAt = transitions.filter(t => t.coldViewerUnderstandsWhy === false);
   const verdict = {
     finalFootageUsable: raw.finalFootageUsable && raw.finalSeconds?.subjectClearlyVisible !== false,
@@ -274,4 +301,4 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   return out;
 }
 
-module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, responseSchema, outputTimeline, deliveryTimeline, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
+module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, responseSchema, outputTimeline, deliveryTimeline, majorSourceJumps, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
