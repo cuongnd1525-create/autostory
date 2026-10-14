@@ -920,7 +920,7 @@ async function run(service, opts) {
       await update({ autoStoryCapacityWarning: `v3: ${err.message}`, autoStoryState: { phase: 'review_failed', failures: [] } });
       const failures = [{ scriptId: 1, kind: err.kind, error: err.message, details: err.details || null }];
       await write(path.join(root, 'failures.json'), failures);
-      emit('failed', `v3 Story Design: ${err.message}`);
+      emit('failed', `${versionTag} Story Design: ${err.message}`);
       return { project, scriptPaths: [], config, analysisDir: root, failures };
     }
     throw err;
@@ -952,7 +952,7 @@ async function run(service, opts) {
     } catch (error) {
       if (opts.signal?.aborted) throw error;
       failures.push({ scriptId, kind: error.kind || 'SERVICE_ERROR', error: error.message });
-      emit('failed', `v3 Script ${scriptId}: ${error.message}`);
+      emit('failed', `${versionTag} Script ${scriptId}: ${error.message}`);
     }
   }
 
