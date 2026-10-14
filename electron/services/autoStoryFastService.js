@@ -145,9 +145,10 @@ class AutoStoryFastService {
   }
   async stage(root, key, input, args, validate, onProgress, signal) {
     args = { ...args, taskType: args.sourceContract ? args.taskType : require("./autoStoryCostPolicy").taskFor(key) || args.taskType };
-    const fingerprint = hash({ VERSION, ...(args.hookSchema ? { hookSchema:1 } : {}), ...(args.relaxedSchema ? { relaxedSchema:1 } : {}), input, prompt: args.prompt, schema: args.responseSchema, videoFps: args.videoFps, videoFpsByPath: args.videoFpsByPath, mediaResolution: args.mediaResolution,
+    const fingerprintOf = model => hash({ VERSION, ...(args.hookSchema ? { hookSchema:1 } : {}), ...(args.relaxedSchema ? { relaxedSchema:1 } : {}), input, prompt: args.prompt, schema: args.responseSchema, videoFps: args.videoFps, videoFpsByPath: args.videoFpsByPath, mediaResolution: args.mediaResolution,
       filePaths: args.filePaths, maxOutputTokens: args.maxOutputTokens, thinkingBudget: args.thinkingBudget, thinkingLevel: args.thinkingLevel,
-      model: args.modelOverride || this.vertex.getModel?.(args.taskType) });
+      model });
+    const fingerprint = fingerprintOf(args.modelOverride || this.vertex.getModel?.(args.taskType));
     const file = path.join(root, `${key}-${fingerprint.slice(0, 20)}.json`);
     const repairFile = `${file}.repair.json`;
     const originalArgs = args;
@@ -157,6 +158,24 @@ class AutoStoryFastService {
     if (cached) {
       await this.recordCost(key, true);
       onProgress?.({ stage: key, message: `Dùng lại ${key} đã kiểm tra · không gọi API` }); return cached;
+    }
+    // A successful fall-back passage is still fully schema-validated and
+    // evidence-gated. On a new run, reuse it BEFORE retrying the overloaded
+    // Pro Preview pool; otherwise each resume pays for another 429.
+    const blockNarrationStage = /^v5-block-narration(?:_rewrite\\d+)?-\\d+$/.test(key);
+    const fallbackModel = String(this.settings.vertexAutoStoryNarrationFallbackModel || 'gemini-3.5-flash').trim();
+    if (!args.noCache && blockNarrationStage && args.sourceContract === true
+        && !args.narrationFallback && this.settings.vertexAutoStoryNarrationFailoverEnabled !== false
+        && fallbackModel && fallbackModel !== (args.modelOverride || this.vertex.getModel?.(args.taskType))) {
+      const fallbackFile = path.join(root, `${key}-${fingerprintOf(fallbackModel).slice(0, 20)}.json`);
+      let fallbackCached = null;
+      try { fallbackCached = await read(fallbackFile); await validate(fallbackCached); }
+      catch (_) { fallbackCached = null; }
+      if (fallbackCached) {
+        await this.recordCost(key, true);
+        onProgress?.({ stage: key, message: `Dùng lại ${key} đã kiểm tra trên ${fallbackModel} · không gọi API` });
+        return fallbackCached;
+      }
     }
     try {
       const pending = await read(repairFile);
@@ -231,8 +250,6 @@ class AutoStoryFastService {
           // Fail over ONLY the evidence-grounded, schema-validated V4 block
           // narration stage. Never silently downgrade source understanding,
           // Director, hook/payoff verification, or visual review.
-          const blockNarrationStage = /^v5-block-narration(?:_rewrite\d+)?-\d+$/.test(key);
-          const fallbackModel = String(this.settings.vertexAutoStoryNarrationFallbackModel || 'gemini-3.5-flash').trim();
           const currentModel = String(args.modelOverride || this.vertex.getModel?.(args.taskType) || '').trim();
           if (blockNarrationStage && args.sourceContract === true && !args.narrationFallback
               && this.settings.vertexAutoStoryNarrationFailoverEnabled !== false
