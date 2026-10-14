@@ -915,8 +915,8 @@ function fakeEngine(asks) {
     assert.ok(Director.timelineSec(out.spine.beats) >= 65);
   });
 
-  await ok('Output fuse 2: Director calls carry bounded 24k output and 4096 thinking budget', async () => {
-    assert.strictEqual(Director.DIRECTOR_MAX_OUTPUT_TOKENS, 24000);
+  await ok('Output fuse 2: Director uses Gemini 3 MEDIUM thinking with enough room for complete EDL JSON', async () => {
+    assert.strictEqual(Director.DIRECTOR_MAX_OUTPUT_TOKENS, 32768);
     assert.strictEqual(Director.DIRECTOR_THINKING_BUDGET, 4096);
     // multimodal + lightweight duration repair both carry the fuse.
     const e59 = edlOf([hookB(60, 66), beat('b2', 4, 14), beat('b3', 16, 30), beat('b4', 36, 50), beat('b5', 67, 74), endB(98, 106)]);
@@ -932,8 +932,48 @@ function fakeEngine(asks) {
     const d = vertex.calls.find(c => c.kind === 'director');
     assert.strictEqual(d.args.maxOutputTokens, Director.DIRECTOR_MAX_OUTPUT_TOKENS);
     assert.strictEqual(d.args.thinkingBudget, 4096);
-    assert.strictEqual(d.args.thinkingLevel, 'high');
+    assert.strictEqual(d.args.thinkingLevel, 'medium');
     await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  await ok('Output fuse 2B: real thoughts-heavy 20-beat MAX_TOKENS gets ONE fresh, lower-thinking recovery', async () => {
+    const eng = fakeEngine([]);
+    const valid = directorEdl();
+    const partial = '{"accessGranted":true,"spine":{"beats":[{"beatId":"b1","observedInFootage":"The officer';
+    let attempts = 0;
+    eng.service.vertex = { lastResponseText: '', lastResponseMetadata: {} };
+    eng.onProgress = () => {};
+    eng.ask = async (key, input, schema, instr, evidence, validate, task, options) => {
+      eng.lastAsks = [...(eng.lastAsks || []), { key, options }];
+      attempts++;
+      if (attempts === 1) {
+        eng.service.vertex.lastResponseText = partial;
+        eng.service.vertex.lastResponseMetadata = {
+          finishReason: 'MAX_TOKENS', requestedMaxOutputTokens: 32768, requestedThinkingLevel: 'medium',
+          usage: { thoughtsTokenCount: 19850, candidatesTokenCount: 4136 }
+        };
+        throw new Error('Vertex AI không hoàn tất response: MAX_TOKENS');
+      }
+      SchemaBoundary.validate(valid, schema); await validate(valid); return valid;
+    };
+    const result = await Director.directEdl(eng, { model: MODEL, scope: scopeCandidate() });
+    assert.ok(result.spine.beats.length > 0);
+    assert.equal(attempts, 2, 'exactly one recovery request');
+    assert.equal(eng.lastAsks[0].options.thinkingLevel, 'medium');
+    assert.equal(eng.lastAsks[0].options.maxOutputTokens, 32768);
+    assert.ok(eng.lastAsks[1].key.endsWith('-thought-recovery'));
+    assert.equal(eng.lastAsks[1].options.thinkingLevel, 'low');
+    assert.equal(eng.lastAsks[1].options.maxOutputTokens, 49152);
+    assert.equal(Director.shouldRecoverThinkingLimit(
+      { finishReason:'MAX_TOKENS',requestedMaxOutputTokens:32768,
+        usage:{thoughtsTokenCount:19850} }, Director.diagnoseDirectorOutput(partial)),true);
+    assert.equal(Director.shouldRecoverThinkingLimit(
+      { finishReason:'MAX_TOKENS',requestedMaxOutputTokens:32768,
+        usage:{thoughtsTokenCount:0} },Director.diagnoseDirectorOutput(partial)),false);
+    assert.equal(Director.shouldRecoverThinkingLimit(
+      { finishReason:'MAX_TOKENS',requestedMaxOutputTokens:32768,
+        usage:{thoughtsTokenCount:19850} },Director.diagnoseDirectorOutput('"loop '.repeat(10000))),false,
+      'degenerate/looped responses are never resent');
   });
 
   await ok('Output fuse 3: a MAX_TOKENS director response is never imported, never resent, raw kept, telemetry split', async () => {
