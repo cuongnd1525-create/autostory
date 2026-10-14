@@ -1264,7 +1264,11 @@ async function autoStoryDraftKey(project, variant, settings) {
       audio: getHighlightAudioMode(s, Boolean(getHighlightVoiceText(s)), project),
       voice: getHighlightVoiceText(s) ? getVoiceCacheInfo({ settings, project, text: getHighlightVoiceText(s), outputPath: "voice.wav", voiceRenderOptions: getSegmentVoiceRenderOptions(s) }).spec : null,
       block: s.deliveryBlockId ? [s.deliveryBlockId, s.deliveryMode, s.deliveryBlockPosition, s.blockSourceAudio,
-        s.blockNarrationText ? getVoiceCacheInfo({ settings, project, text: s.blockNarrationText, outputPath: "voice.wav", voiceRenderOptions: getSegmentVoiceRenderOptions(s) }).spec : null] : null,
+        // Match renderNarratedDeliveryBlock(): use the narration BLOCK'S
+        // emotion, not the incidental visual beat emotion. Otherwise a
+        // changed narrator performance could incorrectly reuse an old MP4.
+        s.blockNarrationText ? getVoiceCacheInfo({ settings, project, text: s.blockNarrationText, outputPath: "voice.wav",
+          voiceRenderOptions: getSegmentVoiceRenderOptions({ ...s, emotionTag: s.blockEmotionTag || s.emotionTag || 'NEUTRAL' }) }).spec : null] : null,
       previewVi: undefined, cues: undefined }))
   })).digest("hex");
 }
