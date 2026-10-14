@@ -688,67 +688,127 @@ const DELIVERY_ONLY_VIOLATION_CODES = new Set([
 const deliveryOnlyViolationSet = violations =>
   Array.isArray(violations) && violations.length > 0 && violations.every(v => DELIVERY_ONLY_VIOLATION_CODES.has(v.code));
 
+function isSourceHookFailure(error) {
+  return error?.kind === 'DIRECTOR_REPAIR_REQUIRED'
+    && Array.isArray(error.details?.violations)
+    && error.details.violations.some(v => v.code === 'HOOK_SOURCE_AUDITION');
+}
+
 async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical, deliveryRepair = Director.repairDeliveryTechnical } = {}) {
   const { engine, service, opts, model, root, emit, scriptId } = ctx;
   let continuityRepair = null;
-  // Mandatory for fully automatic V4, and ONLY when narration is enabled.
-  // The Director's own transition self-evaluation can miss time jumps INSIDE
-  // one raw_evidence block. Prevent such edits from reaching the renderer.
-  if (Number(engine?.project?.autoStoryContractVersion) === 4
-      && engine.config?.narration?.enabled !== false && Director.isDirectorSpine(story)) {
+
+  // A changed EDL MUST pass continuity again. Previously the single downstream
+  // repair bypassed the pre-render narrator gate on the repaired candidate.
+  async function prepareStory(candidate) {
+    if (Number(engine?.project?.autoStoryContractVersion) !== 4
+        || engine.config?.narration?.enabled === false || !Director.isDirectorSpine(candidate)) return candidate;
     const continuity = require('./autoStoryV4NarrativeContinuityGate');
-    let report = continuity.check(story);
+    let report = continuity.check(candidate);
     await write(path.join(root, `narrative-continuity-${scriptId}.json`), report);
     for (let pass = 1; pass <= 2 && !report.passed; pass++) {
       emit('design', `[V4] Script ${scriptId}: ${report.violations.length} unbridged source jumps; narrator continuity repair ${pass}/2 (source cuts locked).`, 'WARNING');
-      const fixed = await deliveryRepair(engine, { model, spine: story, violations: report.violations,
+      const fixed = await deliveryRepair(engine, { model, spine: candidate, violations: report.violations,
         root, write, emit, scriptId });
-      story = { ...story, ...fixed.spine };
+      candidate = { ...candidate, ...fixed.spine };
       continuityRepair = fixed.spine;
-      report = continuity.check(story);
+      report = continuity.check(candidate);
       await write(path.join(root, `narrative-continuity-${scriptId}-repair-${pass}.json`), report);
     }
-    if (!report.passed) {
-      throw new StoryError('DIRECTOR_EDL_INVALID',
-        `Script ${scriptId}: unbridged scene transitions remain after two delivery repairs; do not render disconnected footage.`,
-        { violations: report.violations });
-    }
+    if (!report.passed) throw new StoryError('DIRECTOR_EDL_INVALID',
+      `Script ${scriptId}: unbridged scene transitions remain after two delivery repairs; do not render disconnected footage.`,
+      { violations: report.violations });
+    return candidate;
   }
-  try {
-    return { built: await build(engine, service, opts, story, model, root, emit), story,
-      ...(continuityRepair ? { repairedSpine: continuityRepair } : {}) };
-  } catch (e) {
-    if (!Director.isDirectorSpine(story) || !DIRECTOR_ROUTABLE_KINDS.has(e.kind)) throw e;
-    const firstViolations = e.details?.violations || [{ code: e.kind, message: e.message, details: e.details || null }];
 
-    // Narration timing/ownership failures are DELIVERY-layer failures, not EDL
-    // failures. Never hand them to the full Director repair path: that previously
-    // turned a valid 67.6s EDL into 160.6s, then bounced through over/under duration
-    // repair. Keep beats locked and allow at most two delivery-only replans.
-    if (deliveryOnlyViolationSet(firstViolations)) {
-      let currentStory = story, violations = firstViolations, lastError = e, lastRepair = null;
-      for (let pass = 1; pass <= 2; pass++) {
-        emit('design', `[Director] Script ${scriptId}: delivery-only repair #${pass} (${lastError.message}); EDL stays locked.`, 'WARNING');
-        const fixed = await deliveryRepair(engine, { model, spine: currentStory, violations, root, write, emit, scriptId });
-        currentStory = { ...currentStory, ...fixed.spine };
-        lastRepair = fixed.spine;
-        try {
-          return { built: await build(engine, service, opts, currentStory, model, root, emit), story: currentStory, repairedSpine: lastRepair };
-        } catch (next) {
-          const nextViolations = next.details?.violations || [{ code: next.kind, message: next.message, details: next.details || null }];
-          if (!DIRECTOR_ROUTABLE_KINDS.has(next.kind) || !deliveryOnlyViolationSet(nextViolations)) throw next;
-          lastError = next;
-          violations = nextViolations;
-        }
+  async function compile(candidate, latestRepair = null) {
+    const checked = await prepareStory(candidate);
+    return {
+      built: await build(engine, service, opts, checked, model, root, emit),
+      story: checked,
+      ...(continuityRepair || latestRepair ? { repairedSpine: continuityRepair || latestRepair } : {})
+    };
+  }
+
+  let initial;
+  try { return await compile(story); } catch (error) { initial = error; }
+  if (!Director.isDirectorSpine(story) || !DIRECTOR_ROUTABLE_KINDS.has(initial.kind)) throw initial;
+  const violationsOf = err => err.details?.violations || [
+    { code: err.kind, message: err.message, details: err.details || null }];
+
+  // The first hook attempt + one new hook is often insufficient. Permit two
+  // DISTINCT, targeted repairs, each grounded in the same watched scope reel.
+  // Previously the second rejected hook escaped to run() and killed all output.
+  if (isSourceHookFailure(initial)) {
+    const rejected = [];
+    let current = story, error = initial;
+    const maxHookRepairs = 2;
+    for (let pass = 1; pass <= maxHookRepairs; pass++) {
+      const range = error.details?.rejectedHookRange || {
+        sourceStartSec: Number(current.beats?.[0]?.sourceStartSec),
+        sourceEndSec: Number(current.beats?.[0]?.sourceEndSec)
+      };
+      rejected.push({
+        ...range, firstSecondsObserved: error.details?.firstSecondsObserved || '',
+        specificUnansweredQuestion: error.details?.specificUnansweredQuestion || '',
+        reason: error.message
+      });
+      await write(path.join(root, `hook-repair-history-${scriptId}.json`), { rejected, nextPass: pass });
+      emit('design', `[V4] Script ${scriptId}: source hook failed; finding a different grounded opening (${pass}/${maxHookRepairs}).`, 'WARNING');
+      const fixed = await repair(engine, { model, spine: current, violations: violationsOf(error),
+        root, write, emit, scriptId,
+        hookRepair: { attempt: pass, rejectedOpenings: rejected } });
+      const candidate = { ...current, ...fixed.spine };
+      const first = candidate.beats?.[0];
+      // A superficially rewritten promise with identical source start is NOT a
+      // new hook audition: no need to pay Vertex to watch the same bad clip.
+      if (rejected.some(r => Math.abs(Number(r.sourceStartSec) - Number(first?.sourceStartSec)) < 0.5)) {
+        error = new StoryError('DIRECTOR_REPAIR_REQUIRED',
+          'Director reused an opening that failed the watched-source hook audit.', {
+            violations: [{ code: 'HOOK_SOURCE_AUDITION', message: 'Reused an already rejected opening; choose different source footage.' }],
+            rejectedHookRange: { sourceStartSec: first?.sourceStartSec, sourceEndSec: first?.sourceEndSec }
+          });
+        current = candidate;
+        continue;
       }
-      throw lastError;
+      current = candidate;
+      try { return await compile(current, fixed.spine); }
+      catch (next) {
+        if (!isSourceHookFailure(next)) throw next;
+        error = next;
+      }
     }
-
-    emit('design', `[Director] Script ${scriptId}: ${e.kind} (${e.message}) — returning EDL to the director.`, 'WARNING');
-    const fixed = await repair(engine, { model, spine: story, violations: firstViolations, root, write, emit, scriptId });
-    const repairedStory = { ...story, ...fixed.spine };
-    return { built: await build(engine, service, opts, repairedStory, model, root, emit), story: repairedStory, repairedSpine: fixed.spine };
+    const history = rejected.concat([{
+      ...(error.details?.rejectedHookRange || {}),
+      firstSecondsObserved: error.details?.firstSecondsObserved || '',
+      reason: error.message
+    }]);
+    await write(path.join(root, `hook-repair-history-${scriptId}.json`), { rejected: history, exhausted: true });
+    throw new StoryError('HOOK_AUDITION_EXHAUSTED',
+      `Script ${scriptId}: no factual, compelling opening passed source audition after ${maxHookRepairs} focused repairs; video withheld instead of publishing a weak/misleading hook.`,
+      { rejectedOpenings: history, violations: violationsOf(error) });
   }
+
+  const firstViolations = violationsOf(initial);
+  if (deliveryOnlyViolationSet(firstViolations)) {
+    let current = story, violations = firstViolations, lastError = initial;
+    for (let pass = 1; pass <= 2; pass++) {
+      emit('design', `[Director] Script ${scriptId}: delivery-only repair #${pass} (${lastError.message}); EDL stays locked.`, 'WARNING');
+      const fixed = await deliveryRepair(engine, { model, spine: current, violations, root, write, emit, scriptId });
+      current = { ...current, ...fixed.spine };
+      try { return await compile(current, fixed.spine); }
+      catch (next) {
+        const nextViolations = violationsOf(next);
+        if (!DIRECTOR_ROUTABLE_KINDS.has(next.kind) || !deliveryOnlyViolationSet(nextViolations)) throw next;
+        lastError = next; violations = nextViolations;
+      }
+    }
+    throw lastError;
+  }
+
+  emit('design', `[Director] Script ${scriptId}: ${initial.kind} (${initial.message}) — returning EDL to the director.`, 'WARNING');
+  const fixed = await repair(engine, { model, spine: story, violations: firstViolations, root, write, emit, scriptId });
+  return compile({ ...story, ...fixed.spine }, fixed.spine);
 }
 
 async function run(service, opts) {
