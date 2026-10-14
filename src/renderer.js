@@ -10783,13 +10783,15 @@ async function createAndIngestProject() {
       addLog("Vertex đang xem nguồn, chọn câu chuyện và dựng theo bằng chứng...");
       const result = await window.cineviral.runAutoStoryPipeline(created.project.id);
       if (result.project) state.currentProject = result.project;
-      // Bug-2 fix: a failed/zero-script V3 run STOPS here — surface the real error,
+      // A failed/zero-script Auto Story run STOPS here; report its actual engine.
       // do not claim a draft was rendered, do not proceed to any render step.
       if (result.generationFailed || !(result.analysis?.scriptPaths?.length)) {
+        const engineVersion = Number(result.project?.autoStoryContractVersion || created.project?.autoStoryContractVersion || payload.autoStoryEngineVersion || 4);
+        const engineLabel = engineVersion === 4 ? "AutoStory V4" : engineVersion === 3 ? "AutoStory V3" : "AutoStory V2";
         const err = result.error || result.project?.autoStoryState?.error
-          || result.project?.autoStoryState?.failures?.[0]?.error || "AutoStory V3 không tạo được kịch bản nào.";
-        addLog(`AutoStory V3 thất bại: ${err}`, "ERROR");
-        showToast(`AutoStory V3 thất bại: ${err}`);
+          || result.project?.autoStoryState?.failures?.[0]?.error || `${engineLabel} không tạo được kịch bản nào.`;
+        addLog(`${engineLabel} thất bại: ${err}`, "ERROR");
+        showToast(`${engineLabel} thất bại: ${err}`);
         await refreshProjects();
         showStudio(state.currentProject);
         return state.currentProject;
