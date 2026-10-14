@@ -63,8 +63,16 @@ const STORY_DESIGN_CALLS = 1;
 // budget, like Story Design repairs did). Kept minimal so a long cache-MISS source still
 // gets enough chunk-first windows under the default 16-call cap.
 const SCOPE_SELECTION_CALLS = 1;
-const DIRECTOR_CALLS_PER_SCRIPT = 9; // payoff, EDL, hook audition, two narration repairs, plus two targeted EDL+hook re-auditions
-const NARRATION_CALLS_PER_SCRIPT = 5;
+const DIRECTOR_CALLS_PER_SCRIPT = 9; // payoff, EDL, hook audition, two delivery repairs, plus two targeted EDL+hook re-auditions
+const NARRATION_CALLS_PER_SCRIPT = 5; // legacy V3 narration + per-beat safety rewrites
+// V4 block narration can run again after each of two delivery-only repairs.
+// A pass makes one generation plus at most three local text rewrites. Reserve
+// all bounded passes, unlike the old plan that budgeted only a single pass.
+const V4_NARRATION_PASSES = 3;
+const V4_BLOCK_CALLS_PER_PASS = 4;
+const V4_EDL_TECHNICAL_REPAIRS = 2;
+const V4_CONTINUITY_REPAIRS = 2;
+const V4_TRANSIENT_RETRY_HEADROOM = 2; // 429/5xx attempts still increment calls
 const SOURCE_MODEL_MIN_CALLS = 4;         // floor so a large outputCount can't starve extraction to 0
 // Recursive-subdivision guards for a chunk that STILL hits MAX_TOKENS: keep
 // halving the window until it fits, but stop at a deterministic floor so a
@@ -403,7 +411,12 @@ function downstreamReserve(config) {
   // Scope-media-director path: one Story Scope selection, then per script one director
   // EDL call (replacing Story Design) plus the narration calls.
   if (config?.editorialArchitecture === 'scope_media_director') {
-    return SCOPE_SELECTION_CALLS + outputCount * (DIRECTOR_CALLS_PER_SCRIPT + NARRATION_CALLS_PER_SCRIPT);
+    return SCOPE_SELECTION_CALLS + outputCount * (
+      DIRECTOR_CALLS_PER_SCRIPT +
+      V4_NARRATION_PASSES * V4_BLOCK_CALLS_PER_PASS +
+      V4_EDL_TECHNICAL_REPAIRS + V4_CONTINUITY_REPAIRS +
+      V4_TRANSIENT_RETRY_HEADROOM
+    );
   }
   return STORY_DESIGN_CALLS + outputCount * NARRATION_CALLS_PER_SCRIPT;
 }
