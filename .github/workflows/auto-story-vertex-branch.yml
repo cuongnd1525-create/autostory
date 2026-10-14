@@ -43,6 +43,7 @@ jobs:
           node tests/autoStoryV4HookGate.test.js
           node tests/autoStoryV4HookRecovery.test.js
           node tests/autoStoryV4BlockNarrationCache.test.js
+          node tests/autoStoryV4Vertex429Failover.test.js
           node tests/autoStoryV4PayoffGate.test.js
           node tests/autoStoryV4ScopeEvidence.test.js
           node tests/autoStoryV4StoryQuality.test.js
