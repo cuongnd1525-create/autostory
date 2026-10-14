@@ -77,7 +77,7 @@ const buildOpts = {
     const eng = { duration: 924.9, config: { outputCount: 3, editorialArchitecture: 'scope_media_director' }, service: svc };
     const budget = S.requestBudgetPlan(eng);
     const plan = S.planChunkWindows(eng.duration, budget.sourceModelLimit);
-    assert.equal(budget.downstreamReserved, 25); // includes payoff verification for each V4 output
+    assert.equal(budget.downstreamReserved, 31); // V4: payoff, EDL, hook, 2 possible narration-bridge repairs and remaining downstream checks
     assert.ok(budget.global >= 30, 'source + recovery + downstream all fit');
     assert.equal(budget.global, S.callLimit(svc));
     assert.equal(svc.callBudget.adaptiveLimit, true);
