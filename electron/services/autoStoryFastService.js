@@ -231,7 +231,7 @@ class AutoStoryFastService {
           // Fail over ONLY the evidence-grounded, schema-validated V4 block
           // narration stage. Never silently downgrade source understanding,
           // Director, hook/payoff verification, or visual review.
-          const blockNarrationStage = /^v5-block-narration(?:_rewrite\\d+)?-\\d+$/.test(key);
+          const blockNarrationStage = /^v5-block-narration(?:_rewrite\d+)?-\d+$/.test(key);
           const fallbackModel = String(this.settings.vertexAutoStoryNarrationFallbackModel || 'gemini-3.5-flash').trim();
           const currentModel = String(args.modelOverride || this.vertex.getModel?.(args.taskType) || '').trim();
           if (blockNarrationStage && args.sourceContract === true && !args.narrationFallback
