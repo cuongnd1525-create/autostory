@@ -6,8 +6,8 @@
 // or rewrite footage deterministically.
 const Delivery = require('./deliveryBlockService');
 
-const MIN_FORWARD_GAP_SEC = 8;
-const MIN_BACKWARD_GAP_SEC = 8;
+const MIN_FORWARD_GAP_SEC = 20;
+const MIN_BACKWARD_GAP_SEC = 20;
 const round1 = x => Math.round(x * 10) / 10;
 
 function check(spine, { narrationEnabled = true } = {}) {
