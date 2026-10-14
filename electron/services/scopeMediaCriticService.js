@@ -130,7 +130,7 @@ function buildPrompt(spine, timeline, durationSec, delivery = null) {
   const majorJumps = majorSourceJumps(timeline);
   return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS only: scope, causal flow, dialogue function, hook, ending. Ignore captions, fonts, framing, blur, music, colour and FPS.
 MANDATORY MAJOR SOURCE CUT CHECK (${majorJumps.length} boundary/boundaries):
-${majorJumps.map(g => `- At OUTPUT ${g.outputSec.toFixed(1)}s, source jumps ${g.sourceGapSec > 0 ? 'forward' : 'backward'} ${Math.abs(g.sourceGapSec)}s: ${g.fromBeatId} -> ${g.toBeatId}. Check whether what is actually SPOKEN (narrator or original participants) or SHOWN explains this change.`).join('\\n') || '- No major >20s source jumps in this EDL.'}
+${majorJumps.map(g => `- At OUTPUT ${g.outputSec.toFixed(1)}s, source jumps ${g.sourceGapSec > 0 ? 'forward' : 'backward'} ${Math.abs(g.sourceGapSec)}s: ${g.fromBeatId} -> ${g.toBeatId}. Check whether what is actually SPOKEN (narrator or original participants) or SHOWN explains this change.`).join('\n') || '- No major >20s source jumps in this EDL.'}
 For EACH listed source cut include a transitions[] entry near the OUTPUT timestamp above, with the actual spoken/visible bridge in whatViewerSeesAndHears and your real coldViewerUnderstandsWhy judgment. Do not blindly mark understood merely because a narrator block was planned. If a narrator has unrelated words or no audible voice, the jump is NOT bridged. Judge from the MP4, not the delivery plan.
 
 INTENDED STORY SCOPE
