@@ -16,6 +16,15 @@ const clean = {
   coldViewerCanFollow: true, coldViewerNotes: '',
   openingCuriosity: { firstSecondsDescription: 'Officer confronts the driver.', createsCuriosity: true },
   transitions: [], finalSeconds: { visualDescription: 'Officer displays the recovered item.', subjectClearlyVisible: true },
+  productionQuality: {
+    narratorSoundsNatural: true, narratorAddsNecessaryContext: true,
+    narratorHandoffsClean: true, essentialDialogueClear: true,
+    activeFootageReadable: true, importantVisualTextReadable: true,
+    pacingMaintainsProgress: true,
+    audibleObservation: 'Narrator sounds conversational and stops before the original admission.',
+    visualObservation: 'Driver and hands are readable on a portrait phone.',
+    pacingObservation: 'Each interval leads toward the observed revelation.'
+  },
   issues: []
 };
 const auditableCuts = [
@@ -41,6 +50,33 @@ assert.equal(failing.isCompliant, false);
 assert.ok(failing.weakRegions.some(x => x.type === 'procedural_repetition'));
 assert.equal(check({ ...clean, hookPromiseSupported: undefined }).status, 'MEDIA_CRITIC_INVALID',
   'V4 must not silently accept a media response missing the hook verification field');
+assert.equal(check({ ...clean, productionQuality: undefined }).status, 'MEDIA_CRITIC_INVALID',
+  'the actual MP4 must receive a production-quality review before V1 can PASS');
+
+const blockedQuality = (flag, type, evidence = 'Actual MP4 has a locally observable problem') => {
+  const result = check({ ...clean, productionQuality: {
+    ...clean.productionQuality, [flag]: false
+  }, issues: [{ type, severity: 'blocking', outputStartSec: 8, outputEndSec: 17,
+    evidence, whyItFails: 'Bad on a mobile viewing session.' }] });
+  assert.equal(result.status, 'SCOPED_MEDIA_CRITIC_OK');
+  assert.equal(result.isCompliant, false, flag);
+  assert.ok(result.weakRegions.some(r => r.type === type && r.beatIds.includes('search')), flag);
+  return result;
+};
+blockedQuality('narratorSoundsNatural', 'narration_robotic', 'TTS sounds flat and clipped at 8-17s');
+blockedQuality('narratorAddsNecessaryContext', 'narration_unnecessary');
+blockedQuality('narratorHandoffsClean', 'narration_handoff_confusing');
+blockedQuality('essentialDialogueClear', 'raw_dialogue_unintelligible');
+const narrow = blockedQuality('activeFootageReadable', 'small_active_footage',
+  'Only a small horizontal strip of the bodycam is readable within blurred portrait canvas');
+assert.ok(narrow.weakRegions.some(r => r.visualLayoutIssue), 'visual layout problems cannot be fixed by story-only EDL changes');
+blockedQuality('importantVisualTextReadable', 'unreadable_on_screen_text');
+blockedQuality('pacingMaintainsProgress', 'pacing_without_progress');
+const missingTimedProof = check({ ...clean,
+  productionQuality: { ...clean.productionQuality, narratorSoundsNatural: false } });
+assert.equal(missingTimedProof.status, 'MEDIA_CRITIC_INVALID',
+  'a quality failure must identify actual output seconds and observed evidence');
+
 
 const b = (id, start, end, state, info) => ({
   beatId: id, sourceStartSec: start, sourceEndSec: end,
