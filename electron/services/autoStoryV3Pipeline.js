@@ -871,9 +871,20 @@ async function run(service, opts) {
     autoStoryEditorialConfig: config, autoStorySourceV3: { identity, cache, duration: probe.duration },
     draftVoiceMode: 'final', showSubtitles: true, narrationLanguage: 'en',
     mixer: { ...project.mixer, sourceVolume: 28, narrationSourceAudioOverride: true, narrationDuckDefault: true },
+    // The old out-of-box 9:16 canvas placed a small 16:9 bodycam strip in a
+    // huge blurred field. Enlarge the usable foreground slightly (125%) on
+    // untouched V4 defaults, including existing cached projects. Never stomp a
+    // user-selected scale or any project with manual video-edit updates. This
+    // is a safe starting point, NOT a substitute for real subject tracking:
+    // the rendered-MP4 visual gate must still reject unreadable evidence.
     videoDecoration: (!original.autoStoryPipelineVersion && !project.videoEditUpdatedAt)
-      ? { ...project.videoDecoration, canvasEnabled: true, canvasAspect: '9:16', blurBackgroundEnabled: true }
-      : project.videoDecoration
+      ? { ...project.videoDecoration, canvasEnabled: true, canvasAspect: '9:16',
+          blurBackgroundEnabled: true,
+          foregroundScalePercent: project.videoDecoration?.foregroundScalePercent ?? 125 }
+      : requestedContractVersion === 4 && !project.videoEditUpdatedAt
+        && project.videoDecoration?.foregroundScalePercent == null
+        ? { ...project.videoDecoration, foregroundScalePercent: 125 }
+        : project.videoDecoration
   });
   engine.project = project;
 
