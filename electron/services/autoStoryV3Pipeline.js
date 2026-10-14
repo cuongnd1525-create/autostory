@@ -1006,6 +1006,26 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   const probe = f => service.ffmpeg.probeVideo(f);
   const summarize = c => ({ scopeSurvived: c.scopeSurvived, centralQuestionActiveThroughout: c.centralQuestionActiveThroughout,
     endingIsConsequence: c.endingIsConsequence, finalFootageUsable: c.finalFootageUsable, blockingIssues: (c.issues || []).filter(x => x.severity === 'blocking').length, mp4Duration: c.mp4Duration });
+  const visualBlocked = async (critique, passes) => {
+    // A source-footage EDL repair cannot make a tiny central strip or illegible
+    // subtitle fill a portrait frame. Do not burn two expensive Director repairs
+    // and then claim V1 success with the same unacceptable render.
+    const layoutIssues = (critique?.weakRegions || []).filter(x => x.visualLayoutIssue === true);
+    if (!layoutIssues.length) return null;
+    const audit = directorAudit(id, { needsUserReview: true, status: 'VISUAL_QA_FAILED',
+      failureType: 'VISUAL_QA_FAILED' }, {
+      repairPasses: passes, finalCheck: { complete: true, verdict: 'FAIL',
+        issues: layoutIssues.map(x => ({
+          reason: `${x.type}: ${x.reason} (visual framing/captions need a renderer-level adjustment)`,
+          outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds
+        })) },
+      metrics: summarize(critique), auditResult: critique
+    });
+    await fs.writeFile(record, JSON.stringify(audit, null, 2));
+    onProgress?.({ stage: 'reviewing', level: 'WARNING',
+      message: `Script ${id}: Visual QA không đạt ở ${layoutIssues.length} vùng MP4; giữ draft để sửa khung hình/phụ đề, không chấp nhận V1.` });
+    return audit;
+  };
   const criticFailed = async (critique, duration, repairPasses) => {
     const audit = directorAudit(id, { needsUserReview: true, status: 'MEDIA_CRITIC_FAILED', failureType: 'MEDIA_CRITIC_FAILED' }, {
       repairPasses, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
@@ -1027,6 +1047,8 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
   await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
   if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
+  const initialLayoutBlocker = await visualBlocked(critique, 0);
+  if (initialLayoutBlocker) return initialLayoutBlocker;
   if (critique.isCompliant) {
     const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
@@ -1081,6 +1103,8 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     }
     await fs.writeFile(path.join(root, `repair-${pass}-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
     if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass);
+    const layoutBlocker = await visualBlocked(critique, pass);
+    if (layoutBlocker) return layoutBlocker;
     if (critique.isCompliant) {
       try { await persistAcceptedSpine(root, id, current); }
       catch (err) {
