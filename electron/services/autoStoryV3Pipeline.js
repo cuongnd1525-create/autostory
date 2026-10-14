@@ -886,6 +886,14 @@ async function run(service, opts) {
   let model = await sourceModel.loadCached(engine);
   if (model) {
     emit('understand', '[V3] Source Story Model cache HIT — skipping whole-source preparation.', 22);
+    // Source cache HIT bypasses sourceModel.build(), so its adaptive call-budget
+    // planner would otherwise never run. Reserve actual downstream calls,
+    // including the new bounded hook-repair attempts, without charging
+    // phantom source extraction calls.
+    if (config.editorialArchitecture === SCOPE_MEDIA_DIRECTOR) {
+      const budget = sourceModel.requestBudgetPlan(engine, { sourceCached: true });
+      emit('understand', `[V4] Cached-source downstream budget: global=${budget.global}, reserved=${budget.downstreamReserved}, sourceCalls=0.`);
+    }
   } else {
     const detectedAudio = await audioEvents.detect(service, project.sourceVideoPath, probe.duration, opts.signal).catch(() => []);
     const words = await audioEvents.loadWordTimestamps(project).catch(() => []);
