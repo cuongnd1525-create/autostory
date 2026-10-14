@@ -77,5 +77,39 @@ const story = { scriptId: 1, centralViewerQuestion: 'What changed?',
     require('node:path').join(__dirname, '..', 'electron', 'services', 'dubbingService.js'), 'utf8');
   assert.ok(rendererSource.includes('emotionTag: lead.blockEmotionTag || lead.emotionTag'),
     'narrated-block emotion must reach voice render options');
+  // The renderer voice cache and full-MP4 reuse key MUST both follow the
+  // block-level emotion. A change of narrator delivery must never keep the
+  // previous robotic draft by reusing its stale MP4.
+  const Dubbing = require('../electron/services/dubbingService');
+  const fs = require('node:fs/promises');
+  const os = require('node:os');
+  const path = require('node:path');
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-block-voice-key-'));
+  try {
+    const src = path.join(dir, 'bodycam.mp4');
+    await fs.writeFile(src, 'mock-source-for-key-only');
+    const project = {
+      sourceVideoPath: src, analysisWorkflow: 'vertex_auto_story',
+      voiceProvider: 'kokoro', voiceId: 'af_heart', draftVoiceMode: 'final',
+      analysis: { activeVariantId: 'v1' }
+    };
+    const segment = {
+      sourceStartSec: 5, sourceEndSec: 11, duration: 6,
+      audioMode: 'voiceover_with_ambient',
+      deliveryBlockId: 'setup', deliveryMode: 'narrated_story',
+      deliveryBlockPosition: 0, blockSourceAudio: 'voiceover_with_ambient',
+      blockNarrationText: 'Earlier, the officer stopped the driver.',
+      blockEmotionTag: 'NEUTRAL', emotionTag: 'NEUTRAL'
+    };
+    const variant = { id: 'v1', title: 'A verified case',
+      segments: [segment] };
+    const neutral = await Dubbing.autoStoryDraftKey(project, variant, {});
+    const urgent = await Dubbing.autoStoryDraftKey(project, {
+      ...variant, segments: [{ ...segment, blockEmotionTag: 'URGENT' }]
+    }, {});
+    assert.notEqual(neutral, urgent, 'block emotion change must force fresh MP4 render');
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
   console.log('V4 Block Narration incremental regeneration passed');
 })().catch(e => { console.error(e); process.exit(1); });
