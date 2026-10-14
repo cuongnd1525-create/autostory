@@ -34,6 +34,7 @@ const story = { scriptId: 1, centralViewerQuestion: 'What changed?',
     project: {}, sourceHash: 'source-A', cache: '/tmp',
     ask: async (_key, input) => {
       requests.push(input.blocks.map(b => b.blockId));
+      engine.seenPayloads ||= input.blocks;
       return { accessGranted: true, narrations: input.blocks.map(b => ({
         blockId: b.blockId, narrationText: 'The situation changed.',
         previewVi: 'Tình hình thay đổi.', narratorFunction: 'BRIDGE',
@@ -51,6 +52,11 @@ const story = { scriptId: 1, centralViewerQuestion: 'What changed?',
   const first = await run(original);
   assert.deepEqual(first.audit.generatedBlockIds, ['setup', 'middle']);
   assert.deepEqual(requests, [['setup', 'middle']]);
+  // Every locally written passage receives the same whole-story arc, including
+  // untouched raw evidence that must not be narrated over.
+  const firstPayloads = engine.seenPayloads;
+  assert.ok(firstPayloads?.[0]?.narrationArc?.some(b => b.blockId === 'raw_end' && b.mode === 'raw_evidence'));
+  assert.ok(firstPayloads[0].narrationArc.some(b => b.blockId === 'middle'));
   const repaired = blocks();
   repaired.find(b => b.blockId === 'middle').narrationIntent = 'clarify the revised reason';
   const second = await run(repaired);
