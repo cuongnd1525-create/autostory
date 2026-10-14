@@ -18,7 +18,15 @@ const clean = {
   transitions: [], finalSeconds: { visualDescription: 'Officer displays the recovered item.', subjectClearlyVisible: true },
   issues: []
 };
-const check = data => Critic.normalizeCritique(data, { durationSec: 70, timeline, deliveryAware: true });
+const auditableCuts = [
+  { outputSec: 5, change: 'scene', whatViewerSeesAndHears: 'Officer asks the driver why the search began.', coldViewerUnderstandsWhy: true },
+  { outputSec: 55, change: 'scene', whatViewerSeesAndHears: 'The prior confrontation leads to the visible discovery.', coldViewerUnderstandsWhy: true }
+];
+const check = data => Critic.normalizeCritique({ ...data,
+  transitions: data.transitions?.length ? data.transitions : auditableCuts
+}, { durationSec: 70, timeline, deliveryAware: true });
+assert.equal(Critic.normalizeCritique(clean, { durationSec: 70, timeline, deliveryAware: true }).status,
+  'MEDIA_CRITIC_INVALID', 'a missing ordinary cut cannot pass a full media review');
 assert.equal(check(clean).isCompliant, true);
 let failing = check({ ...clean, hookPromiseSupported: false, observedStory: 'Searching ends without a discovery' });
 assert.equal(failing.isCompliant, false);
@@ -54,4 +62,28 @@ const report = Director.validateDirectorEdl({ beats }, {
   reel: { ranges: [{ sourceStartSec: 0, sourceEndSec: 70, windowStartSec: 0, windowEndSec: 70 }] } });
 assert.ok(report.violations.some(v => v.code === 'REPEATED_INFORMATION'),
   'Two repeated searches with no new viewer state must trigger EDL repair');
+// The new render replayed its 0-5s police/drug hook again around 50s.
+const hookReplay = [
+  b('opening', 422.4, 426.8, 'Officer suspects narcotics.', 'The officer feels a suspicious object.'),
+  b('rewind', 334.6, 340.8, 'Earlier stop', 'Officer starts the vehicle stop.'),
+  b('search', 360, 378, 'Officer checks the driver.', 'Officer asks about an object in his clothes.'),
+  b('return', 420, 426.8, 'Officer suspects narcotics.', 'The officer feels a suspicious object.'),
+  b('ending', 470, 506, 'New detail', 'Officer confronts the driver with a new consequential question.')
+];
+const checkedReplay = Director.validateDirectorEdl({ beats: hookReplay }, {},
+  { durationSec: 600, targetDurationMinSec: 65, targetDurationMaxSec: 150, reel: { ranges: [] } });
+assert.ok(checkedReplay.violations.some(v => v.code === 'HOOK_FOOTAGE_REPLAY'),
+  'source overlap should stop identical teaser footage from playing again in the body');
+
+const nonAdjacentRepeat = [
+  b('opening', 1, 8, 'Hook', 'A new confrontation begins.'),
+  b('a', 8, 24, 'Police keep repeating a procedural search step', 'The officer keeps checking the same area for the same item.'),
+  b('b', 25, 36, 'The officer asks the driver to stay inside', 'The suspect still awaits the result of the search.'),
+  b('c', 36, 49, 'Police keep repeating a procedural search step', 'The officer keeps checking the same area for the same item.'),
+  b('ending', 49, 77, 'Resolution', 'Officer reveals a confirmed discovery.')
+];
+const infoResult = Director.validateDirectorEdl({ beats: nonAdjacentRepeat }, {},
+  { durationSec: 120, targetDurationMinSec: 65, targetDurationMaxSec: 100, reel: { ranges: [] } });
+assert.ok(infoResult.violations.some(v => v.code === 'REPEATED_INFORMATION' && v.secondBeatId === 'c'),
+  'same search repeated after an intervening question must not count as story progress');
 console.log('V4 story quality: payoff, repetition, and media release gates passed');
