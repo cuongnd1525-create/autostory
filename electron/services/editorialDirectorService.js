@@ -387,9 +387,9 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
 
   // Hook/body footage reuse is not a new reveal. A short callback may be fine,
   // but replaying >=2s covering >=60% of a later shot wastes the hook.
-  if (beats.length > 2 && beats[0].scopeMembership === 'hook') {
+  if (beats.length > 1 && (beats[0].scopeMembership === 'hook' || toV2Role(beats[0].narrativeRole) === 'hook')) {
     const opening = beats[0];
-    for (let i = 2; i < beats.length; i++) {
+    for (let i = 1; i < beats.length; i++) {
       const b = beats[i];
       const seconds = Math.max(0, Math.min(num(opening.sourceEndSec), num(b.sourceEndSec))
         - Math.max(num(opening.sourceStartSec), num(b.sourceStartSec)));
