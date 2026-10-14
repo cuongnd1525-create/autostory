@@ -972,7 +972,7 @@ function fakeEngine(asks) {
         usage:{thoughtsTokenCount:0} },Director.diagnoseDirectorOutput(partial)),false);
     assert.equal(Director.shouldRecoverThinkingLimit(
       { finishReason:'MAX_TOKENS',requestedMaxOutputTokens:32768,
-        usage:{thoughtsTokenCount:19850} },Director.diagnoseDirectorOutput('"loop '.repeat(10000))),false,
+        usage:{thoughtsTokenCount:19850} },Director.diagnoseDirectorOutput('{"beatId":"b1","whyNecessaryNow":"' + 'The same procedural action repeats without a new fact. '.repeat(90))),false,
       'degenerate/looped responses are never resent');
   });
 
