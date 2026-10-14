@@ -1082,14 +1082,23 @@ async function repairDeliveryTechnical(engine, { model, spine, violations, root 
 
 // Repair for a deterministic downstream finding (e.g. duration check in buildScript).
 // Same owner, same scope, same reel; JS only reports the violation.
-async function repairTechnical(engine, { model, spine, violations, root = null, write = null, emit = () => {}, scriptId = 1 }) {
+async function repairTechnical(engine, { model, spine, violations, root = null, write = null, emit = () => {}, scriptId = 1, hookRepair = null }) {
   if (!isDirectorSpine(spine)) throw new StoryError('INPUT_MISSING', 'repairTechnical requires a director-owned spine.');
   const scope = spine.storyScope;
   const { reel, evidence } = await prepareReel(engine, scope, model);
   const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
   const out = await runDirector(engine, {
-    model, scope, reel, evidence, key: `v5-editorial-director-downstream-fix-${scriptId}`,
-    extraInput: { currentEdl, violations }, repairText: repairInstruction('technical', { violations }), root, write, emit
+    model, scope, reel, evidence, key: hookRepair
+      ? `v5-editorial-director-hook-fix-${scriptId}-${hookRepair.attempt}`
+      : `v5-editorial-director-downstream-fix-${scriptId}`,
+    extraInput: { currentEdl, violations, ...(hookRepair ? { hookRepair: {
+      attempt: hookRepair.attempt,
+      rejectedOpenings: hookRepair.rejectedOpenings,
+      candidateWindows: (scope.hookCandidates || []).slice(0, 4)
+    } } : {}) },
+    repairText: hookRepair
+      ? `HOOK SOURCE AUDITION FAILED — rebuild ONLY the opening strategy, the first beat and the minimum adjacent transition/delivery information necessary. The independent Payoff Gate already verified the source ending, but the opening must show real, immediately understandable curiosity BEFORE narration or captions. Avoid ALL rejectedOpenings in input.hookRepair; do not reuse those start ranges. WATCH and choose a materially different moment from the attached reel (candidateWindows are hints, not proof). Consider a brief, non-spoiling conflict teaser if chronological first seconds are ordinary patdown/questioning. The hook is allowed to pose an unanswered, truthful question: do NOT require the final confession/discovery in the first 6s; do NOT claim a find not shown anywhere in the source. Use the earliest moment of intelligible conflict with genuine stakes, never silent routine search, mid-sentence filler or the payoff itself. Keep downstream core/ending footage and EDL duration where possible, rebuild deliveryBlocks/transitionChecks to match any beat changes. Return COMPLETE, validated EDL; never invent an outcome.`
+      : repairInstruction('technical', { violations }), root, write, emit
   });
   return { spine: stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, downstreamRepair: true }), evidence, reel, report: out.report };
 }
