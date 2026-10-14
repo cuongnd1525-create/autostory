@@ -156,8 +156,34 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   if (engine.config?.narration?.enabled === false) throw repairRequest(narrated[0].b.blockId, 'NARRATION_DISABLED', 'narration is disabled for this project.');
 
   const payloads = new Map(narrated.map(({ b, k }) => [b.blockId, blockPayload(timeline, k, model, wps)]));
-  const texts = await askBlockNarration(engine, story, [...payloads.values()], evidence);
-  const measured = new Map();
+  // Delivery-only repairs keep the source EDL locked. Re-running the WHOLE
+  // narration pass for unchanged blocks burns Vertex calls and can exhaust the
+  // run budget before the edited block is validated. Cache only individually
+  // gate- and voice-fit-approved passages, keyed by their FULL evidence context
+  // and story promise. Revalidate every block against the current timeline.
+  // The cache lives on this run's engine (never reused for another video).
+  const narrationCache = engine.v4ApprovedBlockNarrations ||= new Map();
+  const measured = engine.v4MeasuredBlockVoices ||= new Map();
+  const cacheKeys = new Map(narrated.map(({ b }) => [b.blockId, JSON.stringify({
+    sourceHash: engine.sourceHash || null,
+    story: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise,
+      mustWithhold: story.storyScope?.mustWithhold || [] },
+    payload: payloads.get(b.blockId)
+  })]));
+  const texts = new Map(), missing = [], reusedBlockIds = [];
+  for (const { b } of narrated) {
+    const key = cacheKeys.get(b.blockId);
+    if (narrationCache.has(key)) {
+      texts.set(b.blockId, narrationCache.get(key));
+      reusedBlockIds.push(b.blockId);
+    } else missing.push(payloads.get(b.blockId));
+  }
+  audit.reusedBlockIds = reusedBlockIds;
+  audit.generatedBlockIds = missing.map(p => p.blockId);
+  if (missing.length) {
+    const generated = await askBlockNarration(engine, story, missing, evidence);
+    for (const [id, line] of generated) if (payloads.has(id) && !texts.has(id)) texts.set(id, line);
+  }
 
   const problemsOf = async () => {
     const out = new Map();
@@ -204,7 +230,17 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     return out;
   };
 
+  // A single failing block must not force regeneration of the other approved
+  // blocks on the next Director delivery repair. Never cache an invalid block.
+  const rememberApproved = problems => {
+    for (const { b } of narrated) {
+      const key = cacheKeys.get(b.blockId);
+      if (problems.has(b.blockId)) narrationCache.delete(key);
+      else if (texts.get(b.blockId)) narrationCache.set(key, texts.get(b.blockId));
+    }
+  };
   let problems = await problemsOf();
+  rememberApproved(problems);
   for (let attempt = 1; attempt <= MAX_TEXT_REWRITES && problems.size; attempt++) {
     const redo = [...problems.keys()].map(id => {
       const p = problems.get(id);
@@ -215,6 +251,7 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     const again = await askBlockNarration(engine, story, redo, evidence, true, attempt);
     for (const [id, line] of again) if (problems.has(id)) texts.set(id, line);
     problems = await problemsOf();
+    rememberApproved(problems);
   }
   if (problems.size) {
     const [blockId, p] = problems.entries().next().value;
