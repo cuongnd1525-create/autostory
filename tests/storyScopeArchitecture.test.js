@@ -807,7 +807,16 @@ function fakeEngine(asks) {
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
     const clean = { ...blocking, issues: [], summary: 'coherent' };
     const repairedEdl = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b4' ? { ...b, sourceStartSec: 38, sourceEndSec: 54 } : b)) });
-    const vertex = makeVertex({ scope: selection(), director: n => (n === 1 ? directorEdl() : repairedEdl), scope_critic: n => (n === 1 ? blocking : clean) });
+    const everyCut = spine => {
+      let outputSec = 0;
+      return spine.beats.slice(0, -1).map(beat => {
+        outputSec += beat.sourceEndSec - beat.sourceStartSec;
+        return { outputSec, change: 'scene', whatViewerSeesAndHears: 'The audible exchange leads to the next observed event.', coldViewerUnderstandsWhy: true };
+      });
+    };
+    const vertex = makeVertex({ scope: selection(), director: n => (n === 1 ? directorEdl() : repairedEdl),
+      scope_critic: n => ({ ...(n === 1 ? blocking : clean),
+        transitions: everyCut((n === 1 ? directorEdl() : repairedEdl).spine) }) });
     const service = makeService(p.store, vertex, makeFfmpeg(), dubbing);
     const run = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
     assert.deepStrictEqual(run.failures, []);
