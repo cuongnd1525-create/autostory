@@ -189,7 +189,10 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     sourceHash: engine.sourceHash || null,
     story: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise,
       mustWithhold: story.storyScope?.mustWithhold || [] },
-    payload: payloads.get(b.blockId)
+    // Global arc is planning context, not a cache dependency: when the Director
+    // adjusts another block's delivery, this block's grounded local meaning
+    // has not changed. Keep adjacent raw context / evidence in the cache key.
+    payload: { ...payloads.get(b.blockId), narrationArc: undefined }
   })]));
   const texts = new Map(), missing = [], reusedBlockIds = [];
   for (const { b } of narrated) {
