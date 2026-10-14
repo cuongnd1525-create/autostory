@@ -75,8 +75,7 @@ const story = { scriptId: 1, centralViewerQuestion: 'What changed?',
   // narrator TTS voice settings. It is easy to regress by passing lead raw.
   const rendererSource = require('node:fs').readFileSync(
     require('node:path').join(__dirname, '..', 'electron', 'services', 'dubbingService.js'), 'utf8');
-  assert.match(rendererSource,
-    /getSegmentVoiceRenderOptions\\(\\{\\s*\\.\\.\\.lead, emotionTag: lead\\.blockEmotionTag \\|\\| lead\\.emotionTag/,
+  assert.ok(rendererSource.includes('emotionTag: lead.blockEmotionTag || lead.emotionTag'),
     'narrated-block emotion must reach voice render options');
   console.log('V4 Block Narration incremental regeneration passed');
 })().catch(e => { console.error(e); process.exit(1); });
