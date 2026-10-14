@@ -29,9 +29,24 @@ const ISSUE_TYPES = [
   'narration_overwrites_evidence', // narration talks over / paraphrases a moment that should speak for itself
   'weak_narrator_to_raw_handoff',  // the narrator does not set up why the next real moment matters
   'weak_raw_to_narrator_handoff',  // coming out of a real moment, the narrator does not connect it forward
-  'opening_lacks_curiosity'        // the first seconds give a cold viewer no reason to keep watching
+  'opening_lacks_curiosity',       // the first seconds give a cold viewer no reason to keep watching
+  'narration_robotic',             // audible TTS rhythm/inflection makes narration unengaging
+  'narration_fragmented',          // isolated unnatural phrases or rushed short blocks
+  'narration_unnecessary',         // narration repeats visible action or already-understood dialogue
+  'narration_handoff_confusing',   // words do not lead naturally into/out of real dialogue
+  'narration_masks_dialogue',      // source speech and voiceover compete or unintelligibly overlap
+  'raw_dialogue_unintelligible',   // the essential original words cannot be heard
+  'small_active_footage',         // main picture occupies too little of 9:16 to read action
+  'unreadable_on_screen_text',     // relevant on-screen captions/evidence cannot be read
+  'pacing_without_progress'       // a timed region stalls despite cuts or original dialogue
 ];
 const DELIVERY_ISSUES = new Set(ISSUE_TYPES.slice(ISSUE_TYPES.indexOf('unbridged_perspective_shift')));
+const VISUAL_PRESENTATION_ISSUES = new Set(['small_active_footage', 'unreadable_on_screen_text']);
+// These are audible/visual MP4 delivery faults. The Editorial Director can repair
+// speech ownership or the EDL, but cannot magically correct a renderer layout.
+const AUDIO_PRESENTATION_ISSUES = new Set(['narration_robotic', 'narration_fragmented',
+  'narration_unnecessary', 'narration_handoff_confusing', 'narration_masks_dialogue',
+  'raw_dialogue_unintelligible']);
 
 const object = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required });
 const responseSchema = object({
@@ -57,6 +72,20 @@ const responseSchema = object({
     })
   },
   finalSeconds: object({ visualDescription: { type: 'string' }, subjectClearlyVisible: { type: 'boolean' } }),
+  // Real rendered MP4 only. Every false verdict MUST describe a directly
+  // observed problem in issues[] with an output timestamp, not just self-grade.
+  productionQuality: object({
+    narratorSoundsNatural: { type: 'boolean' },
+    narratorAddsNecessaryContext: { type: 'boolean' },
+    narratorHandoffsClean: { type: 'boolean' },
+    essentialDialogueClear: { type: 'boolean' },
+    activeFootageReadable: { type: 'boolean' },
+    importantVisualTextReadable: { type: 'boolean' },
+    pacingMaintainsProgress: { type: 'boolean' },
+    audibleObservation: { type: 'string' },
+    visualObservation: { type: 'string' },
+    pacingObservation: { type: 'string' }
+  }),
   issues: {
     type: 'array',
     items: object({
@@ -131,7 +160,7 @@ function buildPrompt(spine, timeline, durationSec, delivery = null) {
   const everyCut = timeline.slice(1).map((t, i) => ({
     outputSec: t.outputStartSec, previous: timeline[i], current: t
   }));
-  return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge STORY and EDIT DECISIONS only: scope, causal flow, dialogue function, hook, ending. Ignore captions, fonts, framing, blur, music, colour and FPS.
+  return `You are a senior short-form story editor reviewing a RENDERED edit. Watch the whole attached video (${durationSec.toFixed(2)}s). Judge the WHOLE REAL MP4 as a TikTok-ready edit: story, retention, original dialogue, narrator TEXT AND AUDIBLE TTS DELIVERY, transitions, visual composition and final readability. Never infer voice quality from the text or intended script.
 MANDATORY MAJOR SOURCE CUT CHECK (${majorJumps.length} boundary/boundaries):
 ${majorJumps.map(g => `- At OUTPUT ${g.outputSec.toFixed(1)}s, source jumps ${g.sourceGapSec > 0 ? 'forward' : 'backward'} ${Math.abs(g.sourceGapSec)}s: ${g.fromBeatId} -> ${g.toBeatId}. Check whether what is actually SPOKEN (narrator or original participants) or SHOWN explains this change.`).join('\n') || '- No major >20s source jumps in this EDL.'}
 MANDATORY COLD-VIEWER AUDIT OF EVERY EDL CUT (${everyCut.length} boundaries, even when the time gap is short):
@@ -166,7 +195,8 @@ Answer from what you actually SEE and HEAR:
    coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? It cannot be true while a listed transition is not understood. coldViewerNotes: where that breaks, if anywhere.
    openingCuriosity: describe the first seconds (firstSecondsDescription) and judge whether they create immediate curiosity for a cold viewer (createsCuriosity).
 7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
-8. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
+8. PRODUCTION QUALITY (mandatory): actually LISTEN to the rendered narration. In productionQuality report narratorSoundsNatural, narratorAddsNecessaryContext, narratorHandoffsClean, essentialDialogueClear, activeFootageReadable, importantVisualTextReadable, pacingMaintainsProgress, and grounded audibleObservation, visualObservation and pacingObservation (each an observation about the ACTUAL MP4, not a plan). If no narrator occurs, narrator-related verdicts are true and explain that no narrator is audible. If no important captions/text are relied on, importantVisualTextReadable=true and say so. Notice mechanical inflection, clipped 2-4-word phrases, narrator repeating what the officer already says, poor ducking or loud clashes, long procedural stretches, and a tiny central 16:9 strip swimming in blurred top/bottom space. Treat the picture as readable only when a mobile viewer can discern the actual action and evidence without zooming. Do NOT penalize necessary wide shots automatically; the actual key action must be legible. For EVERY false productionQuality field add at least ONE specifically TIMED blocking issue in issues[] with literal observed MP4 evidence. Choose the relevant exact issue type (narration_robotic, narration_fragmented, narration_unnecessary, narration_handoff_confusing, narration_masks_dialogue, raw_dialogue_unintelligible, small_active_footage, unreadable_on_screen_text, pacing_without_progress). A static picture showing a developing exchange may still be excellent; judge information gain rather than movement. Do not invent a poor moment just to fill a checklist.
+9. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
 Return JSON only.`;
 }
 
@@ -184,6 +214,26 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
   if (deliveryAware && !Array.isArray(raw.transitions)) return invalid("Critic field 'transitions' must list the rendered video's transitions.");
   if (deliveryAware && typeof raw.finalSeconds?.subjectClearlyVisible !== 'boolean') return invalid("Critic field 'finalSeconds.subjectClearlyVisible' must be boolean (inspect the last 3-5 seconds visually).");
   if (deliveryAware && typeof raw.openingCuriosity?.createsCuriosity !== 'boolean') return invalid("Critic field 'openingCuriosity.createsCuriosity' must be boolean.");
+  const qualityFlags = {
+    narratorSoundsNatural: 'narration_robotic',
+    narratorAddsNecessaryContext: 'narration_unnecessary',
+    narratorHandoffsClean: 'narration_handoff_confusing',
+    essentialDialogueClear: 'raw_dialogue_unintelligible',
+    activeFootageReadable: 'small_active_footage',
+    importantVisualTextReadable: 'unreadable_on_screen_text',
+    pacingMaintainsProgress: 'pacing_without_progress'
+  };
+  if (deliveryAware) {
+    const pq = raw.productionQuality;
+    if (!pq || typeof pq !== 'object') return invalid('Rendered-MP4 productionQuality audit is missing.');
+    for (const k of Object.keys(qualityFlags)) {
+      if (typeof pq[k] !== 'boolean') return invalid(`productionQuality.${k} must be a boolean based on the rendered MP4.`);
+    }
+    for (const k of ['audibleObservation', 'visualObservation', 'pacingObservation']) {
+      if (typeof pq[k] !== 'string' || !pq[k].trim())
+        return invalid(`productionQuality.${k} requires an observation of the actual rendered MP4.`);
+    }
+  }
   // Visual evidence wins over story resolution: an ending whose picture is not
   // clearly visible is unusable, and a cold viewer cannot follow past a transition
   // the critic itself says is not understood.
@@ -219,6 +269,15 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
     s = Math.max(0, Math.min(durationSec, s)); e = Math.max(0, Math.min(durationSec, e));
     if (e <= s) e = Math.min(durationSec, s + 0.5);
     issues.push({ ...it, outputStartSec: s, outputEndSec: e, beatIds: beatsInRegion(timeline, s, e) });
+  }
+  // A blanket "sounds bad" or "tiny video" verdict is insufficient for a
+  // repair: demand a local MP4 observation with output timestamps. If missing,
+  // withhold PASS rather than accepting an ungrounded quality score.
+  if (deliveryAware) for (const [flag, issueType] of Object.entries(qualityFlags)) {
+    if (raw.productionQuality[flag] === false && !issues.some(it =>
+      it.type === issueType && it.severity === 'blocking' && String(it.evidence || '').trim())) {
+      return invalid(`productionQuality.${flag}=false lacks a timed blocking ${issueType} issue with observed evidence.`);
+    }
   }
   // A false verdict with no matching issue still needs a repairable region.
   const lastBeat = timeline[timeline.length - 1];
@@ -272,9 +331,13 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
   const isCompliant = raw.scopeSurvived && raw.centralQuestionActiveThroughout && raw.endingIsConsequenceOfCentralConflict && verdict.finalFootageUsable
     && verdict.coldViewerCanFollow !== false && verdict.openingCreatesCuriosity !== false
     && raw.hookPromiseSupported !== false && raw.observableEndingConsequence !== false
-    && raw.repetitiveProcedureWithoutProgress !== true && blocking.length === 0;
+    && raw.repetitiveProcedureWithoutProgress !== true
+    && (!deliveryAware || Object.keys(qualityFlags).every(k => raw.productionQuality[k] === true))
+    && blocking.length === 0;
   const weakRegions = blocking.map(x => ({ type: x.type, outputStartSec: x.outputStartSec, outputEndSec: x.outputEndSec, beatIds: x.beatIds, reason: x.whyItFails, evidence: x.evidence,
-    ...(DELIVERY_ISSUES.has(x.type) ? { deliveryIssue: true } : {}) }));
+    ...(DELIVERY_ISSUES.has(x.type) ? { deliveryIssue: true } : {}),
+    ...(VISUAL_PRESENTATION_ISSUES.has(x.type) ? { visualLayoutIssue: true } : {}),
+    ...(AUDIO_PRESENTATION_ISSUES.has(x.type) ? { audioIssue: true } : {}) }));
   return {
     status: 'SCOPED_MEDIA_CRITIC_OK', critic: 'scope-media-critic-v1', isCompliant,
     scopeSurvived: raw.scopeSurvived, centralQuestionActiveThroughout: raw.centralQuestionActiveThroughout,
@@ -285,6 +348,7 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
     repetitiveProcedureWithoutProgress: raw.repetitiveProcedureWithoutProgress ?? null,
     openingCuriosity: raw.openingCuriosity || null, transitions,
     observedStory: raw.observedStory || '', summary: raw.summary || '', issues, weakRegions,
+    productionQuality: raw.productionQuality || null,
     coldViewerCanFollow: verdict.coldViewerCanFollow, coldViewerCanFollowReported: typeof raw.coldViewerCanFollow === 'boolean' ? raw.coldViewerCanFollow : null, coldViewerNotes: raw.coldViewerNotes || '',
     deliveryIssues: issues.filter(x => DELIVERY_ISSUES.has(x.type)),
     // Envelope fields the V4 review-state writer already persists.
@@ -315,4 +379,4 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   return out;
 }
 
-module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, responseSchema, outputTimeline, deliveryTimeline, majorSourceJumps, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
+module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, VISUAL_PRESENTATION_ISSUES, AUDIO_PRESENTATION_ISSUES, responseSchema, outputTimeline, deliveryTimeline, majorSourceJumps, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
