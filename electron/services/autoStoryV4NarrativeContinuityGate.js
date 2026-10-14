@@ -21,12 +21,19 @@ function check(spine, { narrationEnabled = true } = {}) {
     const previous = beats[i - 1], next = beats[i];
     const delta = Number(next.sourceStartSec) - Number(previous.sourceEndSec);
     if (!Number.isFinite(delta)) continue;
-    const significant = delta >= MIN_FORWARD_GAP_SEC || delta <= -MIN_BACKWARD_GAP_SEC;
+    // A clearly declared temporal rewind/callback is a meaningful cut even
+    // when its source-time distance is under the long-jump threshold.
+    const chronology = String(next.chronologyMode || '').toLowerCase();
+    const semanticRewind = ['rewind', 'callback'].includes(chronology)
+      && previous.chronologyMode !== next.chronologyMode;
+    const significant = delta >= MIN_FORWARD_GAP_SEC
+      || delta <= -MIN_BACKWARD_GAP_SEC || semanticRewind;
     if (!significant) continue;
     const prior = owners.get(previous.beatId), following = owners.get(next.beatId);
     const narrator = [prior, following].find(b => b?.mode === 'narrated_story'
       && String(b.narrationIntent || '').trim());
-    const caseName = delta < 0 ? 'rewind/source-time reversal' : 'source-time jump';
+    const caseName = semanticRewind ? `semantic ${chronology} transition`
+      : delta < 0 ? 'rewind/source-time reversal' : 'source-time jump';
     const bound = { fromBeatId: previous.beatId, toBeatId: next.beatId,
       sourceGapSec: round1(delta), fromSourceEndSec: previous.sourceEndSec,
       toSourceStartSec: next.sourceStartSec,
