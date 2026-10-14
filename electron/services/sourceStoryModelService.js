@@ -63,7 +63,7 @@ const STORY_DESIGN_CALLS = 1;
 // budget, like Story Design repairs did). Kept minimal so a long cache-MISS source still
 // gets enough chunk-first windows under the default 16-call cap.
 const SCOPE_SELECTION_CALLS = 1;
-const DIRECTOR_CALLS_PER_SCRIPT = 5; // payoff, Director EDL, hook audition, and up to two narrator-bridge repairs
+const DIRECTOR_CALLS_PER_SCRIPT = 9; // payoff, EDL, hook audition, two narration repairs, plus two targeted EDL+hook re-auditions
 const NARRATION_CALLS_PER_SCRIPT = 5;
 const SOURCE_MODEL_MIN_CALLS = 4;         // floor so a large outputCount can't starve extraction to 0
 // Recursive-subdivision guards for a chunk that STILL hits MAX_TOKENS: keep
@@ -408,7 +408,7 @@ function downstreamReserve(config) {
   return STORY_DESIGN_CALLS + outputCount * NARRATION_CALLS_PER_SCRIPT;
 }
 // The request budget split for this run.
-function requestBudgetPlan(engine) {
+function requestBudgetPlan(engine, { sourceCached = false } = {}) {
   const cb = engine.service?.callBudget;
   if (!cb) return { unbounded: true, global: Infinity, downstreamReserved: 0, sourceModelLimit: Infinity };
   const downstreamReserved = downstreamReserve(engine.config);
@@ -422,8 +422,8 @@ function requestBudgetPlan(engine) {
     && configuredCap === 16 && engine.service.settings?.vertexAutoStoryStrictCallCap !== true;
   const adaptive = legacyV4Cap || !configuredCap;
   if (adaptive) {
-    const planned = planChunkWindows(engine.duration, Infinity).initialWindows;
-    const reserveForSplits = Math.max(4, Math.ceil(planned / 2));
+    const planned = sourceCached ? 0 : planChunkWindows(engine.duration, Infinity).initialWindows;
+    const reserveForSplits = sourceCached ? 0 : Math.max(4, Math.ceil(planned / 2));
     const required = downstreamReserved + planned + reserveForSplits + (cb.calls || 0);
     const desired = Math.min(100, Math.max(16, required));
     cb.adaptiveLimit = true;
