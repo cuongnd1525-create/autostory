@@ -204,6 +204,10 @@ ${payload.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\
 - Return the COMPLETE repaired EDL.
 - Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order).
 - Delivery findings (who owns the audio; input.weakRegions[].deliveryBlockIds) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent, and the weak-region beats themselves (e.g. compress an explanatory raw stretch to its strongest quote plus narration). Keep every unaffected block as it was. Return deliveryBlocks and transitionChecks covering every block.
+- Audible narrator fails on the rendered MP4 (narration_robotic, narration_fragmented, narration_unnecessary, narration_handoff_confusing, narration_masks_dialogue): this is a REAL delivered-audio issue. Change the affected narrated_story block(s) by regrouping adjacent beats to allow ONE coherent sentence, shortening/reframing narrationIntent to genuinely necessary context, or handing important dialogue back to raw_evidence. Do not merely return the same narrationIntent, delivery block membership and audio ownership with a different adjective. Preserve any source statement that proves the payoff.
+- Raw dialogue unintelligible: find a clearer in-scope source moment or change audio ownership only where the original words are not essential. Do not invent recovered words.
+- pacing_without_progress, procedural_repetition and low_value_stretch: the final footage itself must CHANGE. Remove or replace the weakest repetitive beats with genuinely new source facts, reactions, decisions or consequences. Never declare the same EDL repaired just because a prompt changed.
+- Layout problems (small_active_footage, unreadable_on_screen_text) belong to RENDER QA, not an EDL-only text edit; do not pretend changing narration fixes these.
 - Unusable final footage (unusable_footage at the end): replace the ending with another in-scope ending candidate (input.storyScope.candidateEndingEvents or an ending_material window) whose picture is clearly observable, or shorten the ending beat to a visually usable endpoint.
 - Stay inside input.storyScope. Replacement footage must come from the attached scope reel. Do not introduce a new branch of the incident to fill time.
 - Keep the total duration inside input.targetDurationMinSec..input.targetDurationMaxSec.`;
@@ -1013,6 +1017,38 @@ async function repairEdl(engine, { model, spine, critique, weakRegions = [], roo
     repairText: repairInstruction('critic'),
     root, write, emit
   });
+  // Prevent a model from claiming a serious EDITING fault was repaired while
+  // returning the same source cuts / same narration ownership. This happened
+  // in production: a second MP4 had bit-identical H.264 video after "repair".
+  const observed = (weakRegions || []).filter(x => x && typeof x.type === 'string');
+  const needsFootageChange = observed.some(x => [
+    'pacing_without_progress', 'procedural_repetition', 'low_value_stretch',
+    'repeated_dialogue_function', 'hook_spends_payoff', 'opening_lacks_curiosity',
+    'hook_unfulfilled', 'causal_break', 'ending_without_payoff'
+  ].includes(x.type));
+  const needsDeliveryChange = observed.some(x => [
+    'narration_robotic', 'narration_fragmented', 'narration_unnecessary',
+    'narration_handoff_confusing', 'narration_masks_dialogue',
+    'raw_dialogue_unintelligible', 'raw_explanation_overlong',
+    'weak_narrator_to_raw_handoff', 'weak_raw_to_narrator_handoff'
+  ].includes(x.type));
+  const cutSignature = edl => JSON.stringify((edl?.beats || []).map(x => [
+    x.beatId, x.sourceStartSec, x.sourceEndSec, x.chronologyMode, x.narrativeRole
+  ]));
+  const audioSignature = edl => JSON.stringify((edl?.deliveryBlocks || []).map(x => [
+    x.blockId, x.mode, x.beatIds, x.narrationIntent, x.sourceAudioTreatment
+  ]));
+  if (needsFootageChange && cutSignature(out.spine) === cutSignature(spine)) {
+    throw new StoryError('EDITORIAL_REPAIR_NOOP',
+      'Media Critic rejected the rendered edit for weak footage or pacing, but Director returned an identical EDL. Rejecting the fake repair; choose different in-scope source moments.',
+      { weakRegions: observed });
+  }
+  if (needsDeliveryChange && !needsFootageChange
+      && audioSignature(out.spine) === audioSignature(spine)) {
+    throw new StoryError('EDITORIAL_REPAIR_NOOP',
+      'Media Critic rejected narrator delivery, but Director returned identical narration blocks. Re-rendering would preserve the same weak passages.',
+      { weakRegions: observed });
+  }
   const repaired = stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, repairPass: pass });
   return { spine: repaired, evidence, reel, report: out.report, request: { scope, currentEdl, weakRegions, reel, evidenceFiles: evidence.map(e => e.file) } };
 }
