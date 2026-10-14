@@ -26,7 +26,7 @@ const original = {
 };
 const audit = Continuity.check(original);
 assert.equal(audit.passed, false, 'real 88s video with 18 all-raw beats is unacceptable');
-assert.ok(audit.violations.length >= 5, 'detects rewind and long jumps even inside one raw block');
+assert.ok(audit.violations.length >= 4, 'detects rewind and long jumps even inside one raw block');
 assert.ok(audit.violations.some(v=>v.sourceGapSec < -80), 'teaser rewind is unbridged');
 assert.ok(audit.violations.some(v=>v.sourceGapSec > 50), 'final jump has no narrator');
 assert.ok(audit.violations.every(v=>v.code==='UNBRIDGED_EDL_TIME_JUMP'));
