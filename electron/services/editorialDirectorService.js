@@ -138,6 +138,7 @@ EVERY BEAT MUST BE BOTH NOVEL AND CAUSALLY COHERENT WITH THE SCOPE.
 - Every text field is ONE short sentence (about 25 words at most). State each point once; never repeat a sentence or restate another field.
 - A different timestamp, speaker or line is not progress. "It is interesting" is not a reason.
 - If removing a beat makes the story clearer with no causal loss, remove it.
+- Rank every beat by information gain: a new fact, contradiction, decision, reaction, danger or consequence. Look back across the last FOUR beats. The same search or question with unchanged viewer knowledge is filler even if the shot, speaker or wording changes. Do not pad to 65 seconds by replaying routine procedures; reject a scope with insufficient genuinely new evidence.
 - Do not pad duration with repeated procedural searching, indistinguishable views of the same object or officers restating the same question. Keep a second search shot only if a NEW finding, credible contradiction, direct reaction, or consequence changes viewer knowledge. A timeline of routine searches with no resolution is NOT an escalating story.
 - An unfinished investigation can be interesting only when an observable smaller consequence has been reached and the hook does not promise discoveries that are not shown.
 - A continuous exchange in one place can be excellent when each exchange changes the conflict, exposes a contradiction, raises the stakes or moves toward the consequence. Do not cut away just to get visual variety.
@@ -182,7 +183,7 @@ Choose (chosen) whichever creates the stronger immediate curiosity while preserv
 
 HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
 - An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must not spend input.storyScope.mustWithhold.
-- Then rewind (chronologyMode 'rewind') to the start of the causal spine. After the rewind the viewer must still have an open question. Replaying part of the hook later in its full context is allowed. An exact duplicate of a range is not.
+- Then rewind (chronologyMode 'rewind') to the start of the causal spine. After the rewind the viewer must still have an open question. Do NOT replay two or more seconds of hook footage later; resume with UNSEEN consequential words or action. A callback that changes nothing is dead repetition. An exact duplicate of a range is not.
 - The FIRST beat must use a hook role (teaser_conflict, cold_open, cold_open_hook, hook or micro_payoff).
 
 ENDING = A CONSEQUENCE OF THE CENTRAL CONFLICT.
@@ -381,6 +382,39 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
         && !['hook', 'ending'].includes(next.scopeMembership)) {
       add('REPEATED_INFORMATION', `Beat '${next.beatId}' adds the same information and viewer-state as '${prev.beatId}'. Remove or replace it with a consequential discovery, contradictory fact, or meaningful reaction; do not fill the duration with redundant searching.`,
         { firstBeatId: prev.beatId, secondBeatId: next.beatId });
+    }
+  }
+
+  // Hook/body footage reuse is not a new reveal. A short callback may be fine,
+  // but replaying >=2s covering >=60% of a later shot wastes the hook.
+  if (beats.length > 2 && beats[0].scopeMembership === 'hook') {
+    const opening = beats[0];
+    for (let i = 2; i < beats.length; i++) {
+      const b = beats[i];
+      const seconds = Math.max(0, Math.min(num(opening.sourceEndSec), num(b.sourceEndSec))
+        - Math.max(num(opening.sourceStartSec), num(b.sourceStartSec)));
+      const shorter = Math.min(beatLen(opening), beatLen(b));
+      if (seconds >= 2 && shorter > 0 && seconds / shorter >= 0.6) {
+        add('HOOK_FOOTAGE_REPLAY',
+          `Beat '${b.beatId}' repeats ${round2(seconds)}s from opening '${opening.beatId}'. Resume from new source action after the teaser, not the same quote played twice.`,
+          { firstBeatId: opening.beatId, secondBeatId: b.beatId, overlapSec: round2(seconds) });
+      }
+    }
+  }
+  // Repeated search -> question -> repeated search is filler even if the
+  // duplicate beats are not adjacent.
+  for (let i = 2; i < beats.length - 1; i++) {
+    const b = beats[i], info = semantic(b.newInformation), state = semantic(b.viewerStateAfter);
+    if (info.length < 24 || state.length < 12 || ['hook', 'ending'].includes(b.scopeMembership)) continue;
+    for (let j = Math.max(1, i - 4); j < i - 1; j++) {
+      const a = beats[j];
+      if (['hook', 'ending'].includes(a.scopeMembership)) continue;
+      if (info === semantic(a.newInformation) && state === semantic(a.viewerStateAfter)) {
+        add('REPEATED_INFORMATION',
+          `Beat '${b.beatId}' repeats the information and viewer state of '${a.beatId}' despite intermediate procedure. Cut the duplicate or replace it with a sourced new consequence.`,
+          { firstBeatId: a.beatId, secondBeatId: b.beatId });
+        break;
+      }
     }
   }
 
