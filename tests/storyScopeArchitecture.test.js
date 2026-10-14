@@ -802,7 +802,8 @@ function fakeEngine(asks) {
     const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true,
       hookPromiseSupported: true, observableEndingConsequence: true, repetitiveProcedureWithoutProgress: false,
       finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
-      openingCuriosity: { firstSecondsDescription: 'the denial at the window', createsCuriosity: true }, transitions: [], finalSeconds: { visualDescription: 'driver in cuffs, clearly lit', subjectClearlyVisible: true },
+      openingCuriosity: { firstSecondsDescription: 'the denial at the window', createsCuriosity: true },
+      transitions: [{ outputSec: 6, change: 'time', whatViewerSeesAndHears: 'The next scene establishes the earlier roadside encounter.', coldViewerUnderstandsWhy: true }], finalSeconds: { visualDescription: 'driver in cuffs, clearly lit', subjectClearlyVisible: true },
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
     const clean = { ...blocking, issues: [], summary: 'coherent' };
     const repairedEdl = directorEdl({ beats: directorEdl().spine.beats.map(b => (b.beatId === 'b4' ? { ...b, sourceStartSec: 38, sourceEndSec: 54 } : b)) });
