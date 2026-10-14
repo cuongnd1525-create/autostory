@@ -5,6 +5,7 @@ const path = require('node:path');
 const Continuity = require('../electron/services/autoStoryV4NarrativeContinuityGate');
 const Director = require('../electron/services/editorialDirectorService');
 const Pipeline = require('../electron/services/autoStoryV3Pipeline');
+const Critic = require('../electron/services/scopeMediaCriticService');
 
 const times = [
   [422.4,426.8], [334.6,340.8], [364.3,369.8], [369.8,377.4],
@@ -24,6 +25,31 @@ const original = {
   deliveryBlocks: [{ blockId: 'all_raw', mode: 'raw_evidence', beatIds: beats.map(b=>b.beatId),
     ownershipReason:'Real interaction', storyFunction:'Evidence', viewerStateChanges:1, blockSummary:'Search' }]
 };
+// Critic must not certify an MP4 without explicitly listening at each major
+// source-time boundary. A planned narrator block alone is NOT audio evidence.
+const timeline = [
+  { beatId:'a', sourceStartSec:60, sourceEndSec:66, outputStartSec:0, outputEndSec:6 },
+  { beatId:'b', sourceStartSec:4, sourceEndSec:18, outputStartSec:6, outputEndSec:20 }
+];
+assert.equal(Critic.majorSourceJumps(timeline).length,1);
+const mediaReply = {
+  scopeSurvived:true, centralQuestionActiveThroughout:true,
+  endingIsConsequenceOfCentralConflict:true, finalFootageUsable:true,
+  hookPromiseSupported:true, observableEndingConsequence:true,
+  repetitiveProcedureWithoutProgress:false,
+  coldViewerCanFollow:true, coldViewerNotes:'', observedStory:'Clear rewind and payoff.',
+  openingCuriosity:{firstSecondsDescription:'The denial',createsCuriosity:true},
+  finalSeconds:{visualDescription:'Known result',subjectClearlyVisible:true},
+  transitions:[], issues:[], summary:'Coherent'
+};
+let report = Critic.normalizeCritique(mediaReply,{timeline,durationSec:20,deliveryAware:true});
+assert.equal(report.status,'MEDIA_CRITIC_INVALID','AI cannot omit the important rewind');
+report = Critic.normalizeCritique({ ...mediaReply, transitions:[{
+  outputSec:6, change:'time', whatViewerSeesAndHears:'Narrator audibly explains that we are returning to the original roadside stop.',
+  coldViewerUnderstandsWhy:true
+}] },{timeline,durationSec:20,deliveryAware:true});
+assert.equal(report.isCompliant,true,'verified audible transition allows the edit');
+
 const audit = Continuity.check(original);
 assert.equal(audit.passed, false, 'real 88s video with 18 all-raw beats is unacceptable');
 assert.ok(audit.violations.length >= 4, 'detects rewind and long jumps even inside one raw block');
