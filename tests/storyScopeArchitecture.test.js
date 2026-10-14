@@ -828,6 +828,9 @@ function fakeEngine(asks) {
     const service = makeService(p.store, vertex, makeFfmpeg(), dubbing);
     const run = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
     assert.deepStrictEqual(run.failures, []);
+    const visualProject = await p.store.getProject(p.dir, p.projectId);
+    assert.strictEqual(visualProject.videoDecoration.foregroundScalePercent, 125,
+      'untouched project-store 100% foreground must be enlarged in V4 without a manual layout edit');
     const first = path.join(p.dir, 'draft-1.mp4'); await fs.writeFile(first, 'mp4');
     await p.store.updateProject(p.dir, p.projectId, { analysis: { highlightVariants: [{ id: 'v1', scriptId: 1, artifacts: { fastDraftVideoPath: first } }] } });
     const res = await Pipeline.auditDrafts(makeService(p.store, vertex, makeFfmpeg(), dubbing), { workspaceRoot: p.dir, projectId: p.projectId, scriptId: 1, onProgress: () => {} });
