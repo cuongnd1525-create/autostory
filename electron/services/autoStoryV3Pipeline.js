@@ -880,9 +880,13 @@ async function run(service, opts) {
     videoDecoration: (!original.autoStoryPipelineVersion && !project.videoEditUpdatedAt)
       ? { ...project.videoDecoration, canvasEnabled: true, canvasAspect: '9:16',
           blurBackgroundEnabled: true,
-          foregroundScalePercent: project.videoDecoration?.foregroundScalePercent ?? 125 }
+          foregroundScalePercent: !project.videoEditUpdatedAt
+            && (project.videoDecoration?.foregroundScalePercent == null
+              || Number(project.videoDecoration.foregroundScalePercent) === 100)
+            ? 125 : project.videoDecoration.foregroundScalePercent }
       : requestedContractVersion === 4 && !project.videoEditUpdatedAt
-        && project.videoDecoration?.foregroundScalePercent == null
+        && (project.videoDecoration?.foregroundScalePercent == null
+          || Number(project.videoDecoration.foregroundScalePercent) === 100)
         ? { ...project.videoDecoration, foregroundScalePercent: 125 }
         : project.videoDecoration
   });
