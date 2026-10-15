@@ -367,6 +367,37 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
   };
 }
 
+// Advisory-only: exact audio ownership statistics from the REAL compiled EDL,
+// useful when provider 429 makes AI feedback unavailable. No narration quota.
+function deliveryCadenceMetrics(spine = {}, script = null) {
+  const timeline = outputTimeline(spine, script);
+  const blocks = deliveryTimeline(spine, script, timeline) || [];
+  const durationSec = timeline.length ? Number(timeline[timeline.length-1].outputEndSec) : 0;
+  const r = n => Math.round(Math.max(0, n) * 100) / 100;
+  const narrated = blocks.filter(b=>b.mode==='narrated_story');
+  const raw = blocks.filter(b=>b.mode==='raw_evidence');
+  const len = b => Math.max(0, Number(b.outputEndSec)-Number(b.outputStartSec));
+  const narratedSec = narrated.reduce((n,b)=>n+len(b),0);
+  const rawSec = raw.reduce((n,b)=>n+len(b),0);
+  let longestRawRun=0, currentRaw=0;
+  for (const block of [...blocks].sort((a,b)=>a.outputStartSec-b.outputStartSec)) {
+    if (block.mode==='raw_evidence') {
+      currentRaw += len(block); longestRawRun = Math.max(longestRawRun,currentRaw);
+    } else currentRaw = 0;
+  }
+  const singleBeatNarrationBlocks=narrated.filter(b=>(b.beatIds||[]).length===1).length;
+  const advisoryFlags=[];
+  if (durationSec>=90 && rawSec/Math.max(durationSec,1)>.8 && longestRawRun>25)
+    advisoryFlags.push('LONG_RAW_EXPOSITION_TO_INSPECT');
+  if (narrated.length>1 && narrated.length===singleBeatNarrationBlocks)
+    advisoryFlags.push('NARRATION_ONLY_ON_SINGLE_BEATS_TO_INSPECT');
+  return {totalSec:r(durationSec),beatCount:timeline.length,deliveryBlockCount:blocks.length,
+    narratedBlockCount:narrated.length,rawBlockCount:raw.length,
+    narratedSec:r(narratedSec),rawSec:r(rawSec),longestRawRunSec:r(longestRawRun),
+    singleBeatNarrationBlocks,narratorShare:Number((narratedSec/Math.max(durationSec,1)).toFixed(3)),
+    advisoryFlags,advisoryOnly:true};
+}
+
 async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null } = {}) {
   if (!aiService || !mp4Path || !actualMp4DurationSec) throw new Error('Scope media critic requires aiService, mp4Path, and actualMp4DurationSec');
   const timeline = outputTimeline(spine, script);
@@ -400,4 +431,4 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   return out;
 }
 
-module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, VISUAL_PRESENTATION_ISSUES, AUDIO_PRESENTATION_ISSUES, responseSchema, outputTimeline, deliveryTimeline, majorSourceJumps, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
+module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, VISUAL_PRESENTATION_ISSUES, AUDIO_PRESENTATION_ISSUES, responseSchema, outputTimeline, deliveryTimeline, majorSourceJumps, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender, deliveryCadenceMetrics };
