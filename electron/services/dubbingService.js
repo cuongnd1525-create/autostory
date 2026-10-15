@@ -48,6 +48,7 @@ const {
   rankManualGeminiVariants,
   scoreManualGeminiVariant
 } = require("./manualGeminiViralPreflightService");
+const {validateManualGeminiEditorialContract, auditSerializedVariants} = require("./manualGeminiEditorialGateService");
 const { compilePodcastEdlFile } = require("./podcastViralService");
 const {
   consolidateStoryRecutSegments,
@@ -4476,6 +4477,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
+      if (project.analysisWorkflow === "manual_gemini_draft_review") {
+        const contractFile = path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "hook-contract.json");
+        const hookContract = await fs.readFile(contractFile, "utf8").then(JSON.parse).catch(() => null);
+        const editorial = validateManualGeminiEditorialContract({
+          script: scriptInput, normalizedScript: script,
+          promptOptions: configuredPromptOptions, hookContract
+        });
+        if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
+        script.warnings.push(...editorial.warnings);
+      }
       if (configuredPromptOptions.profile === "independent") {
         const importedScriptId = safeNumber(
           scriptInput.scriptId ?? scriptInput.script_id,
@@ -4687,6 +4698,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           "Ba Part dùng source_narrator_ranges khác nhau. Hãy yêu cầu Gemini quét narrator nguồn một lần và chép cùng bản đồ timestamp narrator vào cả ba JSON."
         );
       }
+    }
+    if (project.analysisWorkflow === "manual_gemini_draft_review") {
+      const seriesWarnings = auditSerializedVariants(variants, project.manualGeminiPromptOptions || {});
+      if (seriesWarnings.length) variants.forEach(variant => variant.warnings.push(...seriesWarnings));
     }
     if (isTwoPassGeminiWorkflow) {
       const ranked = rankManualGeminiVariants(variants);
@@ -5328,6 +5343,17 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
+      if (isDraftReviewWorkflow) {
+        const contractFile = path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "hook-contract.json");
+        const hookContract = await fs.readFile(contractFile, "utf8").then(JSON.parse).catch(() => null);
+        const editorial = validateManualGeminiEditorialContract({
+          script: scriptInput, normalizedScript: script,
+          promptOptions: project.manualGeminiPromptOptions || {profile: activeVariant.promptProfile},
+          hookContract
+        });
+        if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
+        script.warnings.push(...editorial.warnings);
+      }
       if (safeText(activeVariant.promptProfile).toLowerCase() === "independent") {
         const importedScriptId = safeNumber(scriptInput.scriptId ?? scriptInput.script_id, activeVariant.scriptId || 1);
         const configuredMaxDuration = safeNumber(
