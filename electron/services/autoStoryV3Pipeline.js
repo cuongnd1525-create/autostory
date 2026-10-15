@@ -833,6 +833,14 @@ async function run(service, opts) {
     || (Number(original.autoStoryContractVersion) === 3
       && original.autoStoryEditorialArchitecture === SCOPE_MEDIA_DIRECTOR)
     ? 4 : 3;
+  // Natural storyteller contract: reserve genuine visual runway before
+  // narration is ever written. Only V4's Director-owned delivery path opts in;
+  // the older bodycam/manual modes remain unchanged.
+  if (requestedContractVersion === 4 && config.narration?.enabled !== false) {
+    const explicit = Number(project.autoStoryConfig?.narrationMinBlockSec);
+    config.narrationMinBlockSec = Number.isFinite(explicit) && explicit >= 3
+      ? Math.min(12, explicit) : 5.0;
+  }
   const versionTag = requestedContractVersion === 4 ? 'V4' : 'V3';
   const update = patch => service.store.updateProject(opts.workspaceRoot, opts.projectId, patch);
   const emit = (stage, message, percent) => opts.onProgress?.({
