@@ -105,7 +105,8 @@ class AutoStoryRunner {
           await state(id, 'final_export');
           a = await require('./autoStoryReleaseGate').finalizeVariant({
             store: this.store, dubbing: this.dubbing, workspaceRoot, projectId,
-            scriptId: id, settings: this.settings, audit: a, onProgress
+            scriptId: id, settings: this.settings, audit: a, onProgress,
+            aiService: this.consumer?.vertex || this.consumer?.ai || null
           });
           await state(id, a?.error || a?.finalCheck?.error ? 'failed' : a?.needsUserReview ? 'needs_attention' : 'complete', a?.error || a?.finalCheck?.error || '');
         } catch (error) {
