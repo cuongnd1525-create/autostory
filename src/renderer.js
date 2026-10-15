@@ -81,6 +81,15 @@ const MODE_PRESENTATION = Object.freeze({
     nextHint: "Bước tiếp theo: cấu hình giọng đọc.",
     configurable: false
   },
+  anime_lore: {
+    category: "recap",
+    categoryLabel: "ANIME LORE",
+    title: "Anime Lore / Character Breakdown",
+    description: "Canon-first, three hooks, voice-first multi-asset video and multimodal review.",
+    badges: ["Anime Canon", "9:16", "Vertex AI", "English US"],
+    nextHint: "Use the Anime Lore panel below to create and render one grounded video.",
+    configurable: true
+  },
   recap: {
     category: "recap",
     categoryLabel: "AI VIDEO RECAP",
@@ -6844,6 +6853,8 @@ function syncModeUi() {
   const isDiyStoryRemix = isDiyStoryRemixMode();
   const isPodcastViral = isPodcastViralMode();
   const isAutoStory = isAutoStoryMode();
+  document.getElementById("anime-lore-options")?.classList.toggle("hidden", state.selectedMode !== "anime_lore");
+  if (el.nextStep) el.nextStep.classList.toggle("hidden", state.selectedMode === "anime_lore");
   const isPodcastTwoPass = isPodcastViral && isPodcastTwoPassMode();
   if (isPodcastViral) {
     if (el.sourceLanguage) el.sourceLanguage.value = "en";
