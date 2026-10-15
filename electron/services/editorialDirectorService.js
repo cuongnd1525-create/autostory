@@ -1068,6 +1068,7 @@ const DELIVERY_ONLY_REPAIR_INSTRUCTION = `DELIVERY-ONLY TECHNICAL REPAIR.
 The EDL is LOCKED. input.currentEdl.beats are already media-grounded and MUST remain byte-for-byte equivalent in identity, order and source ranges. Do NOT output beats and do NOT select new footage.
 Repair ONLY input.currentEdl.deliveryBlocks and transitionChecks to resolve input.violations.
 Preserve every unaffected block exactly when possible. Every existing beat must belong to exactly one block; block membership is consecutive in EDL order; blocks follow EDL order.
+IMPORTANT PARTITION CHECK: index all beats in input.currentEdl.beats from 0 to N-1. Emit blocks whose beatIds each cover exactly one CONSECUTIVE index interval. Blocks cover 0..N-1 without gaps, overlap, duplicates or reordering, and transitionChecks cover every boundary. A longer narrated passage MAY span multiple adjacent beats, but you cannot take nonadjacent beats away from essential original-dialogue blocks and pretend the narrator visual window grew.
 
 For an UNBRIDGED_EDL_TIME_JUMP violation, the footage jumps significantly in source time with raw_audio on both sides and no narrator-guided handoff. PRESERVE the footage and strongest raw exchanges; turn an adjacent non-essential raw beat (or a continuous group of such beats) into narrated_story with a specific, evidence-grounded narrationIntent explaining the time/causal change. A teaser -> earlier context needs explicit rewind orientation. The narrator MUST bridge cause, time and viewer understanding, not just describe a visual or repeat the next raw quote.
 For a NARRATED_BLOCK_VOICE_OVERFLOW / NARRATED_BLOCK_UNFIT failure, the block writer has already attempted focused text rewrites and measured the real TTS. Do not trigger a whole-story rewrite.
@@ -1113,7 +1114,7 @@ async function repairDeliveryTechnical(engine, { model, spine, violations, root 
       narrationMinBlockSec,
       narrationWordsPerSecond: engine.config?.narration?.measuredWordsPerSecond || null,
       ...(attempt ? { previousRepairViolations,
-        repairConstraint: `Your previous locked-EDL delivery edit violates the ${narrationMinBlockSec}s minimum narrator window. Rework the COMPLETE audio ownership map, keep source beats locked, preserve source payoff dialogue, and verify duration of EVERY narrated block before submitting. If no safe neighbouring picture can join a narrated block, do not invent a four-word narrator fragment.` } : {})
+        repairConstraint: `Your previous locked-EDL delivery response FAILED validation: ${previousRepairViolations.map(v => v.code).join(', ')}. Rebuild deliveryBlocks as a COMPLETE NON-OVERLAPPING PARTITION of input.currentEdl.beats IN THEIR EXACT ORDER: each beat exactly once; each block lists ONLY adjacent beats; no block may jump past another block or reuse its beats. Check EVERY narrated block owns at least ${narrationMinBlockSec}s of consecutive output picture. Keep all essential original audio and the ending payoff. Do not invent a four-word narrator fragment. Return ALL transitionChecks for the corrected block boundaries.` } : {})
     };
     let accepted = null, validation = null;
     try {
@@ -1140,19 +1141,27 @@ async function repairDeliveryTechnical(engine, { model, spine, violations, root 
         report: validation
       };
     } catch (error) {
-      const rejected = error?.details?.violations || [];
-      const tooShort = error?.kind === 'INVALID_RESPONSE'
-        && rejected.some(x => x.code === 'NARRATED_STORY_WINDOW_TOO_SHORT');
-      if (!tooShort) throw error;
+      const rejected = Array.isArray(error?.details?.violations) ? error.details.violations : [];
+      // ALL deterministic delivery/EDL validator rejections require another
+      // editorial proposal, not an immediate fatal 0/1. In particular, a
+      // retry which makes a >5s narrator by REORDERING/NON-CONTIGUOUS beats
+      // is *still* invalid and must never pass through to rendering.
+      // Keep genuine provider errors, bad schemas and unrelated exceptions
+      // visible: do not swallow or silently downgrade them to recut requests.
+      const rejectedByValidator = error?.kind === 'INVALID_RESPONSE'
+        && rejected.length > 0;
+      if (!rejectedByValidator) throw error;
       previousRepairViolations = rejected;
-      emit('design', `[Director] Locked delivery repair ${attempt + 1}/2 proposed narrator windows shorter than ${narrationMinBlockSec}s; requesting a different grouping. Original source beats preserved.`);
+      const codes = [...new Set(rejected.map(v => v.code))];
+      emit('design', `[Director] Locked delivery repair ${attempt + 1}/2 failed EDL validation (${codes.join(', ')}); ${attempt ? 'switching to the source-watching Director' : 'retrying a valid contiguous block partition'}. Original EDL remains unchanged.`);
       if (attempt === 1) {
-        // Structural incompatibility, not a model/network failure: return a
-        // TYPED handoff to the multimodal Director. Never drop the narration
-        // quality rule, silently accept raw audio, or endlessly retry.
+        // Preserve BOTH the triggering continuity/voice problem and the
+        // attempted repair's structural failures. The multimodal Director
+        // needs to solve the story problem, not merely renumber bad blocks.
         throw new StoryError('DIRECTOR_REPAIR_REQUIRED',
-          `Delivery-only repair cannot preserve the real dialogue while giving narration ${narrationMinBlockSec}s of visual runway. Recut the verified EDL with the watched scope reel.`,
-          { violations: rejected, needsMediaEdlRepair: true });
+          `Delivery-only repair exhausted: ${codes.join(', ')}. Recut the verified EDL using the source reel to secure natural narrator runway, ordered contiguous blocks and real-dialogue payoff.`,
+          { violations: [...violations, ...rejected], triggeringViolations: violations,
+            rejectedDeliveryViolations: rejected, needsMediaEdlRepair: true });
       }
     }
   }
