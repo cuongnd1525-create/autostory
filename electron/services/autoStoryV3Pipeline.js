@@ -739,7 +739,7 @@ async function directStories(engine, model, root, emit, config) {
     const exhausted = rejectedScopes.length ? `No source-verified Story Scope survived (rejected: ${rejectedScopes.map(x => x.storyScopeId).join(', ')}; payoff reselections: ${recoveryRound}).` : 'No director EDL produced.';
     throw new StoryError(first.kind || 'DIRECTOR_EDL_INVALID',
       `${exhausted} First rejection: ${first.error || 'no confirmed scope'}`,
-      { rejectedScopes, recoveries, failures });
+      { ...(first.details || {}), rejectedScopes, recoveries, failures });
   }
   emit('design', `[Director] ${spines.length} media-grounded EDL(s) ready.`, 40);
   spines.failures = failures;
