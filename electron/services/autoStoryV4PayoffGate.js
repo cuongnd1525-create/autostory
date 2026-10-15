@@ -74,12 +74,23 @@ async function verify(engine, scope, { root = null, scriptId = 1, emit = () => {
   const verdict = judge(response, scope);
   if (root) {
     await fs.mkdir(root, { recursive: true });
-    await fs.writeFile(path.join(root, `payoff-verification-${scriptId}.json`),
-      JSON.stringify({ scopeId: scope.storyScopeId, response, verdict }, null, 2));
+    const report = JSON.stringify({ scopeId: scope.storyScopeId, response, verdict }, null, 2);
+    await fs.writeFile(path.join(root, `payoff-verification-${scriptId}.json`), report);
+    // Retain evidence for EVERY rejected scope: earlier scriptId-only artifacts
+    // got overwritten when an alternate scope reused that script slot.
+    const safeScopeId = String(scope.storyScopeId || 'unknown').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 96);
+    await fs.writeFile(path.join(root, `payoff-verification-${scriptId}-${safeScopeId}.json`), report);
   }
   if (!verdict.accepted) {
     throw new StoryError('STORY_SCOPE_PAYOFF_REJECTED', verdict.reasons.join(' '),
-      { violations: verdict.reasons.map(message => ({ code: 'UNSUPPORTED_STORY_PAYOFF', message })) });
+      { violations: verdict.reasons.map(message => ({ code: 'UNSUPPORTED_STORY_PAYOFF', message })),
+        // Negative watched-source evidence feeds a bounded new Story Scope
+        // selection. We must not regenerate the same unproven promise.
+        observedEnding: response.observedEnding,
+        unsupportedPromise: response.unsupportedPromise || '',
+        endingSupportsCentralConflict: response.endingSupportsCentralConflict === true,
+        outcomeType: response.outcomeType,
+        candidateEnding: chosen });
   }
   emit('design', `[V4] Source payoff verified for story ${scriptId}: ${verdict.observedEnding}`);
   return verdict;
