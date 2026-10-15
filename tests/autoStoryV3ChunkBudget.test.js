@@ -69,6 +69,15 @@ const buildOpts = {
     assert.ok(wp.splitReserve >= 1, 'reserve left for emergency splits');
     // short source stays staged; a prior whole+compact overflow forces chunk-first.
     assert.equal(S.selectStrategy(600, null).mode, 'staged');
+    assert.deepEqual(S.selectStrategy(1140.2, null), {mode:'chunk-first',reason:'long-source'},
+      'real 1015_01 19-minute source should not waste 9 minutes on whole-source then accept a 21-event compact index');
+    assert.equal(S.MODEL_VERSION,8,'cached 21-event compact v7 is invalidated before another run');
+    const nineteenBudget = S.requestBudgetPlan({duration:1140.2,
+      config:{outputCount:1,editorialArchitecture:'scope_media_director'},
+      service:{settings:{vertexAutoStoryMaxCalls:16},callBudget:{calls:0}}});
+    const nineteenWindows = S.planChunkWindows(1140.2,nineteenBudget.sourceModelLimit);
+    assert.ok(nineteenWindows.feasible && nineteenWindows.initialWindows>=5,
+      '19-minute source should get full source coverage before scope selection');
     assert.equal(S.selectStrategy(600, { modelVersion: S.MODEL_VERSION, whole: 'MAX_TOKENS', compact: 'MAX_TOKENS' }).reason, 'prior-max-tokens');
   });
 
