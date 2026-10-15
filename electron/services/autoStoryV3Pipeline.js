@@ -1123,6 +1123,7 @@ function directorAudit(id, verdict, extra = {}) {
 async function auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine, script, ai }) {
   const { workspaceRoot, projectId, onProgress, onDraft, signal } = opts;
   const probe = f => service.ffmpeg.probeVideo(f);
+  let deliveryCadence = null;
   const summarize = c => ({ scopeSurvived: c.scopeSurvived, centralQuestionActiveThroughout: c.centralQuestionActiveThroughout,
     endingIsConsequence: c.endingIsConsequence, finalFootageUsable: c.finalFootageUsable, blockingIssues: (c.issues || []).filter(x => x.severity === 'blocking').length, mp4Duration: c.mp4Duration });
   const visualBlocked = async (critique, passes) => {
@@ -1157,7 +1158,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
       repairPasses,
       finalCheck: { complete:false, verdict:'PENDING',
         issues:[{ reason:`Media critic unavailable (${critique.providerStatus || 'provider'}): ${critique.summary}` }] },
-      metrics: { mp4Duration: duration },
+      metrics: { mp4Duration: duration, ...(deliveryCadence ? { deliveryCadence } : {}) },
       draftVideoPath: mp4Path, auditResult: critique
     });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
@@ -1181,6 +1182,11 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     const { title: _t, spine: _s, openLoops: _o, ...rendered } = script.story_contract;
     spine = { ...rendered, openLoops: _o || rendered.openLoops || [] };
   }
+  deliveryCadence = ScopeCritic.deliveryCadenceMetrics(spine, script);
+  await fs.writeFile(path.join(root, `audio-cadence-audit-${id}.json`),
+    JSON.stringify(deliveryCadence, null, 2));
+  onProgress?.({ stage: 'reviewing',
+    message: `Script ${id}: audio cadence — ${deliveryCadence.narratedBlockCount} narrator blocks (${deliveryCadence.narratedSec}s), ${deliveryCadence.rawBlockCount} raw blocks (${deliveryCadence.rawSec}s), longest raw run ${deliveryCadence.longestRawRunSec}s. Advisory only.` });
   onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (initial render)...` });
   let { critique, duration } = await critiqueDirectorRender(ai, spine, currentMp4, probe, script);
   await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
@@ -1236,6 +1242,9 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     onDraft?.(await service.store.getProject(workspaceRoot, projectId));
 
     await fs.writeFile(path.join(root, `last-rendered-story-spine-${id}.json`), JSON.stringify(current, null, 2));
+    deliveryCadence = ScopeCritic.deliveryCadenceMetrics(current, highlight);
+    await fs.writeFile(path.join(root, `audio-cadence-audit-${id}.json`),
+      JSON.stringify(deliveryCadence, null, 2));
     onProgress?.({ stage: 'reviewing', message: `Script ${id}: [Director] Scope-aware media critic (repair pass ${pass})...` });
     ({ critique, duration } = await critiqueDirectorRender(ai, current, currentMp4, probe, highlight));
     } catch (err) {
