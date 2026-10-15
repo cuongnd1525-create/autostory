@@ -1,0 +1,49 @@
+name: Manual Gemini Editorial CI
+
+on:
+  push:
+    branches:
+      - feat/manual-gemini-series-editorial-gates-20261015
+  pull_request:
+    paths:
+      - "electron/services/**"
+      - "electron/main.js"
+      - "electron/preload.js"
+      - "src/renderer.js"
+      - "src/index.html"
+      - "tests/*Gemini*"
+      - "tests/hookAudition.test.js"
+      - ".github/workflows/manual-gemini-editorial-ci.yml"
+
+jobs:
+  manual-gemini:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install test dependencies
+        run: npm ci --ignore-scripts
+      - name: Verify modified JavaScript syntax
+        run: |
+          node --check electron/main.js
+          node --check electron/preload.js
+          node --check src/renderer.js
+          node --check electron/services/hookContractService.js
+          node --check electron/services/hookMiningService.js
+          node --check electron/services/hookAuditionService.js
+          node --check electron/services/manualGeminiPackService.js
+          node --check electron/services/manualGeminiEditorialGateService.js
+          node --check electron/services/dubbingService.js
+          node --check electron/services/geminiDraftReviewService.js
+      - name: Manual editorial gate unit tests
+        run: node --test tests/manualGeminiEditorialGate.test.js
+      - name: Related workflow regressions
+        run: |
+          node tests/hookAudition.test.js
+          node tests/manualGeminiPackService.test.js
+          node tests/manualGeminiViralPreflight.test.js
+          node tests/geminiDraftReviewService.test.js
