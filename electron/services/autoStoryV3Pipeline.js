@@ -706,12 +706,31 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
     const continuity = require('./autoStoryV4NarrativeContinuityGate');
     let report = continuity.check(candidate);
     await write(path.join(root, `narrative-continuity-${scriptId}.json`), report);
+    let mediaRecutUsed = false;
     for (let pass = 1; pass <= 2 && !report.passed; pass++) {
       emit('design', `[V4] Script ${scriptId}: ${report.violations.length} unbridged source jumps; narrator continuity repair ${pass}/2 (source cuts locked).`, 'WARNING');
-      const fixed = await deliveryRepair(engine, { model, spine: candidate, violations: report.violations,
-        root, write, emit, scriptId });
-      candidate = { ...candidate, ...fixed.spine };
-      continuityRepair = fixed.spine;
+      try {
+        const fixed = await deliveryRepair(engine, { model, spine: candidate, violations: report.violations,
+          root, write, emit, scriptId });
+        candidate = { ...candidate, ...fixed.spine };
+        continuityRepair = fixed.spine;
+      } catch (error) {
+        // A source-locked delivery edit can be mathematically impossible: no
+        // expendable 5s picture exists between the real bodycam evidence beats.
+        // This is NOT an invalid video or an API error. Give the visual Director
+        // one bounded chance to reselect picture from the same verified scope,
+        // with the real media attached and the too-short block observations.
+        // Merely asking Gemini Flash to try another four-word sentence cannot fix it.
+        if (error?.kind !== 'DIRECTOR_REPAIR_REQUIRED'
+          || error?.details?.needsMediaEdlRepair !== true || mediaRecutUsed) throw error;
+        mediaRecutUsed = true;
+        emit('design', `[V4] Script ${scriptId}: locked delivery cannot meet natural narration minimum; requesting a MEDIA-GROUNDED EDL recut, preserving hook and original payoff.`, 'WARNING');
+        const recut = await repair(engine, { model, spine: candidate,
+          violations: error.details?.violations || report.violations,
+          root, write, emit, scriptId });
+        candidate = { ...candidate, ...recut.spine };
+        continuityRepair = recut.spine;
+      }
       report = continuity.check(candidate);
       await write(path.join(root, `narrative-continuity-${scriptId}-repair-${pass}.json`), report);
     }
