@@ -170,6 +170,55 @@
                       <strong>Không cần cấu hình thêm ở bước này</strong>
                       <p>Chọn Tiếp tục để thiết lập giọng đọc và nguồn video.</p>
                     </div>
+            <div id="anime-lore-options" class="field-card prompt-options-card hidden">
+              <div class="prompt-options-heading">
+                <div><span class="section-kicker">ANIME LORE STUDIO — FEATURE BRANCH</span>
+                  <strong>Canon-first • Voice-first • Visual Match</strong>
+                  <small>Mode riêng: 1 video, 3 hooks, fact ledger; chưa xác minh canon độc lập thì không tự đánh dấu đủ điều kiện xuất bản.</small></div>
+              </div>
+              <div class="prompt-options-grid">
+                <div><label for="anime-series">Tên Anime</label>
+                  <input id="anime-series" type="text" placeholder="Mushoku Tensei" /></div>
+                <div><label for="anime-character">Nhân vật (English)</label>
+                  <input id="anime-character" type="text" placeholder="Rudeus Greyrat" /></div>
+                <div><label for="anime-topic">Một câu hỏi / luận điểm</label>
+                  <input id="anime-topic" type="text" placeholder="What limits this character's magic?" /></div>
+                <div><label for="anime-medium">Phạm vi canon</label>
+                  <select id="anime-medium"><option value="anime">Anime-only</option>
+                    <option value="manga">Manga</option><option value="light_novel">Light Novel</option></select></div>
+                <div><label for="anime-through">Spoiler through</label>
+                  <input id="anime-through" type="text" placeholder="Season 2" /></div>
+                <div><label for="anime-duration">Thời lượng mục tiêu (65–180s)</label>
+                  <input id="anime-duration" type="number" min="65" max="180" value="75" /></div>
+                <div><label for="anime-voice-provider">Narrator</label>
+                  <select id="anime-voice-provider"><option value="elevenlabs">ElevenLabs (word timing)</option>
+                    <option value="edge">Edge Neural (timing ước lượng)</option></select></div>
+                <div><label for="anime-voice-id">Voice ID (để trống dùng default)</label>
+                  <input id="anime-voice-id" type="text" placeholder="ElevenLabs voice ID hoặc en-US-AndrewNeural" /></div>
+              </div>
+              <label for="anime-canon">Canon fact ledger — mỗi dòng: medium | episode/chapter | one sourced fact</label>
+              <textarea id="anime-canon" rows="7" style="width:100%" placeholder="anime | S2 E03 | A precise claim supported by this episode&#10;anime | S2 E04 | Another documented fact"></textarea>
+              <small>Nguồn này là xác nhận do bạn nhập, không phải bằng chứng đã được AI xác minh độc lập. Không nhập fan theory như canon.</small>
+              <div class="inline-field">
+                <input id="anime-media-folder" type="text" placeholder="Thư mục các video/ảnh bạn có quyền sử dụng" />
+                <button type="button" class="secondary-button" id="anime-media-pick">Chọn thư mục</button>
+              </div>
+              <label class="check-row"><input id="anime-media-rights" type="checkbox" /> Tôi có quyền sử dụng các assets trong thư mục, gồm cả nhạc nếu thêm.</label>
+              <small>Media nên có sidecar .anime.json chứa characters/tags/description. Thiếu visual match sẽ trả needs_assets, không dùng cảnh sai.</small>
+              <div class="inline-field" style="margin-top:12px">
+                <button type="button" id="anime-run" class="primary-button">Tạo &amp; dựng Anime Lore V1</button>
+                <button type="button" id="anime-cancel" class="secondary-button" disabled>Hủy</button>
+              </div>
+              <div class="inline-field" style="margin-top:8px">
+                <input id="anime-existing-project-id" type="text" placeholder="Project ID để tiếp tục lần chạy lỗi" />
+                <button type="button" id="anime-resume" class="secondary-button">Resume project</button>
+              </div>
+              <div style="margin-top:12px"><strong id="anime-run-status">Sẵn sàng</strong>
+                <p id="anime-run-stage" style="white-space:pre-wrap"></p>
+                <progress id="anime-run-progress" max="100" value="0" style="width:100%"></progress>
+                <pre id="anime-run-result" style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:280px;overflow-y:auto"></pre>
+              </div>
+            </div>
             <div id="auto-story-options" class="field-card auto-story-only prompt-options-card hidden">
               <div class="prompt-options-heading">
                 <div>
@@ -2459,5 +2508,6 @@
     <script src="./previewLog.js"></script>
     <script src="./antigravityModelCatalog.js"></script>
     <script src="./renderer.js"></script>
+    <script src="./animeLoreUi.js"></script>
   </body>
 </html>
