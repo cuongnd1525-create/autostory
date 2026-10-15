@@ -50,9 +50,15 @@ const CHUNK_TARGET_SEC = 600;
 const LONG_SOURCE_THRESHOLD_SEC = 900;   // 15 min: 19-minute bodycam overflowed whole-source JSON and compact recovery lost story coverage
 // Chunk-first initial windows: small enough that a normal window extracts in ONE
 // call without recursion. ~216s => ~8 windows for a ~1726s source.
-const CHUNK_FIRST_TARGET_SEC = 216;
+const CHUNK_FIRST_TARGET_SEC = 216; // legacy v3: low call budget
+// V4 source extraction must avoid 200+s dialogue-dense chunks: the real 1015_01
+// video needed 9 calls to cover only 75% after repeated schema splits. Smaller
+// FIRST-PASS windows fit the actual 32-event transport schema and cost fewer
+// retries than splitting a dense 228s window several times.
+const V4_CHUNK_TARGET_SEC = 80;
+const V4_CHUNK_MAX_WINDOWS = 24;
 const CHUNK_FIRST_MIN_WINDOWS = 4;
-const CHUNK_FIRST_MAX_WINDOWS = 12;
+const CHUNK_FIRST_MAX_WINDOWS = 12; // legacy v3 only
 const CHUNK_MIN_WINDOW_SEC = 60;          // never plan an initial window smaller than this
 // Phase budget: reserve calls for the pipeline steps that run AFTER the source model
 // so recovery can't consume the whole run cap. Derived from the pipeline's OWN bounded
@@ -435,8 +441,15 @@ function requestBudgetPlan(engine, { sourceCached = false } = {}) {
     && configuredCap === 16 && engine.service.settings?.vertexAutoStoryStrictCallCap !== true;
   const adaptive = legacyV4Cap || !configuredCap;
   if (adaptive) {
-    const planned = sourceCached ? 0 : planChunkWindows(engine.duration, Infinity).initialWindows;
-    const reserveForSplits = sourceCached ? 0 : Math.max(4, Math.ceil(planned / 2));
+    const v4 = engine.config?.editorialArchitecture === 'scope_media_director';
+    const planned = sourceCached ? 0 : planChunkWindows(engine.duration, Infinity, {
+      editorialArchitecture: engine.config?.editorialArchitecture
+    }).initialWindows;
+    // V4: dense dialogue has shown both 32-event schema overflow and
+    // MAX_TOKENS in different windows. Reserve enough extra calls to finish
+    // the WHOLE source without borrowing the Director/narration budget.
+    const reserveForSplits = sourceCached ? 0
+      : v4 ? Math.max(8, Math.ceil(planned * 0.75)) : Math.max(4, Math.ceil(planned / 2));
     const required = downstreamReserved + planned + reserveForSplits + (cb.calls || 0);
     const desired = Math.min(100, Math.max(16, required));
     cb.adaptiveLimit = true;
@@ -463,14 +476,18 @@ function selectStrategy(duration, priorDiag) {
 // Plan SMALL initial windows for chunk-first. Feasible iff the flat pass fits the
 // remaining source-model budget (splits are handled live, not pre-reserved as a
 // full binary tree — that adversarial gate made long sources impossible).
-function planChunkWindows(duration, budgetRemaining) {
-  let W = Math.round(duration / CHUNK_FIRST_TARGET_SEC);
-  W = Math.max(CHUNK_FIRST_MIN_WINDOWS, Math.min(CHUNK_FIRST_MAX_WINDOWS, W));
+function planChunkWindows(duration, budgetRemaining, { editorialArchitecture = null } = {}) {
+  const v4 = editorialArchitecture === 'scope_media_director';
+  const targetSec = v4 ? V4_CHUNK_TARGET_SEC : CHUNK_FIRST_TARGET_SEC;
+  const maxWindows = v4 ? V4_CHUNK_MAX_WINDOWS : CHUNK_FIRST_MAX_WINDOWS;
+  let W = Math.round(duration / targetSec);
+  W = Math.max(CHUNK_FIRST_MIN_WINDOWS, Math.min(maxWindows, W));
   W = Math.min(W, Math.max(1, Math.floor(duration / CHUNK_MIN_WINDOW_SEC)));
   W = Math.max(1, W);
   const feasible = !Number.isFinite(budgetRemaining) ? true : W <= budgetRemaining;
   const splitReserve = Number.isFinite(budgetRemaining) ? Math.max(0, budgetRemaining - W) : Infinity;
-  return { feasible, initialWindows: W, windowSec: round1(duration / W), splitReserve, budgetRemaining: Number.isFinite(budgetRemaining) ? budgetRemaining : null };
+  return { feasible, initialWindows: W, windowSec: round1(duration / W), splitReserve,
+    targetSec, budgetRemaining: Number.isFinite(budgetRemaining) ? budgetRemaining : null };
 }
 // Live phase-budget guard shared across whole/compact/chunk source-model calls.
 function makePhase(engine, sourceModelLimit) {
@@ -605,7 +622,9 @@ async function chunkedExtract(engine, schema, instruction, ctx, audioEvents, emi
   const duration = engine.duration;
   const budget = opts.budget || requestBudgetPlan(engine);
   const phase = opts.phase || makePhase(engine, budget.sourceModelLimit);
-  const windowPlan = opts.windowPlan || planChunkWindows(duration, phase.remaining());
+  const windowPlan = opts.windowPlan || planChunkWindows(duration, phase.remaining(), {
+    editorialArchitecture: engine.config?.editorialArchitecture
+  });
   // Small per-window output contract derived from the global caps / window count
   // (with a modest safety surplus) — a chunk need not reproduce the full 40/60 model.
   const perWindowEvents = Math.min(MAX_EVENTS, schema?.properties?.events?.maxItems ?? MAX_EVENTS,
@@ -739,7 +758,9 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
 
   // CHUNK-FIRST (long sources, or staged fell through): small windows, phase-budgeted,
   // recursion only as an emergency fallback. Never persists a partial model.
-  const windowPlan = planChunkWindows(engine.duration, phase.remaining());
+  const windowPlan = planChunkWindows(engine.duration, phase.remaining(), {
+    editorialArchitecture: engine.config?.editorialArchitecture
+  });
   const model = await chunkedExtract(engine, chunkSchema || compactSchema || schema,
     chunkInstruction || compactInstruction || instruction, ctx, audioEvents, emit,
     { phase, budget, windowPlan, mode: strat.mode, strategyReason: strat.reason });
@@ -757,6 +778,7 @@ module.exports = {
   MODEL_VERSION, RECOVERY_VERSION, MAX_EVENTS, MAX_QUOTES, MAX_QUOTES_PER_EVENT, MAX_PEOPLE,
   MIN_LEAF_SEC, MAX_SPLIT_DEPTH, MAX_CHUNKS, CHUNK_TARGET_SEC,
   LONG_SOURCE_THRESHOLD_SEC, CHUNK_FIRST_TARGET_SEC, CHUNK_FIRST_MIN_WINDOWS, CHUNK_FIRST_MAX_WINDOWS,
+  V4_CHUNK_TARGET_SEC, V4_CHUNK_MAX_WINDOWS,
   STORY_DESIGN_CALLS, NARRATION_CALLS_PER_SCRIPT, SOURCE_MODEL_MIN_CALLS,
   WHOLE_MAX_OUTPUT_TOKENS, COMPACT_MAX_OUTPUT_TOKENS, CHUNK_MAX_OUTPUT_TOKENS, SOURCE_MODEL_THINKING_BUDGET
 };
