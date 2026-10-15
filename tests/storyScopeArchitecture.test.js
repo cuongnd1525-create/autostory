@@ -809,6 +809,52 @@ function fakeEngine(asks) {
       model:MODEL, spine, violations:incoming, scriptId:14
     }), /Vertex 429 capacity error/);
     assert.equal(provider.lastAsks.length,1, 'provider failure is not a fake structural repair');
+
+    // Integrated pipeline: feed the actual two invalid Gemini proposals into
+    // repairDeliveryTechnical, then check buildDirectorScript HANDS OFF to
+    // the media-grounded recut and builds the new, validated story.
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'v4-contiguous-recovery-'));
+    try {
+      const integratedEngine = makeRepairEngine([response(false), scrambled]);
+      integratedEngine.project.autoStoryContractVersion = 4;
+      const progress = [];
+      let recutCount = 0, buildCount = 0;
+      const result = await Pipeline.buildDirectorScript({
+        engine: integratedEngine, service: {}, opts: {}, model: MODEL, root: dir,
+        emit: (_stage, message) => progress.push(message), scriptId:15
+      }, { ...spine, scriptId:15 }, {
+        build: async (_eng,_srv,_opts,story) => {
+          buildCount++;
+          assert.equal(story.beats[1].sourceStartSec,5,'use recut picture not stale source clip');
+          assert.equal(story.deliveryBlocks[1].mode,'narrated_story');
+          assert.deepStrictEqual(story.deliveryBlocks[1].beatIds,['b2','b3']);
+          assert.equal(Director.validateDirectorEdl(story, scope, {
+            durationSec:SOURCE_SEC, targetDurationMinSec:65, targetDurationMaxSec:90,
+            reel, requireDeliveryBlocks:true, narrationEnabled:true,
+            minNarrationSec:11
+          }).violations.filter(v=>['NARRATED_STORY_WINDOW_TOO_SHORT',
+            'DELIVERY_BLOCK_NOT_CONTIGUOUS','DELIVERY_BLOCK_ORDER'].includes(v.code)).length,0);
+          return {script:{segments:[]}};
+        },
+        deliveryRepair: Director.repairDeliveryTechnical,
+        repair: async (_eng,args) => {
+          recutCount++;
+          assert.ok(args.violations.some(v=>v.code==='UNBRIDGED_EDL_TIME_JUMP'));
+          assert.ok(args.violations.some(v=>v.code==='DELIVERY_BLOCK_NOT_CONTIGUOUS'));
+          const edited = { ...args.spine,
+            beats: args.spine.beats.map(beat=>beat.beatId==='b2'
+              ? { ...beat, sourceStartSec:5 } : beat),
+            deliveryBlocks: makeBlocks(true),
+            transitionChecks: transitionsFor(makeBlocks(true)) };
+          return {spine:edited};
+        }
+      });
+      assert.equal(integratedEngine.lastAsks.length,2,'two failed delivery requests, then no third blind delivery attempt');
+      assert.equal(recutCount,1,'exactly one watched-media recut after exhausted delivery options');
+      assert.equal(buildCount,1,'the corrected EDL reaches the renderer');
+      assert.equal(result.repairedSpine.beats[1].sourceStartSec,5);
+      assert.ok(progress.some(m=>/MEDIA-GROUNDED EDL recut/.test(m)));
+    } finally { await fs.rm(dir,{recursive:true,force:true}); }
   });
 
   await ok('F/budget: realistic narrated run fits the DEFAULT 16-call budget; director voiceover choice is honoured', async () => {
