@@ -1145,6 +1145,26 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
       message: `Script ${id}: Visual QA không đạt ở ${layoutIssues.length} vùng MP4; giữ draft để sửa khung hình/phụ đề, không chấp nhận V1.` });
     return audit;
   };
+  const criticPending = async (critique, duration, repairPasses, mp4Path) => {
+    // The MP4 and the source-grounded EDL are complete. A 429/503 only means
+    // that independent review has not happened YET; it does not prove either
+    // that the edit is bad or that it is ready to publish. Persist a resumable
+    // audit, keep the rendered draft, and never ask for a second render.
+    const audit = directorAudit(id, {
+      complete: false, pending: true, needsUserReview: true, retryable: true,
+      status: 'MEDIA_CRITIC_PENDING', failureType: 'PROVIDER_REVIEW_UNAVAILABLE'
+    }, {
+      repairPasses,
+      finalCheck: { complete:false, verdict:'PENDING',
+        issues:[{ reason:`Media critic unavailable (${critique.providerStatus || 'provider'}): ${critique.summary}` }] },
+      metrics: { mp4Duration: duration },
+      draftVideoPath: mp4Path, auditResult: critique
+    });
+    await fs.writeFile(record, JSON.stringify(audit, null, 2));
+    onProgress?.({ stage:'reviewing', level:'WARNING',
+      message:`Script ${id}: Vertex Media Critic unavailable (${critique.providerStatus || 'provider'}). Draft MP4 preserved; review PENDING, not failed and not approved. Retry review from this saved draft when Vertex is available.` });
+    return audit;
+  };
   const criticFailed = async (critique, duration, repairPasses) => {
     const audit = directorAudit(id, { needsUserReview: true, status: 'MEDIA_CRITIC_FAILED', failureType: 'MEDIA_CRITIC_FAILED' }, {
       repairPasses, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
@@ -1165,6 +1185,8 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   let { critique, duration } = await critiqueDirectorRender(ai, spine, currentMp4, probe, script);
   await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
   await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
+  if (critique.status === 'MEDIA_CRITIC_UNAVAILABLE')
+    return criticPending(critique, duration, 0, currentMp4);
   if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
   const initialLayoutBlocker = await visualBlocked(critique, 0);
   if (initialLayoutBlocker) return initialLayoutBlocker;
@@ -1221,6 +1243,8 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
       return passFailure(pass, err);
     }
     await fs.writeFile(path.join(root, `repair-${pass}-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
+    if (critique.status === 'MEDIA_CRITIC_UNAVAILABLE')
+      return criticPending(critique, duration, pass, currentMp4);
     if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass);
     const layoutBlocker = await visualBlocked(critique, pass);
     if (layoutBlocker) return layoutBlocker;
