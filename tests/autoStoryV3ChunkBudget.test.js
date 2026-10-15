@@ -75,10 +75,83 @@ const buildOpts = {
     const nineteenBudget = S.requestBudgetPlan({duration:1140.2,
       config:{outputCount:1,editorialArchitecture:'scope_media_director'},
       service:{settings:{vertexAutoStoryMaxCalls:16},callBudget:{calls:0}}});
-    const nineteenWindows = S.planChunkWindows(1140.2,nineteenBudget.sourceModelLimit);
-    assert.ok(nineteenWindows.feasible && nineteenWindows.initialWindows>=5,
-      '19-minute source should get full source coverage before scope selection');
+    const nineteenWindows = S.planChunkWindows(1140.2,nineteenBudget.sourceModelLimit,
+      {editorialArchitecture:'scope_media_director'});
+    assert.equal(nineteenWindows.initialWindows,14,
+      'V4 should start with ~80s windows instead of 228s and waste fewer schema overflow calls');
+    assert.ok(nineteenWindows.feasible && nineteenWindows.splitReserve>=8,
+      '19-minute source has substantial split headroom without eating narration budget');
+    assert.ok(nineteenBudget.global>=50 && nineteenBudget.global<=100);
     assert.equal(S.selectStrategy(600, { modelVersion: S.MODEL_VERSION, whole: 'MAX_TOKENS', compact: 'MAX_TOKENS' }).reason, 'prior-max-tokens');
+  });
+
+  await ok('1015_01: dense 1140.2s bodycam completes 100% after 9 old-budget calls and keeps Director budget', async () => {
+    const dir = tmp();
+    const {svc,callBudget,calls} = makeService(16,(_args,win) => {
+      if (!win) throw Error('Whole-source extraction must not run');
+      // Mock the overflows which caused the real run to stop after 855s,
+      // including the 798-912s dense part. Split only when still >50s.
+      const length = win.end-win.start;
+      if (length>50 && ((win.start>=720 && win.start<905) ||
+          (win.start>=0 && win.start<81))) return MAX_TOKENS_RAW();
+      return windowModel(win.start);
+    });
+    const eng = makeEngine(svc,dir,1140.2,1);
+    eng.config.editorialArchitecture='scope_media_director';
+    eng.project.autoStoryContractVersion=4;
+    const plan = S.requestBudgetPlan(eng);
+    assert.equal(plan.downstreamReserved,28);
+    assert.ok(plan.sourceModelLimit>=25);
+    const model = await S.build(eng,overview,buildOpts);
+    const diag = JSON.parse(fs.readFileSync(path.join(dir,'chunk-coverage.json'),'utf8'));
+    assert.equal(diag.coverageRatio,1,'the story model cannot stop at 75% of source');
+    assert.equal(diag.failedLeafWindows.length,0);
+    assert.equal(diag.plannedInitialWindows,14);
+    assert.ok(callBudget.calls>9,'past phase-budget exhaustion must no longer cut off source');
+    assert.ok(callBudget.calls<=diag.sourceModelLimit,
+      'all source calls finish within the planned adaptive reserve');
+    assert.ok(S.callLimit(svc)-callBudget.calls>=28,
+      'all Director/continuity/narrator calls remain reserved');
+    assert.ok(model.events.length && fs.existsSync(path.join(dir,'story-model.json')));
+    assert.ok(calls.every(x=>x.win && x.win.end-x.win.start<=82),
+      'use short first-pass video proxies, not 228s originals');
+  });
+
+  await ok('1015_01 worst-case dialogue: phase budget auto-extends WITHOUT cannibalizing downstream calls', async () => {
+    const dir=tmp();
+    const {svc,callBudget} = makeService(16,(_args,win) => {
+      if (!win) throw Error('Unexpected whole call');
+      return win.end-win.start>55 ? MAX_TOKENS_RAW() : windowModel(win.start);
+    });
+    const eng=makeEngine(svc,dir,1140.2,1);
+    eng.config.editorialArchitecture='scope_media_director';
+    eng.project.autoStoryContractVersion=4;
+    const before=S.requestBudgetPlan(eng);
+    const model=await S.build(eng,overview,buildOpts);
+    const diag=JSON.parse(fs.readFileSync(path.join(dir,'chunk-coverage.json'),'utf8'));
+    assert.equal(diag.coverageRatio,1);
+    assert.ok(diag.budgetExtensions?.length>=1,
+      'late source overflows should dynamically extend the budget rather than fail at 75%');
+    assert.ok(callBudget.calls>before.sourceModelLimit);
+    assert.ok(S.callLimit(svc)-callBudget.calls>=28,
+      'phase extensions must grant matching total calls; no Director starvation');
+    assert.ok(eng.logs.some(x=>/Dense-source recovery: extended adaptive source phase/.test(x)));
+    assert.ok(model.events.length);
+  });
+
+  await ok('strict V4 call limit never grows even for dense source',async()=>{
+    const dir=tmp();
+    const {svc,callBudget}=makeService(40,(_args,win)=>win && win.end-win.start>55
+      ? MAX_TOKENS_RAW() : windowModel(win?.start||0));
+    svc.settings.vertexAutoStoryStrictCallCap=true;
+    const eng=makeEngine(svc,dir,1140.2,1);
+    eng.config.editorialArchitecture='scope_media_director';
+    eng.project.autoStoryContractVersion=4;
+    await assert.rejects(()=>S.build(eng,overview,buildOpts),
+      e=>e.kind==='SOURCE_MODEL_RECOVERY_BUDGET'||/phase budget/.test(e.message));
+    assert.equal(S.callLimit(svc),40);
+    assert.equal(callBudget.adaptiveLimit,undefined);
+    assert.ok(!fs.existsSync(path.join(dir,'story-model.json')),'never persist incomplete evidence');
   });
 
   await ok('existing user setting 16 auto-scales a V4 job with 3 outputs and 924.9s source', () => {
