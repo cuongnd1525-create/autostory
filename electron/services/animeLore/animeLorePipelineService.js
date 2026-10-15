@@ -37,8 +37,14 @@ class AnimeLorePipelineService {
    const cacheKey=hash({version:VERSION,name,inputData});
    let prior=await readJson(filename);
    if(prior && prior.cacheKey===cacheKey && prior.result) {
-    emit(i,'Cache hit: '+name);
-    return prior.result;
+    let valid=true;
+    if(i===8) for(const unit of prior.result.segments||[]) {
+      try { await fs.access(unit.audioPath); } catch(_e){valid=false;break;}
+    }
+    if(i===12 || i===14) {
+      try { await fs.access(prior.result.path || prior.result.outputPath); } catch(_e){valid=false;}
+    }
+    if(valid){emit(i,'Cache hit: '+name);return prior.result;}
    }
    emit(i,'Running '+name);
    const result=await task();
@@ -75,16 +81,34 @@ class AnimeLorePipelineService {
    const media=await step(9,{config,mediaFingerprint},()=>Media.index(config,this.settings));
    const matched=await step(10,{config,voice,media},async()=>Matcher.match(config,voice,media));
    const timeline=await step(11,{matched,voice,media},async()=>Timeline.create(config,voice,matched,media));
-   const draft=await step(12,{timeline,voice,renderVersion:1},()=>Renderer.render(config,timeline,voice,root,this.settings,{signal,onProgress}));
+   const draft=await step(12,{timeline,voice,mediaFingerprint,renderVersion:2},()=>Renderer.render(config,timeline,voice,root,this.settings,{signal,onProgress}));
    // A cached draft can be stale or deleted; block false success rather than inventing a completed render.
    await fs.access(draft.path);
-   const review=await step(13,{draft,canon,script},()=>Review.review({config,canon,script,draft,settings:this.settings,signal,onProgress}));
-   if(!review.pass)throw blocked('needs_human_review','AI multimodal review found issues. Export is blocked.',{review,projectId});
-   const exported=await step(14,{review,draft,config,canon},()=>Export.exportPack(root,config,canon,script,timeline,draft,review));
+   const reviewPack=await step(13,{draft,canon,script,mediaFingerprint,reviewVersion:2},async()=>{
+     const repairs=require('./animeLoreReviewRepair');
+     let currentDraft=draft,currentTimeline=timeline,check=await Review.review({
+       config,canon,script,draft:currentDraft,settings:this.settings,signal,onProgress});
+     const reviewHistory=[{pass:check.pass,issues:check.issues||[],draftPath:currentDraft.path}];
+     for(let attempt=1;attempt<=2 && !check.pass;attempt++){
+       const patch=repairs.repairVisualEdits(currentTimeline,check,media);
+       if(!patch.patched)break;
+       currentTimeline=patch.timeline;
+       const patchRoot=path.join(root,'repair-'+attempt);
+       await fs.mkdir(patchRoot,{recursive:true});
+       currentDraft=await Renderer.render(config,currentTimeline,voice,patchRoot,this.settings,{signal,onProgress});
+       check=await Review.review({config,canon,script,draft:currentDraft,settings:this.settings,signal,onProgress});
+       reviewHistory.push({attempt,patchCount:patch.patchCount,pass:check.pass,
+         issues:check.issues||[],draftPath:currentDraft.path});
+     }
+     return {review:check,draft:currentDraft,timeline:currentTimeline,reviewHistory};
+   });
+   const {review}=reviewPack;
+   if(!review.pass)throw blocked('needs_human_review','AI multimodal review found issues. Export is blocked.',{review,reviewHistory:reviewPack.reviewHistory,projectId});
+   const exported=await step(14,{review,draft:reviewPack.draft,config,canon},()=>Export.exportPack(root,config,canon,script,reviewPack.timeline,reviewPack.draft,review));
    state={...state,phase:'needs_human_review',humanCanonReviewRequired:true,outputPath:exported.outputPath};
    await atomicJson(path.join(root,'anime-state.json'),state);
    emit(14,'Video rendered and visually reviewed; confirm source facts and rights before publishing.','needs_human_review');
-   return {projectId,status:'needs_human_review',draftPath:draft.path,...exported,review,sourceFactsUnverified:true};
+   return {projectId,status:'needs_human_review',draftPath:reviewPack.draft.path,...exported,review,sourceFactsUnverified:true};
   } catch(error) {
    const status=error.animeStatus || (signal?.aborted?'cancelled':'failed');
    state={...state,phase:status,error:String(error.message),details:error.details||null};
