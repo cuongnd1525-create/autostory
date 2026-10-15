@@ -705,6 +705,59 @@ function fakeEngine(asks) {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
+  await ok('F/window-retry: short narrator repair retries with its real duration constraint then escalates to source-aware recut', async () => {
+    const scope = scopeCandidate();
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    const spine = Director.stampSpine(directorEdl().spine, scope, reel);
+    const template = spine.deliveryBlocks[0];
+    const makeBlocks = grouped => {
+      const raw = (id, ids) => ({ ...template, blockId: id, mode: 'raw_evidence',
+        beatIds: ids, evidenceFunction: 'Authentic verified speech' });
+      const narrator = { ...template, blockId:'short_bridge', mode:'narrated_story',
+        beatIds: grouped ? ['b2','b3'] : ['b2'],
+        narrationIntent:'Orient the earlier stop in a single natural thought',
+        narratorFunction:'CONTEXT', ownershipReason:'Causal timeline bridge',
+        sourceAudioTreatment:'voiceover_with_ambient' };
+      return [raw('cold_open', ['b1']), narrator, raw('real_confrontation',
+        grouped ? ['b4','b5','b6'] : ['b3','b4','b5','b6'])];
+    };
+    const response = grouped => {
+      const deliveryBlocks = makeBlocks(grouped);
+      return { reason:'Preserve the real outcome and provide enough picture for narrator',
+        deliveryBlocks, transitionChecks:transitionsFor(deliveryBlocks) };
+    };
+    const originalRanges = spine.beats.map(b=>[b.beatId,b.sourceStartSec,b.sourceEndSec]);
+    const makeRepairEngine = asks => {
+      const e = fakeEngine(asks);
+      e.config = { ...e.config, narration:{ enabled:true, measuredWordsPerSecond:2.2 },
+        narrationMinBlockSec:11 };
+      return e;
+    };
+    const e = makeRepairEngine([response(false),response(true)]);
+    const out = await Director.repairDeliveryTechnical(e, {
+      model: MODEL, spine, violations:[{code:'UNBRIDGED_EDL_TIME_JUMP',
+        message:'Earlier bodycam source must be introduced with a narrator'}], scriptId: 11
+    });
+    assert.deepStrictEqual(out.spine.beats.map(b=>[b.beatId,b.sourceStartSec,b.sourceEndSec]),originalRanges);
+    assert.deepStrictEqual(out.spine.deliveryBlocks[1].beatIds,['b2','b3']);
+    assert.equal(e.lastAsks.length,2,'invalid narrator split triggers precisely one alternate AI delivery call');
+    assert.equal(e.lastAsks[0].input.narrationMinBlockSec,11,
+      'the Director must see the same minimum duration that the validator enforces');
+    assert.ok(e.lastAsks[1].input.previousRepairViolations.some(v=>v.code==='NARRATED_STORY_WINDOW_TOO_SHORT'),
+      'the second attempt must see the exact timed failure from the first');
+    assert.match(e.lastAsks[1].key, /window_retry1$/,
+      'a fresh repair key prevents reusing a previously rejected response');
+
+    const impossible = makeRepairEngine([response(false),response(false)]);
+    await assert.rejects(() => Director.repairDeliveryTechnical(impossible, {
+      model: MODEL, spine, violations:[{code:'UNBRIDGED_EDL_TIME_JUMP'}], scriptId:12
+    }), err => err.kind==='DIRECTOR_REPAIR_REQUIRED'
+      && err.details?.needsMediaEdlRepair===true
+      && err.details.violations.some(v=>v.code==='NARRATED_STORY_WINDOW_TOO_SHORT'),
+      'two invalid audio-only edits must request REAL visual EDL recutting, never accept fragments');
+    assert.equal(impossible.lastAsks.length,2,'bounded retry does not burn the whole Vertex request budget');
+  });
+
   await ok('F/budget: realistic narrated run fits the DEFAULT 16-call budget; director voiceover choice is honoured', async () => {
     const p = await makeProject();
     await p.store.updateProject(p.dir, p.projectId, { autoStoryConfig: { targetDurationMinSec: 65, targetDurationMaxSec: 90, outputCount: 1, audioBalance: 'balanced' } });
