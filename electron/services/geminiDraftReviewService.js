@@ -1535,6 +1535,38 @@ class GeminiDraftReviewService {
     }
     const sourceCoverageComplete = !evidenceReel && (Boolean(sourceProxy)
       || (allProxyChunks.length > 0 && selectedProxyChunks.length === allProxyChunks.length));
+    // Supplemental full-source pack is deliberately OUTSIDE the 10-file
+    // draft review upload folder. The user may upload it in earlier batches
+    // to the SAME Gemini chat when the Evidence Reel lacks a stronger shot.
+    let sourceCoverageExtensionDir = "";
+    let missingSupplementaryChunks = 0;
+    if (!sourceCoverageComplete && allProxyChunks.length) {
+      const extensionDir = path.join(reviewDir, "FULL-SOURCE-EXTENSION");
+      await fs.mkdir(extensionDir, {recursive: true});
+      let deployed = 0;
+      for (const chunk of allProxyChunks) {
+        const sourceFile = await existingFile([
+          chunk.uploadRelativePath && pass1Dir && path.join(pass1Dir, chunk.uploadRelativePath),
+          pass1Dir && path.join(pass1Dir, chunk.file)
+        ]);
+        if (!sourceFile) { missingSupplementaryChunks += 1; continue; }
+        await linkOrCopy(sourceFile, path.join(extensionDir, path.basename(chunk.file)));
+        deployed += 1;
+      }
+      if (deployed) {
+        sourceCoverageExtensionDir = extensionDir;
+        await fs.writeFile(path.join(extensionDir, "00-READ-ME-FIRST.txt"), [
+          "OPTIONAL COMPLETE SOURCE AUDIT FOR GEMINI DRAFT REVIEW",
+          "These are supplemental original-source PROXY chunks, not output draft segments.",
+          "Upload these chunks in manageable batches to the SAME Gemini chat before requesting the final review JSON.",
+          "Ask Gemini to acknowledge each non-final upload batch, not write JSON yet.",
+          "Then upload all files from the normal draft review folder and ask for the final JSON.",
+          "All burned timestamps are absolute SOURCE timestamps, not local chunk playback times.",
+          "The normal package still reports partial coverage because local software cannot prove Gemini actually watched supplemental uploads.",
+          "Available chunks: " + deployed + "/" + allProxyChunks.length
+        ].join("\n"), "utf8");
+      }
+    }
     const selectedProxyManifest = evidenceReel ? evidenceReel.manifest : selectedProxyChunks.length ? {
       ...proxyChunksManifest,
       reviewSelectionOnly: !sourceCoverageComplete,
@@ -1687,6 +1719,8 @@ class GeminiDraftReviewService {
       segmentCount: draftTimeline.segments.length,
       evidenceMode,
       sourceCoverageComplete,
+      sourceCoverageExtensionDir,
+      missingSupplementaryChunks,
       evidenceReelWarning,
       reviewInputVideoDurationSec,
       packageMs: Date.now() - packageStartedAt

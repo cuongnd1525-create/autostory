@@ -10333,6 +10333,13 @@ async function createGeminiDraftReviewPackage() {
     addLog(`Gói Lượt 2 đã sẵn sàng: ${result.reviewDir}`);
     addLog(`Gửi ${result.uploadFileCount || "tất cả"} file trong thư mục này cho một chat Gemini Pro mới (tối đa 10 file): ${result.reviewDir}`);
     addLog(`Prompt review: ${result.promptPath}`);
+    if (result.sourceCoverageExtensionDir) {
+      addLog(
+        "Đã tạo gói nguồn bổ sung: " + result.sourceCoverageExtensionDir
+        + ". Để Gemini tìm cảnh thay thế toàn nguồn, upload lần lượt các proxy ở đây vào CÙNG chat Gemini trước khi gửi prompt review cuối.",
+        "INFO"
+      );
+    }
     if (result.sourceCoverageComplete === false) {
       addLog(
         "CẢNH BÁO: Gói review chỉ chứa một phần video nguồn (Evidence Reel/proxy tuyển chọn). Gemini không thể xác nhận đây là lựa chọn tốt nhất trên toàn bộ nguồn; cần tìm bổ sung nếu muốn thay cảnh ngoài vùng đã gửi.",
