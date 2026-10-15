@@ -378,6 +378,17 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   try {
     raw = await aiService.generateJsonFromFiles({ filePaths: [mp4Path], prompt, responseSchema, taskType: 'analysis' });
   } catch (error) {
+    // A provider capacity outage is NOT a judgment about the actual footage.
+    // Do not convert Vertex 429 into an editorial FAIL, and do not immediately
+    // resend the same large video to the saturated preview-model pool.
+    if (error?.name === 'AbortError' || error?.code === 'ABORT_ERR') throw error;
+    const provider = require('./autoStoryProviderErrors');
+    if (provider.isRateLimit(error) || /request failed \((502|503|504)\)|Service Unavailable/i.test(error?.message || '')) {
+      return { status: 'MEDIA_CRITIC_UNAVAILABLE', isCompliant: false, retryable: true,
+        providerStatus: provider.isRateLimit(error) ? 429 : Number(/(?:502|503|504)/.exec(error.message)?.[0]) || 503,
+        summary: `Critic model temporarily unavailable: ${error.message}`,
+        issues: [], weakWindows: [], weakRegions: [] };
+    }
     return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${error.message}`, issues: [], weakWindows: [], weakRegions: [] };
   }
   const out = normalizeCritique(raw, { durationSec: actualMp4DurationSec, timeline, deliveryAware: Boolean(delivery) });
