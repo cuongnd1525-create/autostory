@@ -1098,35 +1098,67 @@ async function repairDeliveryTechnical(engine, { model, spine, violations, root 
     requireDeliveryBlocks: true,
     minNarrationSec: Number(engine.config?.narrationMinBlockSec) || 0
   };
-  let accepted = null, validation = null;
-  const key = `v5-editorial-director-delivery-fix-${scriptId}`;
-  const input = {
-    currentEdl,
-    violations,
-    narrationWordsPerSecond: engine.config?.narration?.measuredWordsPerSecond || null
-  };
-  const result = await engine.ask(key, input, schemas.deliveryRepairResult, DELIVERY_ONLY_REPAIR_INSTRUCTION, [], v => {
-    const candidate = { ...currentEdl, deliveryBlocks: v.deliveryBlocks, transitionChecks: v.transitionChecks };
-    assertEdlIntact(spine.beats, candidate.beats, engine.duration);
-    const report = validateDirectorEdl(candidate, scope, valOpts);
-    if (!report.valid) throw new StoryError('INVALID_RESPONSE',
-      `Delivery-only repair is invalid: ${report.violations.map(x => x.code).join(', ')}`,
-      { violations: report.violations });
-    accepted = candidate;
-    validation = report;
-  }, 'auto_story_repair', { ...DIRECTOR_GENERATION });
-  if (!accepted) throw new StoryError('INVALID_RESPONSE', 'Delivery-only repair returned no accepted candidate.');
-  if (write && root) await write(path.join(root, `${key}.json`), { mode: 'delivery_only', input: { violations }, result, validation });
-  emit('design', `[Director] Delivery-only repair accepted; EDL remains locked at ${timelineSec(spine.beats)}s.`);
-  return {
-    spine: stampSpine(accepted, scope, reel, {
-      ...(spine.directorMeta || {}),
-      downstreamDeliveryRepair: true,
-      deliveryRepairReason: result.reason
-    }),
-    reel,
-    report: validation
-  };
+  // First prefer an EDL-locked audio edit, but give the model the same
+  // MINIMUM NARRATION RUNWAY that the validator enforces. This field was
+  // previously missing from the request: Gemini could not know why its 1.7s
+  // replacement would fail NARRATED_STORY_WINDOW_TOO_SHORT.
+  const narrationMinBlockSec = valOpts.minNarrationSec;
+  const baseKey = `v5-editorial-director-delivery-fix-${scriptId}`;
+  let previousRepairViolations = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const key = attempt ? `${baseKey}_window_retry${attempt}` : baseKey;
+    const input = {
+      currentEdl,
+      violations,
+      narrationMinBlockSec,
+      narrationWordsPerSecond: engine.config?.narration?.measuredWordsPerSecond || null,
+      ...(attempt ? { previousRepairViolations,
+        repairConstraint: `Your previous locked-EDL delivery edit violates the ${narrationMinBlockSec}s minimum narrator window. Rework the COMPLETE audio ownership map, keep source beats locked, preserve source payoff dialogue, and verify duration of EVERY narrated block before submitting. If no safe neighbouring picture can join a narrated block, do not invent a four-word narrator fragment.` } : {})
+    };
+    let accepted = null, validation = null;
+    try {
+      const result = await engine.ask(key, input, schemas.deliveryRepairResult, DELIVERY_ONLY_REPAIR_INSTRUCTION, [], v => {
+        const candidate = { ...currentEdl, deliveryBlocks: v.deliveryBlocks, transitionChecks: v.transitionChecks };
+        assertEdlIntact(spine.beats, candidate.beats, engine.duration);
+        const report = validateDirectorEdl(candidate, scope, valOpts);
+        if (!report.valid) throw new StoryError('INVALID_RESPONSE',
+          `Delivery-only repair is invalid: ${report.violations.map(x => x.code).join(', ')}`,
+          { violations: report.violations });
+        accepted = candidate;
+        validation = report;
+      }, 'auto_story_repair', { ...DIRECTOR_GENERATION });
+      if (!accepted) throw new StoryError('INVALID_RESPONSE', 'Delivery-only repair returned no accepted candidate.');
+      if (write && root) await write(path.join(root, `${key}.json`), { mode: 'delivery_only', input: { violations, narrationMinBlockSec, previousRepairViolations }, result, validation });
+      emit('design', `[Director] Delivery-only repair accepted; EDL remains locked at ${timelineSec(spine.beats)}s.`);
+      return {
+        spine: stampSpine(accepted, scope, reel, {
+          ...(spine.directorMeta || {}),
+          downstreamDeliveryRepair: true,
+          deliveryRepairReason: result.reason
+        }),
+        reel,
+        report: validation
+      };
+    } catch (error) {
+      const rejected = error?.details?.violations || [];
+      const tooShort = error?.kind === 'INVALID_RESPONSE'
+        && rejected.some(x => x.code === 'NARRATED_STORY_WINDOW_TOO_SHORT');
+      if (!tooShort) throw error;
+      previousRepairViolations = rejected;
+      emit('design', `[Director] Locked delivery repair ${attempt + 1}/2 proposed narrator windows shorter than ${narrationMinBlockSec}s; requesting a different grouping. Original source beats preserved.`);
+      if (attempt === 1) {
+        // Structural incompatibility, not a model/network failure: return a
+        // TYPED handoff to the multimodal Director. Never drop the narration
+        // quality rule, silently accept raw audio, or endlessly retry.
+        throw new StoryError('DIRECTOR_REPAIR_REQUIRED',
+          `Delivery-only repair cannot preserve the real dialogue while giving narration ${narrationMinBlockSec}s of visual runway. Recut the verified EDL with the watched scope reel.`,
+          { violations: rejected, needsMediaEdlRepair: true });
+      }
+    }
+  }
+  throw new StoryError('DIRECTOR_REPAIR_REQUIRED',
+    'Narration delivery repair exhausted; return to the media-grounded Editorial Director.',
+    { violations: previousRepairViolations, needsMediaEdlRepair: true });
 }
 
 // Repair for a deterministic downstream finding (e.g. duration check in buildScript).
