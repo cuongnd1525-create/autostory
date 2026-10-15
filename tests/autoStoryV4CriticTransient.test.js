@@ -60,6 +60,33 @@ const Pipeline = require('../electron/services/autoStoryV3Pipeline');
     assert.equal((await fs.readFile(mp4,'utf8')),'draft bytes preserved');
     assert.equal(JSON.parse(await fs.readFile(record,'utf8')).status,'MEDIA_CRITIC_PENDING');
 
+    const cadenceFile=JSON.parse(await fs.readFile(path.join(root,'audio-cadence-audit-1.json'),'utf8'));
+    assert.equal(cadenceFile.advisoryOnly,true);
+    assert.equal(cadenceFile.beatCount,2);
+    assert.deepEqual(cadenceFile.advisoryFlags,[]);
+
+    const exampleBeats=[
+      ['h',0,8],['a',8,45],['n1',45,51],['b',51,91],['n2',91,99],['end',99,117]
+    ].map(([beatId,sourceStartSec,sourceEndSec])=>({beatId,sourceStartSec,sourceEndSec}));
+    const exampleBlocks=[
+      {blockId:'raw1',mode:'raw_evidence',beatIds:['h','a']},
+      {blockId:'narr1',mode:'narrated_story',beatIds:['n1']},
+      {blockId:'raw2',mode:'raw_evidence',beatIds:['b']},
+      {blockId:'narr2',mode:'narrated_story',beatIds:['n2']},
+      {blockId:'raw3',mode:'raw_evidence',beatIds:['end']}
+    ];
+    const cadence=Critic.deliveryCadenceMetrics({beats:exampleBeats,deliveryBlocks:exampleBlocks});
+    assert.equal(cadence.totalSec,117);
+    assert.equal(cadence.narratedSec,14);
+    assert.equal(cadence.rawSec,103);
+    assert.equal(cadence.narratedBlockCount,2);
+    assert.equal(cadence.singleBeatNarrationBlocks,2);
+    assert.ok(cadence.longestRawRunSec>=40);
+    assert.ok(cadence.advisoryFlags.includes('LONG_RAW_EXPOSITION_TO_INSPECT'));
+    assert.ok(cadence.advisoryFlags.includes('NARRATION_ONLY_ON_SINGLE_BEATS_TO_INSPECT'));
+    assert.equal(cadence.advisoryOnly,true,
+      'the metrics must not impose an arbitrary narrator quota or auto-PASS');
+
     const temporary=await Critic.critiqueScopedRender(spine,{
       aiService:{generateJsonFromFiles:async()=>{throw new Error('request failed (503) Service Unavailable')}},
       mp4Path:mp4,actualMp4DurationSec:116.566
