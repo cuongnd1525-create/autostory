@@ -662,7 +662,10 @@ function fakeEngine(asks) {
     assert.strictEqual(seen.repairs[0].violations[0].code, 'TOTAL_DURATION_UNDER_MIN');
     assert.strictEqual(seen.repairs[0].spine.storyScope.storyScopeId, scope.storyScopeId, 'repair gets the scope-bearing spine');
     assert.deepStrictEqual(seen.builds[1], good.beats.map(b => b.sourceEndSec), 'rebuild uses the director-repaired EDL');
-    assert.strictEqual(outcome.repairedSpine, good);
+    assert.deepStrictEqual(outcome.repairedSpine.beats, good.beats,
+      'the persisted repaired spine must carry the EDL used by the successful build');
+    assert.deepStrictEqual(outcome.repairedSpine.storyScope, good.storyScope);
+    assert.equal(outcome.repairedSpine.scriptId, 1);
     // Non-routable errors (code bugs such as EDL_MUTATED) are NOT papered over by a repair.
     await assert.rejects(Pipeline.buildDirectorScript({ engine: fakeEngine([]), service: {}, opts: {}, model: MODEL, root: dir, emit: () => {}, scriptId: 1 }, { ...spine, scriptId: 1 },
       { build: async () => { throw Object.assign(new Error('mut'), { kind: 'EDL_MUTATED' }); }, repair: async () => { throw new Error('must not repair'); } }), e => e.kind === 'EDL_MUTATED');
