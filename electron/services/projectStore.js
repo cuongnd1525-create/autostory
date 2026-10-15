@@ -57,7 +57,8 @@ class ProjectStore {
     await this.ensureWorkspaceRoot(workspaceRoot);
 
     const timestamp = new Date().toISOString();
-    const projectId = `${slugify(payload.title || path.parse(payload.sourceVideoPath).name)}-${crypto.randomUUID().slice(0, 8)}`;
+    const safeTitle = payload.title || payload.projectTitle || payload.seriesTitle || (payload.sourceVideoPath ? path.parse(payload.sourceVideoPath).name : "untitled-anime-lore");
+    const projectId = `${slugify(safeTitle)}-${crypto.randomUUID().slice(0, 8)}`;
     const projectPaths = this.getProjectPaths(workspaceRoot, projectId);
 
     await Promise.all([
@@ -72,8 +73,9 @@ class ProjectStore {
 
     const project = {
       id: projectId,
-      title: payload.title || path.parse(payload.sourceVideoPath).name,
-      sourceVideoPath: payload.sourceVideoPath,
+      title: safeTitle,
+      sourceVideoPath: payload.sourceVideoPath || "",
+      animeLoreConfig: payload.animeLoreConfig || null,
       exportRoot: payload.exportRoot || "",
       exportLayout: payload.exportLayout || "flat",
       mode: payload.mode || "dubbing",
