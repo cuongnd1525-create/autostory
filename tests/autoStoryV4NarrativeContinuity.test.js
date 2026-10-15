@@ -155,6 +155,50 @@ assert.equal(Continuity.check(shortRewind).passed, false,
     assert.ok(rescued.repairedSpine,'persist media-repaired Director spine');
     assert.equal(rescued.story.beats[1].sourceStartSec,original.beats[1].sourceStartSec+1);
 
+    // Two-stage recovery: media Director repairs the 1.7s narration window,
+    // but a later measured TTS check still asks for a delivery-only revision.
+    // The SECOND revision must operate on (and persist) the MEDIA-RECUT EDL,
+    // not revert to the old 83s EDL after the first compile throws.
+    let voiceBuilds = 0, recutCalls = 0, voiceDeliveryRepairs = 0;
+    const combined = await Pipeline.buildDirectorScript({
+      engine, service:{}, opts:{}, model:{}, root, emit:()=>{}, scriptId:4
+    }, { ...original, scriptId:4 }, {
+      build: async (_eng,_svc,_opts,story) => {
+        voiceBuilds++;
+        assert.equal(story.beats[1].sourceStartSec,original.beats[1].sourceStartSec+1,
+          'both voice attempts must use revised source picture');
+        if (voiceBuilds===1) throw Object.assign(new Error('measured TTS exceeds picture'),
+          {kind:'DIRECTOR_REPAIR_REQUIRED',details:{violations:[
+            {code:'NARRATED_BLOCK_VOICE_OVERFLOW',blockId:'block-2'}]}});
+        return {script:{segments:[]} };
+      },
+      deliveryRepair: async (_eng,args) => {
+        if (args.violations.some(v=>v.code==='UNBRIDGED_EDL_TIME_JUMP')) {
+          throw Object.assign(new Error('1.7s narrator microblock'), {
+            kind:'DIRECTOR_REPAIR_REQUIRED',
+            details:{ needsMediaEdlRepair:true, violations:[
+              {code:'NARRATED_STORY_WINDOW_TOO_SHORT',availableSec:1.7,requiredSec:5}] }
+          });
+        }
+        voiceDeliveryRepairs++;
+        assert.equal(args.spine.beats[1].sourceStartSec,original.beats[1].sourceStartSec+1,
+          'measured voice repair must receive the actual successful recut');
+        return {spine:{...args.spine, deliveryBlocks:args.spine.deliveryBlocks.map((blk,i)=>
+          i===1 ? {...blk,narrationIntent:'Briefly orient to earlier verified events'} : blk)}};
+      },
+      repair:async()=>{
+        recutCalls++;
+        const recut = {...original, beats:original.beats.map((bt,i)=>i===1
+          ? {...bt,sourceStartSec:bt.sourceStartSec+1}:bt)};
+        return {spine:makeGuided(recut)};
+      }
+    });
+    assert.equal(recutCalls,1);
+    assert.equal(voiceDeliveryRepairs,1);
+    assert.equal(voiceBuilds,2);
+    assert.equal(combined.repairedSpine.beats[1].sourceStartSec,original.beats[1].sourceStartSec+1,
+      'persisted canonical Director spine must match the actually rendered picture');
+
     await assert.rejects(()=>Pipeline.buildDirectorScript({
       engine, service:{},opts:{},model:{},root,emit:()=>{},scriptId:2
     },{...original,scriptId:2},{
