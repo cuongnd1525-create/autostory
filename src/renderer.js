@@ -8075,6 +8075,34 @@ function renderHighlightVariantBar(project = state.currentProject) {
   el.highlightVariantBar.innerHTML = "";
 }
 
+function buildHighlightRevisionComparison(before, after) {
+  const oldSegments = Array.isArray(before?.segments) ? before.segments : [];
+  const newSegments = Array.isArray(after?.segments) ? after.segments : [];
+  const signature = s => [
+    Number(s.sourceStartSec || 0).toFixed(2), Number(s.sourceEndSec || 0).toFixed(2),
+    String(s.audioMode || ""), String(s.voiceoverText || "").trim()
+  ].join("|");
+  const oldSet = new Set(oldSegments.map(signature));
+  const newSet = new Set(newSegments.map(signature));
+  const kept = newSegments.filter(s => oldSet.has(signature(s))).length;
+  const removed = oldSegments.filter(s => !newSet.has(signature(s))).length;
+  const duration = list => list.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+  const narrator = list => list.filter(s => s.audioMode !== "original_audio").reduce((sum, s) => sum + Number(s.duration || 0), 0);
+  const hook = list => list.length ? Number(list[0].sourceStartSec || 0).toFixed(1) + "s" : "—";
+  const score = entry => Number.isFinite(Number(entry?.viralPreflight?.score))
+    ? String(entry.viralPreflight.score) + "/100" : "—";
+  const rows = [
+    "Giữ " + kept + " cảnh, thêm " + (newSegments.length - kept) + ", bỏ " + removed,
+    "Hook nguồn: " + hook(oldSegments) + " → " + hook(newSegments),
+    "Thời lượng: " + duration(oldSegments).toFixed(1) + "s → " + duration(newSegments).toFixed(1) + "s",
+    "Đoạn narrator: " + narrator(oldSegments).toFixed(1) + "s → " + narrator(newSegments).toFixed(1) + "s",
+    "Preflight (heuristic): " + score(before) + " → " + score(after),
+    "Review: " + String(after?.review?.reviewDecision || "updated")
+  ];
+  return '<div class="revision-compare-summary">' + rows.map(row =>
+    '<span>' + escapeHtml(row) + '</span>').join("") + '</div>';
+}
+
 function renderHighlightRevisionBar(project = state.currentProject) {
   if (!el.highlightRevisionBar) return;
   const variant = getActiveHighlightVariant(project);
@@ -8083,6 +8111,9 @@ function renderHighlightRevisionBar(project = state.currentProject) {
     revisionNumber: Number(variant.revisionNumber || 1),
     label: variant.revisionLabel || `V${Number(variant.revisionNumber || 1)}`,
     artifacts: variant.artifacts || {},
+    segments: variant.segments || [],
+    viralPreflight: variant.viralPreflight || null,
+    review: variant.draftReview || null,
     current: true
   } : null;
   const revisions = [...history, currentRevision]
@@ -8105,6 +8136,7 @@ function renderHighlightRevisionBar(project = state.currentProject) {
         : item.current;
       return `<button type="button" class="revision-button ${active ? "active" : ""}" data-revision-preview="${escapeHtml(draftPath)}">${escapeHtml(item.label || `V${item.revisionNumber}`)}</button>`;
     }).join("")}
+    ${revisions.length > 1 ? buildHighlightRevisionComparison(revisions[revisions.length - 2], revisions[revisions.length - 1]) : ""}
   `;
 }
 
