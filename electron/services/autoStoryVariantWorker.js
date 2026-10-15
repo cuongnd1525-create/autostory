@@ -192,7 +192,7 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
       const audit = result.audits.find(a => Number(a.scriptId) === scriptId);
       const finalAudit = await require('./autoStoryReleaseGate').finalizeVariant({
         store: local, dubbing, workspaceRoot: workerRoot, projectId, scriptId,
-        settings, audit, onProgress
+        settings, audit, onProgress, aiService: service.vertex || service.ai || null
       });
       await publish();
       return finalAudit;
