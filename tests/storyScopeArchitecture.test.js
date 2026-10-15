@@ -291,7 +291,7 @@ function fakeEngine(asks) {
 
       // Variant with a new label but the EXACT SAME ending must not pass
       // structural selection merely by renaming the scope.
-      assert.equal(StoryScope.rejectedByPayoffEvidence({
+      assert.equal(Scope.rejectedByPayoffEvidence({
         ...good, candidateEndingEvents:failed.candidateEndingEvents
       }, rejected)?.storyScopeId,failed.storyScopeId);
     } finally {await fs.rm(root,{recursive:true,force:true});}
