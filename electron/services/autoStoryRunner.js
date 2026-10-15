@@ -58,6 +58,15 @@ class AutoStoryRunner {
             } finally {
               await milestones;
             }
+            // Worker V4 may return a preserved, unreviewed draft when the
+            // external MP4 critic is overloaded. This is not a script failure,
+            // and an incomplete audit is NOT a pass or final export permit.
+            if (audit?.status === 'MEDIA_CRITIC_PENDING' && audit?.retryable === true) {
+              await state(id, 'needs_attention', 'Media Critic 429/503: draft kept; rerun review when available.');
+              onProgress?.({ stage:'reviewing', level:'WARNING',
+                message:`Script ${id}: draft preserved, Vertex review pending due to provider overload. Not approved for publication.` });
+              return;
+            }
             if (!audit?.complete) throw new Error(audit?.error || 'Chưa có review hoàn chỉnh.');
             const finalPhase = audit.finalCheck?.error ? 'failed' : audit.needsUserReview ? 'needs_attention' : 'complete';
             await state(id, finalPhase, audit.finalCheck?.error || '');
