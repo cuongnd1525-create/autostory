@@ -22,7 +22,17 @@ function assess({ audit, media, bytes, file, config = {}, renderQa = null }) {
     checkedAt: new Date().toISOString() };
 }
 
-async function finalizeVariant({ store, dubbing, workspaceRoot, projectId, scriptId, settings = {}, audit, onProgress, probe = null }) {
+async function reviewFinalEditorial({ aiService, output, duration, spine, script, root, scriptId }) {
+  const ScopeCritic = require('./scopeMediaCriticService');
+  const review = await ScopeCritic.critiqueScopedRender(spine, {
+    aiService, mp4Path: output, actualMp4DurationSec: duration, script
+  });
+  await fs.writeFile(path.join(root, `final-editorial-audit-${scriptId}.json`),
+    JSON.stringify({ source: 'independent-final-mp4', file: path.basename(output), ...review }, null, 2));
+  return review;
+}
+
+async function finalizeVariant({ store, dubbing, workspaceRoot, projectId, scriptId, settings = {}, audit, onProgress, probe = null, aiService = null }) {
   if (!audit || audit.finalCheck?.verdict !== 'PASS' || audit.needsUserReview) return audit;
   const record = path.join(store.getProjectPaths(workspaceRoot, projectId).analysisDir, 'auto-story-fast', `review-state-${scriptId}.json`);
   let release;
@@ -49,6 +59,39 @@ async function finalizeVariant({ store, dubbing, workspaceRoot, projectId, scrip
     const reportPath = finalVariant?.artifacts?.renderQaPath;
     const renderQa = reportPath ? await fs.readFile(reportPath, 'utf8').then(JSON.parse).catch(() => null) : null;
     release = assess({ audit, media, bytes: stat.size, file: output, config: updated.autoStoryEditorialConfig || updated.autoStoryConfig, renderQa });
+    // Draft approval does NOT establish that the separately rendered final MP4
+    // still has clear bodycam evidence, usable narration, readable captions,
+    // or the promised payoff. Inspect the REAL final MP4 independently.
+    // Only the Vertex V4 Director path opts in; older/manual workflows stay as is.
+    if (release.status === 'ready_to_publish' && Number(updated.autoStoryContractVersion) === 4
+        && settings.autoStoryFinalEditorialReviewEnabled !== false) {
+      const analysisRoot = path.dirname(record);
+      let script = null;
+      try { script = JSON.parse(await fs.readFile(path.join(analysisRoot, `script-${scriptId}.json`), 'utf8')); }
+      catch (_) {}
+      let spine = script?.story_contract || null;
+      if (!spine?.beats) {
+        try {
+          const data = JSON.parse(await fs.readFile(path.join(analysisRoot, 'story-spine.json'), 'utf8'));
+          spine = (data.spines || []).find(x => Number(x.scriptId) === Number(scriptId)) || null;
+        } catch (_) {}
+      }
+      if (!aiService || !spine?.beats) {
+        release = { ...release, status: 'needs_attention',
+          issues: [...release.issues, 'Independent final editorial review unavailable: missing AI critic or canonical Director EDL.'] };
+      } else {
+        onProgress?.({ stage: 'final_export', message: `Script ${scriptId}: independent editorial review of full-quality final MP4` });
+        const review = await reviewFinalEditorial({ aiService, output, duration: media.duration,
+          spine, script, root: analysisRoot, scriptId });
+        if (!review.isCompliant || review.status !== 'SCOPED_MEDIA_CRITIC_OK') {
+          release = { ...release, status: 'needs_attention',
+            issues: [...release.issues, `Final MP4 editorial review failed: ${review.summary || review.status}`],
+            finalEditorialAuditPath: path.join(analysisRoot, `final-editorial-audit-${scriptId}.json`) };
+        } else {
+          release.finalEditorialAuditPath = path.join(analysisRoot, `final-editorial-audit-${scriptId}.json`);
+        }
+      }
+    }
     if (settings.autoStoryFinalFullDecode === true && release.status === 'ready_to_publish') {
       await ffmpeg.run(ffmpeg.ffmpegPath, ['-v', 'error', '-xerror', '-i', output, '-f', 'null', '-'], { captureStdout: false });
     }
