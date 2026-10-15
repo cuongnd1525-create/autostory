@@ -638,38 +638,108 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
 const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING', 'UNDER_MIN_SCOPE_INFEASIBLE', 'STORY_SCOPE_PAYOFF_REJECTED']);
 async function directStories(engine, model, root, emit, config) {
   const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit });
-  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model };
+  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65,
+    maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model };
   const alternates = StoryScope.alternateScopes(selected.selection, selected.scope.storyScopeId, scopeOpts)
-    .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION, targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
-  const scopes = [selected.scope, ...alternates]; // Try alternatives if one makes an untrue payoff promise.
-  await write(path.join(root, 'story-scope.json'), { contract: StoryScope.SCOPE_CONTRACT_VERSION, chosen: selected.scope, reel: selected.reel,
-    selectionRationale: selected.selection.selectionRationale, candidates: selected.selection.candidates, attempts: selected.attempts, usedScopes: scopes.map(x => x.storyScopeId) });
-  const spines = [], failures = [], rejectedScopes = [];
-  for (let i = 0; i < scopes.length && spines.length < Math.max(1, config.outputCount || 1); i++) {
+    .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION,
+      targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
+  const scopes = [selected.scope, ...alternates];
+  const history = [selected.selection];
+  const spines = [], failures = [], rejectedScopes = [], recoveries = [];
+  const requested = Math.max(1, config.outputCount || 1);
+  // Payoff rejection is a reason to try ANOTHER source-evidenced story, not
+  // a reason to relax the final promise. Limit regeneration to two rounds to
+  // avoid burning the full Vertex budget when the source has no second story.
+  const MAX_PAYOFF_SCOPE_RESELECTIONS = 2;
+  let recoveryRound = 0;
+  const seenScopes = new Set(scopes.map(x => x.storyScopeId));
+
+  async function persistScopeSelection() {
+    await write(path.join(root, 'story-scope.json'), {
+      contract: StoryScope.SCOPE_CONTRACT_VERSION, chosen: selected.scope, reel: selected.reel,
+      selectionRationale: selected.selection.selectionRationale, candidates: selected.selection.candidates,
+      attempts: selected.attempts, usedScopes: scopes.map(x => x.storyScopeId), recoveries
+    });
+  }
+  await persistScopeSelection();
+
+  for (let i = 0; spines.length < requested; i++) {
+    if (i >= scopes.length) {
+      const rejectedPayoffs = rejectedScopes.filter(x => x.kind === 'STORY_SCOPE_PAYOFF_REJECTED');
+      if (!rejectedPayoffs.length || recoveryRound >= MAX_PAYOFF_SCOPE_RESELECTIONS) break;
+      recoveryRound++;
+      emit('design', `[V4] All known Story Scopes rejected; resampling DIFFERENT source-grounded ending ${recoveryRound}/${MAX_PAYOFF_SCOPE_RESELECTIONS} from verified payoff evidence.`, 'WARNING');
+      try {
+        const recovery = await StoryScope.selectStoryScope(engine, model, {
+          root, write, emit, maxRepairs: 1, retryKey: `v5-story-scope_payoff-recovery${recoveryRound}`,
+          rejectedScopes: rejectedPayoffs, previousSelection: history[history.length - 1]
+        });
+        history.push(recovery.selection);
+        const candidates = [recovery.scope, ...StoryScope.alternateScopes(recovery.selection, recovery.scope.storyScopeId, scopeOpts)];
+        let added = 0;
+        for (const candidate of candidates) {
+          if (seenScopes.has(candidate.storyScopeId) ||
+              StoryScope.rejectedByPayoffEvidence(candidate, rejectedPayoffs)) continue;
+          const scoped = { ...candidate, contract: StoryScope.SCOPE_CONTRACT_VERSION,
+            targetDurationMinSec: selected.scope.targetDurationMinSec,
+            targetDurationMaxSec: selected.scope.targetDurationMaxSec };
+          scopes.push(scoped);
+          seenScopes.add(scoped.storyScopeId);
+          added++;
+        }
+        recoveries.push({ round: recoveryRound, selected: recovery.scope.storyScopeId,
+          added, attempts: recovery.attempts });
+        await persistScopeSelection();
+        if (!added) {
+          emit('design', '[V4] Reselection did not find a new verified candidate ending; original rejected scopes remain blocked.', 'WARNING');
+        }
+      } catch (error) {
+        if (engine.signal?.aborted) throw error;
+        // An actual model/provider error is not evidence that the source has
+        // no valid story. Surface it explicitly, do not mislabel as payoff.
+        if (!['STORY_SCOPE_INVALID', 'INVALID_RESPONSE'].includes(error.kind)) throw error;
+        recoveries.push({ round: recoveryRound, failed: true, reason: error.message });
+        emit('design', `[V4] Payoff-grounded scope reselection ${recoveryRound} failed: ${error.message}`, 'WARNING');
+        await persistScopeSelection();
+      }
+      // Processing resumes at index i if the recovered selection appended
+      // validated candidates; otherwise bounded recovery can try again.
+      if (i >= scopes.length) continue;
+    }
+
+    const candidate = scopes[i];
     const scriptId = spines.length + 1;
     try {
-      // Do not spend media-director/render calls on a story with no honest payoff.
-      await require('./autoStoryV4PayoffGate').verify(engine, scopes[i],
-        { root, scriptId, emit });
+      await require('./autoStoryV4PayoffGate').verify(engine, candidate, { root, scriptId, emit });
       const directed = await Director.directEdl(engine,
-        { model, scope: scopes[i], root, write, emit, scriptId });
+        { model, scope: candidate, root, write, emit, scriptId });
       spines.push({ ...directed.spine, scriptId });
       await write(path.join(root, 'story-spine.json'), { spines });
     } catch (err) {
-      if (!DIRECTOR_FAILURE_KINDS.has(err.kind) && err.kind !== 'STORY_SCOPE_PAYOFF_REJECTED') {
+      if (!DIRECTOR_FAILURE_KINDS.has(err.kind)) {
         if (i === 0 || engine.signal?.aborted) throw err;
       }
-      // A rejected candidate is NOT a failed video job if another scope is
-      // accepted for that script slot. Save it separately for diagnostics.
-      rejectedScopes.push({ storyScopeId: scopes[i].storyScopeId, kind: err.kind || 'SERVICE_ERROR',
-        error: err.message, details: err.details || null });
-      emit('design', `[V4] Scope ${scopes[i].storyScopeId} rejected: ${err.message}`, 'WARNING');
+      // Preserve actual watched-source NEGATIVE evidence, not just a generic
+      // error string. A later scope reselector must avoid the same outcome.
+      const rejected = {
+        storyScopeId: candidate.storyScopeId, centralViewerQuestion: candidate.centralViewerQuestion,
+        candidateEnding: err.details?.candidateEnding || candidate.candidateEndingEvents?.[0] || null,
+        observedEnding: err.details?.observedEnding || '',
+        unsupportedPromise: err.details?.unsupportedPromise || '',
+        kind: err.kind || 'SERVICE_ERROR', error: err.message, details: err.details || null
+      };
+      rejectedScopes.push(rejected);
+      emit('design', `[V4] Scope ${candidate.storyScopeId} rejected: ${err.message}`, 'WARNING');
     }
   }
   await write(path.join(root, 'rejected-story-scopes.json'), rejectedScopes);
+  await persistScopeSelection();
   if (!spines.length) {
     const first = rejectedScopes[0] || {};
-    throw new StoryError(first.kind || 'DIRECTOR_EDL_INVALID', first.error || 'No director EDL produced.', first.details || { failures });
+    const exhausted = rejectedScopes.length ? `No source-verified Story Scope survived (rejected: ${rejectedScopes.map(x => x.storyScopeId).join(', ')}; payoff reselections: ${recoveryRound}).` : 'No director EDL produced.';
+    throw new StoryError(first.kind || 'DIRECTOR_EDL_INVALID',
+      `${exhausted} First rejection: ${first.error || 'no confirmed scope'}`,
+      { rejectedScopes, recoveries, failures });
   }
   emit('design', `[Director] ${spines.length} media-grounded EDL(s) ready.`, 40);
   spines.failures = failures;
