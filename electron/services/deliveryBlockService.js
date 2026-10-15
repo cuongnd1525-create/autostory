@@ -60,7 +60,7 @@ const transitionCheckSchema = {
 
 // ---------------------------------------------------------------- structure
 // Pure structural validation. Returns violations in the director's format.
-function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true, requireSelfCheck = false } = {}) {
+function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true, requireSelfCheck = false, minNarrationSec = 0 } = {}) {
   const out = [];
   const add = (code, message, extra = {}) => out.push({ code, message, ...extra });
   if (!Array.isArray(blocks) || !blocks.length) {
@@ -96,6 +96,20 @@ function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true, r
     if (requireSelfCheck && !(Number.isFinite(blk?.viewerStateChanges) && blk.viewerStateChanges >= 0)) add('DELIVERY_BLOCK_SELF_CHECK_MISSING', `Block '${id}' needs viewerStateChanges: how many genuinely new viewer-state changes the whole block produces.`, { blockId: id });
     if (requireSelfCheck && !String(blk?.ownershipReason || '').trim()) add('DELIVERY_BLOCK_SELF_CHECK_MISSING', `Block '${id}' needs ownershipReason: why the real moment (raw_evidence) or the narrator (narrated_story) owns it.`, { blockId: id });
     if (blk?.mode === 'narrated_story') {
+      // V4 natural-voice policy (opt-in from the actual Director run): a
+      // substantial explanatory passage must have enough continuous visual
+      // runway. A 1.7s slice cannot tell a 10-word causal story by changing
+      // emotion or forcing Gemini to rewrite it into four disconnected words.
+      // No narrator quota is imposed: all-raw stories remain valid.
+      const availableSec = members.reduce((sum, bid) => {
+        const beat = beats[order.get(bid)];
+        return sum + (beat ? beatSec(beat) : 0);
+      }, 0);
+      if (Number(minNarrationSec) > 0 && availableSec + 0.01 < Number(minNarrationSec)) {
+        add('NARRATED_STORY_WINDOW_TOO_SHORT',
+          `Narrated block '${id}' owns only ${availableSec.toFixed(2)}s. A natural narrative passage needs at least ${Number(minNarrationSec).toFixed(1)}s of continuous picture. Group adjacent non-essential picture beats into ONE narrated passage, extend the source range within the verified reel, or use the actual original audio where it tells the story. Do NOT ask TTS to speak faster or cut the passage down to 2-4 words.`,
+          { blockId: id, beatIds: members, availableSec, requiredSec: Number(minNarrationSec) });
+      }
       if (!narrationEnabled) add('NARRATION_DISABLED', `Block '${id}' is narrated_story but narration is disabled for this project; use raw_evidence.`, { blockId: id });
       if (!String(blk.narrationIntent || '').trim()) add('NARRATED_BLOCK_WITHOUT_INTENT', `Narrated block '${id}' needs narrationIntent: what the passage must make the viewer understand.`, { blockId: id });
       if (blk.handoffTargetBeatId && !order.has(blk.handoffTargetBeatId)) add('DELIVERY_HANDOFF_UNKNOWN_BEAT', `Block '${id}' hands off to unknown beat '${blk.handoffTargetBeatId}'.`, { blockId: id });
