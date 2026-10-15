@@ -3580,8 +3580,8 @@ The first voiceover sentence of EVERY Part must contain a curiosity gap. Do not 
     : "Set shared_top_banner_text, top_banner_text, and part_badge to empty strings and on_screen_elements to an empty array.";
 
   const persona = isGenZ
-    ? "You are a viral Gen-Z/Millennial TikTok true-crime and bodycam storyteller. Analyze the complete uploaded source, scene-manifest.json, locked evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. Your ultimate goal is to maximize audience outrage, curiosity, and watch time for 9:16 short-form platforms. You speak in fast-paced, conversational internet English. You are gossiping with the viewer about a wild situation, but strictly using verified facts."
-    : "You are a senior TikTok true-crime editor. Analyze the complete uploaded source, scene-manifest.json, locked evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. The Parts must advance the same story rather than retell three unrelated angles.";
+    ? "You are a viral Gen-Z/Millennial TikTok true-crime and bodycam storyteller. Analyze the complete uploaded source, scene-manifest.json, available source evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. Your ultimate goal is to maximize audience outrage, curiosity, and watch time for 9:16 short-form platforms. You speak in fast-paced, conversational internet English. You are gossiping with the viewer about a wild situation, but strictly using verified facts."
+    : "You are a senior TikTok true-crime editor. Analyze the complete uploaded source, scene-manifest.json, available source evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. The Parts must advance the same story rather than retell three unrelated angles.";
   const antiHallucinationRule = isGenZ
     ? `- ANTI-HALLUCINATION VISUAL RULE: Do not write aggressive physical-action claims such as "fighting officers" unless the frames visibly show a physical fight. Verbal arguing must be described precisely.
 - TONE DECOUPLING RULE (CRITICAL): Be 100% factually accurate, but describe verified facts using dramatic, casual internet language rather than police-report prose. For example, verified "disorderly intoxication" may be phrased as "she was completely wasted"; verified "resisting without violence" may be phrased as "she threw a massive tantrum and refused to get in the car". Factuality governs the underlying truth, not vocabulary formality.`
@@ -3590,11 +3590,11 @@ The first voiceover sentence of EVERY Part must contain a curiosity gap. Do not 
     ? `4. NON-REDUNDANT NARRATION (REACTION-DRIVEN COPYWRITING)
 - FORBIDDEN: Using voiceover merely to describe an action already obvious on screen, such as saying "The officer reads her charges" while the officer is reading charges.
 - Voiceover must act as the audience's inner voice: react to verified absurdity, add verified context, highlight stakes, or call out evidence-supported contradictions. Example: "She literally just attacked a kid and now she's playing the victim" is allowed only when every underlying fact is supported by locked evidence.
-- Every added fact must remain 100% supported by evidence.`
+- Every added fact must be supported by supplied source footage, direct audio, or transcript.`
     : `4. NON-REDUNDANT NARRATION (VALUE-ADD COPYWRITING)
 - FORBIDDEN: Using voiceover merely to describe an action that is already completely obvious on screen.
 - Voiceover must add verified context, causal connection, timeline orientation, stakes, background, or consequence that the visual and authentic dialogue cannot communicate alone.
-- Every added fact must be supported by visualFacts, dialogueEvidence, sourceNarratorText, storyMeaning, keywords, or payoff in the same locked evidence. Never invent internal thoughts, motives, criminal history, charges, or outcomes.`;
+- Every added fact must be verified against supplied source footage, direct audio, or transcript. Do not treat model-generated notes as independent evidence. Never invent thoughts, motives, criminal history, charges, or outcomes.`;
 
   return `USER TASK INSTRUCTION - BUILD A 3-PART SERIALIZED TRUE-CRIME SERIES
 
@@ -3649,7 +3649,7 @@ ${persona}
 - SPOILER BAN FOR PART 1 AND PART 2: Script 1 / Part 1 and Script 3 / Part 2 must not reveal the final plot twist, decisive hidden evidence, test result, formal arrest, court sentence, or ultimate legal consequence.
 - Part 1 establishes only the verified premise, bizarre behavior and immediate stakes, then ends on an unresolved confrontation such as a request to search, a suspicious lie, or another evidence-grounded open question.
 - Part 2 advances only the verified middle escalation such as blame, contradiction, argument or refusal, then ends at the boiling-point pre-climax turn before the decisive reveal.
-- RESOLUTION LOCK FOR PART 3: Only Script 4 / Part 3 may reveal the ultimate verified truth, decisive hidden evidence, formal arrest and final court consequence. Do not repeat the same arrest, sentence or Karma payoff across multiple Parts.
+- RESOLUTION LOCK FOR PART 3: Only Script 4 / Part 3 may reveal the actual last verified consequence in the supplied source. Never invent or require an arrest, sentence, conviction or court outcome. Do not repeat the final verified payoff across multiple Parts.
 ${antiHallucinationRule}
 
 1. ANTI-CLONE VOICEOVER RULE (SERIALIZATION INTEGRITY)
@@ -3658,7 +3658,7 @@ ${antiHallucinationRule}
 - Part 1 opening voiceover establishes the verified premise and immediate stakes.
 - Part 2 opening voiceover is a rapid evidence-grounded recap/bridge from Part 1 into the new conflict covered by Part 2.
 - Part 3 opening voiceover orients the verified final chapter, consequence, or unresolved question covered by Part 3.
-- The role descriptions above are structural examples only. Never mention an abduction, escape, interrogation, charge, motive, or outcome unless LOCKED_SCENE_EVIDENCE supports it.
+- The role descriptions above are structural examples only. Never claim an abduction, escape, interrogation, charge, motive, or outcome unless supplied source audio, footage or transcript supports it.
 
 2. ZERO-TOLERANCE SOURCE NARRATOR FILTER (SUPREME OVERRIDE)
 - original_audio is permitted only when sourceNarratorPresent=false, source_narrator_detected=false, and every audible speaker is a directly involved officer, suspect, victim, witness, interview subject, 911/radio dispatcher, or authentic ambient/action sound.

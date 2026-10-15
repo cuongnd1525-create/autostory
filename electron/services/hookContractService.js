@@ -54,7 +54,7 @@ function buildHookContract({
 
     return {
       contractVersion: 2,
-      hookPolicy: hookPolicy || "part_specific",
+      hookPolicy: hookPolicy || "",
       isUserLocked: Boolean(isUserLocked),
       isMultiVariant: true,
       hasDuplicates: dup,
@@ -88,7 +88,7 @@ function buildHookContract({
 
   return {
     contractVersion: 1,
-    hookPolicy: hookPolicy || "part_specific",
+    hookPolicy: hookPolicy || "",
     isUserLocked: Boolean(isUserLocked),
     isMultiVariant: false,
     hasDuplicates: false,

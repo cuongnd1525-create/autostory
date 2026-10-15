@@ -174,6 +174,21 @@ Suspect: That's not my child!
   assert.ok(injectedMulti.includes("SCRIPT 4 (VARIANT 03) — Hook Anchor:"), "Must include Script 4 Anchor");
   console.log("✓ Multi-Variant Contract & Duplicate Divergence Protocol passed");
 
+  // Serialized profiles are ONE case in three chapters, not legacy alternatives.
+  const seriesPrompt = "DIRECT HIGHLIGHT CONTENT RULES:\n- Watch the complete video input.\n"
+    + "prompt_profile: serialized_genz\nseries_mode: interleaved_multipart\n"
+    + "- shared cold open: false";
+  const seriesInjected = injectHookContractToPrompt(seriesPrompt, {
+    ...multiContractWithDup, hookPolicy: "part_specific"
+  });
+  assert.ok(seriesInjected.includes("SERIES HOOK CONTRACT"));
+  assert.ok(seriesInjected.includes("HOOK POLICY: part_specific"));
+  assert.ok(!seriesInjected.includes("3-VARIANT NARRATIVE DIFFERENTIATION MATRIX"));
+  assert.ok(!seriesInjected.includes("bare rim grinding sparks"));
+  const shared = injectHookContractToPrompt(seriesPrompt, {
+    ...multiContractWithDup, hookPolicy: "shared_signature"
+  });
+  assert.ok(shared.includes("HOOK POLICY: shared_signature"));
   console.log("\nALL HOOK AUDITION & CONTRACT TESTS PASSED SUCCESSFULLY! 🎉");
 }
 

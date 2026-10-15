@@ -1680,6 +1680,7 @@ class GeminiDraftReviewService {
       reviewTarget,
       segmentCount: draftTimeline.segments.length,
       evidenceMode,
+      sourceCoverageComplete,
       evidenceReelWarning,
       reviewInputVideoDurationSec,
       packageMs: Date.now() - packageStartedAt
