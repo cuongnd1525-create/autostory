@@ -19,11 +19,11 @@ const rawModel = (nE = 3, nQ = 3) => ({
   quotes: Array.from({ length: nQ }, (_, i) => qt(`q${i + 1}`, `e1`, i, i + 1, `line ${i}`))
 });
 
-// Fake engine that records ask() calls and can be scripted to throw/return.
+// Fake short (<15min) source engine for whole->compact regression. Long source\n// chunk-first behavior is independently verified by autoStoryV3ChunkBudget.\n// Fake engine that records ask() calls and can be scripted to throw/return.
 function makeEngine(cacheDir, askScript) {
   const calls = [];
   return {
-    cache: cacheDir, duration: 1200, cues: [], sourceHash: 'HASH', progress: [],
+    cache: cacheDir, duration: 600, cues: [], sourceHash: 'HASH', progress: [],
     onProgress(p) { this.progress.push(p.message || ''); },
     async metric() {},
     async prepare(ranges) { return ranges.map((r, i) => ({ id: 'c' + i, file: 'c' + i + '.mp4', sourceStart: r.sourceStartSec, duration: r.sourceEndSec - r.sourceStartSec })); },
