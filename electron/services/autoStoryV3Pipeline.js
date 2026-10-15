@@ -697,6 +697,10 @@ function isSourceHookFailure(error) {
 async function buildDirectorScript(ctx, story, { build = buildScript, repair = Director.repairTechnical, deliveryRepair = Director.repairDeliveryTechnical } = {}) {
   const { engine, service, opts, model, root, emit, scriptId } = ctx;
   let continuityRepair = null;
+  // Persist the ACTUAL EDL used by the last build attempt. An accepted
+  // continuity/media recut must not be thrown away if the downstream TTS fit
+  // then asks for another Director repair.
+  let lastPreparedStory = story;
 
   // A changed EDL MUST pass continuity again. Previously the single downstream
   // repair bypassed the pre-render narrator gate on the repaired candidate.
@@ -742,10 +746,13 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
 
   async function compile(candidate, latestRepair = null) {
     const checked = await prepareStory(candidate);
+    lastPreparedStory = checked;
     return {
       built: await build(engine, service, opts, checked, model, root, emit),
       story: checked,
-      ...(continuityRepair || latestRepair ? { repairedSpine: continuityRepair || latestRepair } : {})
+      // Never persist an earlier continuity fix instead of the candidate
+      // whose footage and narration were ACTUALLY built successfully.
+      ...(continuityRepair || latestRepair ? { repairedSpine: checked } : {})
     };
   }
 
@@ -760,7 +767,7 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
   // Previously the second rejected hook escaped to run() and killed all output.
   if (isSourceHookFailure(initial)) {
     const rejected = [];
-    let current = story, error = initial;
+    let current = lastPreparedStory, error = initial;
     const maxHookRepairs = 2;
     for (let pass = 1; pass <= maxHookRepairs; pass++) {
       const range = error.details?.rejectedHookRange || {
@@ -810,7 +817,7 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
 
   const firstViolations = violationsOf(initial);
   if (deliveryOnlyViolationSet(firstViolations)) {
-    let current = story, violations = firstViolations, lastError = initial;
+    let current = lastPreparedStory, violations = firstViolations, lastError = initial;
     for (let pass = 1; pass <= 2; pass++) {
       emit('design', `[Director] Script ${scriptId}: delivery-only repair #${pass} (${lastError.message}); EDL stays locked.`, 'WARNING');
       const fixed = await deliveryRepair(engine, { model, spine: current, violations, root, write, emit, scriptId });
@@ -826,8 +833,8 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
   }
 
   emit('design', `[Director] Script ${scriptId}: ${initial.kind} (${initial.message}) — returning EDL to the director.`, 'WARNING');
-  const fixed = await repair(engine, { model, spine: story, violations: firstViolations, root, write, emit, scriptId });
-  return compile({ ...story, ...fixed.spine }, fixed.spine);
+  const fixed = await repair(engine, { model, spine: lastPreparedStory, violations: firstViolations, root, write, emit, scriptId });
+  return compile({ ...lastPreparedStory, ...fixed.spine }, fixed.spine);
 }
 
 async function run(service, opts) {
