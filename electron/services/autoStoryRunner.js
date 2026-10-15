@@ -101,6 +101,14 @@ class AutoStoryRunner {
           const result = await this.consumer.auditDrafts({ workspaceRoot, projectId, scriptId: id, signal, onProgress,
             onDraft: project => onProgress?.({ project, autoStoryDraftReady: true, stage: 'review_ready', message: `Script ${id}: đã có bản sửa` }) });
           let a = result.audits.find(a => a.scriptId === id);
+          if (a?.status === 'MEDIA_CRITIC_PENDING' && a?.retryable === true) {
+            // A Vertex 429/503 is not an editorial failure. The already-rendered
+            // MP4 can be reviewed later using auditDrafts; do not export a final
+            // video, count the worker as FAILED, or mark this draft PASS.
+            await state(id, 'needs_attention',
+              'Vertex Media Critic đang quá tải; draft đã giữ lại, chờ chạy lại bước review.');
+            return;
+          }
           if (!a?.complete && !a?.error) throw new Error('Chưa có kết quả review hoàn chỉnh cho script này; draft được giữ lại.');
           await state(id, 'final_export');
           a = await require('./autoStoryReleaseGate').finalizeVariant({
