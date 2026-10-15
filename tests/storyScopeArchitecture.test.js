@@ -759,6 +759,56 @@ function fakeEngine(asks) {
       && err.details.violations.some(v=>v.code==='NARRATED_STORY_WINDOW_TOO_SHORT'),
       'two invalid audio-only edits must request REAL visual EDL recutting, never accept fragments');
     assert.equal(impossible.lastAsks.length,2,'bounded retry does not burn the whole Vertex request budget');
+
+    // Real 2026-10-15 production failure: first attempt was a too-short
+    // narrator; next Gemini Flash attempt wrongly combined b2+b4 into one
+    // block and moved b3 after b4, breaking both contiguity and EDL order.
+    // This MUST route to a grounded source edit rather than fail 0/1.
+    const scrambledBlocks = [
+      { ...template, blockId:'hook', mode:'raw_evidence',
+        beatIds:['b1'], evidenceFunction:'Keep the real police hook' },
+      { ...template, blockId:'broken_narrator', mode:'narrated_story',
+        beatIds:['b2','b4'], narratorFunction:'CONTEXT',
+        narrationIntent:'Connect the earlier stop with the search',
+        sourceAudioTreatment:'voiceover_with_ambient' },
+      { ...template, blockId:'real_evidence', mode:'raw_evidence',
+        beatIds:['b3','b5','b6'], evidenceFunction:'Keep the real confession' }
+    ];
+    const scrambled = { reason:'Bad regrouping of nonadjacent pictures',
+      deliveryBlocks:scrambledBlocks, transitionChecks:transitionsFor(scrambledBlocks) };
+    const structural = Delivery.validateDeliveryBlocks(spine.beats, scrambledBlocks, {
+      narrationEnabled:true, minNarrationSec:11
+    });
+    assert.ok(structural.some(v=>v.code==='DELIVERY_BLOCK_NOT_CONTIGUOUS'));
+    assert.ok(structural.some(v=>v.code==='DELIVERY_BLOCK_ORDER'));
+    const exactIncident = makeRepairEngine([response(false),scrambled]);
+    const incoming = [{code:'UNBRIDGED_EDL_TIME_JUMP', message:'Unexplained hook-to-rewind'}];
+    await assert.rejects(() => Director.repairDeliveryTechnical(exactIncident, {
+      model: MODEL, spine, violations:incoming, scriptId:13
+    }), err => {
+      assert.equal(err.kind,'DIRECTOR_REPAIR_REQUIRED');
+      assert.equal(err.details?.needsMediaEdlRepair,true);
+      assert.ok(err.details.triggeringViolations.some(v=>v.code==='UNBRIDGED_EDL_TIME_JUMP'),
+        'retain the original story continuity problem');
+      assert.ok(err.details.rejectedDeliveryViolations.some(v=>v.code==='DELIVERY_BLOCK_NOT_CONTIGUOUS'),
+        'report the precise impossible narrator-block partition');
+      assert.ok(err.details.rejectedDeliveryViolations.some(v=>v.code==='DELIVERY_BLOCK_ORDER'));
+      assert.ok(err.details.violations.some(v=>v.code==='UNBRIDGED_EDL_TIME_JUMP'),
+        'multimodal repair must solve original cause, not just tidy bad blocks');
+      return true;
+    }, 'invalid second repair should trigger real source recut rather than fatal error');
+    assert.equal(exactIncident.lastAsks.length,2,'never infinite-loop invalid audio proposals');
+    assert.match(exactIncident.lastAsks[1].input.repairConstraint,/NON-OVERLAPPING PARTITION/,
+      'second prompt must clearly prohibit overlapping/noncontiguous beats');
+    assert.ok(exactIncident.lastAsks[1].input.previousRepairViolations.some(v=>v.code==='NARRATED_STORY_WINDOW_TOO_SHORT'));
+
+    // Genuine Vertex/transport failure must NOT be mislabeled as an
+    // editorial structural failure and silently retried with another model.
+    const provider = makeRepairEngine([() => { throw new Error('Vertex 429 capacity error'); }]);
+    await assert.rejects(() => Director.repairDeliveryTechnical(provider, {
+      model:MODEL, spine, violations:incoming, scriptId:14
+    }), /Vertex 429 capacity error/);
+    assert.equal(provider.lastAsks.length,1, 'provider failure is not a fake structural repair');
   });
 
   await ok('F/budget: realistic narrated run fits the DEFAULT 16-call budget; director voiceover choice is honoured', async () => {
