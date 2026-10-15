@@ -327,7 +327,15 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     blockOut.fingerprint = Delivery.blockFingerprint(blockOut, beats);
     audit.blocks.push({ blockId: b.blockId, beatIds: b.beatIds, durationSec: b.durationSec, safeWords: blockOut.safeWords, words: blockOut.words,
       advisorySafeWordsExceeded: blockOut.safeWords > 0 && blockOut.words > blockOut.safeWords,
-      rawBlockVoiceSec: blockOut.rawBlockVoiceSec, fitRatio: blockOut.fitRatio, narrationText: t });
+      rawBlockVoiceSec: blockOut.rawBlockVoiceSec, fitRatio: blockOut.fitRatio,
+      // The TTS fit gate previously noticed ONLY overlong passages. This
+      // metric surfaces the converse: one very short phrase followed by a
+      // long padded silence, a common cause of broken documentary cadence.
+      tailSilenceSec: blockOut.rawBlockVoiceSec != null
+        ? Math.max(0, Math.round((b.durationSec - blockOut.rawBlockVoiceSec) * 100) / 100) : null,
+      possibleUnderfilledVoiceWindow: blockOut.rawBlockVoiceSec != null
+        && b.durationSec >= 7 && blockOut.fitRatio < 0.55,
+      narrationText: t });
     return blockOut;
   });
   return { blocks: out, audit };
