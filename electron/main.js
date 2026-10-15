@@ -502,6 +502,29 @@ app.whenReady().then(async () => {
 
   createWindow();
 
+  let animeLoreRunController = null;
+  handleIpc("animeLore:run", async (event, payload = {}) => {
+    if (animeLoreRunController) throw new Error("Anime Lore đang chạy; không được khởi động đồng thời.");
+    const controller = new AbortController();
+    animeLoreRunController = controller;
+    try {
+      const Engine = require("./services/animeLore/animeLorePipelineService");
+      const engine = new Engine(configStore.getSettings(), projectStore);
+      return await engine.run({
+        workspaceRoot: getWorkspaceRoot(),
+        projectId: payload.projectId || null,
+        input: payload.input || null,
+        signal: controller.signal,
+        onProgress: (item) => sendToWebContentsSafe(event.sender, "animeLore:progress", item)
+      });
+    } finally { animeLoreRunController = null; }
+  });
+  handleIpc("animeLore:cancel", async () => {
+    if (!animeLoreRunController) return false;
+    animeLoreRunController.abort();
+    return true;
+  });
+
   handleIpc("app:bootstrap", async () => bootstrapState());
 
   handleIpc("dialog:pickVideo", async () => {

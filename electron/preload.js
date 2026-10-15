@@ -43,6 +43,12 @@ contextBridge.exposeInMainWorld("cineviral", {
   inspectGeminiJsonFiles: (filePaths) => ipcRenderer.invoke("analysis:inspectGeminiJsonFiles", filePaths),
   getHookCandidates: (packageDir) => ipcRenderer.invoke("analysis:getHookCandidates", packageDir),
   lockHookContract: (payload) => ipcRenderer.invoke("analysis:lockHookContract", payload),
+  runAnimeLore: (payload) => ipcRenderer.invoke("animeLore:run", payload),
+  cancelAnimeLore: () => ipcRenderer.invoke("animeLore:cancel"),
+  onAnimeLoreProgress: (callback) => {
+    ipcRenderer.removeAllListeners("animeLore:progress");
+    ipcRenderer.on("animeLore:progress", (_event, item) => callback(item));
+  },
   createProject: (payload) => ipcRenderer.invoke("project:create", payload),
   runAutoStoryPipeline: (projectId, options) => ipcRenderer.invoke("autoStory:run", projectId, options),
   cancelAutoStoryPipeline: () => ipcRenderer.invoke("autoStory:cancel"),

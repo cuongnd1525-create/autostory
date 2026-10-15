@@ -147,7 +147,7 @@ class RecapTtsService {
     const speed = Math.max(0.85, Math.min(1.3, Number(this.settings.voiceSpeed || 1)));
 
     if (provider === "elevenlabs") {
-      const service = this.providers.elevenlabs || new ElevenLabsService(this.settings);
+      const service = this.providers.elevenlabs || new ElevenLabsService(this.settings.elevenLabsApiKey, this.settings.elevenLabsModel, this.settings);
       await service.synthesizeSpeech({
         text,
         voiceId,
