@@ -39,7 +39,7 @@ Each block is ONE continuous narration passage that plays across ALL of the bloc
 FIRST design the entire narrator voice arc across the story as if one documentary narrator spoke it in one sitting, interrupted only by indispensable real police/suspect evidence. The first narrated passage may set up the background and stakes over MULTIPLE visual cuts. Later passages must pick up the thread with explicit causal or temporal continuity, not begin another unrelated introduction. Let original bodycam dialogue carry proof, confrontation and the strongest moment. Use smooth spoken clauses and a natural landing before giving the floor to original dialogue. A 1.7-second clip is never a place for a compressed factual paragraph. Distinct narrator passages must feel like chapters of ONE account, never four isolated recaps.
 The narrator owns comprehension, compression, orientation, causal connection, anticipation and momentum. It is the guide joining apparently disconnected source clips into ONE intelligible True Crime story, not a commentator reading actions aloud. When transitioning to another time, person, discovery or location, establish what changed and WHY the next clip matters; a hook -> rewind must orient the viewer to the earlier events. Hand the viewer to the real moment that follows (followingRawBlock / handoffTargetBeatId) without paraphrasing what that moment will say. Where an original officer/suspect line is emotionally or evidentially essential, stop talking and let the original line play.
 Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their ids in newInformationRefs. A quote whose epistemic status is not known_fact is attributed or hedged ("the caller said/reported...", "according to her"), never stated as fact. The attribution must appear in narrationText itself, not only in metadata. Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
-Read input.blocks[].narrationArc as the GLOBAL story and audio-ownership plan; use it to avoid repetitive mini-introductions and unnatural narration fragments. Respect input.blocks[].deliveryGuidance. Every passage must be a complete, conversational thought, never a 2-4-word fragment pretending to explain a complex event. Preserve natural cadence, clear pronouns and meaningful pauses; never narrate over a raw_evidence payoff. If a block is too short to express its required truth, prefer a minimal grounded orientation; deterministic checks may route the block back to the Director for more duration. safeWords is an ADVISORY first-pass target for the whole block, never a quota. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
+Read input.blocks[].narrationArc as the GLOBAL story and audio-ownership plan; use it to avoid repetitive mini-introductions and unnatural narration fragments. Before outputting JSON, SILENTLY JOIN ALL NARRATOR PASSAGES IN TIMELINE ORDER with the RAW EVIDENCE descriptions between them as ONE AUDIO SCREENPLAY. Check that the first narration truly orients the teaser or situation, later narration continues the SAME causal sentence-level story instead of resetting with generic intros, and every handoff points toward a consequential real exchange. Write ALL requested narrations as one coordinated screenplay; never one independent micro-intro per block. Prefer one setup passage over multiple scattered partial explanations. If the recorded dialogue repeats ordinary police procedure, the narrator compresses its causal significance instead of paraphrasing each procedural line. Respect input.blocks[].deliveryGuidance. Every passage must be a complete, conversational thought, never a 2-4-word fragment pretending to explain a complex event. Preserve natural cadence, clear pronouns and meaningful pauses; never narrate over a raw_evidence payoff. If a block is too short to express its required truth, prefer a minimal grounded orientation; deterministic checks may route the block back to the Director for more duration. safeWords is an ADVISORY first-pass target for the whole block, never a quota. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
 Active voice, spoken English, grounded and specific. previewVi is a natural Vietnamese rendering of the passage.`;
 
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
@@ -220,9 +220,21 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   audit.reusedBlockIds = reusedBlockIds;
   audit.generatedBlockIds = missing.map(p => p.blockId);
   if (missing.length) {
+    // The V4 screenplay is drafted in ONE call, with the COMPLETE sequence
+    // (including raw handoffs) supplied in each payload's narrationArc.
+    // Treat the response as one global audio script, not isolated scene captions.
     const generated = await askBlockNarration(engine, story, missing, evidence);
     for (const [id, line] of generated) if (payloads.has(id) && !texts.has(id)) texts.set(id, line);
   }
+  // A coherent screenplay has no value if a narrator repeatedly resumes
+  // at the same introductory premise. This gate is advisory at first:
+  // keep the measurable report and let the MP4 critic judge semantic quality.
+  audit.globalAudioScreenplay = narrationArc.map(b => {
+    const line = texts.get(b.blockId);
+    return { blockId:b.blockId, mode:b.mode, outputStartSec:b.outputStartSec,
+      outputEndSec:b.outputEndSec, storyFunction:b.storyFunction,
+      ...(line ? { narrationText:line.narrationText || '' } : { evidenceFunction:b.evidenceFunction }) };
+  });
 
   const problemsOf = async () => {
     const out = new Map();
