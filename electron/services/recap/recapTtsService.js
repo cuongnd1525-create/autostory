@@ -1,5 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const EdgeTtsService = require("../edgeTtsService");
 const ElevenLabsService = require("../elevenLabsService");
@@ -9,8 +10,9 @@ const OmniVoiceService = require("../omniVoiceService");
 const VoiceProfileService = require("../voiceProfileService");
 
 class RecapTtsService {
-  constructor(settings = {}) {
+  constructor(settings = {}, dependencies = {}) {
     this.settings = settings;
+    this.providers = dependencies.providers || {};
     this.ffmpegPath = settings.ffmpegPath || process.env.FFMPEG_PATH || "ffmpeg";
     this.ffprobePath = settings.ffprobePath || process.env.FFPROBE_PATH || "ffprobe";
     this.voiceProfileService = new VoiceProfileService();
@@ -108,6 +110,12 @@ class RecapTtsService {
 
   resolveVoiceId(provider, project = {}) {
     const isMale = project.voiceGender === "male" || this.settings.defaultVoiceGender === "male";
+    const language = project.recapNarrationLanguage || this.settings.recapNarrationLanguage || "en";
+    const requestedVoice = project.voiceId || this.settings.defaultVoiceId || "";
+    if (provider === "edge_neural" && language === "vi" && !requestedVoice.startsWith("vi-")) {
+      return isMale ? "vi-VN-NamMinhNeural" : "vi-VN-HoaiMyNeural";
+    }
+    if (provider === "edge_neural" && language === "en" && requestedVoice.startsWith("vi-")) return isMale ? "en-US-ChristopherNeural" : "en-US-JennyNeural";
     if (provider === "elevenlabs") {
       if (project.voiceId || this.settings.defaultVoiceId) {
         return project.voiceId || this.settings.defaultVoiceId;
@@ -135,12 +143,15 @@ class RecapTtsService {
   async synthesizeRaw({ text, outputPath, provider, voiceId, signal }) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
+    const language = this.settings.recapNarrationLanguage || "en";
+    const speed = Math.max(0.85, Math.min(1.3, Number(this.settings.voiceSpeed || 1)));
 
     if (provider === "elevenlabs") {
-      const service = new ElevenLabsService(this.settings);
-      await service.synthesize({
+      const service = this.providers.elevenlabs || new ElevenLabsService(this.settings);
+      await service.synthesizeSpeech({
         text,
         voiceId,
+        languageCode: language,
         outputPath,
         model: this.settings.elevenLabsModel,
         stability: this.settings.elevenLabsStability,
@@ -152,20 +163,23 @@ class RecapTtsService {
     }
 
     if (provider === "kokoro") {
-      const service = new KokoroVoiceService(this.settings);
-      await service.synthesize({
+      const service = this.providers.kokoro || new KokoroVoiceService(this.settings);
+      await service.synthesizeSpeech({
         text,
-        voice: voiceId,
+        voiceName: voiceId,
+        language,
         outputPath,
-        speed: this.settings.kokoroSpeed || 1.0
+        speed: (this.settings.kokoroSpeed || 1.0) * speed
       });
       return outputPath;
     }
 
     if (provider === "omnivoice") {
-      const service = new OmniVoiceService(this.settings);
-      await service.synthesize({
+      const service = this.providers.omnivoice || new OmniVoiceService(this.settings);
+      await service.synthesizeSpeech({
         text,
+        voiceName: voiceId,
+        language,
         outputPath,
         instruct: this.settings.omniVoiceInstruct || ""
       });
@@ -173,8 +187,8 @@ class RecapTtsService {
     }
 
     if (provider === "windows_local") {
-      const service = new WindowsVoiceService(this.settings);
-      await service.synthesize({
+      const service = this.providers.windows_local || new WindowsVoiceService(this.settings);
+      await service.synthesizeSpeech({
         text,
         voiceName: voiceId,
         outputPath,
@@ -184,12 +198,13 @@ class RecapTtsService {
     }
 
     // Default: Edge Neural
-    const edgeService = new EdgeTtsService(this.settings);
-    await edgeService.synthesize({
+    const edgeService = this.providers.edge_neural || new EdgeTtsService(this.settings);
+    await edgeService.synthesizeSpeech({
       text,
-      voice: voiceId,
+      voiceName: voiceId,
+      language,
       outputPath,
-      rate: "+0%",
+      rate: Math.round((speed - 1) * 100),
       pitch: "+0Hz",
       volume: 100
     });
@@ -204,8 +219,13 @@ class RecapTtsService {
     const provider = this.resolveProvider(project);
     const voiceId = this.resolveVoiceId(provider, project);
 
-    const rawPath = path.join(outputDir, `${speechUnit.id}_raw.wav`);
-    const trimmedPath = path.join(outputDir, `${speechUnit.id}_trimmed.wav`);
+    const cacheKey = crypto.createHash("sha256").update(JSON.stringify({ text: speechUnit.text, provider, voiceId,
+      kokoroSpeed: this.settings.kokoroSpeed, kokoroModel: this.settings.kokoroModel,
+      elevenLabsModel: this.settings.elevenLabsModel, windowsVoiceRate: this.settings.windowsVoiceRate,
+      language: this.settings.recapNarrationLanguage, voiceSpeed: this.settings.voiceSpeed })).digest("hex").slice(0, 16);
+    const fileId = `${String(speechUnit.id).replace(/[^a-zA-Z0-9_-]/g, "_")}-${cacheKey}`;
+    const rawPath = path.join(outputDir, `${fileId}_raw.wav`);
+    const trimmedPath = path.join(outputDir, `${fileId}_trimmed.wav`);
 
     // Check if trimmed audio already exists and is valid
     try {
@@ -236,9 +256,11 @@ class RecapTtsService {
       voiceId,
       signal
     });
+    signal?.throwIfAborted();
 
     const rawDuration = await this.probeAudioDuration(rawPath);
     await this.trimAudioSilence(rawPath, trimmedPath);
+    signal?.throwIfAborted();
     const trimmedDuration = await this.probeAudioDuration(trimmedPath);
     const finalDuration = trimmedDuration > 0.05 ? trimmedDuration : rawDuration;
 
@@ -246,7 +268,7 @@ class RecapTtsService {
     if (workspaceRoot) {
       await this.voiceProfileService.recordSample(
         workspaceRoot,
-        { provider, voiceId, language: "en", style: "recap" },
+        { provider, voiceId, language: this.settings.recapNarrationLanguage || "en", style: "recap" },
         { text: speechUnit.text, measuredDurationSec: finalDuration }
       ).catch(() => {});
     }
@@ -268,7 +290,7 @@ class RecapTtsService {
     return this.voiceProfileService.getProfile(workspaceRoot, {
       provider,
       voiceId,
-      language: "en",
+      language: this.settings.recapNarrationLanguage || "en",
       style: "recap"
     });
   }

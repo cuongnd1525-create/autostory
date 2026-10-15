@@ -27,6 +27,20 @@
     { id: "claude-opus-4.6", label: "Claude Opus 4.6", reasoning: ["thinking"] },
     { id: "gpt-oss-120b", label: "GPT-OSS 120B", reasoning: ["medium"] }
   ];
+  // Historical aliases remain parseable for saved settings, while live choices
+  // come from `agy models` and can disappear without a code release.
+  let availableModels = null;
+  function setAvailableModels(models) { availableModels = Array.isArray(models) ? models : null; }
+  function getAvailableFamilies() {
+    if (!availableModels) return FAMILIES;
+    const groups = new Map();
+    for (const entry of availableModels) {
+      if (!groups.has(entry.familyId)) groups.set(entry.familyId, { id: entry.familyId, label: entry.familyLabel, reasoning: [] });
+      const family = groups.get(entry.familyId);
+      if (!family.reasoning.includes(entry.reasoning)) family.reasoning.push(entry.reasoning);
+    }
+    return [...groups.values()];
+  }
 
   const titleCase = (level) => level.charAt(0).toUpperCase() + level.slice(1);
 
@@ -41,7 +55,7 @@
   }
 
   function findFamily(familyId) {
-    return FAMILIES.find((family) => family.id === familyId) || null;
+    return getAvailableFamilies().find((family) => family.id === familyId) || null;
   }
 
   function pickReasoning(family, preferred) {
@@ -54,7 +68,9 @@
   function resolveModel(familyId, reasoning) {
     const family = findFamily(familyId);
     if (!family) return "";
-    return agyModelValue(family, pickReasoning(family, reasoning));
+    const level = pickReasoning(family, reasoning);
+    if (availableModels) return availableModels.find((entry) => entry.familyId === familyId && entry.reasoning === level)?.value || "";
+    return agyModelValue(family, level);
   }
 
   const ALIASES = (() => {
@@ -83,6 +99,8 @@
     const text = String(value || "").trim();
     if (!text) return { familyId: "", reasoning: "", known: true };
     const lower = text.toLowerCase();
+    const live = availableModels?.find((entry) => entry.value.toLowerCase() === lower || entry.label.toLowerCase() === lower);
+    if (live) return { familyId: live.familyId, reasoning: live.reasoning, known: true };
     if (ALIASES.has(lower)) return { ...ALIASES.get(lower), known: true };
     const bare = FAMILIES.find((family) => family.label.toLowerCase() === lower || family.id === lower);
     if (bare) return { familyId: bare.id, reasoning: pickReasoning(bare, fallbackReasoning), known: true };
@@ -103,5 +121,5 @@
     return family ? agyLabel(family, parsed.reasoning) : "";
   }
 
-  return { FAMILIES, REASONING_LABELS, resolveModel, parseModel, normalizeModel, displayName, agyLabel, findFamily };
+  return { FAMILIES, REASONING_LABELS, resolveModel, parseModel, normalizeModel, displayName, agyLabel, findFamily, setAvailableModels, getAvailableFamilies };
 });

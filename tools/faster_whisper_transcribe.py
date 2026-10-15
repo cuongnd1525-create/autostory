@@ -2,6 +2,9 @@ import argparse
 import json
 import math
 import os
+from python_runtime_bootstrap import register_nvidia_dlls
+
+register_nvidia_dlls()
 
 from faster_whisper import WhisperModel, decode_audio
 
@@ -72,6 +75,7 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--compute-type", default="int8")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--beam-size", type=int, default=1)
     parser.add_argument("--chunk-sec", type=int, default=240)
     parser.add_argument("--cache-dir", required=True)
     args = parser.parse_args()
@@ -111,7 +115,7 @@ def main():
         transcribe_options = {
             "language": None if args.language == "auto" else args.language,
             "vad_filter": True,
-            "beam_size": 1,
+            "beam_size": max(1, min(10, args.beam_size)),
             "condition_on_previous_text": False,
             "word_timestamps": True
         }

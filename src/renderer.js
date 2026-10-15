@@ -158,6 +158,7 @@ const stepLabels = [
 ];
 
 const setupDraftKey = "cineviral.setupDraft.v2";
+let recapSetupUi = null;
 
 const el = {};
 
@@ -263,6 +264,7 @@ function syncModeSelectionUi() {
 }
 
 function selectSetupMode(mode, { persist = true, invalidate = true } = {}) {
+  if (state.busy) return;
   if (!MODE_PRESENTATION[mode]) return;
   const previousMode = state.selectedMode;
   state.selectedMode = mode;
@@ -494,6 +496,15 @@ function queryElements() {
     recapWorkflowMode: $("recap-workflow-mode"),
     recapVisualLead: $("recap-visual-lead"),
     recapAllowReuse: $("recap-allow-reuse"),
+    recapMuteSourceAudio: $("recap-mute-source-audio"),
+    recapDurationPreset: $("recap-duration-preset"),
+    recapPreset: $("recap-preset"),
+    recapNarrationLanguage: $("recap-narration-language"),
+    recapNarrationStyle: $("recap-narration-style"),
+    recapEditorialSelection: $("recap-editorial-selection"),
+    recapAspectRatio: $("recap-aspect-ratio"),
+    recapFraming: $("recap-framing"),
+    recapCaptionStyle: $("recap-caption-style"),
     manualPromptCustomization: $("manual-prompt-customization"),
     manualPromptProfile: $("manual-prompt-profile"),
     manualSeriesNarratorStyleLabel: $("manual-series-narrator-style-label"),
@@ -738,6 +749,8 @@ function queryElements() {
     importConfiguredDraftReview: $("import-configured-draft-review"),
     voiceVolume: $("voice-volume"),
     sourceVolume: $("source-volume"),
+    recapMuteSourceAudioMixer: $("recap-mute-source-audio-mixer"),
+    recapSourceAudioControl: $("recap-source-audio-control"),
     bgmVolume: $("bgm-volume"),
     ducking: $("ducking"),
     voiceVolValue: $("voice-vol-value"),
@@ -877,6 +890,7 @@ function getPreviewCacheBust(project = state.currentProject) {
 
 function getPreviewVideoPath(project = state.currentProject) {
   if (state.revisionPreviewPath) return state.revisionPreviewPath;
+  if (project?.mode === "recap") return project.recap?.draftVideoPath || project.recap?.finalVideoPath || project.finalVideoPath || project.sourceVideoPath || "";
   const artifacts = project?.artifacts || {};
   const analysisArtifacts = project?.analysis?.artifacts || {};
   if (project?.mode === "highlight_cut" && getHighlightVariants(project).length) {
@@ -1105,6 +1119,8 @@ function positionPreviewSubtitleOverlay() {
 function getFinalOutputPath(project = state.currentProject) {
   return project?.artifacts?.finalVideoPath
     || project?.analysis?.artifacts?.finalVideoPath
+    || project?.recap?.finalVideoPath
+    || project?.finalVideoPath
     || "";
 }
 
@@ -1264,6 +1280,7 @@ function getVariantScopedVideoEditSettings(settings) {
 function getGlobalVideoEditSettings(project = {}) {
   return {
     mixer: project.mixer || {},
+    ...(project.mode === "recap" ? { recapMuteSourceAudio: Boolean(project.recapMuteSourceAudio) } : {}),
     subtitleStyle: project.subtitleStyle,
     showSubtitles: project.showSubtitles,
     omniVoiceRenderMode: project.omniVoiceRenderMode,
@@ -1365,6 +1382,7 @@ function updateVideoEditStaleStatus(project = state.currentProject) {
 
 function getCurrentProjectSettings() {
   return {
+    ...(state.currentProject?.mode === "recap" ? { recapMuteSourceAudio: Boolean(el.recapMuteSourceAudioMixer?.checked) } : {}),
     mixer: {
       voiceVolume: Number(el.voiceVolume?.value || 100),
       sourceVolume: Number(el.sourceVolume?.value || 0),
@@ -1421,6 +1439,12 @@ async function applyCurrentProjectSettings() {
   await persistCurrentVideoEditSettings();
 }
 
+function syncRecapSourceAudioMuteUi() {
+  const muted = state.currentProject?.mode === "recap" && Boolean(el.recapMuteSourceAudioMixer?.checked);
+  if (el.sourceVolume) el.sourceVolume.disabled = muted;
+  if (el.sourceVolValue && el.sourceVolume) el.sourceVolValue.textContent = `${muted ? 0 : el.sourceVolume.value}%`;
+}
+
 function syncProjectSettingsControls(project = state.currentProject) {
   if (!project) return;
   if (project.mode !== "highlight_cut") state.videoEditScope = "global";
@@ -1431,6 +1455,8 @@ function syncProjectSettingsControls(project = state.currentProject) {
   });
   project = getEffectiveVideoEditProject(project);
   const mixer = project.mixer || {};
+  el.recapSourceAudioControl?.classList.toggle("hidden", project.mode !== "recap");
+  if (el.recapMuteSourceAudioMixer) el.recapMuteSourceAudioMixer.checked = Boolean(project.recapMuteSourceAudio);
   if (el.voiceVolume) el.voiceVolume.value = String(mixer.voiceVolume ?? 100);
   if (el.sourceVolume) {
     const defaultSourceVolume = project.mode === "highlight_cut" && mixer.narrationSourceAudioOverride !== true ? 0 : 20;
@@ -1442,6 +1468,7 @@ function syncProjectSettingsControls(project = state.currentProject) {
   if ($("bgm-path")) $("bgm-path").value = mixer.bgmPath || "";
   if (el.voiceVolValue && el.voiceVolume) el.voiceVolValue.textContent = `${el.voiceVolume.value}%`;
   if (el.sourceVolValue && el.sourceVolume) el.sourceVolValue.textContent = `${el.sourceVolume.value}%`;
+  syncRecapSourceAudioMuteUi();
   if (el.bgmVolValue && el.bgmVolume) el.bgmVolValue.textContent = `${el.bgmVolume.value}%`;
   if (el.duckingValue && el.ducking) el.duckingValue.textContent = `${el.ducking.value}%`;
   if ($("subtitle-style")) $("subtitle-style").value = project.subtitleStyle || "white_black_outline";
@@ -2505,7 +2532,10 @@ function writeSetupDraft() {
     targetLanguage: el.targetLanguage?.value || "vi",
     recapWorkflowMode: el.recapWorkflowMode?.value || "full_auto",
     recapVisualLead: el.recapVisualLead?.value || "0.25",
-    recapAllowReuse: Boolean(el.recapAllowReuse?.checked)
+    recapAllowReuse: Boolean(el.recapAllowReuse?.checked),
+    recapMuteSourceAudio: Boolean(el.recapMuteSourceAudio?.checked),
+    ...readRecapSetupPreferences(),
+    recapSetupSession: recapSetupUi?.serialize()
   };
   localStorage.setItem(setupDraftKey, JSON.stringify(draft));
 }
@@ -2519,6 +2549,13 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (draft.recapWorkflowMode && el.recapWorkflowMode) el.recapWorkflowMode.value = draft.recapWorkflowMode;
   if (draft.recapVisualLead && el.recapVisualLead) el.recapVisualLead.value = draft.recapVisualLead;
   if (typeof draft.recapAllowReuse === "boolean" && el.recapAllowReuse) el.recapAllowReuse.checked = draft.recapAllowReuse;
+  if (typeof draft.recapMuteSourceAudio === "boolean" && el.recapMuteSourceAudio) el.recapMuteSourceAudio.checked = draft.recapMuteSourceAudio;
+  for (const key of Object.keys(readRecapSetupPreferences())) if (draft[key] && el[key]) el[key].value = draft[key];
+  recapSetupUi?.restore(draft.recapSetupSession || {
+    voiceProvider: ["clone", "designed"].includes(draft.lastVoiceSetup?.tab || draft.voiceTab)
+      ? "advanced" : draft.lastVoiceSetup?.presetProvider || draft.presetVoiceProvider,
+    voiceId: draft.lastVoiceSetup?.presetVoiceId || draft.presetVoiceId
+  });
   selectSetupMode(state.selectedMode, { persist: false, invalidate: false });
   if (draft.targetDuration && el.targetDuration) el.targetDuration.value = draft.targetDuration;
   if (draft.voiceSpeed && el.voiceSpeed) el.voiceSpeed.value = draft.voiceSpeed;
@@ -2674,6 +2711,11 @@ function applySetupDraft(draft = readSetupDraft()) {
 }
 
 function resetSetupStep(step) {
+  if (isRecapMode() && recapSetupUi) {
+    recapSetupUi.resetStep(step);
+    if (step === 1) { setSourceMethod("local", { persist: false }); updateSourceSelectionUi(); }
+    return;
+  }
   if (step === 1) {
     el.projectTitle.value = "project_default";
   } else if (step === 2) {
@@ -2874,6 +2916,7 @@ function setBusy(isBusy) {
     el.cancelRender.classList.add("hidden");
     el.cancelRender.disabled = false;
   }
+  recapSetupUi?.sync({ active: isRecapMode(), step: state.currentStep, busy: state.busy });
 }
 
 function getVariantExportStatusLabel(status = "waiting") {
@@ -6722,8 +6765,19 @@ function applyLocalVoicePreset(provider) {
 }
 
 function renderSteps() {
+  if (!recapSetupUi && window.RecapSetupUi) recapSetupUi = window.RecapSetupUi.create({
+    getPayload: readProjectPayload, isBusy: () => state.busy, busy: setBusy, cancellable: setRenderCancellable,
+    getSettings: () => state.settings, openSettings: () => el.openSettings.click(),
+    switchProvider: async (aiProvider) => {
+      const saved = await window.cineviral.saveSettings({ aiProvider });
+      state.settings = saved; fillSettings(saved);
+    },
+    go: (step) => { state.currentStep = step; renderSteps(); }, refresh: renderSteps,
+    persist: writeSetupDraft, log: addLog, toast: showToast, fileUrl: toVideoFileUrl, playAudio: playLocalAudio,
+    openStudio: showStudio, projectChanged: refreshProjects
+  });
   const labels = isRecapMode()
-    ? stepLabels
+    ? window.RecapSetupUi.labels
     : [
       "D\u1ef1 \u00e1n",
       "Ch\u1ebf \u0111\u1ed9",
@@ -6735,16 +6789,17 @@ function renderSteps() {
   el.wizardSteps.innerHTML = labels.map((label, index) => {
     const step = index + 1;
     const className = step === state.currentStep ? "active" : step < state.currentStep ? "done" : "";
+    const tag = isRecapMode() ? "button" : "div";
     return `
-      <div class="wizard-step ${className}">
+      <${tag} ${isRecapMode() ? 'type="button"' : ""} class="wizard-step ${className}" data-wizard-step="${step}" ${state.busy ? "disabled" : ""} ${step === state.currentStep ? 'aria-current="step"' : ""}>
         <span class="step-number">${step < state.currentStep ? "✓" : step}</span>
         <span>${escapeHtml(label)}</span>
-      </div>
+      </${tag}>
     `;
   }).join("");
 
   document.querySelectorAll("[data-step-panel]").forEach((panel) => {
-    panel.classList.toggle("hidden", Number(panel.dataset.stepPanel) !== state.currentStep);
+    panel.classList.toggle("hidden", isRecapMode() || Number(panel.dataset.stepPanel) !== state.currentStep);
   });
 
   el.prevStep.disabled = state.currentStep === 1 || state.busy;
@@ -6752,12 +6807,12 @@ function renderSteps() {
   el.startIngest.classList.toggle("hidden", state.currentStep !== 6);
   const subtitles = isRecapMode()
     ? [
-      "Tạo mới hoặc mở dự án cũ",
-      "Recap hoặc Dubbing",
-      "Video, phụ đề, đầu ra",
-      "Thiết kế / Clone / Mẫu",
-      "Nhịp truyện / Dịch thuật",
-      "Kiểm tra & bắt đầu"
+      "Chọn video cần recap",
+      "Chọn cách kể và thời lượng",
+      "Chọn giọng, ngôn ngữ và âm thanh",
+      "Xác nhận khung hình và phụ đề",
+      "Xem thử và chọn mở đầu",
+      "Xem draft rồi xuất bản cuối"
     ]
     : isScriptRewriteMode()
     ? [
@@ -6831,6 +6886,7 @@ function renderSteps() {
       "Kiểm tra & bắt đầu"
     ];
   el.setupSubtitle.textContent = subtitles[state.currentStep - 1];
+  recapSetupUi?.sync({ active: isRecapMode(), step: state.currentStep, busy: state.busy });
   updateReview();
 }
 
@@ -7015,6 +7071,7 @@ function updateReview() {
     return;
   }
   const isRecap = isRecapMode();
+  recapSetupUi?.updateSummary();
   syncModeUi();
   el.reviewProject.textContent = el.projectTitle.value.trim() || "project_default";
   el.reviewMode.textContent = isRecap ? "Tóm tắt phim (AI)" : isAutoStoryMode() ? "True Crime Auto Story" : isScriptRewriteMode() ? "Viết lại kịch bản" : isSatisfyingStorytimeMode() ? "Oddly Satisfying Storytime" : isHighlightCutMode() ? "Highlight Cut JSON" : isManualGeminiProMode() ? "Gemini Draft Review - 2 lượt" : isStoryRecutMode() ? "Story Recut" : isDiyStoryRemixMode() ? "DIY Story Remix" : isPodcastViralMode() ? "Podcast Viral Cut" : "Thuyết minh & dịch";
@@ -7039,7 +7096,7 @@ function updateReview() {
   }
   if (isRecap) {
     el.reviewDuration.textContent = `${Number(el.recapTargetDuration?.value || el.targetDuration?.value || 60)}s (${el.recapWorkflowMode?.value === "review" ? "Review Before Final" : "Full Auto"})`;
-    el.reviewVoiceSpeed.textContent = `Lead: ${el.recapVisualLead?.value || "0.25"}s · ${el.recapAllowReuse?.checked ? "Cho phép lặp" : "Không lặp cảnh"}`;
+    el.reviewVoiceSpeed.textContent = `Lead: ${el.recapVisualLead?.value || "0.25"}s · ${el.recapAllowReuse?.checked ? "Cho phép lặp" : "Không lặp cảnh"} · ${el.recapMuteSourceAudio?.checked ? "Tắt âm thanh gốc" : "Giữ âm thanh gốc"}`;
   }
   el.translateButton.textContent = `Dịch ngữ cảnh với ${getAiProviderLabel()}`;
   renderHighlightPromptTemplate();
@@ -7213,16 +7270,38 @@ function fillAntigravityModelSelects(savedModel, savedReasoning) {
     select.appendChild(option);
   };
   addOption("", "Mặc định của agy CLI");
-  for (const family of catalog.FAMILIES) addOption(family.id, family.label);
-  if (!parsed.known) {
+  const families = catalog.getAvailableFamilies();
+  for (const family of families) addOption(family.id, family.label);
+  if (!parsed.known || (parsed.familyId && !families.some((family) => family.id === parsed.familyId))) {
     // Keep a value agy does not list (e.g. typed earlier) visible instead of silently dropping it.
-    addOption(LEGACY_AGY_MODEL_PREFIX + parsed.raw, `${parsed.raw} (không có trong danh sách agy)`);
-    select.value = LEGACY_AGY_MODEL_PREFIX + parsed.raw;
+    const original = parsed.raw || savedModel;
+    addOption(LEGACY_AGY_MODEL_PREFIX + original, `${original} (không có trong danh sách agy)`);
+    select.value = LEGACY_AGY_MODEL_PREFIX + original;
     fillAntigravityReasoningSelect(select.value, "");
     return;
   }
   select.value = parsed.familyId;
   fillAntigravityReasoningSelect(parsed.familyId, parsed.reasoning || savedReasoning);
+}
+
+async function refreshAntigravityModels({ force = false, silent = false } = {}) {
+  const button = $("refresh-antigravity-models"), status = $("antigravity-models-status");
+  if (!window.cineviral.getAntigravityModels) return;
+  if (button) button.disabled = true;
+  if (el.antigravityModel) el.antigravityModel.disabled = true;
+  if (status) status.textContent = " Đang tải danh sách model từ CLI…";
+  const selected = readAntigravityModelSelects();
+  try {
+    const result = await window.cineviral.getAntigravityModels({ force, command: el.antigravityCommand?.value.trim() });
+    if (!result.models?.length) throw new Error("CLI chưa trả danh sách model hợp lệ.");
+    window.AntigravityModelCatalog.setAvailableModels(result.models);
+    fillAntigravityModelSelects(selected.antigravityModel, selected.antigravityReasoning);
+    if (el.antigravityModel) el.antigravityModel.disabled = false;
+    if (status) status.textContent = ` Có ${result.models.length} model CLI hiện hỗ trợ.`;
+  } catch (error) {
+    if (status) status.textContent = ` ${error.message}`;
+    if (!silent) addLog(error.message, "WARNING");
+  } finally { if (button) button.disabled = false; }
 }
 
 function readAntigravityModelSelects() {
@@ -7341,7 +7420,7 @@ function readProjectPayload() {
   const targetLanguage = isScriptRewrite || (isHighlightCut && !isDiyStoryRemixMode(setupMode))
     ? sourceLanguage
     : el.targetLanguage.value;
-  const selectedVoice = getSelectedVoiceConfig();
+  const selectedVoice = (isRecap ? recapSetupUi?.basicVoice() : null) || getSelectedVoiceConfig();
   const storyScriptPaths = JSON.parse(el.storyScriptPath?.dataset.paths || "[]");
   const prompt = [
     el.voiceGenderAge.value,
@@ -7452,6 +7531,8 @@ function readProjectPayload() {
       presetVoiceId: el.presetVoiceList.value
     },
     ...getCurrentProjectSettings(),
+    recapMuteSourceAudio: isRecap ? Boolean(el.recapMuteSourceAudio?.checked) : undefined,
+    ...(isRecap ? readRecapSetupPreferences() : {}),
     dubbingRenderMode: state.settings?.dubbingRenderMode || "speech_first_clustered",
     dubbingMinClusterDuration: Number(state.settings?.dubbingMinClusterDuration || 5),
     dubbingMaxClusterDuration: Number(state.settings?.dubbingMaxClusterDuration || 12),
@@ -7462,6 +7543,7 @@ function readProjectPayload() {
 }
 
 function validateCurrentStep() {
+  if (isRecapMode()) return recapSetupUi.validate(state.currentStep);
   if (state.currentStep === 2 && isAutoStoryMode()) {
     const min = Number(el.autoStoryTargetMin?.value || 0);
     const max = Number(el.autoStoryTargetMax?.value || 0);
@@ -7647,6 +7729,8 @@ function showSetup() {
 function openBackSetupModal() {
   document.querySelectorAll("[data-preserve-step]").forEach((checkbox) => {
     checkbox.checked = true;
+    const names = isRecapMode() ? window.RecapSetupUi.labels : ["Dự án", "Chế độ", "Giọng", "Nguồn", "Kịch bản", "Xem trước"];
+    [...checkbox.parentElement.childNodes].filter((node) => node.nodeType === Node.TEXT_NODE).forEach((node) => { node.textContent = ` ${names[Number(checkbox.dataset.preserveStep) - 1]}`; });
   });
   el.backSetupModal.classList.remove("hidden");
 }
@@ -8646,6 +8730,59 @@ function renderAutoStoryStatus() {
   if (button) { button.classList.toggle("hidden", !unfinished); button.disabled = state.busy; button.textContent = state.busy ? "Đang xử lý Auto Story…" : job.boundedRun ? "Thử lại bước chưa hoàn tất" : "Tiếp tục / Sửa lỗi tự động"; }
 }
 
+function readRecapSetupPreferences() {
+  return Object.fromEntries(["recapPreset", "recapNarrationLanguage", "recapNarrationStyle", "recapEditorialSelection", "recapAspectRatio", "recapFraming", "recapCaptionStyle"].map((key) => [key, el[key]?.value]));
+}
+
+function reportRecapResult(result) {
+  const message = result?.status === "editorial_ready" ? "Đã có góc kể và hook thử. Chọn bản bạn muốn dùng trong Studio."
+    : result?.status === "quality_blocked" ? `Chưa xuất master: ${(result.blockers || []).map((item) => item.description).join(" ")}`
+    : result?.status === "review_ready" ? "Draft đã đạt kiểm tra chất lượng. Xem trước rồi duyệt xuất bản cuối."
+    : result?.status === "completed" ? `Đã xuất Video Recap: ${result.finalVideoPath}` : "Đã cập nhật dự án recap.";
+  addLog(message, result?.status === "quality_blocked" ? "WARNING" : "INFO");
+  showToast(message);
+  setExportProgress(result?.status === "completed" ? 100 : 0, message);
+}
+
+function renderRecapEditorialPanel(project) {
+  const panel = $("recap-editorial-panel");
+  if (!panel) return;
+  panel.classList.toggle("hidden", project.mode !== "recap");
+  if (project.mode !== "recap") return;
+  const preferences = { preset: project.recapPreset || "recap", duration: project.targetDurationSec || project.targetDuration || 60,
+    language: project.recapNarrationLanguage || "en", style: project.recapNarrationStyle || "natural", aspect: project.recapAspectRatio || "original", framing: project.recapFraming || "fit_blur", captions: project.recapCaptionStyle || "off" };
+  for (const [key, value] of Object.entries(preferences)) if ($(`recap-studio-${key}`)) $(`recap-studio-${key}`).value = value;
+  const editorial = project.recapEditorial || {};
+  $("recap-angle-choice").innerHTML = (editorial.angles || []).map((angle) => `<option value="${escapeHtml(angle.id)}">${escapeHtml(angle.title)} · ${angle.score}/10</option>`).join("");
+  $("recap-angle-choice").value = editorial.selectedAngleId || "";
+  $("recap-hook-auditions").innerHTML = (editorial.hooks || []).map((hook) => `<article class="recap-hook-card"><label><input type="radio" name="recap-hook-choice" value="${escapeHtml(hook.id)}" ${hook.id === editorial.selectedHookId ? "checked" : ""}> ${escapeHtml(hook.text)}</label><p>${Number(hook.durationSec).toFixed(1)}s · Độ phù hợp ${hook.score}/10</p><video controls preload="metadata" src="${escapeHtml(toVideoFileUrl(hook.videoPath))}"></video></article>`).join("");
+  $("recap-confirm-editorial").disabled = !(editorial.hooks || []).length;
+  $("recap-regenerate-hooks").disabled = !(editorial.angles || []).length;
+  const recap = project.recap || {}, duration = recap.duration;
+  $("recap-quality-status").textContent = [project.status === "quality_blocked" ? "Chưa đạt kiểm tra; chưa xuất master." : project.status === "editorial_ready" ? "Chờ chọn góc kể và hook." : recap.qualityScore != null ? `Điểm review: ${Number(recap.qualityScore).toFixed(2)}/1.` : "Chưa có kết quả kiểm tra draft.",
+    duration ? `Thời lượng dựng: ${Number(duration.actual).toFixed(1)}s / mục tiêu ${duration.target}s.` : "",
+    ...(recap.qualityIssues || []).map((issue) => `${issue.severity}: ${issue.description}`)].filter(Boolean).join(" ");
+  $("recap-approve-final").classList.toggle("hidden", recap.status !== "review_ready" || project.status === "quality_blocked");
+  $("recap-script-preview").textContent = (recap.speechUnits || []).map((unit, index) => `${index + 1}. ${unit.text}`).join("\n\n");
+}
+
+async function runRecapStudioAction(options = {}, approve = false, prepare = null) {
+  if (!state.currentProject || state.currentProject.mode !== "recap") return;
+  const id = state.currentProject.id;
+  setBusy(true); setRenderCancellable(true); state.activeOperation = "Recap";
+  try {
+    if (prepare) await prepare(id);
+    const result = approve ? await window.cineviral.renderRecapFinal(id) : await window.cineviral.runRecap(id, options);
+    state.currentProject = await window.cineviral.getProject(id);
+    renderStudio(); await refreshProjects(); reportRecapResult(result);
+  } catch (error) {
+    addLog(error.message, "ERROR"); showToast(error.message);
+    const fresh = await window.cineviral.getProject(id).catch(() => null);
+    if (fresh) { state.currentProject = fresh; renderStudio(); }
+  }
+  finally { setBusy(false); }
+}
+
 function renderStudio() {
   renderAutoStoryStatus();
   const resumeAutoStory = $("resume-auto-story");
@@ -8684,6 +8821,7 @@ function renderStudio() {
     el.warningBox.style.color = warnings.length ? "#ffb020" : "#35f0a4";
   }
   const isRecap = project.mode === "recap";
+  renderRecapEditorialPanel(project);
   const isScriptRewrite = project.mode === "script_rewrite";
   const isSatisfyingStorytime = project.mode === "satisfying_storytime";
   const isHighlightCut = project.mode === "highlight_cut";
@@ -10789,15 +10927,11 @@ async function createAndIngestProject() {
         targetDurationSec: payload.targetDurationSec,
         allowShotReuse: payload.allowShotReuse,
         recapWorkflow: payload.recapWorkflow,
-        visualLeadSec: payload.visualLeadSec
+        visualLeadSec: payload.visualLeadSec,
+        recapMuteSourceAudio: payload.recapMuteSourceAudio
       });
       state.currentProject = await window.cineviral.getProject(created.project.id);
-      if (result && result.status === "review_ready") {
-        addLog("Bản Draft đã sẵn sàng để Review trước khi xuất Master!", "SUCCESS");
-        showToast("Bản Draft đã sẵn sàng. Hãy kiểm tra các đoạn khớp hình trước khi xuất.");
-      } else {
-        addLog(`Đã hoàn tất Video Recap Master: ${result?.finalVideoPath || ""}`, "SUCCESS");
-      }
+      reportRecapResult(result);
     } else {
       addLog(`Đang lập kế hoạch tóm tắt phim bằng Gemini: ${payload.targetDuration}s, giọng ${payload.voiceSpeed}x...`);
       state.currentProject = await window.cineviral.planProject(created.project.id);
@@ -11103,7 +11237,13 @@ function bindEvents() {
     state.currentStep = Math.max(1, state.currentStep - 1);
     renderSteps();
   });
-  el.nextStep.addEventListener("click", () => {
+  el.wizardSteps.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-wizard-step]");
+    if (!button || state.busy || !isRecapMode()) return;
+    state.currentStep = Number(button.dataset.wizardStep); renderSteps();
+  });
+  el.nextStep.addEventListener("click", async () => {
+    if (isRecapMode()) return recapSetupUi.next(state.currentStep);
     if (!validateCurrentStep()) {
       return;
     }
@@ -11725,7 +11865,7 @@ function bindEvents() {
     });
   });
 
-  [el.projectTitle, el.subtitlePath, el.framePreset, el.autoWhisper, el.targetLanguage, el.targetDuration, el.voiceSpeed, el.viralOptimization, el.viralPlatform, el.viralAngleSetting, el.retentionAggressiveness, el.spoilerControl, el.loopEnding, el.draftVoiceMode, el.draftVoiceProvider, el.draftVoiceList, el.draftVoiceId].filter(Boolean).forEach((node) => {
+  [el.projectTitle, el.subtitlePath, el.framePreset, el.autoWhisper, el.targetLanguage, el.targetDuration, el.voiceSpeed, el.viralOptimization, el.viralPlatform, el.viralAngleSetting, el.retentionAggressiveness, el.spoilerControl, el.loopEnding, el.draftVoiceMode, el.draftVoiceProvider, el.draftVoiceList, el.draftVoiceId, el.recapMuteSourceAudio].filter(Boolean).forEach((node) => {
     node.addEventListener("input", () => {
       updateReview();
       writeSetupDraft();
@@ -11822,13 +11962,14 @@ function bindEvents() {
   });
 
   [
-    el.voiceVolume, el.sourceVolume, el.bgmVolume, el.ducking, el.showSubtitles,
+    el.voiceVolume, el.sourceVolume, el.bgmVolume, el.ducking, el.showSubtitles, el.recapMuteSourceAudioMixer,
     el.storytimeContinuousVoice, el.omniVoiceRenderMode, el.mixerVisualRemix,
     el.autoFitVoice, $("subtitle-style"), $("transition-style"), $("bgm-path")
   ].forEach((input) => {
     input?.addEventListener("input", () => persistVideoEditSettingsSoon());
     input?.addEventListener("change", () => persistVideoEditSettingsSoon(0));
   });
+  el.recapMuteSourceAudioMixer?.addEventListener("change", syncRecapSourceAudioMuteUi);
 
   el.videoEditScope?.querySelectorAll("[data-video-edit-scope]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -12048,8 +12189,30 @@ function bindEvents() {
     showToast("Câu viết lại đã được đưa vào ô kịch bản. Bấm Lưu đoạn để giữ thay đổi.");
   });
 
+  $("recap-apply-prefs")?.addEventListener("click", () => runRecapStudioAction({}, false, async (id) => {
+    await window.cineviral.updateProjectSettings(id, { recapPreset: $("recap-studio-preset").value,
+      targetDurationSec: Number($("recap-studio-duration").value), recapNarrationLanguage: $("recap-studio-language").value,
+      recapNarrationStyle: $("recap-studio-style").value, recapAspectRatio: $("recap-studio-aspect").value,
+      recapFraming: $("recap-studio-framing").value, recapCaptionStyle: $("recap-studio-captions").value });
+  }));
+  $("recap-regenerate-hooks")?.addEventListener("click", () => runRecapStudioAction({}, false, async (id) => {
+    await window.cineviral.updateProjectSettings(id, { recapEditorialSelection: "manual" });
+    await window.cineviral.chooseRecapEditorial(id, { angleId: $("recap-angle-choice").value,
+      hookId: document.querySelector('input[name="recap-hook-choice"]:checked')?.value });
+  }));
+  $("recap-confirm-editorial")?.addEventListener("click", () => runRecapStudioAction({}, false, (id) => window.cineviral.chooseRecapEditorial(id, {
+    angleId: $("recap-angle-choice").value, hookId: document.querySelector('input[name="recap-hook-choice"]:checked')?.value, approve: true
+  })));
+  $("recap-recheck")?.addEventListener("click", () => runRecapStudioAction({ recapRecheck: true }));
+  $("recap-approve-final")?.addEventListener("click", () => runRecapStudioAction({}, true));
+  el.recapDurationPreset?.addEventListener("change", () => {
+    if (Number(el.recapDurationPreset.value)) el.recapTargetDuration.value = el.recapDurationPreset.value;
+    updateReview(); writeSetupDraft();
+  });
+  [el.recapPreset, el.recapNarrationLanguage, el.recapNarrationStyle, el.recapEditorialSelection, el.recapAspectRatio, el.recapFraming, el.recapCaptionStyle, el.recapWorkflowMode, el.recapVisualLead, el.recapAllowReuse].filter(Boolean).forEach((node) => node.addEventListener("change", () => { updateReview(); writeSetupDraft(); }));
   el.renderVideo.addEventListener("click", async () => {
     if (!state.currentProject) return;
+    if (state.currentProject.mode === "recap") return runRecapStudioAction({}, true);
     el.previewPlayer?.pause();
     setBusy(true);
     setRenderCancellable(true);
@@ -12233,7 +12396,9 @@ function bindEvents() {
       await applyCurrentProjectSettings();
       addLog("Đang xuất bản nháp để kiểm tra...");
       if (state.currentProject.mode === "recap") {
-        state.currentProject = await window.cineviral.previewProject(state.currentProject.id);
+        const id = state.currentProject.id;
+        reportRecapResult(await window.cineviral.previewProject(id));
+        state.currentProject = await window.cineviral.getProject(id);
       } else {
         showToast("Bản nháp xem trước hiện mới hỗ trợ đầy đủ cho chế độ tóm tắt phim. Dubbing có thể dùng video proxy/nguồn để xem trước.");
       }
@@ -12481,6 +12646,8 @@ async function bootstrap() {
   applySetupDraft();
   renderProjectPicker();
   bindEvents();
+  $("refresh-antigravity-models")?.addEventListener("click", () => refreshAntigravityModels({ force: true }));
+  if (state.settings.aiProvider === "antigravity_cli") refreshAntigravityModels({ silent: true });
   initStudioSplitters();
   renderActivity();
   if (el.ollamaVisionAssist?.checked) {
@@ -12501,6 +12668,7 @@ async function bootstrap() {
   autoCheckConfiguration();
 
   window.cineviral.onProgress((payload) => {
+    recapSetupUi?.handleProgress(payload);
     window.previewLog?.progress(payload);
     if (payload.autoStoryDraftReady && payload.project) {
       state.currentProject = payload.project;
@@ -12527,7 +12695,7 @@ async function bootstrap() {
       };
       updateVariantHubProgress(payload);
     }
-    if (payload.message) {
+    if (payload.message && !payload.heartbeat) {
       const formattedLog = [payload.stage || payload.step, payload.message].filter(Boolean).join(': ');
       if (formattedLog !== state.lastLoggedProgressMessage) {
         state.lastLoggedProgressMessage = formattedLog;

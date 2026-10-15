@@ -1,15 +1,14 @@
 let activeToken = null;
 const context = new (require('async_hooks').AsyncLocalStorage)();
 function runWithCancelToken(token, work) { return context.run(token, work); }
-function createScopedToken(label) { return { label, cancelled: false, children: new Set(), abortController: new AbortController() }; }
+function createScopedToken(label) {
+  const abortController = new AbortController();
+  return { label, cancelled: false, children: new Set(), abortController, signal: abortController.signal };
+}
 
 function createCancelToken(label = "operation") {
   if (context.getStore()) return context.getStore();
-  activeToken = {
-    label,
-    cancelled: false,
-    children: new Set()
-  };
+  activeToken = createScopedToken(label);
   return activeToken;
 }
 

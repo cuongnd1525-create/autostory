@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { buildCliEnv } = require("./cliEnv");
 const { getCancelToken, throwIfCancelled, trackChild } = require("./cancelToken");
+const { pythonArgs } = require("./pythonRuntimeService");
 const HyMtTranslationService = require("./hyMtTranslationService");
 
 const DEFAULT_MODEL = "Helsinki-NLP/opus-mt-en-vi";
@@ -29,7 +30,7 @@ class TranslationWorker {
     this.startPromise = new Promise((resolve, reject) => {
       const args = [this.scriptPath, "--model", this.model];
       if (this.device) args.push("--device", this.device);
-      const child = spawn(this.pythonCommand, args, {
+      const child = spawn(this.pythonCommand, pythonArgs(this.pythonCommand, args), {
         windowsHide: true,
         env: {
           ...buildCliEnv(),

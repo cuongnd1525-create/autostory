@@ -1553,6 +1553,7 @@ class ManualAntigravityStage1Service {
     cwd,
     timeoutMs,
     onProgress,
+    reportHeartbeat = false,
     progressStep = "antigravity_stage1",
     expectedProxyList = [],
     viewedProxySet = new Set(),
@@ -1689,7 +1690,11 @@ class ManualAntigravityStage1Service {
           killThisChild("host_inactivity_timeout");
           stats.terminationReason = "host_inactivity_timeout";
           finish(() => rejectWith(`Antigravity không có phản hồi trong ${Math.round(idleMs / 1000)}s (quá thời gian chờ hoạt động).`, "inactivity_timeout"));
+          return;
         }
+        if (reportHeartbeat) onProgress?.({ step: progressStep, heartbeat: true,
+          aiStartedAt: Date.parse(startedAtIso), lastActivityAt: lastActivityTime,
+          aiTimeoutMs: hardTimeoutMs, inactivityTimeoutMs: inactivityLimitMs, pid: stats.pid });
       }, Math.max(10, Math.min(this.timers.heartbeatMs, inactivityLimitMs)));
 
       let lastReportedMessage = "";
@@ -1700,7 +1705,9 @@ class ManualAntigravityStage1Service {
         if (cleanMsg === lastReportedMessage && rounded === lastReportedPercent) return;
         lastReportedMessage = cleanMsg;
         lastReportedPercent = rounded;
-        onProgress?.({ step: progressStep, percent: rounded, message: cleanMsg.slice(0, 220) });
+        onProgress?.({ step: progressStep, percent: rounded, message: cleanMsg.slice(0, 220),
+          ...(reportHeartbeat ? { aiStartedAt: Date.parse(startedAtIso), lastActivityAt: lastActivityTime,
+            aiTimeoutMs: hardTimeoutMs, inactivityTimeoutMs: inactivityLimitMs, pid: stats.pid } : {}) });
       };
 
       child.stdout.on("data", (chunk) => {
@@ -1722,6 +1729,15 @@ class ManualAntigravityStage1Service {
             if (event.event === "step_update" && event.step_update) {
               const su = event.step_update;
               recordStep(su);
+              if (reportHeartbeat && su.step_type === "error_message") {
+                const apiError = [su.content, su.message, su.error, su.text_delta].filter((value) => typeof value === "string").join("\n");
+                if (/No capacity available|\bUNAVAILABLE\b.*\b503\b|\bRESOURCE_EXHAUSTED\b/i.test(apiError)) {
+                  failureKind = "capacity"; resultFailureMessage = apiError;
+                  killThisChild("agy_capacity_error");
+                  emitProgress(currentPercent, `Dịch vụ model hết công suất: ${apiError.slice(0, 160)}`);
+                  continue;
+                }
+              }
               if (su.step_type === "tool" && (forbiddenTools.length || toolGuard) && !forbiddenToolError) {
                 const toolName = su.tool_name || su.tool_info?.name || "";
                 const file = String(su.tool_info?.parameters?.AbsolutePath || "");
@@ -1780,7 +1796,9 @@ class ManualAntigravityStage1Service {
               const failed = event.result?.status === "ERROR" || Boolean(event.result?.error);
               if (failed) {
                 resultFailureMessage = String(event.result?.error || event.result?.status || "ERROR");
-                if (/stream was interrupted/i.test(resultFailureMessage)) failureKind = "stream_interrupted";
+                if (/invalid model selection|not recognized as a known model/i.test(resultFailureMessage)) failureKind = "invalid_model";
+                else if (/output token limit|MAX_TOKENS|maximum.*(?:output|token)|response was cut off/i.test(resultFailureMessage)) failureKind = "output_limit";
+                else if (/stream was interrupted/i.test(resultFailureMessage)) failureKind = "stream_interrupted";
                 else if (/\bUNAUTHENTICATED\b|\b401\b|invalid authentication credentials/i.test(resultFailureMessage)) failureKind = "auth";
                 else if (/\bUNAVAILABLE\b|\bRESOURCE_EXHAUSTED\b|No capacity available|high traffic|\b503\b|\b429\b/i.test(resultFailureMessage)) failureKind = "capacity";
                 else failureKind = failureKind || "cli_error";

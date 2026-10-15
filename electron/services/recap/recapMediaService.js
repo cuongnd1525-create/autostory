@@ -226,12 +226,18 @@ class RecapMediaService {
    */
   async extractProxyChunk({ proxyPath, chunk, outputDir }) {
     await fs.mkdir(outputDir, { recursive: true });
-    const chunkFileName = `recap-proxy-chunk-${String(chunk.chunkIndex).padStart(3, "0")}.mp4`;
+    // Stream-copy seeking includes keyframe preroll and changes the actual
+    // source interval. Version the cache so incorrect old clips are not reused.
+    const chunkFileName = `recap-proxy-chunk-${String(chunk.chunkIndex).padStart(3, "0")}-accurate-v2.mp4`;
     const outputPath = path.join(outputDir, chunkFileName);
+    const proxyStat = await fs.stat(proxyPath);
+    const signature = JSON.stringify([2, proxyPath, proxyStat.size, proxyStat.mtimeMs, chunk.sourceStartSec, chunk.durationSec]);
+    const manifestPath = `${outputPath}.json`;
 
     try {
       const existing = await fs.stat(outputPath);
-      if (existing.size > 1024) return outputPath;
+      const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+      if (existing.size > 1024 && manifest.signature === signature) return outputPath;
     } catch (_err) {
       // Extract
     }
@@ -242,14 +248,24 @@ class RecapMediaService {
     await this.runCommand(this.ffmpegPath, [
       "-y",
       "-ss", String(chunk.sourceStartSec),
-      "-t", String(chunk.durationSec),
       "-i", proxyPath,
-      "-c", "copy",
-      "-avoid_negative_ts", "make_zero",
+      "-t", String(chunk.durationSec),
+      "-map", "0:v:0", "-map", "0:a?",
+      "-vf", "setpts=PTS-STARTPTS",
+      "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
+      "-c:a", "aac", "-b:a", "48k", "-ac", "1", "-ar", "22050",
+      "-movflags", "+faststart",
       tempPath
     ], 120000);
 
+    const actual = await this.probeVideo(tempPath);
+    if (Math.abs(actual.duration - chunk.durationSec) > 0.2) {
+      await fs.unlink(tempPath).catch(() => {});
+      throw new Error(`Proxy chunk sai thời lượng: yêu cầu ${chunk.durationSec}s, thực tế ${actual.duration}s. Không gửi clip lệch timeline cho AI.`);
+    }
+
     await fs.rename(tempPath, outputPath);
+    await fs.writeFile(manifestPath, JSON.stringify({ signature, durationSec: actual.duration }), "utf8");
     return outputPath;
   }
 }

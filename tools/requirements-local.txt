@@ -1,0 +1,9 @@
+# One isolated Python 3.11 runtime for ASR, Kokoro, and OPUS-MT.
+numpy>=1.26,<3
+soundfile>=0.12,<1
+torch>=2.4,<3
+transformers>=4.51,<5
+sentencepiece>=0.2,<1
+sacremoses>=0.1,<1
+kokoro==0.9.4
+faster-whisper>=1.1,<2

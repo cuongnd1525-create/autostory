@@ -58,6 +58,8 @@ const settle = (promise) => promise.then((value) => ({ ok: true, value }), (erro
 async function processIsolationTests() {
   const children = new Map();
   const service = new Stage1({ antigravityCommand: "agy" }, { spawn: controlledSpawn(children), timers: { heartbeatMs: 10, hardTimeoutGraceMs: 40 } });
+  // Fake children must use the fake termination path on Windows as well.
+  service.killChild = (child) => child.kill();
   const start = (name, timeoutMs, extra = {}) => settle(service.runCli({ command: "agy", args: [`--print=${name}`], prompt: name, cwd: os.tmpdir(), timeoutMs, label: name, ...extra }));
 
   // A finishes while B continues.
@@ -99,6 +101,7 @@ async function processIsolationTests() {
 
   // Coverage auditing under concurrency: interleaved streams, no cross-contamination.
   const service2 = new Stage1({ antigravityCommand: "agy" }, { spawn: controlledSpawn(children), timers: { heartbeatMs: 10, hardTimeoutGraceMs: 40 } });
+  service2.killChild = (child) => child.kill();
   const proxy1 = { id: "p1", filename: "analysis-proxy-chunk-001.mp4", absolutePath: "D:\\pack\\01-GUI-GEMINI\\analysis-proxy-chunk-001.mp4" };
   const proxy2 = { id: "p2", filename: "analysis-proxy-chunk-002.mp4", absolutePath: "D:\\pack\\01-GUI-GEMINI\\analysis-proxy-chunk-002.mp4" };
   const viewed1 = new Set();

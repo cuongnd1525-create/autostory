@@ -4,6 +4,7 @@ const crypto = require("crypto");
 const { spawn } = require("child_process");
 const { buildCliEnv } = require("./cliEnv");
 const { getCancelToken, throwIfCancelled, trackChild } = require("./cancelToken");
+const { pythonArgs, runtimeFailureMessage } = require("./pythonRuntimeService");
 
 const DEFAULT_MODEL = "hexgrad/Kokoro-82M";
 const DEFAULT_VOICE = "af_heart";
@@ -70,7 +71,7 @@ class KokoroWorkerClient {
     this.startPromise = new Promise((resolve, reject) => {
       const args = [this.scriptPath, "--model", this.model];
       if (this.device) args.push("--device", this.device);
-      const child = spawn(this.pythonCommand, args, {
+      const child = spawn(this.pythonCommand, pythonArgs(this.pythonCommand, args), {
         windowsHide: true,
         env: this.env,
         stdio: ["pipe", "pipe", "pipe"]
@@ -282,8 +283,9 @@ class KokoroVoiceService {
       }, { onProgress, timeoutMs });
     } catch (error) {
       throwIfCancelled();
-      if (/No module named ['"]?kokoro|cannot find module 'kokoro'/i.test(error.message)) {
-        throw new Error("Chưa cài Kokoro. Chạy `python -m pip install kokoro>=0.9.4 soundfile`, sau đó thử lại.");
+      if (/No module named|ENOENT|timed out/i.test(error.message)) {
+        const command = this.settings.kokoroPythonCommand || process.env.KOKORO_PYTHON_COMMAND || "python";
+        throw new Error(runtimeFailureMessage(error, "Kokoro", command, ["numpy", "kokoro>=0.9.4", "soundfile"]), { cause: error });
       }
       throw error;
     }

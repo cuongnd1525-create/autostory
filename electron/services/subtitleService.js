@@ -3,6 +3,8 @@ const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 const { spawn } = require("child_process");
+const { buildCliEnv } = require("./cliEnv");
+const { pythonArgs, runtimeError } = require("./pythonRuntimeService");
 
 const DEFAULT_WHISPER_BASE_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_WHISPER_TIMEOUT_MS = 300000; // Backwards-compatible constant for legacy test assertions
@@ -27,7 +29,7 @@ function runCommand(command, args, timeoutMs = DEFAULT_WHISPER_BASE_TIMEOUT_MS) 
   return new Promise((resolve, reject) => {
     const stdoutChunks = [];
     const stderrChunks = [];
-    const child = spawn(command, args, { windowsHide: true });
+    const child = spawn(command, args, { windowsHide: true, env: buildCliEnv() });
     let settled = false;
     const finish = (callback) => {
       if (settled) return;
@@ -55,10 +57,6 @@ function runCommand(command, args, timeoutMs = DEFAULT_WHISPER_BASE_TIMEOUT_MS) 
       resolve({ stdout, stderr });
     }));
   });
-}
-
-function pythonArgs(command, args) {
-  return String(command || "").toLowerCase() === "py" ? ["-3", ...args] : args;
 }
 
 function normalizeEngine(value) {
@@ -130,8 +128,10 @@ function chooseAutoAsrProfile({
 }
 
 class SubtitleService {
-  constructor(settings = {}) {
+  constructor(settings = {}, dependencies = {}) {
     this.settings = settings;
+    this.runtimeCommand = dependencies.runCommand || runCommand;
+    this.runtimeCheckTimeoutMs = Math.max(30000, Number(settings.pythonRuntimeCheckTimeoutMs || 90000));
     this.whisperEngine = normalizeEngine(settings.whisperEngine || process.env.WHISPER_ENGINE || "auto");
     this.whisperCommand = settings.whisperCommand || process.env.WHISPER_COMMAND || "whisper";
     this.whisperPythonCommand = settings.whisperPythonCommand || process.env.WHISPER_PYTHON_COMMAND || "py";
@@ -187,26 +187,46 @@ class SubtitleService {
     };
     if (engine === "faster-whisper" && checkDependency) {
       try {
-        await runCommand(
+        await this.runtimeCommand(
           this.whisperPythonCommand,
           pythonArgs(this.whisperPythonCommand, ["-c", "import faster_whisper; print('ok')"]),
-          12000
+          this.runtimeCheckTimeoutMs
         );
         profile.fasterWhisperAvailable = true;
-      } catch (_error) {
+      } catch (error) {
         profile.fasterWhisperAvailable = false;
+        profile.runtimeError = runtimeError(error);
+      }
+      if (profile.fasterWhisperAvailable && profile.device === "cuda" && process.platform === "win32") {
+        try {
+          const toolsDir = path.dirname(this.settings.fasterWhisperScript || path.join(__dirname, "..", "..", "tools", "faster_whisper_transcribe.py"));
+          const probe = `import sys; sys.path.insert(0, ${JSON.stringify(toolsDir)}); from python_runtime_bootstrap import register_nvidia_dlls; register_nvidia_dlls(); import ctypes; ctypes.WinDLL('cublas64_12.dll'); ctypes.WinDLL('cudnn64_9.dll'); import ctranslate2; assert ctranslate2.get_cuda_device_count() > 0; print('cuda ok')`;
+          await this.runtimeCommand(this.whisperPythonCommand, pythonArgs(this.whisperPythonCommand, ["-c", probe]), this.runtimeCheckTimeoutMs);
+          profile.cudaRuntimeAvailable = true;
+        } catch (error) {
+          profile.cudaRuntimeAvailable = false;
+          profile.cudaRuntimeError = runtimeError(error);
+          if (this.whisperDevice === "auto") {
+            const cpuProfile = chooseAutoAsrProfile({ language, totalMemoryGb, cpuThreads, nvidiaVramMb: 0 });
+            profile.device = "cpu";
+            profile.computeType = this.whisperComputeType === "auto" ? "int8" : this.whisperComputeType;
+            if (configuredModel === "auto") profile.model = cpuProfile.model;
+            profile.reason = `${cpuProfile.reason}. Đang dùng CPU vì CUDA runtime chưa sẵn sàng: ${profile.cudaRuntimeError.message}`;
+          }
+        }
       }
     }
     if (engine === "nvidia-parakeet" && checkDependency) {
       try {
-        await runCommand(
+        await this.runtimeCommand(
           this.whisperPythonCommand,
           pythonArgs(this.whisperPythonCommand, ["-c", "import torch, soundfile, nemo.collections.asr; print('ok')"]),
-          20000
+          this.runtimeCheckTimeoutMs
         );
         profile.parakeetAvailable = true;
-      } catch (_error) {
+      } catch (error) {
         profile.parakeetAvailable = false;
+        profile.runtimeError = runtimeError(error);
       }
       profile.model = configuredModel.startsWith("nvidia/")
         ? configuredModel
@@ -261,10 +281,15 @@ class SubtitleService {
     profile,
     timeoutMs = null
   }) {
+    if (profile.device === "cuda" && profile.cudaRuntimeAvailable === false) {
+      throw new Error(`Python đã chọn thiếu CUDA runtime cho ASR GPU: ${profile.cudaRuntimeError?.message || "CUDA unavailable"}. Chọn device Auto/CPU hoặc cài cuBLAS CUDA 12 và cuDNN 9.`);
+    }
     const outputPath = path.join(outputDir, `${path.parse(audioPath).name}.srt`);
     const scriptPath = this.settings.fasterWhisperScript
       || path.join(__dirname, "..", "..", "tools", "faster_whisper_transcribe.py");
-    const profileCacheName = `${profile.model}-${profile.device}-${profile.computeType}`.replace(/[^a-z0-9._-]+/gi, "-");
+    const decoder = this.settings.whisperBatchSize || this.settings.whisperBeamSize
+      ? `-batch${Number(this.settings.whisperBatchSize) || "auto"}-beam${Number(this.settings.whisperBeamSize) || 1}` : "";
+    const profileCacheName = `${profile.model}-${profile.device}-${profile.computeType}${decoder}`.replace(/[^a-z0-9._-]+/gi, "-");
     const audioCacheKey = await buildAudioCacheKey(audioPath);
     const chunkCacheDir = cacheDir
       ? path.join(cacheDir, profileCacheName, audioCacheKey)
@@ -277,9 +302,10 @@ class SubtitleService {
       "--language", normalizeLanguage(narrationLanguage),
       "--device", profile.device,
       "--compute-type", profile.computeType,
-      "--batch-size", String(profile.device === "cuda"
+      "--batch-size", String(Number(this.settings.whisperBatchSize) > 0 ? Math.min(32, Math.round(Number(this.settings.whisperBatchSize))) : profile.device === "cuda"
         ? (Number(profile.nvidiaVramMb || 0) >= 6144 ? 16 : 8)
         : (Number(profile.totalMemoryGb || 0) >= 16 ? 4 : 2)),
+      "--beam-size", String(Math.max(1, Math.min(10, Number(this.settings.whisperBeamSize) || 1))),
       "--chunk-sec", String(this.whisperChunkSec),
       "--cache-dir", chunkCacheDir
     ];
