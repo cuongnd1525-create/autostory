@@ -402,9 +402,9 @@
                   <div>
                     <label>Nhịp xen kẽ</label>
                     <select id="manual-series-pacing">
-                      <option value="strict_10" selected>Chặt 8-12 giây mỗi nhịp</option>
+                      <option value="strict_10">Chặt 8-12 giây mỗi nhịp</option>
                       <option value="balanced">Cân bằng 6-18 giây</option>
-                      <option value="story_first">Ưu tiên mạch truyện, âm gốc tới 30 giây</option>
+                      <option value="story_first" selected>Ưu tiên mạch truyện, âm gốc tới 30 giây</option>
                     </select>
                   </div>
                 </div>
@@ -415,7 +415,7 @@
                   </summary>
                   <div class="mode-advanced-options-body">
                     <div class="prompt-toggle-grid">
-                      <label class="check-row"><input id="manual-series-shared-hook" type="checkbox" checked disabled /> Cold Open Hook hành động chung 5-30 giây (bắt buộc)</label>
+                      <label class="check-row"><input id="manual-series-shared-hook" type="checkbox" /> Lặp cùng Hook ở cả 3 Part (mặc định tắt: mỗi Part Hook riêng)</label>
                       <label class="check-row"><input id="manual-series-interleaved-audio" type="checkbox" checked /> Xen kẽ voiceover và âm thanh gốc</label>
                       <label class="check-row"><input id="manual-series-narrator-style" type="checkbox" checked /> <span id="manual-series-narrator-style-label">Văn phong narrator true-crime điện ảnh</span></label>
                       <label class="check-row"><input id="manual-series-cliffhanger" type="checkbox" checked /> Part 1-2 kết thúc bằng cliffhanger</label>

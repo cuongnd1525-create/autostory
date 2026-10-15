@@ -3138,7 +3138,8 @@ class ManualGeminiPackService {
     storyFormat = "non_linear_rewind",
     isMultiVariant = false,
     hasDuplicates = false,
-    variants = null
+    variants = null,
+    hookPolicy = ""
   } = {}) {
     if (!packageDir) throw new Error("Chưa có đường dẫn gói phân tích.");
     if (!candidate && !variants) throw new Error("Chưa chọn ứng viên Hook.");
@@ -3150,7 +3151,8 @@ class ManualGeminiPackService {
       isUserLocked: true,
       isMultiVariant: Boolean(isMultiVariant || variants),
       hasDuplicates: Boolean(hasDuplicates),
-      variants
+      variants,
+      hookPolicy
     });
     const pass1UploadDir = path.join(packageDir, "01-GUI-GEMINI");
     const contractPath = path.join(pass1UploadDir, "hook-contract.json");
@@ -3181,6 +3183,15 @@ class ManualGeminiPackService {
       info.hookContractPath = contractPath;
       info.selectedHookId = contract.hookId;
       info.isMultiVariantHook = contract.isMultiVariant;
+      info.hookPolicy = contract.hookPolicy;
+      // For long sources Gemini uploads the FINAL batch, not the root prompt.
+      // Synchronize a user-locked Hook Contract into that actual upload folder.
+      const batchDirs = Array.isArray(info.proxyUploadBatchDirs) ? info.proxyUploadBatchDirs : [];
+      const finalBatchDir = batchDirs.length > 1 ? batchDirs[batchDirs.length - 1] : "";
+      if (finalBatchDir && await nonEmptyFileExists(promptPath)) {
+        await copyFileAtomic(promptPath, path.join(finalBatchDir, path.basename(promptPath)));
+        await copyFileAtomic(contractPath, path.join(finalBatchDir, "hook-contract.json"));
+      }
       await writeJsonAtomic(infoPath, info);
     }
 

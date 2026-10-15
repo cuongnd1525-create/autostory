@@ -33,7 +33,8 @@ function buildHookContract({
   isUserLocked = true,
   isMultiVariant = false,
   hasDuplicates = false,
-  variants = null
+  variants = null,
+  hookPolicy = ""
 } = {}) {
   // Multi-variant mode
   if (isMultiVariant || (variants && typeof variants === "object")) {
@@ -53,6 +54,7 @@ function buildHookContract({
 
     return {
       contractVersion: 2,
+      hookPolicy: hookPolicy || "part_specific",
       isUserLocked: Boolean(isUserLocked),
       isMultiVariant: true,
       hasDuplicates: dup,
@@ -86,6 +88,7 @@ function buildHookContract({
 
   return {
     contractVersion: 1,
+    hookPolicy: hookPolicy || "part_specific",
     isUserLocked: Boolean(isUserLocked),
     isMultiVariant: false,
     hasDuplicates: false,
@@ -153,10 +156,11 @@ function validateHookContract(contract = {}, videoDurationSec = 0) {
   };
 }
 
-const SERIES_PROMPT_PROFILE_PATTERN = /prompt_profile:\s*viral_tiktok_crime_part1\b/i;
+const SERIES_PROMPT_PROFILE_PATTERN = /prompt_profile:\s*(?:viral_tiktok_crime_part1|serialized_interleaved|serialized_genz)\b/i;
+const SERIES_MODE_PATTERN = /series_mode:\s*interleaved_multipart\b/i;
 
 function isSeriesHookContract(text = "", contract = {}) {
-  if (SERIES_PROMPT_PROFILE_PATTERN.test(String(text || ""))) return true;
+  if (SERIES_PROMPT_PROFILE_PATTERN.test(String(text || "")) || SERIES_MODE_PATTERN.test(String(text || ""))) return true;
   const variants = contract?.variants ? Object.values(contract.variants) : [];
   return variants.some((variant) => /^part_\d/i.test(String(variant?.storyAngle || "")));
 }
@@ -177,7 +181,7 @@ function describeAnchor(entry = {}, label = "") {
 // Series profiles (Part 1/2/3 of ONE story) must never receive the legacy
 // "3 different stories" differentiation matrix: that matrix makes the Parts
 // diverge into three unrelated edits.
-function buildSeriesHookContractBlock(contract = {}) {
+function buildSeriesHookContractBlock(contract = {}, sharedHookEnabled = false) {
   const isMulti = Boolean(contract?.isMultiVariant && contract?.variants);
   const v1 = isMulti ? contract.variants.variant_01 : contract;
   const v2 = isMulti ? contract.variants.variant_02 : null;
@@ -188,22 +192,25 @@ function buildSeriesHookContractBlock(contract = {}) {
     "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)",
     "================================================================================",
     "Script 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.",
+    `HOOK POLICY: ${sharedHookEnabled ? "shared_signature" : "part_specific"}. Obey this policy even when a legacy prompt example suggests otherwise.`,
     "",
     describeAnchor(v1 || {}, "PART 1 (Script 1) cold-open hook anchor"),
     "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
   ];
-  if (v2 && !sameStart(v2, v1)) {
+  if (v2 && !sharedHookEnabled && !sameStart(v2, v1)) {
     lines.push("", describeAnchor(v2, "PART 2 (Script 3) opener anchor"), "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.");
   }
-  if (v3 && !sameStart(v3, v1) && !sameStart(v3, v2)) {
+  if (v3 && !sharedHookEnabled && !sameStart(v3, v1) && !sameStart(v3, v2)) {
     lines.push("", describeAnchor(v3, "PART 3 (Script 4) opener anchor"), "   - Use it as Part 3 Beat 1 only if it belongs to Part 3's scope.");
   }
   lines.push(
     "",
     "SERIES RULES:",
-    "- PART 1 = The Confrontation, PART 2 = The Interrogation, PART 3 = The Verdict & Arrest, in source chronology.",
-    "- Each Part opens on its own strongest verified moment inside its own scope. Never reuse PART 1's hook footage as another Part's opener (a recap of at most 3s is allowed).",
-    "- Spoiler boundary: PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Only PART 3 delivers the payoff.",
+    "- PART 1 introduces verified conflict, PART 2 advances new verified escalation, PART 3 delivers the last verified climax and outcome. Do not invent interrogations, arrests, charges or verdicts.",
+    sharedHookEnabled
+      ? "- SHARED SIGNATURE: Each Part opens with the same verified Part 1 hook; do not claim it is new footage. Keep the chapter-specific narration after that hook unique."
+      : "- PART-SPECIFIC: Each Part opens on a distinct verified moment belonging to its own chapter. A recap of at most 3s is acceptable; do not reuse the full Part 1 hook.",
+    "- Spoiler boundary: PART 1 and PART 2 must not reveal the story’s actual final verified consequence. PART 3 delivers only outcomes supported by the supplied source.",
     "- PART 1 and PART 2 end on verified unresolved cliffhangers that lead into the next Part.",
     "- When a locked series-plan.json is supplied, it is binding for scope, scene allocation and cliffhangers.",
     "================================================================================"
@@ -217,7 +224,9 @@ function injectHookContractToPrompt(basePrompt = "", contract = {}) {
   const range = contract?.anchorRange;
   const tol = contract?.trimmingTolerance || { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 };
   if (isSeriesHookContract(text, contract) && (isMulti || range)) {
-    const seriesBlock = buildSeriesHookContractBlock(contract);
+    const sharedHookEnabled = contract?.hookPolicy === "shared_signature"
+      || (contract?.hookPolicy !== "part_specific" && /- shared cold open:\s*true\b/i.test(text));
+    const seriesBlock = buildSeriesHookContractBlock(contract, sharedHookEnabled);
     if (text.includes("DIRECT HIGHLIGHT CONTENT RULES:")) {
       return text.replace("DIRECT HIGHLIGHT CONTENT RULES:", `DIRECT HIGHLIGHT CONTENT RULES:\n\n${seriesBlock}\n`);
     }

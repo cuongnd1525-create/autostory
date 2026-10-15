@@ -3484,7 +3484,7 @@ function readManualGeminiPromptOptions() {
   return {
     profile,
     independent: readIndependentPromptOptions(),
-    sharedHook: ["serialized_interleaved", "serialized_genz"].includes(profile) ? true : el.manualSeriesSharedHook?.checked !== false,
+    sharedHook: el.manualSeriesSharedHook?.checked === true,
     interleavedAudio: el.manualSeriesInterleavedAudio?.checked !== false,
     cinematicNarrator: el.manualSeriesNarratorStyle?.checked !== false,
     cliffhanger: el.manualSeriesCliffhanger?.checked !== false,
@@ -3528,8 +3528,7 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
   el.manualSerializedOptions?.classList.toggle("hidden", !isSerialized);
   setIndependentHookPriority(options.independent?.hookPriority || DEFAULT_INDEPENDENT_HOOK_PRIORITY);
   if (el.manualSeriesSharedHook) {
-    el.manualSeriesSharedHook.checked = true;
-    el.manualSeriesSharedHook.disabled = isSerialized;
+    el.manualSeriesSharedHook.disabled = false;
   }
   if (el.manualSeriesNarratorStyle) {
     if (isGenZ) el.manualSeriesNarratorStyle.checked = true;
@@ -3559,7 +3558,9 @@ function buildSerializedHighlightGeminiPromptTemplate(options = readManualGemini
 - COMPLETE ACTION HOOK: Preserve the useful progression from setup or warning -> confrontation or action -> climax -> immediate reaction. The Hook may last up to 30 seconds when needed to keep that continuous action understandable and complete. Do not cut a strong action Hook merely to satisfy a shorter duration target.
 - MULTI-SEGMENT HOOK REQUIRED WHEN NEEDED: If the selected action crosses scene-manifest boundaries, return consecutive scene-bounded JSON segments. Assign storyFunction="hook", audio_mode="original_audio", empty voiceover_text, and the same macroBlockId, sourceRunId, actionSequenceId, sustainedBeatId, completeNarrativeBeat=true, sustainedBeatOverride=true, and actionOverride=true to every Hook slice. Preserve source order without gaps and place no voiceover or unrelated footage between slices.
 - HOOK PAYOFF COMPLETENESS: Ending an action Hook before its verified climax or immediate reaction is invalid. Loudness alone is insufficient; the action must remain understandable to a cold viewer and deliver a concrete visual or audible payoff.
-- EVERY Part MUST start with the EXACT SAME complete signature cold open Hook sequence. The Hook MUST use pure original_audio and may last from 5 to 30 seconds. Cut immediately before an external source narrator begins; never retain that narrator merely to complete a duration target.`;
+- ${options.sharedHook
+    ? "SHARED SIGNATURE: Every Part starts with the SAME verified complete signature Hook (5-30s); after the shared Hook each Part tells NEW chapter events and narration."
+    : "PART-SPECIFIC: Every Part starts with its OWN strongest verified Hook from its chapter scope (5-30s), never replay the complete Part 1 Hook. Use at most a 3s recap if essential."} Use pure original_audio for clean direct action/dialogue. Cut immediately before an external source narrator begins; never retain that narrator merely to complete a duration target.`;
   const audioRule = options.interleavedAudio
     ? pacingRule
     : "Choose audio_mode according to story needs. Preserve important source dialogue as original_audio and use voiceover_only only where source dialogue can be safely muted.";
@@ -3604,6 +3605,8 @@ ${persona}
 - series_mode: interleaved_multipart
 - target duration for EACH Part: ${options.minDuration}-${options.maxDuration} seconds after playbackSpeed
 - shared cold open: ${options.sharedHook}
+- editorial_format: serialized_story
+- hook_policy: ${options.sharedHook ? "shared_signature" : "part_specific"}
 - interleaved audio sandwich: ${options.interleavedAudio}
 - cinematic narrator: ${options.cinematicNarrator}
 - cliffhanger endings: ${options.cliffhanger}
@@ -3635,7 +3638,7 @@ ${persona}
 12. TIMELINES: sourceStartSec/sourceEndSec refer only to the original video. Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec; the local tool derives the Part timeline.
     ONE-SCENE-PER-SEGMENT: Every source range must remain inside exactly one selected sceneId. If a logical beat crosses a scene boundary, split it into scene-bounded segments, preserve macroBlockId/sourceRunId/actionSequenceId and divide voiceover without duplication.
 13. DURATION: output duration = (sourceEndSec - sourceStartSec) / playbackSpeed, computed by the local tool. playbackSpeed defaults to 1; set it only for a justified speed change.
-14. AUDIO MODES: original_audio requires voiceover_text="". voiceover_only requires English voiceover_text and means source audio will be ducked to 20% volume.
+14. AUDIO MODES: original_audio requires voiceover_text="" and plays the authentic source soundtrack. voiceover_only requires verified English voiceover_text and MUTES the entire source soundtrack (0%). voiceover_with_ambient may retain source ambience at 10-20% ONLY when no intelligible source dialogue/narrator is present; reducing volume does not remove speech.
 15. DURATION GATE: Every Part must be within ${options.minDuration}-${options.maxDuration}s and never below 60.5s. Add relevant complete evidence, never silence, freeze frames, credits, or filler.
 
 ================================================================================
@@ -3650,7 +3653,7 @@ ${persona}
 ${antiHallucinationRule}
 
 1. ANTI-CLONE VOICEOVER RULE (SERIALIZATION INTEGRITY)
-- Even when shared_hook_enabled=true uses the exact same 5-30s pure original_audio Hook sequence across Part 1, Part 2, and Part 3, the first voiceover_only segment after the complete Hook MUST be unique in wording and narrative purpose for each Part.
+- ${options.sharedHook ? "With shared_hook_enabled=true, the same 5-30s original-audio signature Hook is replayed intentionally." : "With shared_hook_enabled=false, the Parts use distinct verified chapter Hook events."} The first voiceover_only segment after the Hook MUST be unique in wording and narrative purpose for each Part.
 - FORBIDDEN: Copying, lightly paraphrasing, or reusing the same opening narration across multiple Parts.
 - Part 1 opening voiceover establishes the verified premise and immediate stakes.
 - Part 2 opening voiceover is a rapid evidence-grounded recap/bridge from Part 1 into the new conflict covered by Part 2.
@@ -5900,11 +5903,14 @@ async function confirmHookAndLock() {
   try {
     const profile = (typeof readManualGeminiPromptOptions === "function") ? readManualGeminiPromptOptions().profile : "";
     const isTikTokCrimePart1 = profile === "viral_tiktok_crime_part1";
+    const isSerializedProfile = ["serialized_interleaved", "serialized_genz"].includes(profile);
+    const selectedSharedHook = readManualGeminiPromptOptions().sharedHook;
 
     const lockResult = await window.cineviral.lockHookContract({
       packageDir,
       isMultiVariant: true,
       hasDuplicates,
+      hookPolicy: isSerializedProfile ? (selectedSharedHook ? "shared_signature" : "part_specific") : "",
       variants: {
         variant_01: {
           scriptId: 1,
@@ -5912,7 +5918,7 @@ async function confirmHookAndLock() {
           candidate: v1.candidate,
           userAnchorRange: v1.userAnchorRange,
           trimmingTolerance: v1.trimmingTolerance,
-          storyAngle: isTikTokCrimePart1 ? "part_1_confrontation" : "high_octane_thriller"
+          storyAngle: (isTikTokCrimePart1 || isSerializedProfile) ? "part_1_confrontation" : "high_octane_thriller"
         },
         variant_02: {
           scriptId: 3,
@@ -5920,7 +5926,7 @@ async function confirmHookAndLock() {
           candidate: v2.candidate,
           userAnchorRange: v2.userAnchorRange,
           trimmingTolerance: v2.trimmingTolerance,
-          storyAngle: isTikTokCrimePart1 ? "part_2_interrogation" : "non_linear_in_medias_res"
+          storyAngle: (isTikTokCrimePart1 || isSerializedProfile) ? "part_2_escalation" : "non_linear_in_medias_res"
         },
         variant_03: {
           scriptId: 4,
@@ -5928,7 +5934,7 @@ async function confirmHookAndLock() {
           candidate: v3.candidate,
           userAnchorRange: v3.userAnchorRange,
           trimmingTolerance: v3.trimmingTolerance,
-          storyAngle: isTikTokCrimePart1 ? "part_3_verdict_arrest" : "tactical_standoff_breach"
+          storyAngle: (isTikTokCrimePart1 || isSerializedProfile) ? "part_3_verified_outcome" : "tactical_standoff_breach"
         }
       }
     });
