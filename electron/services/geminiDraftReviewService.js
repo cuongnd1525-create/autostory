@@ -471,7 +471,8 @@ function buildReviewContext({
   sourceTranscriptSrt,
   transcriptInput,
   semanticDialogueCandidates,
-  reviewTarget
+  reviewTarget,
+  sourceCoverageComplete = false
 }) {
   return {
     artifactType: "gemini_draft_review_context",
@@ -484,6 +485,10 @@ function buildReviewContext({
     voiceTimingReport: voiceTimingReport || null,
     resolvedTimeline: resolvedTimeline || null,
     sourceProxyManifest: proxyChunksManifest || null,
+    sourceCoverageComplete,
+    sourceCoverageNotice: sourceCoverageComplete
+      ? "The supplied source proxy covers the complete source timeline."
+      : "PARTIAL SOURCE COVERAGE: source replacement claims MUST be limited to supplied ranges; request additional source footage to compare omitted scenes.",
     hookAuditMedia: hookAuditMedia || null,
     transcriptInput: transcriptInput || buildTranscriptInput(),
     semanticDialogueCandidates: semanticDialogueCandidates || buildSemanticDialogueCandidates([]),
@@ -1554,7 +1559,8 @@ class GeminiDraftReviewService {
       sourceTranscriptSrt,
       transcriptInput,
       semanticDialogueCandidates,
-      reviewTarget
+      reviewTarget,
+      sourceCoverageComplete
     }), null, 2), "utf8");
     const reviewPromptText = buildReviewPrompt({
       variant: {
