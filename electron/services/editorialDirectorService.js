@@ -126,6 +126,28 @@ const deliveryRepairResult = {
 
 const schemas = { directorEdl, directorBeat, directorSpine, deliveryRepairResult };
 
+// Source-backed hook recovery must protect the verified STORY. Gemini chooses
+// the replacement opening; JS merely enforces a locked core/payoff contract.
+function hookCoreIntegrityViolations(baseline, candidate) {
+  const before = baseline?.beats || [], after = candidate?.beats || [];
+  if (!before.length || !after.length) return [];
+  const violations = [];
+  if (before.length !== after.length) violations.push({
+    code: 'HOOK_REPAIR_CHANGED_CORE',
+    message: `Hook-only repair must preserve ${before.length} beats, in order; got ${after.length}. Modify only the FIRST opening source cut.`
+  });
+  for (let i = 1; i < before.length; i++) {
+    const a = before[i], c = after[i];
+    if (!c || a.beatId !== c.beatId ||
+      Math.abs(num(a.sourceStartSec) - num(c.sourceStartSec)) > 1e-6 ||
+      Math.abs(num(a.sourceEndSec) - num(c.sourceEndSec)) > 1e-6) {
+      violations.push({ code:'HOOK_REPAIR_CHANGED_CORE', beatId:a.beatId,
+        message:`Beat '${a.beatId}' at index ${i} MUST retain the verified core/ending source cut ${a.sourceStartSec}-${a.sourceEndSec}s. Change only the opening picture and its adjacent delivery/handoff.` });
+    }
+  }
+  return violations;
+}
+
 // ---------------------------------------------------------------- instruction
 const instruction = `PASS 1B — MEDIA-GROUNDED EDITORIAL DIRECTOR. You own the exact EDL.
 The attached video files are the ONLY footage you may cut from. They are the packed media reel of the selected Story Scope: a file may contain SEVERAL source segments back to back. SOURCE MEDIA (and input.scopeReelManifest) lists, per file, each segment's reelStartSec/reelEndSec, its absolute sourceStartSec/sourceEndSec and its scopeWindowId. Map reel time to source time with sourceSec = segment.sourceStartSec + (reelSec - segment.reelStartSec); when sourceClockBurned is true the picture also shows the SOURCE clock. Always output ABSOLUTE source seconds, and never let one beat span two segments. Cut only inside a segment's logical scope window (windowStartSec..windowEndSec); the rest of a segment is context.
@@ -805,6 +827,9 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     // scope window each segment belongs to.
     scopeReelManifest: reel.manifest,
     scopeReelFiles: reel.files,
+    allowedAbsoluteSourceCuts: cuttableRanges(reel.ranges).map(([startSec,endSec]) => ({
+      startSec:round2(startSec), endSec:round2(endSec)
+    })),
     sourceDurationSec: engine.duration,
     targetDurationMinSec: targets.hardMinSec,
     targetDurationMaxSec: targets.hardMaxSec,
@@ -816,6 +841,12 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     narrationWordsPerSecond: cfg.narration?.measuredWordsPerSecond || null,
     narrationMinBlockSec: Number(cfg.narrationMinBlockSec) || 0,
     narrationDeliveryPolicyVersion: 2,
+    ...(extraInput.hookRepair ? {
+      hookRecoveryContractVersion: 2,
+      lockedCoreSourceBeats: (extraInput.currentEdl?.beats || []).slice(1).map(b => ({
+        beatId:b.beatId, sourceStartSec:b.sourceStartSec, sourceEndSec:b.sourceEndSec
+      }))
+    } : {}),
     modelContext: modelContextForReel(model, reel),
     ...extraInput
   };
@@ -830,6 +861,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
   // returns a structurally invalid EDL is diagnostic only and is never promoted.
   let violations = null, current = extraInput.currentEdl || null, reelObservations = '', previousCompression = null;
   let lastAccepted = null, lastInvalidRepair = null, previousUnderMin = null, stalledRepair = null;
+  let lastEvaluatedSpine = null;
   for (let attempt = 0; attempt <= maxTechnicalRepairs; attempt++) {
     const technical = attempt > 0;
     // Once the EDL is media-grounded and ONLY duration is wrong, repair it with a
@@ -872,6 +904,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       ({ result, schemaError } = await askDirector(engine, callKey, input, instr, evidence));
     }
     let spine = result?.spine || null;
+    lastEvaluatedSpine = spine;
     // A compression may remove beats: drop block references to beats that no longer exist.
     if (spine && mode === 'duration_compression' && Array.isArray(spine.deliveryBlocks)) {
       spine = { ...spine, deliveryBlocks: Delivery.pruneRemovedBeats(spine.deliveryBlocks, spine.beats) };
@@ -879,6 +912,11 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     let report = schemaError
       ? { valid: false, violations: [{ code: 'SCHEMA_INVALID', message: `Response did not match the EDL contract: ${schemaError}` }], metrics: {} }
       : validateDirectorEdl(spine, scope, valOpts);
+    if (!schemaError && spine && extraInput.hookRepair) {
+      const coreViolations = hookCoreIntegrityViolations(extraInput.currentEdl, spine);
+      if (coreViolations.length) report = { ...report, valid:false,
+        violations:[...report.violations,...coreViolations] };
+    }
     // Preserve the Story Scope ending across repairs: when the EDL being repaired ends
     // on its ending beat, the repaired EDL must too (new material goes before it).
     if (!schemaError && technical && spine && current) {
@@ -993,11 +1031,15 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     violations = report.violations;
     // Only a structurally valid EDL (or, before any exists, the Director's own
     // latest EDL for a technical repair) becomes the basis of the next repair.
-    current = structurallyValid ? spine : (lastAccepted || spine || current);
+    // Rejected hook proposals cannot become the next core baseline.
+    current = extraInput.hookRepair && !structurallyValid
+      ? extraInput.currentEdl
+      : structurallyValid ? spine : (lastAccepted || spine || current);
   }
   const lastViolations = attempts[attempts.length - 1]?.violations || violations;
   throw new StoryError('DIRECTOR_EDL_INVALID', `Editorial Director EDL failed validation after ${maxTechnicalRepairs} repair pass(es): ${lastViolations.map(v => v.code).join(', ')}`,
-    { violations: lastViolations, attempts, spine: lastAccepted || current, lastAcceptedSpine: lastAccepted, lastInvalidRepair, stalledRepair });
+    { violations: lastViolations, attempts, spine: lastAccepted || current,
+      lastAttemptSpine: lastEvaluatedSpine, lastAcceptedSpine: lastAccepted, lastInvalidRepair, stalledRepair });
 }
 
 async function directEdl(engine, { model, scope, root = null, write = null, emit = () => {}, scriptId = 1 }) {
