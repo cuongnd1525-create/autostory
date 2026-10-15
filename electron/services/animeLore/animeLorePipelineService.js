@@ -55,7 +55,9 @@ class AnimeLorePipelineService {
    const topics=Topics.validateTopics(generated.topicCandidates,canon.facts);
    const angle=await step(3,{config,topics},async()=>Topics.lockAngle(config,topics));
    const ledger=await step(4,{canon,angle},async()=>Ledger.validateLedger(canon,canon.facts.filter(f=>angle.claimIds.includes(f.id))));
-   const hooks=await step(5,{generated,ledger},async()=>Hooks.audition(generated.hooks,ledger));
+   const finalPayoffIds=new Set(generated.beats[3]?.claimIds||[]);
+   const payableHooks=generated.hooks.filter(h=>(h.payoffClaimIds||[]).every(id=>finalPayoffIds.has(id)));
+   const hooks=await step(5,{generated,ledger},async()=>Hooks.audition(payableHooks,ledger));
    const script=await step(6,{generated,hooks},async()=>{
     const beats=generated.beats.map((b,i)=>i===0?{...b,text:hooks.selected.text,claimIds:hooks.selected.payoffClaimIds}:b);
     return {schemaVersion:1,title:generated.title,beats,selectedHook:hooks.selected};
@@ -67,6 +69,7 @@ class AnimeLorePipelineService {
     return {scriptPassed:true,claimsUserAttested:true,requiresHumanCanonReview:true};
    });
    const voice=await step(8,{script,voiceProvider:config.voiceProvider,voiceId:config.voiceId,settings:{elevenLabsModel:this.settings.elevenLabsModel}},()=>Voice.synthesize(config,script,this.settings,path.join(root,'voice'),{signal}));
+   if(voice.durationSec<60.01)throw blocked('needs_fact_review','The completed voice duration must exceed 60 seconds; revise evidence-backed script, do not add filler.',{measuredDuration:voice.durationSec});
    // Changes to a media folder must invalidate dependent EDL and render artifacts.
    const mediaFingerprint=await this.mediaFingerprint(config.mediaFolder);
    const media=await step(9,{config,mediaFingerprint},()=>Media.index(config,this.settings));
