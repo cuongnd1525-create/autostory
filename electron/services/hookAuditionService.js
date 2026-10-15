@@ -19,7 +19,7 @@ function calculateOverallHookScore(scores = {}) {
   const conflict = Math.max(0, Math.min(100, Number(scores.conflict) || 0));
   const curiosity = Math.max(0, Math.min(100, Number(scores.curiosity_gap) || 0));
   const dialogue = Math.max(0, Math.min(100, Number(scores.dialogue_strength) || 0));
-  const payoff = Math.max(0, Math.min(100, Number(scores.payoff_potential) || 75));
+  const payoff = Math.max(0, Math.min(100, Number(scores.payoff_potential ?? 75)));
   const spoiler = Math.max(0, Math.min(100, Number(scores.spoiler_risk) || 0));
 
   const weighted = (visual * 0.25)
