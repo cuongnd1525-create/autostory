@@ -14,10 +14,10 @@ const crypto = require('crypto');
 const { EPISTEMIC } = require('./autoStoryV3Taxonomy');
 
 // Bump when the schema/shape materially changes so stale caches are cleanly missed.
-const MODEL_VERSION = 7;
+const MODEL_VERSION = 8;
 // Bump when the MAX_TOKENS recovery / classifier logic materially changes. Shown
 // in the runtime fingerprint so we can PROVE which build the Electron process loaded.
-const RECOVERY_VERSION = 4;
+const RECOVERY_VERSION = 5;
 
 // Deterministic output caps (enforced in normalize regardless of what the model returns).
 const MAX_PEOPLE = 24;
@@ -45,9 +45,9 @@ const MAX_CHUNKS = 6;
 const CHUNK_TARGET_SEC = 600;
 
 // ---- long-source strategy + phase-budget knobs (explicit + testable) --------
-// Sources longer than this go CHUNK-FIRST (skip whole+compact, which would likely
+// Real 1140s bodycam: whole-source MAX_TOKENS, compact only 21 events / 24 quotes.\n// Avoid that lossy recovery. Sources longer than this go CHUNK-FIRST (skip whole+compact, which would likely
 // blow the output limit and waste minutes) instead of the staged whole->compact->chunk.
-const LONG_SOURCE_THRESHOLD_SEC = 1500;   // 25 min
+const LONG_SOURCE_THRESHOLD_SEC = 900;   // 15 min: 19-minute bodycam overflowed whole-source JSON and compact recovery lost story coverage
 // Chunk-first initial windows: small enough that a normal window extracts in ONE
 // call without recursion. ~216s => ~8 windows for a ~1726s source.
 const CHUNK_FIRST_TARGET_SEC = 216;
