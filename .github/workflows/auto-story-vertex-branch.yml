@@ -27,6 +27,8 @@ jobs:
           node --check electron/services/autoStoryV3Pipeline.js
           node --check electron/services/autoStoryV4HookGate.js
           node --check electron/services/autoStoryReleaseGate.js
+          node --check electron/services/blockNarrationService.js
+          node --check electron/services/editorialDirectorService.js
           node --check electron/services/productionQueue.js
           node --check electron/services/autoStoryVariantWorker.js
           node --check electron/services/autoStoryRunner.js
