@@ -1222,7 +1222,9 @@ async function repairTechnical(engine, { model, spine, violations, root = null, 
   const scope = spine.storyScope;
   const { reel, evidence } = await prepareReel(engine, scope, model);
   const currentEdl = { ...spine, storyScope: undefined, scopeReel: undefined, directorMeta: undefined };
-  const out = await runDirector(engine, {
+  let out;
+  try {
+    out = await runDirector(engine, {
     model, scope, reel, evidence, key: hookRepair
       ? `v5-editorial-director-hook-fix-${scriptId}-${hookRepair.attempt}`
       : `v5-editorial-director-downstream-fix-${scriptId}`,
@@ -1232,9 +1234,43 @@ async function repairTechnical(engine, { model, spine, violations, root = null, 
       candidateWindows: (scope.hookCandidates || []).slice(0, 4)
     } } : {}) },
     repairText: hookRepair
-      ? `HOOK SOURCE AUDITION FAILED — rebuild ONLY the opening strategy, the first beat and the minimum adjacent transition/delivery information necessary. The independent Payoff Gate already verified the source ending, but the opening must show real, immediately understandable curiosity BEFORE narration or captions. Avoid ALL rejectedOpenings in input.hookRepair; do not reuse those start ranges. WATCH and choose a materially different moment from the attached reel (candidateWindows are hints, not proof). Consider a brief, non-spoiling conflict teaser if chronological first seconds are ordinary patdown/questioning. The hook is allowed to pose an unanswered, truthful question: do NOT require the final confession/discovery in the first 6s; do NOT claim a find not shown anywhere in the source. Use the earliest moment of intelligible conflict with genuine stakes, never silent routine search, mid-sentence filler or the payoff itself. Keep downstream core/ending footage and EDL duration where possible, rebuild deliveryBlocks/transitionChecks to match any beat changes. Return COMPLETE, validated EDL; never invent an outcome.`
+      ? `HOOK SOURCE AUDITION FAILED — rebuild ONLY the opening strategy, the FIRST beat and the minimum adjacent transition/delivery information necessary. INPUT.lockedCoreSourceBeats contains the FULL VERIFIED BODY AND ENDING: keep each ID, INDEX, sourceStartSec and sourceEndSec EXACTLY unchanged. Do not remove, reorder, pad, expand or substitute any protected core/ending beat. The deterministic validator will reject even a 0.1s difference. INPUT.allowedAbsoluteSourceCuts is the EXACT ABSOLUTE-SOURCE list of cuttable intervals: the NEW hook must be FULLY inside ONE interval; no source-reel padding, gap, or reel-local timestamp is allowed. The independent Payoff Gate already verified the source ending, but the opening must show real, immediately understandable curiosity BEFORE narration or captions. Avoid ALL rejectedOpenings in input.hookRepair; do not reuse those start ranges. WATCH and choose a materially different moment from the attached reel (candidateWindows are hints, not proof). Consider a brief, non-spoiling conflict teaser if chronological first seconds are ordinary patdown/questioning. The hook is allowed to pose an unanswered, truthful question: do NOT require the final confession/discovery in the first 6s; do NOT claim a find not shown anywhere in the source. Use the earliest moment of intelligible conflict with genuine stakes, never silent routine search, mid-sentence filler or the payoff itself. Keep downstream core/ending footage and EDL duration where possible, rebuild deliveryBlocks/transitionChecks to match any beat changes. Return COMPLETE, validated EDL; never invent an outcome.`
       : repairInstruction('technical', { violations }), root, write, emit
-  });
+    });
+  } catch (error) {
+    // Production 1015_01: the first two full-E DL hook repairs proposed
+    // OUTSIDE_SCOPE_REEL cuts, and the last returned VALID picture with a
+    // 1-4s narrator block. No more multimodal repairs remained. If picture,
+    // timeline, payoff, and protected core are ALL valid, resolve the residual
+    // audio partition with Gemini Flash on a locked EDL (not another Pro recut).
+    const codes = error?.details?.violations || [];
+    const proposal = error?.details?.lastAttemptSpine;
+    if (!hookRepair || error?.kind !== 'DIRECTOR_EDL_INVALID' || !proposal
+      || !codes.length || !codes.every(v => v.code === 'NARRATED_STORY_WINDOW_TOO_SHORT')) throw error;
+    const cfg = engine.config || {};
+    const targets = durationTargets(scope, cfg);
+    const candidate = stampSpine(proposal, scope, reel, {
+      ...(spine.directorMeta || {}), hookRepairAudioRecovery: true
+    });
+    const candidateCheck = validateDirectorEdl(candidate, scope, {
+      durationSec: engine.duration,
+      targetDurationMinSec: targets.hardMinSec,
+      targetDurationMaxSec: targets.hardMaxSec,
+      reel,
+      narrationEnabled: cfg.narration?.enabled !== false,
+      preferredDurationSec: targets.targetDurationSec,
+      targetBandMinSec: targets.targetBandMinSec,
+      targetBandMaxSec: targets.targetBandMaxSec,
+      requireDeliveryBlocks: true, minNarrationSec: 0
+    });
+    if (!candidateCheck.valid ||
+      hookCoreIntegrityViolations(currentEdl, candidate).length) throw error;
+    emit('design', `[Director] Hook source picture passed; only narrator blocks below ${Number(cfg.narrationMinBlockSec) || 0}s remain. Retrying AUDIO ownership with locked source EDL instead of discarding the whole script.`, 'WARNING');
+    const corrected = await repairDeliveryTechnical(engine, {
+      model, spine: candidate, violations: codes, root, write, emit, scriptId
+    });
+    return { ...corrected, evidence, reel };
+  }
   return { spine: stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, downstreamRepair: true }), evidence, reel, report: out.report };
 }
 
