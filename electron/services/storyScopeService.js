@@ -331,9 +331,29 @@ function modelForScope(model) {
   };
 }
 
+// A new name is not a new payoff: the second attempt must avoid previously
+// disproven source endings as well as previously rejected story ids.
+function rejectedByPayoffEvidence(scope, rejected = []) {
+  if (!scope) return null;
+  for (const item of rejected) {
+    if (scope.storyScopeId === item.storyScopeId) return item;
+    const previous = item.candidateEnding || {};
+    const a = Number(previous.sourceStartSec), b = Number(previous.sourceEndSec);
+    if (!(Number.isFinite(a) && Number.isFinite(b) && b > a)) continue;
+    const endings = (scope.candidateEndingEvents || []).filter(e => Number(e.sourceEndSec) > Number(e.sourceStartSec));
+    if (endings.length && endings.every(e => {
+      const start = Number(e.sourceStartSec), end = Number(e.sourceEndSec);
+      const overlap = Math.max(0, Math.min(end, b) - Math.max(start, a));
+      return overlap / Math.max(.01, Math.min(end-start,b-a)) >= .7;
+    })) return item;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- Gemini stage
 // Returns { scope, selection, reel, attempts } or throws StoryError('STORY_SCOPE_INVALID').
-async function selectStoryScope(engine, model, { root = null, write = null, emit = () => {}, maxRepairs = 2 } = {}) {
+async function selectStoryScope(engine, model, { root = null, write = null, emit = () => {}, maxRepairs = 2,
+  rejectedScopes = [], previousSelection = null, retryKey = 'v5-story-scope' } = {}) {
   if (!model || !Array.isArray(model.events) || !model.events.length) {
     throw new StoryError('INPUT_MISSING', 'Story Scope requires a Source Story Model with events.');
   }
@@ -351,19 +371,30 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
     targetDurationMinSec: cfg.targetDurationMinSec || 65,
     targetDurationMaxSec: cfg.targetDurationMaxSec || 90,
     maxScopeReelSec: opts.maxScopeReelSec,
-    storyMode: cfg.storyMode || 'serialized_part'
+    storyMode: cfg.storyMode || 'serialized_part',
+    ...(rejectedScopes.length ? {
+      rejectedPayoffEvidence: rejectedScopes.map(r => ({
+        storyScopeId: r.storyScopeId, centralViewerQuestion: r.centralViewerQuestion,
+        candidateEnding: r.candidateEnding, observedEnding: r.observedEnding,
+        unsupportedPromise: r.unsupportedPromise, reason: r.error
+      })),
+      previousSelection
+    } : {})
   };
+  const recoveryInstruction = rejectedScopes.length
+    ? 'PAYOFF-GROUNDED RESELECTION: the previous mini-story was REJECTED after watching the actual source ending. Read input.rejectedPayoffEvidence. Select a DIFFERENT source-grounded conflict with a DIFFERENT observable ending. Do not reuse any rejected scope ID or disproven ending moment with a renamed promise; provide 2-4 genuine candidates when possible. Never claim an unshown confession, explanation, arrest or admission. Every candidate must link to real indexed events and quotes with correct absolute source time. If the source provides no other genuine story, fail honestly rather than fabricate one.'
+    : '';
   const attempts = [];
-  let violations = null, previous = null, failingId = null;
+  let violations = null, previous = previousSelection, failingId = null;
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const repair = attempt > 0;
     let selection = null, schemaError = null;
     try {
       selection = await engine.ask(
-        `v5-story-scope${repair ? `_repair${attempt}` : ''}`,
+        `${retryKey}${repair ? `_repair${attempt}` : ''}`,
         repair ? { ...input, previousSelection: previous, failingStoryScopeId: failingId, violations } : input,
         schemas.storyScopeSelection,
-        repair ? `${instruction}\n\n${repairInstruction(violations, failingId)}` : instruction,
+        [instruction, recoveryInstruction, repair ? repairInstruction(violations, failingId) : ''].filter(Boolean).join('\n\n'),
         [],
         validateSelectionShape,
         'auto_story_edit',
@@ -381,11 +412,16 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
     if (!schemaError && nCandidates > SCOPE_LIMITS.candidates.max) {
       report = { ...report, valid: false, violations: [...report.violations, { code: 'SCOPE_COUNT_OVER_LIMIT', message: `candidates contains ${nCandidates} items; maximum allowed is ${SCOPE_LIMITS.candidates.max}.`, field: 'candidates', count: nCandidates, max: SCOPE_LIMITS.candidates.max }] };
     }
+    const rejectedMatch = !schemaError && rejectedByPayoffEvidence(scope, rejectedScopes);
+    if (rejectedMatch) report = { ...report, valid: false, violations: [...report.violations, {
+      code: 'REUSED_REJECTED_PAYOFF', message: `Chosen scope '${scope.storyScopeId}' reused disproven ending from '${rejectedMatch.storyScopeId}'. Select a DIFFERENT observed outcome.`
+    }] };
     attempts.push({ attempt, chosenStoryScopeId: selection?.chosenStoryScopeId || null, valid: report.valid, violations: report.violations,
       scopeWindowsDeclared: report.normalization?.declaredCount ?? null, scopeWindowsUnique: report.normalization?.uniqueCount ?? null,
       selectionFingerprint: selection ? require('crypto').createHash('sha256').update(JSON.stringify(selection)).digest('hex').slice(0, 16) : null });
     if (write && root) {
-      await write(require('path').join(root, `story-scope-selection${repair ? `-repair-${attempt}` : ''}.json`), { selection, validation: report });
+      const stageFile = retryKey === 'v5-story-scope' ? 'story-scope-selection' : retryKey.replace(/[^a-zA-Z0-9_-]/g, '_');
+      await write(require('path').join(root, `${stageFile}${repair ? `-repair-${attempt}` : ''}.json`), { selection, validation: report });
     }
     if (report.valid) {
       // The NORMALIZED scope (unique windows) is what the reel, director and critic use.
@@ -413,5 +449,5 @@ function alternateScopes(selection, chosenId, opts) {
 module.exports = {
   SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC, SCOPE_LIMITS, normalizeScopeWindows, limitsText,
   schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
-  chosenScope, alternateScopes, modelForScope
+  chosenScope, alternateScopes, modelForScope, rejectedByPayoffEvidence
 };
