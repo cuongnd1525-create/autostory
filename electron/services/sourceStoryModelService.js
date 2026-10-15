@@ -494,12 +494,28 @@ function makePhase(engine, sourceModelLimit) {
   const cb = engine.service?.callBudget;
   const start = cb ? cb.calls : 0;
   const bounded = !!cb && Number.isFinite(sourceModelLimit);
-  return {
+  const phase = {
     bounded, limit: sourceModelLimit, start,
     used: () => (cb ? cb.calls - start : 0),
-    remaining: () => bounded ? Math.max(0, sourceModelLimit - (cb.calls - start)) : Infinity,
-    exhausted: () => bounded ? (cb.calls - start) >= sourceModelLimit : false
+    remaining: () => bounded ? Math.max(0, phase.limit - (cb.calls - start)) : Infinity,
+    exhausted: () => bounded ? (cb.calls - start) >= phase.limit : false,
+    // Unknown dialogue density can exceed the initial split headroom. Only
+    // adaptive V4 sessions may extend that phase IN LOCKSTEP with the global
+    // call limit, so the 28+ downstream calls remain fully reserved. Explicit
+    // strict caps never extend, and $ budget protection remains at Engine.ask.
+    extendForCoverage: () => {
+      if (!bounded || !phase.exhausted() || !cb?.adaptiveLimit ||
+          engine.config?.editorialArchitecture !== 'scope_media_director' ||
+          engine.service?.settings?.vertexAutoStoryStrictCallCap === true) return 0;
+      const current = callLimit(engine.service);
+      const grant = Math.max(0, Math.min(4, 100 - current));
+      if (!grant) return 0;
+      cb.limit = current + grant;
+      phase.limit += grant;
+      return grant;
+    }
   };
+  return phase;
 }
 // --- lightweight extraction-STRATEGY diagnostic cache (NOT the story-model) ----
 // Remembers, per source hash + model version, that whole/compact already overflowed
@@ -562,6 +578,15 @@ async function extractWindow(engine, schema, instruction, audioEvents, emit, sta
   // ceiling (which itself sits under the run cap). Pre-empt stage()'s generic
   // "Đã đạt giới hạn ... yêu cầu" error with a clean, specific one and record the
   // shortfall, so a run dies (if at all) with a diagnosable cause and no partial model.
+  if (phase && phase.exhausted()) {
+    const extended = phase.extendForCoverage?.() || 0;
+    if (extended) {
+      diag.budgetExtensions ||= [];
+      diag.budgetExtensions.push({ atSec: round1(start), additionalCalls: extended,
+        newSourcePhaseLimit: phase.limit, newGlobalCallLimit: callLimit(engine.service) });
+      emit(`[V3] Dense-source recovery: extended adaptive source phase by ${extended} calls (limit=${phase.limit}, global=${callLimit(engine.service)}); downstream call reserve unchanged.`, 'WARNING');
+    }
+  }
   if (phase && phase.exhausted()) {
     diag.failedLeafWindows.push({ start: round1(start), end: round1(end), depth, reason: `source-model phase budget ${phase.limit} exhausted` });
     throw new (require('./autoStoryRepairRouter').StoryError)('SOURCE_MODEL_RECOVERY_BUDGET',
