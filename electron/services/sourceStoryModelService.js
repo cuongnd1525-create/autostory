@@ -582,6 +582,8 @@ async function extractWindow(engine, schema, instruction, audioEvents, emit, sta
     const extended = phase.extendForCoverage?.() || 0;
     if (extended) {
       diag.budgetExtensions ||= [];
+      diag.sourceModelLimit = phase.limit;
+      diag.global = callLimit(engine.service);
       diag.budgetExtensions.push({ atSec: round1(start), additionalCalls: extended,
         newSourcePhaseLimit: phase.limit, newGlobalCallLimit: callLimit(engine.service) });
       emit(`[V3] Dense-source recovery: extended adaptive source phase by ${extended} calls (limit=${phase.limit}, global=${callLimit(engine.service)}); downstream call reserve unchanged.`, 'WARNING');
