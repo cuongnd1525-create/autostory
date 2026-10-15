@@ -10842,7 +10842,26 @@ async function importReviewedScriptPath(jsonPath, { autoRouted = false } = {}) {
       await saveCurrentSegments();
     }
     addLog(`${autoRouted ? "Đã nhận diện file review V2. Đang tự chuyển luồng import" : "Đang import JSON Gemini đã sửa"}: ${jsonPath}`);
-    state.currentProject = await window.cineviral.importReviewedScriptProject(state.currentProject.id, jsonPath);
+    let importedProject;
+    try {
+      importedProject = await window.cineviral.importReviewedScriptProject(state.currentProject.id, jsonPath);
+    } catch (error) {
+      if (!String(error.message || "").startsWith("V2_REGRESSION_CONFIRM:")) throw error;
+      const confirmed = await showConfirmAction({
+        title: "Bản V2 bị giảm điểm chất lượng",
+        message: String(error.message).replace("V2_REGRESSION_CONFIRM:", "")
+          + " Bạn có muốn chấp nhận V2 thay vì giữ bản hiện tại không?",
+        confirmLabel: "Vẫn import V2"
+      });
+      if (!confirmed) {
+        addLog("Đã giữ nguyên V1/V hiện tại; không import V2 giảm chất lượng.", "WARNING");
+        return;
+      }
+      importedProject = await window.cineviral.importReviewedScriptProject(
+        state.currentProject.id, jsonPath, {allowRegression: true}
+      );
+    }
+    state.currentProject = importedProject;
     state.revisionPreviewPath = "";
     state.selectedSegmentIndex = 0;
     state.expandedScenePickerIndex = -1;

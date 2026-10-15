@@ -940,13 +940,14 @@ app.whenReady().then(async () => {
     });
   });
 
-  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath) => {
+  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath, options = {}) => {
     const settings = configStore.getSettings();
     return dubbingService.importReviewedScriptProject({
       workspaceRoot: getWorkspaceRoot(),
       projectId,
       settings,
-      jsonPath
+      jsonPath,
+      allowRegression: options?.allowRegression === true
     });
   });
 

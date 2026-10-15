@@ -5119,7 +5119,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     return "edge_neural";
   }
 
-  async importReviewedScriptProject({ workspaceRoot, projectId, settings, jsonPath }) {
+  async importReviewedScriptProject({ workspaceRoot, projectId, settings, jsonPath, allowRegression = false }) {
     const project = await this.projectStore.getProject(workspaceRoot, projectId);
     const paths = this.projectStore.getProjectPaths(workspaceRoot, projectId);
     const ffmpeg = new FfmpegService(settings);
@@ -5424,6 +5424,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         && candidateScore === previousScore
         && candidateIssueCount > previousIssueCount;
       if (scoreRegressed || sameScoreMoreErrors) {
+        // Do not silently accept a lower-scoring V2. The confirmation is
+        // explicit and scoped only to the reviewed JSON being imported.
+        if (draftReviewArtifact && !allowRegression) {
+          throw new Error(
+            "V2_REGRESSION_CONFIRM: Viral readiness " + previousScore + "/100 -> "
+            + candidateScore + "/100, issue count " + previousIssueCount + " -> "
+            + candidateIssueCount + ". Confirm importing this review or retain V1."
+          );
+        }
         const regressionWarningPath = path.join(paths.analysisDir, "highlight-cut-review-regression-warning.json");
         await this.projectStore.writeJson(regressionWarningPath, {
           generatedAt: now,
