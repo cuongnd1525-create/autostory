@@ -33,6 +33,7 @@ function wordSpans(beat,durationSec,alignment) {
 }
 async function synthesize(config,script,settings,outDir,options={}) {
   await fs.mkdir(outDir,{recursive:true});
+  config={...config,voiceId:config.voiceId||(config.voiceProvider==='elevenlabs'?settings.defaultVoiceId||settings.elevenLabsVoiceId||'':'en-US-AndrewNeural')};
   const results=[];let totalDuration=0;
   for(let i=0;i<script.beats.length;i++) {
     const b=script.beats[i],id='beat_'+String(i+1).padStart(2,'0');
