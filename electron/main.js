@@ -27,6 +27,7 @@ const OllamaService = require("./services/ollamaService");
 const RenderJobService = require("./services/renderJobService");
 const { createMonotonicProgressNormalizer } = require("./services/progressPolicy");
 const { buildCliEnv } = require("./services/cliEnv");
+const { pythonArgs, runtimeFailureMessage } = require("./services/pythonRuntimeService");
 const { createCancelToken, clearCancelToken, cancelActiveOperation } = require("./services/cancelToken");
 const { inspectGeminiJsonFiles } = require("./services/geminiJsonArtifactService");
 const RecapPipelineService = require("./services/recap/recapPipelineService");
@@ -171,7 +172,8 @@ function runCheckCommand(command, args = [], timeoutMs = 8000) {
       settled = true;
       clearTimeout(timer);
       const output = Buffer.concat(stdoutChunks).toString() || Buffer.concat(stderrChunks).toString();
-      resolve({ ok: code === 0, detail: output.split(/\r?\n/).find(Boolean) || `exit code ${code}` });
+      const lines = output.split(/\r?\n/).filter(Boolean);
+      resolve({ ok: code === 0, detail: (code === 0 ? lines[0] : lines.slice(-8).join("\n")) || `exit code ${code}` });
     });
   });
 }
@@ -314,7 +316,7 @@ async function checkConfiguration(settings) {
         profile.parakeetAvailable ? "ok" : "error",
         profile.parakeetAvailable
           ? `Parakeet sẵn sàng: ${profile.model} · ${profile.device}.`
-          : "Chưa cài NVIDIA NeMo ASR cho Python đã chọn.",
+          : runtimeFailureMessage(new Error(profile.runtimeError?.message || "ASR runtime import failed"), "NVIDIA Parakeet", settings.whisperPythonCommand || "py", ["nemo_toolkit[asr]", "soundfile"]),
         `${profile.reason}. Cài đặt yêu cầu PyTorch/CUDA phù hợp và: py -3 -m pip install "nemo_toolkit[asr]" soundfile`
       );
     } else {
@@ -322,7 +324,7 @@ async function checkConfiguration(settings) {
         ? null
         : await runCheckCommand(settings.whisperCommand || "whisper", ["--help"]);
       const asrStatus = profile.fasterWhisperAvailable
-        ? "ok"
+        ? (profile.device === "cuda" && profile.cudaRuntimeAvailable === false ? "error" : "ok")
         : fallbackWhisper?.ok
         ? "warning"
         : "error";
@@ -331,12 +333,14 @@ async function checkConfiguration(settings) {
         settings.whisperEngine === "auto" ? "Nhận diện tự động" : "faster-whisper",
         asrStatus,
         profile.fasterWhisperAvailable
-          ? `Sẵn sàng: ${profile.model} · ${profile.device}/${profile.computeType}.`
+          ? (profile.device === "cuda" && profile.cudaRuntimeAvailable === false
+            ? `ASR đã có nhưng CUDA runtime chưa sẵn sàng: ${profile.cudaRuntimeError?.message || "không nạp được DLL NVIDIA"}. Chọn Auto/CPU hoặc cài CUDA runtime.`
+            : `Sẵn sàng: ${profile.model} · ${profile.device}/${profile.computeType}.`)
           : fallbackWhisper?.ok
-          ? "Chưa cài faster-whisper; Whisper CLI dự phòng sẵn sàng."
-          : "Chưa có faster-whisper hoặc Whisper CLI để nhận diện lời thoại.",
+          ? "Không chạy được faster-whisper; Whisper CLI dự phòng sẵn sàng."
+          : runtimeFailureMessage(new Error(profile.runtimeError?.message || "ASR runtime import failed"), "Nhận diện tự động", settings.whisperPythonCommand || "py", ["faster-whisper"]),
         `${profile.reason}. CPU ${profile.cpuThreads} luồng, RAM ${profile.totalMemoryGb} GB${profile.nvidiaVramMb ? `, NVIDIA ${Math.round(profile.nvidiaVramMb / 1024)} GB` : ""}.`
-          + (profile.fasterWhisperAvailable ? "" : " Cài nhanh: py -3 -m pip install faster-whisper")
+          + (profile.fasterWhisperAvailable ? "" : ` Chi tiết: ${profile.runtimeError?.message || "không kiểm tra được runtime"}`)
       );
     }
   }
@@ -349,8 +353,9 @@ async function checkConfiguration(settings) {
     const omni = await runCheckCommand(settings.omniVoiceCommand || "omnivoice-infer", ["--help"]);
     add("defaultVoiceProvider", "Voice provider", omni.ok ? "ok" : "warning", omni.ok ? "OmniVoice command sẵn sàng." : "Không chạy được OmniVoice command.", omni.detail);
   } else if (voiceProvider === "kokoro") {
-    const kokoro = await runCheckCommand(settings.kokoroPythonCommand || "python", ["-c", "import kokoro, soundfile; print('kokoro ok')"], 20000);
-    add("defaultVoiceProvider", "Voice provider", kokoro.ok ? "ok" : "warning", kokoro.ok ? "Kokoro local sẵn sàng." : "Chưa cài được Kokoro cho Python đã chọn.", kokoro.ok ? "" : `${kokoro.detail} Cài bằng: python -m pip install kokoro>=0.9.4 soundfile`);
+    const kokoroPython = settings.kokoroPythonCommand || "python";
+    const kokoro = await runCheckCommand(kokoroPython, pythonArgs(kokoroPython, ["-c", "import numpy, kokoro, soundfile; print('kokoro ok')"]), 90000);
+    add("defaultVoiceProvider", "Voice provider", kokoro.ok ? "ok" : "warning", kokoro.ok ? "Kokoro local sẵn sàng." : runtimeFailureMessage(new Error(kokoro.detail), "Kokoro", kokoroPython, ["numpy", "kokoro>=0.9.4", "soundfile"]), kokoro.ok ? "" : kokoro.detail);
   } else {
     add("defaultVoiceProvider", "Voice provider", "ok", `Đang dùng ${voiceProvider}.`);
   }
@@ -373,16 +378,14 @@ async function checkConfiguration(settings) {
       }
     } else {
       const translationPython = settings.localTranslationPythonCommand || "python";
-      const translationCheckArgs = translationPython === "py"
-        ? ["-3", "-c", "import transformers, sentencepiece, torch; print('local translation ok')"]
-        : ["-c", "import transformers, sentencepiece, torch; print('local translation ok')"];
-      const localTranslation = await runCheckCommand(translationPython, translationCheckArgs, 20000);
+      const translationCheckArgs = pythonArgs(translationPython, ["-c", "import transformers, sentencepiece, sacremoses, torch; from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; print('local translation ok')"]);
+      const localTranslation = await runCheckCommand(translationPython, translationCheckArgs, 90000);
       add(
         "localPreviewTranslation",
         "Dịch phụ đề preview local",
         localTranslation.ok ? "ok" : "warning",
-        localTranslation.ok ? "OPUS-MT Anh-Vi đã đủ runtime." : "Thiếu runtime dịch local.",
-        localTranslation.ok ? "" : `${localTranslation.detail} Cài bằng: python -m pip install transformers torch sentencepiece sacremoses`
+        localTranslation.ok ? "OPUS-MT Anh-Vi đã đủ runtime." : runtimeFailureMessage(new Error(localTranslation.detail), "Dịch local", translationPython, ["transformers<5", "torch", "sentencepiece", "sacremoses"]),
+        localTranslation.ok ? "" : localTranslation.detail
       );
     }
   }
@@ -604,6 +607,10 @@ app.whenReady().then(async () => {
   });
 
   handleIpc("settings:get", async () => configStore.getSettings());
+  handleIpc("settings:antigravityModels", async (_event, options = {}) => {
+    const settings = { ...configStore.getSettings(), ...(options.command ? { antigravityCommand: options.command } : {}) };
+    return { models: await require("./services/antigravityModelDiscovery").list(settings, { force: Boolean(options.force) }) };
+  });
 
   handleIpc("settings:save", async (_event, payload) => {
     const previousWorkspaceRoot = configStore.getSettings().workspaceRoot;
@@ -1449,6 +1456,9 @@ app.whenReady().then(async () => {
 
   handleIpc("recap:getReviewState", async (_event, projectId) => {
     return await recapPipelineService.getReviewState(getWorkspaceRoot(), projectId);
+  });
+  handleIpc("recap:chooseEditorial", async (_event, projectId, payload) => {
+    return recapPipelineService.chooseEditorial(getWorkspaceRoot(), projectId, payload);
   });
 
   handleIpc("recap:updateDecisions", async (_event, projectId, payload) => {

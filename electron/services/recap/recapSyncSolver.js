@@ -51,6 +51,7 @@ class RecapSyncSolver {
     const decisions = [];
     const traceability = [];
     const rewriteRecommendations = [];
+    const clauseBudgets = [];
 
     let currentTimelineSec = 0.0;
 
@@ -72,8 +73,10 @@ class RecapSyncSolver {
         usedIntervals,
         sourceDurationSec,
         currentTimelineSec,
-        unitIndex: uIdx
+        unitIndex: uIdx,
+        clauseSpans: audioInfo.clauseSpans
       });
+      clauseBudgets.push(...(unitSolution.clauseBudgets || []));
 
       // Update used intervals tracking
       for (const clip of unitSolution.clips) {
@@ -124,7 +127,8 @@ class RecapSyncSolver {
           currentDuration: rawAudioDuration,
           targetDuration: unitSolution.suggestedTargetDuration,
           deltaRatio: unitSolution.deltaRatio,
-          reason: unitSolution.rewriteReason
+          reason: unitSolution.rewriteReason,
+          clauseBudgets: unitSolution.clauseBudgets
         });
       }
 
@@ -153,13 +157,15 @@ class RecapSyncSolver {
       totalWords,
       averageVisualLeadMs: avgVisualLeadMs,
       rewriteRecommendationCount: rewriteRecommendations.length,
-      usedIntervalCount: usedIntervals.length
+      usedIntervalCount: usedIntervals.length,
+      semanticTimingMismatchCount: rewriteRecommendations.filter(item => item.clauseBudgets?.some(group => !group.passed)).length
     };
 
     return {
       decisions,
       traceability,
       metrics,
+      clauseBudgets,
       rewriteRecommendations
     };
   }
@@ -175,8 +181,11 @@ class RecapSyncSolver {
     usedIntervals,
     sourceDurationSec,
     currentTimelineSec,
-    unitIndex
+    unitIndex,
+    clauseSpans
   }) {
+    if (clauseSpans?.length > 1) return this._solveAlignedUnit({ unit, assignedEvents, rawAudioDuration, scenesList,
+      usedIntervals, currentTimelineSec, clauseSpans });
     // Determine visual lead
     const leadSec = Math.min(this.maxVisualLeadSec, Math.max(this.minVisualLeadSec, this.targetVisualLeadSec));
     const leadMs = Math.round(leadSec * 1000);
@@ -277,7 +286,8 @@ class RecapSyncSolver {
         video_speed: Number(videoSpeed.toFixed(3)),
         lead_ms: eIdx === 0 ? leadMs : 0,
         face_closeup: Boolean(ev.face_closeup),
-        lip_sync_risk: isLipSyncRisk
+        lip_sync_risk: isLipSyncRisk,
+        focus_x: ev.focus_x ?? 0.5, focus_y: ev.focus_y ?? 0.5
       });
 
       clipTimelineStart = clipTimelineEnd;
@@ -307,6 +317,78 @@ class RecapSyncSolver {
       suggestedTargetDuration: Number(totalRawEventDuration.toFixed(2)),
       notes
     };
+  }
+
+  _solveAlignedUnit({ unit, assignedEvents, rawAudioDuration, scenesList, usedIntervals, currentTimelineSec, clauseSpans }) {
+    const lead = Math.min(this.maxVisualLeadSec, Math.max(this.minVisualLeadSec, this.targetVisualLeadSec));
+    const events = new Map(assignedEvents.map(event => [event.id, event])), occupied = [...usedIntervals], clips = [], budgets = [];
+    const freeWindows = (start, end) => {
+      let windows = [{ start, end }];
+      if (this.allowShotReuse) return windows;
+      for (const used of occupied) windows = windows.flatMap(window => {
+        if (used.end <= window.start || used.start >= window.end) return [window];
+        return [{ start: window.start, end: Math.min(window.end, used.start) }, { start: Math.max(window.start, used.end), end: window.end }].filter(window => window.end - window.start >= .1);
+      });
+      return windows.sort((a, b) => b.end - b.start - (a.end - a.start));
+    };
+    for (let groupIndex = 0; groupIndex < clauseSpans.length; groupIndex++) {
+      const group = clauseSpans[groupIndex];
+      const start = groupIndex === 0 ? currentTimelineSec : currentTimelineSec + group.startSec;
+      const end = groupIndex + 1 < clauseSpans.length ? currentTimelineSec + clauseSpans[groupIndex + 1].startSec : currentTimelineSec + lead + rawAudioDuration + .15;
+      const candidates = group.visual_event_ids.map(id => events.get(id)).filter(Boolean);
+      const weight = candidates.reduce((sum, event) => sum + event.source_end - event.source_start, 0);
+      let cursor = start, availableDuration = 0, groundedCapacity = 0; const missingEventIds = [];
+      for (const event of candidates) {
+        const wanted = (end - start) * (event.source_end - event.source_start) / Math.max(.01, weight);
+        const scene = scenesList.find(s => event.source_start >= (s.startSec ?? s.start ?? 0) && event.source_end <= (s.endSec ?? s.end ?? 0));
+        const from = scene ? Math.max(scene.startSec ?? scene.start, event.source_start - 1.5) : event.source_start;
+        const to = scene ? Math.min(scene.endSec ?? scene.end, event.source_end + 1.5) : event.source_end;
+        const window = freeWindows(from, to)[0];
+        if (!window) { missingEventIds.push(event.id); cursor += wanted; continue; }
+        if (!this.allowShotReuse) {
+          let reserve = 0;
+          for (let next = groupIndex + 1; next < clauseSpans.length; next++) {
+            const later = clauseSpans[next];
+            const laterEnd = next + 1 < clauseSpans.length ? clauseSpans[next + 1].startSec : lead + rawAudioDuration + .15;
+            const laterEvents = later.visual_event_ids.map(id => events.get(id)).filter(Boolean);
+            const laterWeight = laterEvents.reduce((sum, item) => sum + item.source_end - item.source_start, 0);
+            for (const item of laterEvents) {
+              if (item.source_end <= window.start || item.source_start >= window.end) continue;
+              const laterWanted = (laterEnd - later.startSec) * (item.source_end - item.source_start) / Math.max(.01, laterWeight);
+              reserve += Math.max(.1, (laterWanted - 1.5 / laterEvents.length) * this.minVideoSpeedNormal);
+            }
+          }
+          // Reserve a distinct source interval for later clauses referencing
+          // this footage; consuming the entire window here creates false shortages.
+          if (reserve > 0) window.end = Math.max(window.start + .1, window.end - reserve);
+        }
+        const lipRisk = Boolean(event.lip_sync_risk || (event.face_closeup && event.dialogue_present));
+        const minSpeed = lipRisk ? this.minVideoSpeedTalking : this.minVideoSpeedNormal;
+        groundedCapacity += (window.end - window.start) / minSpeed;
+        const speed = Math.max(minSpeed, Math.min(1, (window.end - window.start) / wanted));
+        const sourceEnd = Math.min(window.end, window.start + wanted * speed);
+        const available = (sourceEnd - window.start) / speed;
+        availableDuration += available;
+        clips.push({ clip_id: `clip_${unit.id}_group${groupIndex + 1}_${clips.length + 1}`, event_id: event.id,
+          source_start: Number(window.start.toFixed(3)), source_end: Number(sourceEnd.toFixed(3)),
+          output_start: Number(cursor.toFixed(3)), output_end: Number((cursor + wanted).toFixed(3)),
+          video_speed: speed, lead_ms: clips.length === 0 ? Math.round(lead * 1000) : 0,
+          face_closeup: Boolean(event.face_closeup), lip_sync_risk: lipRisk, focus_x: event.focus_x ?? .5, focus_y: event.focus_y ?? .5 });
+        occupied.push({ start: window.start, end: sourceEnd }); cursor += wanted;
+      }
+      const wanted = end - start, hold = Math.max(0, wanted - availableDuration);
+      budgets.push({ speechUnitId: unit.id, clauseIds: group.clauseIds, text: group.text, visual_event_ids: group.visual_event_ids,
+        currentDuration: Number(wanted.toFixed(3)), targetDuration: Number(Math.min(wanted, availableDuration + 1.5).toFixed(3)),
+        maxGroundedDuration: Number((groundedCapacity + 1.5).toFixed(3)),
+        targetWordCount: Math.max(3, Math.floor(group.text.split(/\s+/).filter(Boolean).length * Math.min(1, (availableDuration + 1.5) / wanted) * .94)),
+        holdSec: Number(hold.toFixed(3)), missingEventIds, passed: hold <= 1.5 && missingEventIds.length === 0 });
+    }
+    const needsRewrite = budgets.some(budget => !budget.passed);
+    return { clips, voiceTempo: 1, totalVideoDuration: rawAudioDuration + lead + .15,
+      tierUsed: needsRewrite ? 1 : 0, needsRewrite, clauseBudgets: budgets,
+      rewriteReason: needsRewrite ? "Some measured clauses outlast their grounded footage. Shorten those clauses or select additional supporting events; preserve the overall spoken budget." : "",
+      deltaRatio: 0, suggestedTargetDuration: budgets.reduce((sum, budget) => sum + budget.targetDuration, 0),
+      notes: "Visual switches follow measured spoken clause boundaries; voice tempo unchanged." };
   }
 
   /**
@@ -399,7 +481,7 @@ class RecapSyncSolver {
     }
 
     // Also check clauses if unit-level had none
-    if (!matched.length && Array.isArray(unit.clauses)) {
+    if (Array.isArray(unit.clauses)) {
       for (const clause of unit.clauses) {
         for (const cId of safeArray(clause.visual_event_ids)) {
           if (eventsMap.has(cId) && !matched.some(m => m.id === cId)) {

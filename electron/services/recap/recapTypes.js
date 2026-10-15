@@ -15,6 +15,17 @@ function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function validateChunkTimeline(events, chunk = {}) {
+  const duration = Number(chunk.durationSec || (chunk.sourceEndSec - chunk.sourceStartSec));
+  if (duration < 60 || !Array.isArray(events) || events.length < 6) return;
+  const starts = events.map(e => Number(e.source_start)), ends = events.map(e => Number(e.source_end));
+  const span = Math.max(...ends) - Math.min(...starts);
+  const tiny = events.filter(e => Number(e.source_end) - Number(e.source_start) < .2).length;
+  if (span < Math.min(10, duration * .15) && tiny / events.length >= .75) {
+    throw Object.assign(new Error(`Mốc AI có dấu hiệu ghi phút.giây thành số giây: ${events.length} sự kiện của chunk ${duration.toFixed(1)}s bị nén vào ${span.toFixed(2)}s. Phải phân tích lại với timestamp tính bằng giây; không tự đoán/chuyển đơn vị.`), { kind: "invalid_json" });
+  }
+}
+
 /**
  * Validates a VisualEvent object.
  * A VisualEvent is something visible that can anchor narration clauses.
@@ -41,6 +52,8 @@ function validateVisualEvent(event, index = 0) {
     actions: safeArray(event.actions),
     objects: safeArray(event.objects),
     location: safeText(event.location || ""),
+    focus_x: Math.max(0, Math.min(1, safeNumber(event.focus_x, 0.5))),
+    focus_y: Math.max(0, Math.min(1, safeNumber(event.focus_y, 0.5))),
     importance: Math.max(0, Math.min(1, safeNumber(event.importance, 0.5))),
     motion_level: Math.max(0, Math.min(1, safeNumber(event.motion_level ?? event.motionIntensity, 0.5))),
     dialogue_present: Boolean(event.dialogue_present || event.dialoguePresent || event.dialogue),
@@ -184,7 +197,9 @@ function validateEditDecision(decision, index = 0) {
       video_speed: Number(video_speed.toFixed(3)),
       lead_ms: safeNumber(clip.lead_ms, 0),
       face_closeup: Boolean(clip.face_closeup),
-      lip_sync_risk: Boolean(clip.lip_sync_risk)
+      lip_sync_risk: Boolean(clip.lip_sync_risk),
+      focus_x: Math.max(0, Math.min(1, safeNumber(clip.focus_x, 0.5))),
+      focus_y: Math.max(0, Math.min(1, safeNumber(clip.focus_y, 0.5)))
     };
   });
 
@@ -224,6 +239,7 @@ module.exports = {
   safeNumber,
   safeText,
   safeArray,
+  validateChunkTimeline,
   validateVisualEvent,
   validateStoryModel,
   validateRecapPlan,

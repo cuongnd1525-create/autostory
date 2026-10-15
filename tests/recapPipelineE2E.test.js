@@ -12,6 +12,7 @@ const ProjectStore = require("../electron/services/projectStore");
 function runCommand(binary, args) {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { windowsHide: true });
+    child.on("error", reject);
     let stderr = "";
     child.stderr.on("data", (d) => { stderr += d.toString(); });
     child.on("close", (code) => {
@@ -163,6 +164,7 @@ async function runE2ETest() {
     });
 
     const draftProbe = await mediaService.probeVideo(draftOutput);
+    assert.ok(Math.abs(draftProbe.duration - renderer.getTimelineDuration(solution.decisions)) < 0.075, "Draft must preserve the scheduled narration/video timeline");
     assert.ok(draftProbe.duration > 4, `Draft duration should be > 4s (got ${draftProbe.duration}s)`);
     assert.strictEqual(draftProbe.hasAudio, true, "Draft should have mixed audio");
     console.log(`   Draft reel rendered successfully: ${draftProbe.duration}s`);
@@ -176,6 +178,7 @@ async function runE2ETest() {
     });
 
     const finalProbe = await mediaService.probeVideo(finalOutput);
+    assert.ok(Math.abs(finalProbe.duration - renderer.getTimelineDuration(solution.decisions)) < 0.075, "Final master must preserve the scheduled narration/video timeline");
     assert.ok(finalProbe.duration > 4, `Final duration should be > 4s (got ${finalProbe.duration}s)`);
     assert.strictEqual(finalProbe.width, 1280, "Final master should preserve native 1280 resolution");
     assert.strictEqual(finalProbe.hasAudio, true, "Final master should have mixed audio");

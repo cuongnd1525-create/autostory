@@ -79,6 +79,15 @@ class ProjectStore {
       exportRoot: payload.exportRoot || "",
       exportLayout: payload.exportLayout || "flat",
       mode: payload.mode || "dubbing",
+      recapMuteSourceAudio: payload.mode === "recap" ? Boolean(payload.recapMuteSourceAudio) : undefined,
+      ...(payload.mode === "recap" ? {
+        targetDurationSec: Number(payload.targetDurationSec || payload.targetDuration || 60),
+        recapWorkflow: payload.recapWorkflow || "full_auto", allowShotReuse: Boolean(payload.allowShotReuse),
+        visualLeadSec: Number(payload.visualLeadSec ?? 0.25), recapPreset: payload.recapPreset || "recap",
+        recapNarrationLanguage: payload.recapNarrationLanguage || "en", recapNarrationStyle: payload.recapNarrationStyle || "natural",
+        recapEditorialSelection: payload.recapEditorialSelection || "auto", recapAspectRatio: payload.recapAspectRatio || "original",
+        recapFraming: payload.recapFraming || "fit_blur", recapCaptionStyle: payload.recapCaptionStyle || "off"
+      } : {}),
       analysisWorkflow: payload.analysisWorkflow || "",
       manualGeminiPackPath: payload.manualGeminiPackPath || "",
       manualGeminiPromptOptions: payload.manualGeminiPromptOptions || null,

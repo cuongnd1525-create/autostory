@@ -568,8 +568,9 @@
             <div class="two-column recap-options recap-only">
               <div class="field-card">
                 <label>Thời lượng video mong muốn (giây)</label>
-                <input id="target-duration" type="number" min="8" max="600" step="1" value="60" />
-                <small>Gemini sẽ dựa vào mốc này để chọn số cảnh và độ dài nhịp dựng.</small>
+                <select id="recap-duration-preset"><option value="0">Tùy chỉnh</option><option value="75" selected>Recap ngắn — 75 giây</option><option value="120">Review — 120 giây</option><option value="240">Bản dài — 4 phút</option></select>
+                <input id="target-duration" type="number" min="15" max="600" step="1" value="75" />
+                <small>AI chọn nhịp kể theo mục tiêu; thời lượng được kiểm tra lại bằng audio thực tế.</small>
               </div>
               <div class="field-card">
                 <label>Tốc độ giọng đọc</label>
@@ -586,13 +587,13 @@
               <div class="field-card">
                 <label>Chế độ quy trình (Workflow)</label>
                 <select id="recap-workflow-mode">
-                  <option value="full_auto" selected>Full Auto (Tự động xuất Master)</option>
-                  <option value="review">Review Before Final Render (Kiểm tra Draft trước)</option>
+                  <option value="review" selected>Duyệt draft trước khi xuất</option>
+                  <option value="full_auto">Tự động xuất sau khi đạt kiểm tra</option>
                 </select>
-                <small>Review mode cho phép xem trước draft proxy và kiểm tra semantic sync trước khi render bản nét.</small>
+                <small>Bản cuối chỉ được xuất khi draft đạt kiểm tra chất lượng.</small>
               </div>
               <div class="field-card">
-                <label>Độ trễ hình ảnh dẫn trước (Visual Lead)</label>
+                <label>Hình xuất hiện trước lời kể</label>
                 <select id="recap-visual-lead">
                   <option value="0.25" selected>250ms (Tiêu chuẩn Editor - Khuyên dùng)</option>
                   <option value="0.15">150ms (Nhịp nhanh)</option>
@@ -606,7 +607,24 @@
               <small>Tắt: Mỗi đoạn phim chỉ dùng đúng 1 lần trong recap, bảo đảm tính tự nhiên và liền mạch.</small>
             </div>
             <div class="field-card recap-only">
-              <label class="check-row"><input id="viral-optimization" type="checkbox" checked /> Tối ưu viral & retention TikTok</label>
+              <label class="check-row"><input id="recap-mute-source-audio" type="checkbox" /> Tắt toàn bộ âm thanh video gốc</label>
+              <small>Bật: Chỉ giữ giọng kể TTS, tắt lời thoại, nhạc và tiếng động của video gốc.</small>
+            </div>
+            <div class="field-card recap-only">
+              <strong>Biên tập TikTok</strong>
+              <div class="two-column compact-grid">
+                <div><label for="recap-preset">Loại nội dung</label><select id="recap-preset"><option value="recap">Recap — kể diễn biến</option><option value="review">Review — nhận xét có dẫn chứng</option><option value="explain">Giải thích — trả lời một câu hỏi</option></select></div>
+                <div><label for="recap-narration-language">Ngôn ngữ lời kể</label><select id="recap-narration-language"><option value="en">Tiếng Anh (US)</option><option value="vi">Tiếng Việt</option></select></div>
+                <div><label for="recap-narration-style">Phong cách kể</label><select id="recap-narration-style"><option value="natural">Tự nhiên, câu ngắn</option><option value="suspense">Hồi hộp</option><option value="humorous">Hài hước</option><option value="cinematic">Điện ảnh</option></select></div>
+                <div><label for="recap-editorial-selection">Chọn góc kể và hook</label><select id="recap-editorial-selection"><option value="manual" selected>Tôi chọn sau khi nghe/xem hook thử</option><option value="auto">AI tự chọn, lưu 3 hook thử</option></select></div>
+                <div><label for="recap-aspect-ratio">Khung xuất</label><select id="recap-aspect-ratio"><option value="9:16">Dọc 9:16 — TikTok</option><option value="original">Giữ khung gốc</option></select></div>
+                <div><label for="recap-framing">Bố cục video dọc</label><select id="recap-framing"><option value="fit_blur">Giữ toàn cảnh, nền mờ</option><option value="smart_crop">Crop theo chủ thể AI nhận diện</option></select></div>
+                <div><label for="recap-caption-style">Phụ đề</label><select id="recap-caption-style"><option value="phrase">Cụm từ ngắn</option><option value="karaoke">Highlight từng từ</option><option value="off">Tắt</option></select></div>
+              </div>
+              <small>Tạo 3 góc kể, 5 hook và 3 bản mở đầu để so sánh. Đo TTS để sửa thời lượng; draft còn lỗi nghiêm trọng sẽ được sửa hoặc dừng trước khi xuất master.</small>
+            </div>
+            <div class="field-card recap-only">
+              <label class="check-row"><input id="viral-optimization" type="checkbox" checked /> Tối ưu mở đầu và giữ chân người xem</label>
               <div class="two-column compact-grid">
                 <div>
                   <label>Nền tảng</label>
@@ -646,7 +664,7 @@
                 </div>
               </div>
               <label class="check-row"><input id="loop-ending" type="checkbox" checked /> Kết thúc dạng loop / gợi bình luận</label>
-              <small>Chỉ áp dụng cho chế độ Tóm tắt phim (AI). Nếu lớp viral lỗi, tool fallback về pipeline cũ và ghi report debug.</small>
+              <small>AI đề xuất góc kể và tạo ba hook nghe thử dựa trên sự kiện trong video nguồn.</small>
             </div>
                   </div>
                 </div>
@@ -1336,7 +1354,7 @@
           </div>
         </section>
 
-        <aside class="log-panel">
+        <aside id="setup-activity-panel" class="log-panel">
           <div class="log-title">
             <span>Hoạt động</span>
             <div class="log-actions">
@@ -1394,6 +1412,27 @@
               </div>
             </div>
             <div id="highlight-revision-bar" class="revision-bar hidden"></div>
+            <div id="recap-editorial-panel" class="field-card hidden">
+              <h3>Biên tập recap / review</h3>
+              <div class="two-column compact-grid">
+                <div><label>Loại nội dung</label><select id="recap-studio-preset"><option value="recap">Recap</option><option value="review">Review</option><option value="explain">Giải thích</option></select></div>
+                <div><label>Thời lượng (giây)</label><input id="recap-studio-duration" type="number" min="15" max="600" value="60" /></div>
+                <div><label>Lời kể</label><select id="recap-studio-language"><option value="en">Tiếng Anh (US)</option><option value="vi">Tiếng Việt</option></select></div>
+                <div><label>Phong cách</label><select id="recap-studio-style"><option value="natural">Tự nhiên</option><option value="suspense">Hồi hộp</option><option value="humorous">Hài hước</option><option value="cinematic">Điện ảnh</option></select></div>
+                <div><label>Khung hình</label><select id="recap-studio-aspect"><option value="9:16">Dọc 9:16</option><option value="original">Khung gốc</option></select></div>
+                <div><label>Cách đặt hình</label><select id="recap-studio-framing"><option value="fit_blur">Giữ đủ hình, nền mờ</option><option value="smart_crop">Crop theo điểm trọng tâm AI</option></select></div>
+                <div><label>Phụ đề</label><select id="recap-studio-captions"><option value="phrase">Cụm từ</option><option value="karaoke">Highlight từng từ</option><option value="off">Tắt</option></select></div>
+              </div>
+              <button id="recap-apply-prefs" class="secondary-button">Áp dụng và dựng lại</button>
+              <label for="recap-angle-choice">Góc kể</label><select id="recap-angle-choice"></select>
+              <button id="recap-regenerate-hooks" class="secondary-button">Tạo hook cho góc kể này</button>
+              <div id="recap-hook-auditions" class="recap-hook-grid"></div>
+              <button id="recap-confirm-editorial" class="primary-button">Dùng hook đã chọn và tiếp tục</button>
+              <div id="recap-quality-status" role="status"></div>
+              <details><summary>Lời kể của draft</summary><div id="recap-script-preview" style="white-space:pre-wrap;line-height:1.6;margin:12px 0"></div></details>
+              <button id="recap-recheck" class="secondary-button">Kiểm tra lại draft</button>
+              <button id="recap-approve-final" class="primary-button">Duyệt draft và xuất master</button>
+            </div>
             <div id="segment-list" class="segment-list"></div>
           </div>
 
@@ -1772,6 +1811,10 @@
                       <b id="source-vol-value" class="value-badge">20%</b>
                     </div>
                     <input id="source-volume" type="range" min="0" max="100" value="20" class="sleek-slider" />
+                    <div id="recap-source-audio-control" class="hidden">
+                      <label class="check-row"><input id="recap-mute-source-audio-mixer" type="checkbox" /> Tắt toàn bộ âm thanh video gốc</label>
+                      <small>Chỉ giữ giọng kể TTS khi xuất draft hoặc master.</small>
+                    </div>
                   </div>
                   <div class="slider-group">
                     <div class="slider-header">
@@ -2388,6 +2431,7 @@
                   <label>Lệnh Antigravity<input id="antigravity-command" type="text" placeholder="agy" /></label>
                   <label>Mô hình Antigravity<select id="antigravity-model"></select></label>
                   <label>Mức suy luận (reasoning)<select id="antigravity-reasoning"></select></label>
+                  <div class="settings-field-wide"><button id="refresh-antigravity-models" type="button" class="secondary-button">Tải lại model từ CLI</button><small id="antigravity-models-status" role="status"></small></div>
                   <label class="settings-field-wide">Tham số Antigravity<input id="antigravity-args" type="text" placeholder="Tùy chọn, prompt được gửi qua stdin. Dùng {prompt} nếu cần." /></label>
                   <label>Thời gian chờ (ms)<input id="antigravity-timeout-ms" type="number" min="15000" step="1000" /></label>
                 </div>
@@ -2513,6 +2557,7 @@
     <script src="./productionQueueUi.js"></script>
     <script src="./previewLog.js"></script>
     <script src="./antigravityModelCatalog.js"></script>
+    <script src="./recapSetupUi.js"></script>
     <script src="./renderer.js"></script>
     <script src="./animeLoreUi.js"></script>
   </body>

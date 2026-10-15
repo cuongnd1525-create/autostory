@@ -57,6 +57,9 @@ async function mapWithConcurrency(items, concurrency, worker) {
 }
 
 function fetchFailureMessage(error, label, url) {
+  if (error instanceof TypeError && /AbortSignal|construct.*Request|RequestInit/i.test(error.message)) {
+    return `${label}: lỗi tham số request: ${error.message}`;
+  }
   const cause = error?.cause || error || {};
   const code = safeText(cause.code || cause.errno);
   const detail = safeText(cause.message || error?.message || "unknown network error");
@@ -80,6 +83,7 @@ function fetchErrorCode(error) {
 
 function shouldRetryFetchError(error, retryCodes = null) {
   if (error?.name === "AbortError") return false;
+  if (error instanceof TypeError && /AbortSignal|construct.*Request|RequestInit/i.test(error.message)) return false;
   if (!Array.isArray(retryCodes)) return true;
   return retryCodes.includes(fetchErrorCode(error));
 }
@@ -97,6 +101,7 @@ async function fetchWithRetry(url, optionsFactory, {
       const options = typeof optionsFactory === "function" ? optionsFactory(attempt) : optionsFactory;
       return await fetch(url, options);
     } catch (error) {
+      if (error?.name === "AbortError" || optionsFactory?.signal?.aborted) throw error;
       lastError = error;
       if (!shouldRetryFetchError(error, retryCodes) || attempt >= attempts) break;
       const delayMs = retryDelayMs * (2 ** (attempt - 1));
@@ -382,10 +387,10 @@ class VertexAiService {
   async assertBudgetAvailable() {
     const status = await this.budgetStatus();
     if (status.budgetUsd && status.totalSpentUsd >= status.budgetUsd) {
-      throw new Error(`Vertex AI đã đạt hard limit $${status.budgetUsd.toFixed(2)}. Hãy tăng hạn mức hoặc đổi provider.`);
+      throw Object.assign(new Error(`Vertex AI đã đạt hard limit $${status.budgetUsd.toFixed(2)}. Hãy tăng hạn mức hoặc đổi provider.`), { kind: "budget" });
     }
     if (status.dailyLimitUsd && status.dailySpentUsd >= status.dailyLimitUsd) {
-      throw new Error(`Vertex AI đã đạt giới hạn hôm nay $${status.dailyLimitUsd.toFixed(2)}.`);
+      throw Object.assign(new Error(`Vertex AI đã đạt giới hạn hôm nay $${status.dailyLimitUsd.toFixed(2)}.`), { kind: "budget" });
     }
     return status;
   }
@@ -512,7 +517,9 @@ class VertexAiService {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     let heartbeat = null;
-    if (signal) signal.addEventListener("abort", () => controller.abort(), { once: true });
+    const abort = () => controller.abort(signal.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
     onProgress?.({ percent: 45, message: `Vertex AI đang chạy ${model}` });
     if (typeof onProgress === "function") {
       heartbeat = setInterval(() => {
@@ -547,8 +554,10 @@ class VertexAiService {
             // JSON extraction (Source Story Model) we cap/disable them so reasoning can't
             // starve the JSON output and cause a false MAX_TOKENS truncation. Only sent
             // when the caller opts in (thinkingBudget >= 0), so other tasks are unchanged.
-            ...(Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0
-              ? { thinkingConfig: { thinkingBudget: Math.round(Number(thinkingBudget)) } } : {}),
+            ...(thinkingBudget !== null && thinkingBudget !== undefined && thinkingBudget !== ""
+              && Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0
+              ? { thinkingConfig: { thinkingBudget: /gemini-2\.5-pro/i.test(model)
+                ? Math.max(128, Math.round(Number(thinkingBudget))) : Math.round(Number(thinkingBudget)) } } : {}),
             ...(responseSchema ? { responseSchema: sourceContract
               ? (hookSchema || relaxedSchema ? require('./autoStorySchemaBoundary').hookTransport(responseSchema)
                 : require('./autoStorySchemaBoundary').transport(responseSchema)) : responseSchema } : {})
@@ -586,7 +595,7 @@ class VertexAiService {
         finishReason: payload.candidates?.[0]?.finishReason || "",
         usage: payload.usageMetadata || {}, model,
         requestedMaxOutputTokens: Number(maxOutputTokens) > 0 ? Math.round(Number(maxOutputTokens)) : null,
-        requestedThinkingBudget: Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0 ? Math.round(Number(thinkingBudget)) : null,
+        requestedThinkingBudget: thinkingBudget !== null && thinkingBudget !== undefined && thinkingBudget !== "" && Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0 ? Math.round(Number(thinkingBudget)) : null,
         prepareMs: preparedAt - startedAt, modelMs: completedAt - preparedAt
       };
       const responseText = extractResponseText(payload);
@@ -626,6 +635,7 @@ class VertexAiService {
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
     }
   }
 

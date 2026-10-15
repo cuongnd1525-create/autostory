@@ -11,6 +11,7 @@ const os = require("os");
 const { spawn } = require("child_process");
 const RecapHardwareService = require("./recapHardwareService");
 const { throwIfCancelled, trackChild } = require("../cancelToken");
+const RecapCaptionService = require("./recapCaptionService");
 
 class RecapRenderer {
   constructor(options = {}) {
@@ -18,6 +19,7 @@ class RecapRenderer {
     this.ffprobePath = options.ffprobePath || process.env.FFPROBE_PATH || "ffprobe";
     this.hardwareService = options.hardwareService || new RecapHardwareService({ ffmpegPath: this.ffmpegPath });
     this.logger = options.logger || console;
+    this.captionService = options.captionService || new RecapCaptionService(options.settings || {});
   }
 
   async runCommand(binary, args, { cancelToken = null, captureStdout = false } = {}) {
@@ -100,7 +102,7 @@ class RecapRenderer {
       // First clip in decision determines the speech unit's timeline start
       const firstClip = dec.clips && dec.clips.length > 0 ? dec.clips[0] : null;
       const targetSpeechStart = firstClip
-        ? Number((firstClip.output_start + (firstClip.lead_ms || 250) / 1000).toFixed(3))
+        ? Number((firstClip.output_start + (firstClip.lead_ms ?? 250) / 1000).toFixed(3))
         : currentAudioTimeline;
 
       // If there is a silence gap before this speech unit, generate silent padding
@@ -119,25 +121,23 @@ class RecapRenderer {
         currentAudioTimeline = targetSpeechStart;
       }
 
-      // Retime audio if voice_tempo != 1.0
-      let unitAudioPath = dec.audio_path;
+      // Concat demuxing requires identical PCM formats. Even tempo=1 must
+      // be converted: Edge/Kokoro audio is commonly 24 kHz mono, while
+      // generated silence is 44.1 kHz stereo.
       const tempo = Number(dec.voice_tempo || 1.0);
-      if (Math.abs(tempo - 1.0) > 0.005) {
-        const retimedPath = path.join(retimedAudioDir, `speech_retimed_${dIdx}.wav`);
-        await this.runCommand(this.ffmpegPath, [
-          "-y",
-          "-i", dec.audio_path,
-          "-filter:a", `atempo=${tempo.toFixed(4)},aresample=44100`,
-          "-c:a", "pcm_s16le",
-          retimedPath
-        ], { cancelToken });
-        unitAudioPath = retimedPath;
-      }
+      if (!Number.isFinite(tempo) || tempo < 0.5 || tempo > 2) throw new Error(`Invalid narration tempo: ${tempo}`);
+      const unitAudioPath = path.join(retimedAudioDir, `speech_normalized_${dIdx}.wav`);
+      await this.runCommand(this.ffmpegPath, [
+        "-y", "-i", dec.audio_path,
+        "-filter:a", `${Math.abs(tempo - 1) > 0.0001 ? `atempo=${tempo.toFixed(4)},` : ""}aresample=44100`,
+        "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le", unitAudioPath
+      ], { cancelToken });
 
       concatEntries.push(`file '${unitAudioPath.replace(/\\/g, "/")}'`);
 
       // Update current timeline position with retimed duration
-      const effectiveDuration = (dec.audio_duration || 3.0) / tempo;
+      const effectiveDuration = (await this.probeVideo(unitAudioPath)).durationSec;
+      if (!(effectiveDuration > 0)) throw new Error(`Cannot measure normalized narration: ${dec.speech_unit_id}`);
       currentAudioTimeline = Number((currentAudioTimeline + effectiveDuration).toFixed(3));
     }
 
@@ -187,12 +187,49 @@ class RecapRenderer {
     return masterNarrationPath;
   }
 
+  getTimelineDuration(decisions) {
+    return Math.max(...decisions.flatMap((decision) => [
+      ...(decision.clips || []).map((clip) => clip.output_end),
+      (decision.clips?.[0]?.output_start || 0) + (decision.clips?.[0]?.lead_ms ?? 250) / 1000
+        + Number(decision.audio_duration || 0) / Number(decision.voice_tempo || 1)
+    ]), 0);
+  }
+
+  segmentTiming(clips, index, fps, totalDurationSec) {
+    const startFrame = index === 0 ? 0 : Math.round(clips[index].output_start * fps);
+    const endFrame = Math.round((clips[index + 1]?.output_start ?? totalDurationSec) * fps);
+    if (endFrame <= startFrame) throw new Error("Recap clips have an invalid or overlapping output timeline.");
+    return { durationSec: (endFrame - startFrame) / fps,
+      initialGapSec: index === 0 ? Math.max(0, clips[index].output_start) : 0 };
+  }
+
+  framingFilter(presentation = {}, clip = {}, draft = false) {
+    if (presentation.aspect !== "9:16") return draft ? "scale=640:360:force_original_aspect_ratio=decrease,pad=640:360:(ow-iw)/2:(oh-ih)/2" : "null";
+    const width = draft ? 360 : 1080, height = draft ? 640 : 1920;
+    if (presentation.framing === "smart_crop") {
+      const x = Math.max(0, Math.min(1, Number(clip.focus_x ?? 0.5))), y = Math.max(0, Math.min(1, Number(clip.focus_y ?? 0.5)));
+      return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='max(0,min(iw-ow,iw*${x}-ow/2))':y='max(0,min(ih-oh,ih*${y}-oh/2))'`;
+    }
+    return `split=2[back][front];[back]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=20:1[blur];[front]scale=${width}:${height}:force_original_aspect_ratio=decrease[fit];[blur][fit]overlay=(W-w)/2:(H-h)/2`;
+  }
+
+  async captionFilter({ presentation, narrationPath, decisions, captionDirectory, width, height, onProgress }) {
+    if (!presentation?.captions || presentation.captions === "off") return null;
+    const caption = await this.captionService.prepare({ narrationPath, decisions, directory: captionDirectory,
+      style: presentation.captions, language: presentation.language, width, height, onProgress });
+    const escaped = caption.assPath.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+    return `ass='${escaped}'`;
+  }
+
   /**
    * Renders the draft proxy video for AI quality review and preview.
    */
   async renderDraft({
     sourceVideoPath,
     proxyVideoPath = null,
+    muteSourceAudio = false,
+    presentation = {},
+    captionDirectory,
     decisions = [],
     outputPath,
     onProgress = () => {},
@@ -206,6 +243,7 @@ class RecapRenderer {
       const inputVideo = (proxyVideoPath && (await this._fileExists(proxyVideoPath)))
         ? proxyVideoPath
         : sourceVideoPath;
+      const hasSourceAudio = !muteSourceAudio && (await this.probeVideo(inputVideo)).hasAudio;
 
       const encoder = await this.hardwareService.detectBestEncoder();
       const draftEncArgs = this.hardwareService.getFastDraftEncoderArgs(encoder);
@@ -215,7 +253,7 @@ class RecapRenderer {
         throw new Error("Cannot render recap: no edit decision clips provided.");
       }
 
-      const totalVideoDuration = allClips[allClips.length - 1].output_end;
+      const totalVideoDuration = this.getTimelineDuration(decisions);
       onProgress({ percent: 10, stage: "draft_audio", message: "Generating narration master track..." });
       const narrationTrack = await this.buildNarrationTrack({
         decisions,
@@ -223,6 +261,9 @@ class RecapRenderer {
         tempDir,
         cancelToken
       });
+      const caption = await this.captionFilter({ presentation, narrationPath: narrationTrack, decisions,
+        captionDirectory: captionDirectory || path.join(path.dirname(outputPath), "captions"),
+        width: presentation.aspect === "9:16" ? 360 : 640, height: presentation.aspect === "9:16" ? 640 : 360, onProgress });
 
       // Render individual draft segments
       const segmentDir = path.join(tempDir, "segments");
@@ -235,13 +276,16 @@ class RecapRenderer {
         const segPath = path.join(segmentDir, `seg_${String(i).padStart(4, "0")}.mp4`);
         const rawDur = clip.source_end - clip.source_start;
         const speed = clip.video_speed || 1.0;
+        const timing = this.segmentTiming(allClips, i, 24, totalVideoDuration);
 
         const vfFilters = [
-          `setpts=${(1 / speed).toFixed(4)}*PTS`,
-          `scale=640:360:force_original_aspect_ratio=decrease`,
-          `pad=640:360:(ow-iw)/2:(oh-ih)/2`,
+          `setpts=${(1 / speed).toFixed(8)}*(PTS-STARTPTS)`,
+          this.framingFilter(presentation, clip, true),
           `setsar=1`,
-          `fps=24`
+          `fps=24`,
+          ...(timing.initialGapSec > 0 ? [`tpad=start_mode=clone:start_duration=${timing.initialGapSec}`] : []),
+          `tpad=stop_mode=clone:stop_duration=${timing.durationSec}`,
+          `trim=duration=${timing.durationSec}`, "setpts=PTS-STARTPTS"
         ];
 
         const clipArgs = [
@@ -251,12 +295,16 @@ class RecapRenderer {
           "-i", inputVideo,
           "-vf", vfFilters.join(","),
           ...draftEncArgs,
-          "-an",
-          segPath
+          "-t", String(timing.durationSec),
         ];
+        if (hasSourceAudio) {
+          const tempoFilter = Math.abs(speed - 1) > 0.01 ? `atempo=${speed.toFixed(4)},` : "";
+          clipArgs.push("-af", `${tempoFilter}volume=0.20,aresample=44100,aformat=channel_layouts=stereo,${timing.initialGapSec > 0 ? `adelay=${Math.round(timing.initialGapSec * 1000)}:all=1,` : ""}apad,atrim=duration=${timing.durationSec}`, "-ac", "2", "-c:a", "aac", "-b:a", "128k");
+        } else clipArgs.push("-an");
+        clipArgs.push(segPath);
 
         await this.runCommand(this.ffmpegPath, clipArgs, { cancelToken });
-        concatEntries.push(`file '${segPath.replace(/\\/g, "/")}'`);
+        concatEntries.push(`file '${segPath.replace(/\\/g, "/")}'\nduration ${timing.durationSec}`);
 
         const progressPercent = 10 + Math.round(((i + 1) / allClips.length) * 65);
         onProgress({
@@ -290,9 +338,10 @@ class RecapRenderer {
         "-y",
         "-i", assembledVideo,
         "-i", narrationTrack,
+        ...(hasSourceAudio ? ["-filter_complex", "[0:a:0][1:a:0]amix=inputs=2:duration=first:dropout_transition=2[aout]"] : []),
         "-map", "0:v:0",
-        "-map", "1:a:0",
-        "-c:v", "copy",
+        "-map", hasSourceAudio ? "[aout]" : "1:a:0",
+        ...(caption ? ["-vf", caption, ...draftEncArgs] : ["-c:v", "copy"]),
         "-c:a", "aac",
         "-b:a", "128k",
         outputPath
@@ -310,6 +359,9 @@ class RecapRenderer {
    */
   async renderFinal({
     sourceVideoPath,
+    muteSourceAudio = false,
+    presentation = {},
+    captionDirectory,
     decisions = [],
     outputPath,
     onProgress = () => {},
@@ -321,6 +373,7 @@ class RecapRenderer {
 
     try {
       const sourceMeta = await this.probeVideo(sourceVideoPath);
+      const hasSourceAudio = !muteSourceAudio && sourceMeta.hasAudio;
       const encoder = await this.hardwareService.detectBestEncoder();
       const allClips = decisions.flatMap((d) => d.clips || []);
 
@@ -328,7 +381,7 @@ class RecapRenderer {
         throw new Error("Cannot render final recap: no edit decision clips provided.");
       }
 
-      const totalVideoDuration = allClips[allClips.length - 1].output_end;
+      const totalVideoDuration = this.getTimelineDuration(decisions);
       onProgress({ percent: 5, stage: "final_audio", message: "Assembling narration track..." });
       const narrationTrack = await this.buildNarrationTrack({
         decisions,
@@ -336,6 +389,10 @@ class RecapRenderer {
         tempDir,
         cancelToken
       });
+      const caption = await this.captionFilter({ presentation, narrationPath: narrationTrack, decisions,
+        captionDirectory: captionDirectory || path.join(path.dirname(outputPath), "captions"),
+        width: presentation.aspect === "9:16" ? 1080 : sourceMeta.width,
+        height: presentation.aspect === "9:16" ? 1920 : sourceMeta.height, onProgress });
 
       // Render pristine segments from original source
       const segmentDir = path.join(tempDir, "segments");
@@ -348,11 +405,16 @@ class RecapRenderer {
         const segPath = path.join(segmentDir, `final_seg_${String(i).padStart(4, "0")}.mp4`);
         const rawDur = clip.source_end - clip.source_start;
         const speed = clip.video_speed || 1.0;
+        const timing = this.segmentTiming(allClips, i, 30, totalVideoDuration);
 
         const vfFilters = [
-          `setpts=${(1 / speed).toFixed(4)}*PTS`,
+          `setpts=${(1 / speed).toFixed(8)}*(PTS-STARTPTS)`,
+          this.framingFilter(presentation, clip, false),
           `setsar=1`,
-          `fps=30`
+          `fps=30`,
+          ...(timing.initialGapSec > 0 ? [`tpad=start_mode=clone:start_duration=${timing.initialGapSec}`] : []),
+          `tpad=stop_mode=clone:stop_duration=${timing.durationSec}`,
+          `trim=duration=${timing.durationSec}`, "setpts=PTS-STARTPTS"
         ];
 
         const clipArgs = [
@@ -366,16 +428,17 @@ class RecapRenderer {
         ];
 
         // Duck source ambient audio to 20% if source has audio
-        if (sourceMeta.hasAudio) {
-          const atempoStr = Math.abs(speed - 1.0) > 0.01 ? `atempo=${speed.toFixed(4)},` : "";
-          clipArgs.push("-af", `${atempoStr}volume=0.20,aresample=44100`, "-c:a", "aac", "-b:a", "192k");
+        if (!hasSourceAudio) {
+          clipArgs.push("-an");
         } else {
-          clipArgs.push("-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-shortest", "-c:a", "aac", "-b:a", "192k");
+          const atempoStr = Math.abs(speed - 1.0) > 0.01 ? `atempo=${speed.toFixed(4)},` : "";
+          clipArgs.push("-af", `${atempoStr}volume=0.20,aresample=44100,aformat=channel_layouts=stereo,${timing.initialGapSec > 0 ? `adelay=${Math.round(timing.initialGapSec * 1000)}:all=1,` : ""}apad,atrim=duration=${timing.durationSec}`, "-ac", "2", "-c:a", "aac", "-b:a", "192k");
         }
 
-        clipArgs.push(segPath);
+        clipArgs.push("-t", String(timing.durationSec), segPath);
         await this.runCommand(this.ffmpegPath, clipArgs, { cancelToken });
-        concatEntries.push(`file '${segPath.replace(/\\/g, "/")}'`);
+        // AAC encoder padding must not accumulate as video timeline gaps.
+        concatEntries.push(`file '${segPath.replace(/\\/g, "/")}'\nduration ${timing.durationSec}`);
 
         const progressPercent = 5 + Math.round(((i + 1) / allClips.length) * 75);
         onProgress({
@@ -409,10 +472,10 @@ class RecapRenderer {
         "-y",
         "-i", assembledVideo,
         "-i", narrationTrack,
-        "-filter_complex", "[0:a][1:a]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+        ...(hasSourceAudio ? ["-filter_complex", "[0:a:0][1:a:0]amix=inputs=2:duration=first:dropout_transition=2[aout]"] : []),
         "-map", "0:v:0",
-        "-map", "[aout]",
-        "-c:v", "copy",
+        "-map", hasSourceAudio ? "[aout]" : "1:a:0",
+        ...(caption ? ["-vf", caption, ...encoder.args] : ["-c:v", "copy"]),
         "-c:a", "aac",
         "-b:a", "320k",
         "-movflags", "+faststart",

@@ -1,5 +1,6 @@
 const fs = require("fs/promises");
 const path = require("path");
+const { localPythonCommand } = require("./pythonRuntimeService");
 
 async function atomicWrite(filePath, contents) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
@@ -64,7 +65,7 @@ class ConfigStore {
       ytDlpCommand: process.env.YT_DLP_COMMAND || "yt-dlp",
       whisperEngine: process.env.WHISPER_ENGINE || "auto",
       whisperCommand: process.env.WHISPER_COMMAND || "whisper",
-      whisperPythonCommand: process.env.WHISPER_PYTHON_COMMAND || "py",
+      whisperPythonCommand: process.env.WHISPER_PYTHON_COMMAND || localPythonCommand("py"),
       whisperModel: process.env.WHISPER_MODEL || "auto",
       whisperDevice: process.env.WHISPER_DEVICE || "auto",
       whisperComputeType: process.env.WHISPER_COMPUTE_TYPE || "auto",
@@ -109,7 +110,7 @@ class ConfigStore {
       omniVoiceWorkerIdleTimeoutMs: Number(process.env.OMNIVOICE_WORKER_IDLE_TIMEOUT_MS || 15 * 60 * 1000),
       omniVoiceInstruct: process.env.OMNIVOICE_INSTRUCT || "",
       omniVoiceRefText: process.env.OMNIVOICE_REF_TEXT || "",
-      kokoroPythonCommand: process.env.KOKORO_PYTHON_COMMAND || "python",
+      kokoroPythonCommand: process.env.KOKORO_PYTHON_COMMAND || localPythonCommand(),
       kokoroModel: process.env.KOKORO_MODEL || "hexgrad/Kokoro-82M",
       kokoroDevice: process.env.KOKORO_DEVICE || "",
       kokoroVoicePreset: process.env.KOKORO_VOICE_PRESET || "natural",
@@ -117,7 +118,7 @@ class ConfigStore {
       kokoroWorkerIdleTimeoutMs: Number(process.env.KOKORO_WORKER_IDLE_TIMEOUT_MS || 15 * 60 * 1000),
       localPreviewTranslationEnabled: process.env.LOCAL_PREVIEW_TRANSLATION !== "0",
       localTranslationProvider: process.env.LOCAL_TRANSLATION_PROVIDER || "opus_mt",
-      localTranslationPythonCommand: process.env.LOCAL_TRANSLATION_PYTHON || "python",
+      localTranslationPythonCommand: process.env.LOCAL_TRANSLATION_PYTHON || localPythonCommand(),
       localTranslationModel: process.env.LOCAL_TRANSLATION_MODEL || "Helsinki-NLP/opus-mt-en-vi",
       localTranslationDevice: process.env.LOCAL_TRANSLATION_DEVICE || "",
       localTranslationBatchSize: Number(process.env.LOCAL_TRANSLATION_BATCH_SIZE || 8),
