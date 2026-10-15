@@ -49,6 +49,7 @@ const {
   scoreManualGeminiVariant
 } = require("./manualGeminiViralPreflightService");
 const {validateManualGeminiEditorialContract, auditSerializedVariants} = require("./manualGeminiEditorialGateService");
+const {auditManualSourceGrounding} = require("./manualSourceGroundingAuditService");
 const { compilePodcastEdlFile } = require("./podcastViralService");
 const {
   consolidateStoryRecutSegments,
@@ -4353,6 +4354,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       })
       : null;
     const variants = [];
+    const groundingAudits = [];
+    const groundingSrt = project.analysisWorkflow === "manual_gemini_draft_review"
+      ? await fs.readFile(path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "source-transcript.srt"), "utf8").catch(() => "")
+      : "";
     for (const [variantIndex, jsonPath] of jsonPaths.entries()) {
       const raw = await fs.readFile(jsonPath, "utf8");
       const parsedArtifact = parseGeminiJsonObject(raw, path.basename(jsonPath));
@@ -4486,6 +4491,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         });
         if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
         script.warnings.push(...editorial.warnings);
+        const grounding = auditManualSourceGrounding({
+          rawScript: scriptInput, normalizedScript: script,
+          transcriptSrt: groundingSrt, sourceVideo: manualManifest?.sourceVideo || ""
+        });
+        groundingAudits.push({scriptId: editorial.scriptId, ...grounding});
+        if (grounding.quoteManualReviewCount) {
+          script.warnings.push(grounding.quoteManualReviewCount
+            + " quote nguồn chưa khớp SRT; cần nghe trực tiếp trước khi xuất.");
+        }
       }
       if (configuredPromptOptions.profile === "independent") {
         const importedScriptId = safeNumber(
@@ -4710,6 +4724,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         variant.viralRank = rankById.get(variant.id) || variants.length;
       });
     }
+    const sourceGroundingReportPath = groundingAudits.length
+      ? path.join(paths.analysisDir, "manual-gemini-source-grounding.json") : "";
+    if (sourceGroundingReportPath) {
+      await this.projectStore.writeJson(sourceGroundingReportPath, {
+        artifactType: "manual_gemini_source_grounding_report",
+        generatedAt: new Date().toISOString(),
+        reports: groundingAudits
+      });
+    }
     const activeVariant = variants[0];
     const recommendedVariant = [...variants]
       .sort((left, right) => Number(right.viralPreflight?.score || 0) - Number(left.viralPreflight?.score || 0))[0];
@@ -4786,7 +4809,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       artifacts: {
         highlightCutScriptPath: scriptPath,
         sceneManifestPath,
-        validationPath
+        validationPath,
+        ...(sourceGroundingReportPath ? {sourceGroundingReportPath} : {})
       }
     };
 
