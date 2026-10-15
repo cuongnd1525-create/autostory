@@ -190,6 +190,12 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
     try {
       const result = await service.auditDrafts({ workspaceRoot: workerRoot, projectId, scriptId, signal, onProgress });
       const audit = result.audits.find(a => Number(a.scriptId) === scriptId);
+      if (audit?.status === 'MEDIA_CRITIC_PENDING' && audit.retryable === true) {
+        // The MP4 is already on disk; do not spend render time again or call
+        // final export before the real independent critic is available.
+        await publish();
+        return audit;
+      }
       const finalAudit = await require('./autoStoryReleaseGate').finalizeVariant({
         store: local, dubbing, workspaceRoot: workerRoot, projectId, scriptId,
         settings, audit, onProgress, aiService: service.vertex || service.ai || null
