@@ -29,7 +29,8 @@ function match(config,voice,media){
    const candidate=available[0],asset=candidate.asset;
    const remainder=segment.durationSec-cursor;
    // Keep edits readable, avoiding the compulsory 2s copyright-evasion rule.
-   const desired=Math.min(remainder,2.2+(sequence%3)*0.3);
+   const nominal=Math.min(remainder,2.2+(sequence%3)*0.3);
+   const desired=remainder-nominal<0.45?remainder:nominal;
    const mediaDuration=asset.mediaType==='image'?desired:Math.max(0,asset.endSec-asset.startSec);
    const duration=Math.min(desired,mediaDuration);
    if(duration<0.4)break;
