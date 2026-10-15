@@ -518,6 +518,104 @@ function fakeEngine(asks) {
     await assert.rejects(Packer.buildReelFiles(engine, { ...reel, fileCount: MAXF + 1, maxReelFiles: MAXF }), /provider limit is 10/);
   });
 
+  await ok('1015_01 hook regression: twice OUTSIDE_SCOPE_REEL, then valid hook with short narrator => preserve core and recover via LOCKED delivery-only repair', async () => {
+    const original = directorEdl();
+    const scope = scopeCandidate();
+    const reel = Scope.planScopeReel(scope, { durationSec: SOURCE_SEC });
+    const base = Director.stampSpine(original.spine, scope, reel);
+    const propose = (start, end, shortNarration = false) => {
+      const beats = original.spine.beats.map((b,i) => i === 0
+        ? { ...b, sourceStartSec:start, sourceEndSec:end, observedInFootage:`observed hook at ${start}s` } : b);
+      const out = withBlocks({ ...original, spine: { ...original.spine, beats } });
+      if (shortNarration) {
+        const template = out.spine.deliveryBlocks[0];
+        const raw = (id, beatIds) => ({ ...template, blockId:id, beatIds, mode:'raw_evidence',
+          storyFunction:'authentic officer evidence', evidenceFunction:'The real exchange is essential' });
+        const blocks = [
+          raw('hook_raw',['b1']),
+          { ...template, blockId:'short_narration', beatIds:['b2'], mode:'narrated_story',
+            sourceAudioTreatment:'voiceover_with_ambient', narratorFunction:'CONTEXT',
+            narrationIntent:'Connect the earlier stop to the evidence',
+            storyFunction:'timeline orientation',
+            ownershipReason:'Causal connection needs the narrator' },
+          raw('rest_raw',['b3','b4','b5','b6'])
+        ];
+        out.spine.deliveryBlocks=blocks;
+        out.spine.transitionChecks=transitionsFor(blocks);
+      }
+      return out;
+    };
+    const grouping = {
+      reason:'One continuous narrator bridge over b2 and b3',
+      deliveryBlocks:[
+        { ...original.spine.deliveryBlocks[0], blockId:'hook_raw', mode:'raw_evidence',
+          beatIds:['b1'], evidenceFunction:'Keep hook natural evidence' },
+        { ...original.spine.deliveryBlocks[0], blockId:'narration_repaired', mode:'narrated_story',
+          beatIds:['b2','b3'], sourceAudioTreatment:'voiceover_with_ambient',
+          narratorFunction:'CONTEXT', narrationIntent:'Orient original stop before raw confrontation',
+          ownershipReason:'One coherent narrator passage' },
+        { ...original.spine.deliveryBlocks[0], blockId:'rest_raw', mode:'raw_evidence',
+          beatIds:['b4','b5','b6'], evidenceFunction:'Keep genuine denial and consequence' }
+      ]
+    };
+    grouping.transitionChecks=transitionsFor(grouping.deliveryBlocks);
+    const engine=fakeEngine([
+      propose(130,136), propose(145,151), propose(52,58,true), grouping
+    ]);
+    engine.config.narration={enabled:true,measuredWordsPerSecond:2.2};
+    engine.config.narrationMinBlockSec=11;
+    const progress=[];
+    const result=await Director.repairTechnical(engine,{
+      model:MODEL,spine:base,scriptId:1,
+      violations:[{code:'HOOK_SOURCE_AUDITION',message:'Hook opening is too procedural'}],
+      hookRepair:{attempt:1,rejectedOpenings:[{sourceStartSec:60,sourceEndSec:66}]},
+      emit:(_stage,message)=>progress.push(message)
+    });
+    assert.equal(engine.lastAsks.length,4,
+      'three multimodal attempts then ONE locked narration regroup; not another full-EDL rewrite');
+    assert.deepStrictEqual(engine.lastAsks.map(x=>x.key),
+      ['v5-editorial-director-hook-fix-1-1',
+        'v5-editorial-director-hook-fix-1-1_fix1',
+        'v5-editorial-director-hook-fix-1-1_fix2',
+        'v5-editorial-director-delivery-fix-1']);
+    assert.ok(engine.lastAsks[1].input.violations.some(v=>v.code==='OUTSIDE_SCOPE_REEL'));
+    assert.ok(engine.lastAsks[2].input.violations.some(v=>v.code==='OUTSIDE_SCOPE_REEL'));
+    assert.deepStrictEqual(engine.lastAsks[1].input.currentEdl.beats.slice(1).map(b=>b.sourceStartSec),
+      original.spine.beats.slice(1).map(b=>b.sourceStartSec),
+      'out-of-reel proposal is NEVER promoted to the next currentEdl');
+    assert.ok(engine.lastAsks[0].input.allowedAbsoluteSourceCuts.some(r=>r.startSec<=52 && r.endSec>=58),
+      'provide actual absolute cuttable source bounds, not just the composite reel timestamps');
+    assert.equal(engine.lastAsks[0].input.hookRecoveryContractVersion,2);
+    assert.ok(progress.some(x=>x.includes('only narrator blocks below')),
+      'a valid hook with short narrator escalates to audio-only regroup');
+    assert.equal(result.spine.beats[0].sourceStartSec,52);
+    assert.deepStrictEqual(result.spine.beats.slice(1).map(b=>[b.beatId,b.sourceStartSec,b.sourceEndSec]),
+      base.beats.slice(1).map(b=>[b.beatId,b.sourceStartSec,b.sourceEndSec]));
+    assert.deepStrictEqual(result.spine.deliveryBlocks[1].beatIds,['b2','b3']);
+    assert.ok(Director.validateDirectorEdl(result.spine,scope,{durationSec:SOURCE_SEC,
+      reel,narrationEnabled:true,requireDeliveryBlocks:true,minNarrationSec:11}).valid,
+      'the finished EDL must meet the SAME 11s policy; never bypass narrator quality floor');
+  });
+
+  await ok('Hook repair rejects even an in-reel change to the verified core/ending', async () => {
+    const original=directorEdl();
+    const scope=scopeCandidate();
+    const baseline=Director.stampSpine(original.spine,scope,Scope.planScopeReel(scope,{durationSec:SOURCE_SEC}));
+    const changed=withBlocks({ ...original, spine:{...original.spine,
+      beats:original.spine.beats.map((b,i)=>i===0
+        ? {...b,sourceStartSec:52,sourceEndSec:58} :
+          i===2 ? {...b,sourceStartSec:16.5,sourceEndSec:30} : b)
+    }});
+    const e=fakeEngine([changed,changed,changed]);
+    await assert.rejects(()=>Director.repairTechnical(e,{model:MODEL,spine:baseline,scriptId:2,
+      violations:[{code:'HOOK_SOURCE_AUDITION'}],
+      hookRepair:{attempt:1,rejectedOpenings:[]}
+    }),err=>err.kind==='DIRECTOR_EDL_INVALID'
+      && err.details?.violations?.some(v=>v.code==='HOOK_REPAIR_CHANGED_CORE'),
+      'rewriting the core under pretext of changing hook cannot be silently accepted');
+    assert.equal(e.lastAsks.length,3);
+  });
+
   await ok('Pack G: no EDL beat may map outside the original logical scope windows (context padding / compaction gaps are not cuttable)', async () => {
     const scope = scopeCandidate({ scopeWindows: [{ windowId: 'a', startSec: 10, endSec: 60, purposes: ['core'] }, { windowId: 'z', startSec: 200, endSec: 240, purposes: ['core', 'ending_material'] }],
       explicitScopeBoundary: { startSec: 0, endSec: 250, rationale: 'x' }, candidateEndingEvents: [{ sourceStartSec: 230, sourceEndSec: 240, endingType: 'forward_cliffhanger' }] });
