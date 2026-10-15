@@ -160,7 +160,10 @@ DELIVERY BLOCKS (spine.deliveryBlocks) — the audio-ownership layer over your b
 - Every beat belongs to exactly one block; a block's beatIds are CONSECUTIVE beats in EDL order; blocks follow EDL order. Blocks never change a beat's range, order or role.
 - raw_evidence: the real moment speaks with its original audio. Give evidenceFunction (what the viewer must see/hear/believe).
 - narrated_story: ONE continuous narration passage runs across ALL of the block's beats (visual cuts stay; only the voice spans them). Give storyFunction, narratorFunction, narrationIntent (exactly what the passage must make the viewer understand) and sourceAudioTreatment: voiceover_with_ambient (keep and duck the scene ambience) or voiceover_only (mute the source, e.g. it contains another narrator or unusable speech). handoffTargetBeatId names the raw beat the passage hands the viewer to, when there is one.
-- A narrated block needs enough seconds for its whole passage (input.narrationWordsPerSecond words per second when given, otherwise about 2.5). The narration text itself is written later from your narrationIntent.
+- ONE narrator is telling ONE story. Do not scatter separate 1-2 second narrator remarks between every original clip. The viral bodycam rhythm is: REAL AUDIO HOOK -> a substantial CONNECTED narrator setup across several meaningful picture cuts -> original evidence/dialogue -> another connected narrator bridge only if the viewer needs it -> original payoff. This is an editorial pattern, not a fixed number of blocks or a rule to narrate every scene.
+- Every narrated_story block requires at least input.narrationMinBlockSec continuous seconds of visual runway when that policy is positive; the validator will REJECT any shorter block even if you plan to use four words. Prefer coherent 7-18s voice passages when genuine evidence-grounded context justifies them. A block may contain several consecutive picture beats while one uninterrupted voice carries the thought. Do not mask an important police/suspect quote merely to extend narration; instead choose an unimportant picture, shorten an earlier routine exchange, move the transition, or leave that beat as raw_evidence.
+- Before finalizing the EDL, READ ONLY THE NARRATION INTENTS IN OUTPUT ORDER AS ONE STORY. Each must advance a distinct cause, consequence or change. No repeated cold intros, disconnected pronouns or mini-sentences. Raw clips between them must make the connection comprehensible. A narrator does not have to appear at all when strong original speech alone communicates the entire story.
+- A narrated block needs enough seconds for its whole naturally paced passage (input.narrationWordsPerSecond words per second when given, otherwise about 2.5). The narration text itself is written later from your narrationIntent.
 - Each beat's audio follows its block; you do not need to set beat audioMode.
 - If input.narrationEnabled is false, every block must be raw_evidence.
 - A block must not hide a change of scene, time or perspective: put a block boundary where the viewer's sense of where/when/whose account changes, so the transition is visible and can be judged.
@@ -327,7 +330,7 @@ function coveredByReel(b, reelRanges) {
   return inside / (e - s);
 }
 
-function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null, requireDeliveryBlocks = false } = {}) {
+function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null, requireDeliveryBlocks = false, minNarrationSec = 0 } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
   const beats = Array.isArray(spine?.beats) ? spine.beats : [];
@@ -341,7 +344,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   // Delivery blocks: STRUCTURE only. When valid, each beat's audio follows its block.
   let audioBeats = beats;
   if (requireDeliveryBlocks || spine?.deliveryBlocks !== undefined) {
-    const blockViolations = Delivery.validateDeliveryBlocks(beats, spine?.deliveryBlocks, { narrationEnabled });
+    const blockViolations = Delivery.validateDeliveryBlocks(beats, spine?.deliveryBlocks, { narrationEnabled, minNarrationSec });
     violations.push(...blockViolations);
     if (!blockViolations.length) audioBeats = Delivery.applyDeliveryBlocks(beats, spine.deliveryBlocks);
   }
@@ -808,12 +811,15 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     storyMode: cfg.storyMode || 'serialized_part',
     narrationEnabled: cfg.narration?.enabled !== false,
     narrationWordsPerSecond: cfg.narration?.measuredWordsPerSecond || null,
+    narrationMinBlockSec: Number(cfg.narrationMinBlockSec) || 0,
+    narrationDeliveryPolicyVersion: 2,
     modelContext: modelContextForReel(model, reel),
     ...extraInput
   };
   const valOpts = { durationSec: engine.duration, targetDurationMinSec: targets.hardMinSec, targetDurationMaxSec: targets.hardMaxSec, reel,
     narrationEnabled: baseInput.narrationEnabled, preferredDurationSec: targets.targetDurationSec,
-    targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec, requireDeliveryBlocks: true };
+    targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec, requireDeliveryBlocks: true,
+    minNarrationSec: baseInput.narrationMinBlockSec };
   const attempts = [];
   emit('design', `[Director] Output policy: maxOutputTokens=${DIRECTOR_GENERATION.maxOutputTokens}, thinkingLevel=${DIRECTOR_GENERATION.thinkingLevel}, thoughtRecovery=one bounded LOW attempt if telemetry shows reasoning saturation.`);
   // current = the EDL the next repair starts from. lastAccepted = the last EDL whose
@@ -1065,6 +1071,7 @@ Preserve every unaffected block exactly when possible. Every existing beat must 
 
 For an UNBRIDGED_EDL_TIME_JUMP violation, the footage jumps significantly in source time with raw_audio on both sides and no narrator-guided handoff. PRESERVE the footage and strongest raw exchanges; turn an adjacent non-essential raw beat (or a continuous group of such beats) into narrated_story with a specific, evidence-grounded narrationIntent explaining the time/causal change. A teaser -> earlier context needs explicit rewind orientation. The narrator MUST bridge cause, time and viewer understanding, not just describe a visual or repeat the next raw quote.
 For a NARRATED_BLOCK_VOICE_OVERFLOW / NARRATED_BLOCK_UNFIT failure, the block writer has already attempted focused text rewrites and measured the real TTS. Do not trigger a whole-story rewrite.
+For NARRATED_STORY_WINDOW_TOO_SHORT or NARRATED_BLOCK_FRAGMENTED, do NOT demand a four-word sentence. Delivery-only regrouping may suffice only when non-essential picture beats can safely join one contiguous narrated block, reaching at least input.narrationMinBlockSec seconds. Otherwise a MULTIMODAL EDL recut is needed to secure adequate visuals without losing the original dialogue; never claim success with the same inadequate time window.
 Choose the smallest delivery-layer fix that preserves the story:
 - shorten the failing narrated block's narrationIntent to only the indispensable context;
 - OR, if adjacent existing beat(s) can legitimately share narration ownership without talking over essential proof/emotion, regroup those EXISTING beats into the narrated block to give the passage more time;
@@ -1088,7 +1095,8 @@ async function repairDeliveryTechnical(engine, { model, spine, violations, root 
     preferredDurationSec: targets.targetDurationSec,
     targetBandMinSec: targets.targetBandMinSec,
     targetBandMaxSec: targets.targetBandMaxSec,
-    requireDeliveryBlocks: true
+    requireDeliveryBlocks: true,
+    minNarrationSec: Number(engine.config?.narrationMinBlockSec) || 0
   };
   let accepted = null, validation = null;
   const key = `v5-editorial-director-delivery-fix-${scriptId}`;
