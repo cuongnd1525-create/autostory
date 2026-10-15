@@ -137,17 +137,12 @@ class RecapTtsService {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
     if (provider === "elevenlabs") {
-      const service = new ElevenLabsService(this.settings);
-      await service.synthesize({
-        text,
-        voiceId,
-        outputPath,
-        model: this.settings.elevenLabsModel,
-        stability: this.settings.elevenLabsStability,
-        similarityBoost: this.settings.elevenLabsSimilarityBoost,
-        style: this.settings.elevenLabsStyle,
-        speakerBoost: this.settings.elevenLabsSpeakerBoost
-      });
+      const service = new ElevenLabsService(
+        this.settings.elevenLabsApiKey,
+        this.settings.elevenLabsModel,
+        this.settings
+      );
+      await service.synthesizeSpeech({ text, voiceId, outputPath, performanceMode: "story" });
       return outputPath;
     }
 
