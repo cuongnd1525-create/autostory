@@ -240,6 +240,63 @@ function fakeEngine(asks) {
 (async () => {
   console.log('Story Scope + media-grounded Editorial Director');
 
+  await ok('Payoff recovery: 19min source has no valid alternate; reject false ending, select a DIFFERENT observed outcome, then direct a real EDL', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(),'v4-payoff-recovery-'));
+    try {
+      const failed = scopeCandidate({
+        storyScopeId:'scope_chase_and_blame_expanded',
+        centralViewerQuestion:'Will the suspect later explain the crash?',
+        candidateEndingEvents:[{eventId:'e4',sourceStartSec:68,sourceEndSec:80,
+          endingType:'forward_cliffhanger',whyItIsAConsequence:'False anticipated explanation'}]
+      });
+      const good = scopeCandidate({
+        storyScopeId:'scope_actual_detention',
+        centralViewerQuestion:'Will the driver be detained after the failed test?'
+      });
+      const noPayoff = { accessGranted:true, observedEnding:'Driver only asks about a personal object, no explanation',
+        concreteOutcomeVisibleOrAudible:false, endingSupportsCentralConflict:false,
+        promiseSupportedByEnding:false, unsupportedPromise:'Promised explanation of crash was never made',
+        outcomeType:'honest_unresolved', reason:'The ending does not answer that question' };
+      const actualPayoff = { accessGranted:true, observedEnding:'Officer announces detention after failed test',
+        concreteOutcomeVisibleOrAudible:true, endingSupportsCentralConflict:true,
+        promiseSupportedByEnding:true, unsupportedPromise:'',
+        outcomeType:'honest_unresolved', reason:'Detention is a visible consequence of the test' };
+      const engine = fakeEngine([selection([failed]),noPayoff,selection([good]),actualPayoff,directorEdl()]);
+      engine.config = {...engine.config,forcePayoffVerification:true};
+      const progress = [];
+      const spines = await Pipeline.directStories(engine, MODEL, root,
+        (_stage,message) => progress.push(message),
+        {outputCount:1,targetDurationMinSec:65,targetDurationMaxSec:90});
+      assert.equal(spines.length,1,'verified alternative should become script #1');
+      assert.equal(spines[0].storyScope.storyScopeId,'scope_actual_detention');
+      assert.equal(engine.lastAsks.filter(x=>x.key.startsWith('v4-payoff-verify-')).length,2,
+        'verify both candidate endings instead of bypassing the gate');
+      const rescope = engine.lastAsks.find(x=>x.key==='v5-story-scope_payoff-recovery1');
+      assert.ok(rescope,'retry selection when original candidates are exhausted');
+      assert.equal(rescope.input.rejectedPayoffEvidence[0].observedEnding,noPayoff.observedEnding);
+      assert.equal(rescope.input.rejectedPayoffEvidence[0].unsupportedPromise,noPayoff.unsupportedPromise);
+      assert.match(rescope.instruction,/DIFFERENT source-grounded conflict/);
+      assert.ok(progress.some(x=>x.includes('resampling DIFFERENT source-grounded ending')));
+      const state = JSON.parse(await fs.readFile(path.join(root,'story-scope.json'),'utf8'));
+      assert.equal(state.recoveries[0].added,1);
+      const failedProof = JSON.parse(await fs.readFile(path.join(root,
+        'payoff-verification-1-scope_chase_and_blame_expanded.json'),'utf8'));
+      assert.equal(failedProof.verdict.accepted,false);
+      const approvedProof = JSON.parse(await fs.readFile(path.join(root,
+        'payoff-verification-1-scope_actual_detention.json'),'utf8'));
+      assert.equal(approvedProof.verdict.accepted,true);
+      const rejected = JSON.parse(await fs.readFile(path.join(root,'rejected-story-scopes.json'),'utf8'));
+      assert.equal(rejected.length,1);
+      assert.equal(rejected[0].unsupportedPromise,noPayoff.unsupportedPromise);
+
+      // Variant with a new label but the EXACT SAME ending must not pass
+      // structural selection merely by renaming the scope.
+      assert.equal(StoryScope.rejectedByPayoffEvidence({
+        ...good, candidateEndingEvents:failed.candidateEndingEvents
+      }, rejected)?.storyScopeId,failed.storyScopeId);
+    } finally {await fs.rm(root,{recursive:true,force:true});}
+  });
+
   // ---------------------------------------------------------------- A, B, C
   await ok('A/B/C: run() selects Story Scope BEFORE the EDL; director receives the scope and scope-reel MEDIA + manifest', async () => {
     const { dir, store, projectId } = await makeProject();
