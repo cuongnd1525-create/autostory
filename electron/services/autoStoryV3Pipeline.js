@@ -663,7 +663,7 @@ async function directStories(engine, model, root, emit, config) {
   }
   await persistScopeSelection();
 
-  for (let i = 0; spines.length < requested; i++) {
+  for (let i = 0; spines.length < requested;) {
     if (i >= scopes.length) {
       const rejectedPayoffs = rejectedScopes.filter(x => x.kind === 'STORY_SCOPE_PAYOFF_REJECTED');
       if (!rejectedPayoffs.length || recoveryRound >= MAX_PAYOFF_SCOPE_RESELECTIONS) break;
@@ -707,7 +707,7 @@ async function directStories(engine, model, root, emit, config) {
       if (i >= scopes.length) continue;
     }
 
-    const candidate = scopes[i];
+    const candidate = scopes[i++];
     const scriptId = spines.length + 1;
     try {
       await require('./autoStoryV4PayoffGate').verify(engine, candidate, { root, scriptId, emit });
