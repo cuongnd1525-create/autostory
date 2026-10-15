@@ -121,6 +121,40 @@ assert.equal(Continuity.check(shortRewind).passed, false,
     const after=JSON.parse(await fs.readFile(path.join(root,'narrative-continuity-1-repair-1.json'),'utf8'));
     assert.equal(after.passed,true);
 
+    // Production regression: the first locked source-jump bridge proposed
+    // a 1.7s narrator and failed NARRATED_STORY_WINDOW_TOO_SHORT. It MUST
+    // route to the multimodal editor for new in-scope picture, not fail 0/1.
+    let recuts = 0, lockedTries = 0;
+    const rescued = await Pipeline.buildDirectorScript({
+      engine, service:{}, opts:{}, model:{}, root, emit:()=>{}, scriptId:3
+    }, { ...original,scriptId:3 }, {
+      build: async (_eng,_svc,_opts,story) => {
+        assert.equal(Continuity.check(story).passed,true);
+        assert.equal(story.beats[1].sourceStartSec,original.beats[1].sourceStartSec+1,
+          'true media recut must reach rendering, not the original footage');
+        return { script:{segments:[]} };
+      },
+      deliveryRepair: async () => {
+        lockedTries++;
+        throw Object.assign(new Error('Cannot fit a natural narrator into a 1.7s clip'), {
+          kind:'DIRECTOR_REPAIR_REQUIRED',
+          details:{ needsMediaEdlRepair:true, violations:[{code:'NARRATED_STORY_WINDOW_TOO_SHORT',
+            availableSec:1.7,requiredSec:5}] }
+        });
+      },
+      repair: async (_eng,args) => {
+        recuts++;
+        assert.ok(args.violations.some(v=>v.code==='NARRATED_STORY_WINDOW_TOO_SHORT'));
+        const recut = { ...original, beats:original.beats.map((beat,i)=>i===1
+          ? { ...beat,sourceStartSec:beat.sourceStartSec+1 }:beat) };
+        return { spine:makeGuided(recut) };
+      }
+    });
+    assert.equal(lockedTries,1);
+    assert.equal(recuts,1);
+    assert.ok(rescued.repairedSpine,'persist media-repaired Director spine');
+    assert.equal(rescued.story.beats[1].sourceStartSec,original.beats[1].sourceStartSec+1);
+
     await assert.rejects(()=>Pipeline.buildDirectorScript({
       engine, service:{},opts:{},model:{},root,emit:()=>{},scriptId:2
     },{...original,scriptId:2},{
