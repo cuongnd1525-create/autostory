@@ -1458,10 +1458,10 @@ SERIALIZATION IDENTITY - HIGHEST PRIORITY:
 
 ${genZRules}
 
-SHARED COLD OPEN:
-- Start with the exact complete shared Hook macro-block assigned to [1,2,3]. Every Part must use the same ordered evidenceId/sceneId/sourceStartSec/sourceEndSec sequence.
+CHAPTER COLD OPEN (SHARED ONLY WHEN USER CHOSE SHARED HOOK):
+- Start with this Part\u0027s locked Hook. If shared_hook_enabled=true the Hook source range must match all Parts; if false, the Hook is chapter-specific and must not be cloned from Part 1.
 - The Hook must be pure original_audio and may last 5-30 seconds. Preserve setup/warning -> confrontation/action -> climax -> immediate reaction. Do not cut before the verified payoff merely to shorten it.
-- When the Hook crosses a scene boundary, return consecutive Hook segments with storyFunction="hook" and the same macroBlockId, sourceRunId, actionSequenceId, sustainedBeatId, actionOverride=true, and sustainedBeatOverride=true. No voiceover or unrelated footage may appear between Hook slices.
+- When the Hook crosses a scene boundary, return consecutive original_audio Hook segments with the same macroBlockId, sourceRunId and sustainedBeatId; use sustainedBeatOverride=true. For verbal-only conflict set actionOverride=false, even if it is intense. Set actionOverride=true and one actionSequenceId ONLY for verified physical action. No voiceover or unrelated footage may interrupt a complete Hook.
 - End immediately before any external source narrator starts. Never extend the Hook into narrator speech merely to reach a duration target.
 
 SERIALIZATION & MYSTERY PRESERVATION - SUPREME STORY RULE:
@@ -1498,7 +1498,7 @@ VOICE AND CONTINUITY:
 - PROMISE-TO-PROOF: A definite narration claim of confession, blame, accusation or answered question must be audible within the immediately following original_audio evidence. Include payoffProof with quote and verified sourceStartSec/sourceEndSec or rewrite as an unanswered question.
 - CLEAN VISUALS/CAPTIONS: For original_audio, caption and voiceover_text are empty. Narrator VO B-roll must not conflict with source burned-in dialogue captions; prefer safeForVoiceover=true evidence. Check fade/black frames and third-party narrator tails against actual media, not guessed timestamps.
 - CLEAN CLIFFHANGER: A Part may end with an unresolved case question but NEVER midway through a spoken sentence; use a complete source response or short fact-grounded closing VO.
-- Every voiceover_only claim must be supported by its own evidenceId and fit the calibrated word budget.
+- Every voiceover_only claim must be supported by its own evidenceId and fit calibrated speech timing; no artificial minimum word target. Measured TTS duration outranks word estimates.
 - Every segment after the first needs a concrete causal/temporal transitionReason. Preserve complete spoken lines and immediate reactions.
 - ONE-SCENE-PER-SEGMENT: sourceStartSec/sourceEndSec stay inside both the locked evidence and exactly one sceneId. Never cross a scene boundary in one segment. Split at boundaries, preserve macroBlockId/sourceRunId/actionSequenceId, divide narration without duplication, and recalculate startSec/endSec continuously from zero.
 - endSec-startSec=(sourceEndSec-sourceStartSec)/playbackSpeed. No silence, freeze frames, credits, filler, or repeated footage to reach duration.

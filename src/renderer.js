@@ -3325,10 +3325,16 @@ function getCurrentVoiceCalibrationPromptBlock({
 } = {}) {
   const selected = getSelectedVoiceConfig();
   const profile = state.finalVoiceCalibration?.profile || {};
-  const budgets = state.finalVoiceCalibration?.wordBudgets || [];
+  const shortVoiceBridges = coveragePolicy === "adaptive_story_short_vo";
+  const budgets = shortVoiceBridges
+    ? [3, 5, 8, 10].map(durationSec => ({durationSec}))
+    : (state.finalVoiceCalibration?.wordBudgets || []);
   const measuredWordsPerSecond = Number(profile.conservativeWordsPerSecond || profile.wordsPerSecond || 0);
   const budgetLines = budgets.length
     ? budgets.map((item) => {
+      if (shortVoiceBridges && !measuredWordsPerSecond) {
+        return `- ${item.durationSec}s bridge: measure the selected voice first; no minimum or guessed word budget.`;
+      }
       if (!coveragePolicy || !measuredWordsPerSecond) {
         return `- ${item.durationSec}s segment: minWords=${item.minWords}, maxWords=${item.maxWords}`;
       }
@@ -3356,6 +3362,8 @@ function getCurrentVoiceCalibrationPromptBlock({
       : "  minWords = floor((endSec - startSec) * measuredWordsPerSecond * targetNarrationCoverageMin)",
     maxOnly ? "  There is deliberately no minWords requirement." : "  maxWords = ceil((endSec - startSec) * measuredWordsPerSecond * targetNarrationCoverageMax)",
     coveragePolicy ? `- coveragePolicy: ${coveragePolicy}` : "",
+    shortVoiceBridges ? "- ADAPTIVE SHORT VO: usually 3-8s (10s maximum); shorten the shot to real TTS duration if necessary. These maximum word counts are SAFETY BUDGETS, not targets. Never pad narration to reach a minimum; preserve full authentic original_audio beats." : "",
+    shortVoiceBridges ? "- Actual rendered TTS timing outranks word estimates; revise wording or duration if a fit fails." : "",
     "- Example measured word budgets:",
     budgetLines
   ].filter(Boolean).join("\n");
@@ -3562,7 +3570,9 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
 
 function buildSerializedHighlightGeminiPromptTemplate(options = readManualGeminiPromptOptions()) {
   const isGenZ = options.profile === "serialized_genz";
-  const voiceBlock = getCurrentVoiceCalibrationPromptBlock();
+  const voiceBlock = options.pacing === "adaptive_story"
+    ? getCurrentVoiceCalibrationPromptBlock({maxOnly:true,coveragePolicy:"adaptive_story_short_vo"})
+    : getCurrentVoiceCalibrationPromptBlock();
   const pacingRule = options.pacing === "adaptive_story"
     ? "ASYMMETRIC PACING: narrator bridges target 3-8s (max 10s), real dialogue/action is selected by COMPLETE meaning, not a timer. Routine witness/context excerpts usually 5-8s, decisive officer-question -> suspect-answer -> pushback/reaction exchanges often 12-25s, continuous physical action often 15-30s or longer as supported. These are SOFT budgets, never minimum filler or hard maximums. Protect complete original_audio beats with sustainedBeatOverride; actionOverride is reserved for actual physical action. Never cut mid-sentence, before the promised answer, or inside an immediate reaction."
     : options.pacing === "story_first"
@@ -3574,7 +3584,7 @@ function buildSerializedHighlightGeminiPromptTemplate(options = readManualGemini
 - ACTION-FIRST PRIORITY: Scan the entire source and prioritize the strongest clear high-adrenaline visual/audio sequence, including an intense argument, forced entry, physical struggle, pursuit, weapon draw, gunshot, panic, or immediate reaction. Strong action with a clear climax and payoff outranks a bizarre confession, extreme entitlement, absurd excuse, or psychological contradiction.
 - A semantic or psychological quote may become the Hook only when no verified action sequence provides stronger visual impact, understandable conflict, and a more powerful payoff.
 - COMPLETE ACTION HOOK: Preserve the useful progression from setup or warning -> confrontation or action -> climax -> immediate reaction. The Hook may last up to 30 seconds when needed to keep that continuous action understandable and complete. Do not cut a strong action Hook merely to satisfy a shorter duration target.
-- MULTI-SEGMENT HOOK REQUIRED WHEN NEEDED: If the selected action crosses scene-manifest boundaries, return consecutive scene-bounded JSON segments. Assign storyFunction="hook", audio_mode="original_audio", empty voiceover_text, and the same macroBlockId, sourceRunId, actionSequenceId, sustainedBeatId, completeNarrativeBeat=true, sustainedBeatOverride=true, and actionOverride=true to every Hook slice. Preserve source order without gaps and place no voiceover or unrelated footage between slices.
+- MULTI-SEGMENT HOOK REQUIRED WHEN NEEDED: If a complete Hook crosses scene-manifest boundaries, return consecutive scene-bounded original_audio segments with the same macroBlockId, sourceRunId, sustainedBeatId, completeNarrativeBeat=true and sustainedBeatOverride=true. For a VERBAL-ONLY confrontation Hook, set actionOverride=false and omit actionSequenceId unless it is genuinely supported. For a PHYSICAL action Hook, assign one verified actionSequenceId and actionOverride=true to its physical action slices only. Preserve source order without gaps and never insert VO inside the same complete beat.
 - HOOK PAYOFF COMPLETENESS: Ending an action Hook before its verified climax or immediate reaction is invalid. Loudness alone is insufficient; the action must remain understandable to a cold viewer and deliver a concrete visual or audible payoff.
 - ${options.sharedHook
     ? "SHARED SIGNATURE: Every Part starts with the SAME verified complete signature Hook (5-30s); after the shared Hook each Part tells NEW chapter events and narration."
@@ -3643,6 +3653,7 @@ ${persona}
    FIRST 35 SECONDS CHECK: Reject long stationary interviews, repeated camera angles, dead air, extended black-screen phone shots, and narrator bleed; recut the opening before returning JSON.
 2. ${hookRule}
 3. AUDIO SANDWICH: ${audioRule}
+   - Never label a verbal argument, denial, accusation or verbal-only confession as physical action. Use sustainedBeatOverride for a complete critical dialogue exchange; reserve actionOverride for verified physical action.
 4. VISUAL ACTION OVERRIDE: Do not over-rely on transcript density. Major physical events such as escape, vehicle theft, pursuit, struggle, crash, weapon draw, forced entry, takedown, panic, or immediate physical reaction outrank ordinary dialogue. Every narrativeEssential/mustInclude action must appear.
 5. ACTION SEQUENCE EXCEPTION: Keep an unbroken high-adrenaline action and its immediate reaction as sustained original_audio. Do not interrupt it to satisfy audio alternation. There is no fixed maximum; cut only at a natural lull, repetition, or loss of story value. Mark linked segments actionOverride=true and keep one actionSequenceId.
 6. SUSTAINED BEAT OVERRIDE (CRITICAL EXCEPTION):
