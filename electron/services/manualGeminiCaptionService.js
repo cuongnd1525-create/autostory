@@ -69,4 +69,28 @@ function toSrt(cues = []) {
     .map((cue, index) => [index + 1, toSrtTime(cue.startSec) + " --> " + toSrtTime(cue.endSec), sanitize(cue.text)].join("\n"))
     .join("\n\n");
 }
-module.exports = {captionPhrases,splitTimedCaption,buildManualNarratorEnglishCues,toSrt};
+function toAssTime(t) {
+  const cs = Math.max(0, Math.round(number(t) * 100));
+  return Math.floor(cs / 360000) + ":" + String(Math.floor(cs / 6000) % 60).padStart(2, "0")
+    + ":" + String(Math.floor(cs / 100) % 60).padStart(2, "0")
+    + "." + String(cs % 100).padStart(2, "0");
+}
+function toTikTokAss(cues = []) {
+  // Native 1080x1920 coordinate system, scaled by libass for 540px drafts too.
+  const header = [
+    "[Script Info]", "ScriptType: v4.00+", "PlayResX: 1080", "PlayResY: 1920",
+    "ScaledBorderAndShadow: yes", "WrapStyle: 2",
+    "", "[V4+ Styles]",
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
+    "Style: TikTok,Arial,57,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,4,1,2,100,100,255,1",
+    "", "[Events]",
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+  ];
+  const events = cues.filter(c => sanitize(c.text) && number(c.endSec) > number(c.startSec))
+    .map(c => {
+      const text = sanitize(c.text).replace(/[{}]/g, "").replace(/\\/g, "").replace(/,/g, ",");
+      return ["Dialogue: 0",toAssTime(c.startSec),toAssTime(c.endSec),"TikTok","",0,0,0,"",text].join(",");
+    });
+  return [...header,...events].join("\n") + "\n";
+}
+module.exports = {captionPhrases,splitTimedCaption,buildManualNarratorEnglishCues,toSrt,toTikTokAss};
