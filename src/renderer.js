@@ -3620,7 +3620,9 @@ ${persona}
 - Never output Script 2. The unusual IDs preserve compatibility with the editing tool.
 
 ### EDITORIAL RULES
-1. STORY FIRST: Write one factual series blueprint before choosing clips. Define the central person, conflict, verified causal chain, escalation, climax, resolution, and the unique audience question carried into each Part.
+1. STORY FIRST: Watch the complete source and write one factual series blueprint before choosing clips. Define the central conflict, verified causal chain, escalation, climax, last verified outcome, and each Part's unique viewer question.
+   HOOK SELECTION AUDIT: Compare multiple actual video-and-audio moments, not just action-candidates JSON. A high local Hook score is merely a search hint. Unless isUserLocked=true, no candidate is mandatory. Reject quiet post-incident recounts when a clearer genuine event from the same story exists.
+   FIRST 35 SECONDS CHECK: Reject long stationary interviews, repeated camera angles, dead air, extended black-screen phone shots, and narrator bleed; recut the opening before returning JSON.
 2. ${hookRule}
 3. AUDIO SANDWICH: ${audioRule}
 4. VISUAL ACTION OVERRIDE: Do not over-rely on transcript density. Major physical events such as escape, vehicle theft, pursuit, struggle, crash, weapon draw, forced entry, takedown, panic, or immediate physical reaction outrank ordinary dialogue. Every narrativeEssential/mustInclude action must appear.
@@ -3653,8 +3655,9 @@ ${persona}
 
 0. SERIALIZATION & MYSTERY PRESERVATION RULES (CRITICAL)
 - SPOILER BAN FOR PART 1 AND PART 2: Script 1 / Part 1 and Script 3 / Part 2 must not reveal the final plot twist, decisive hidden evidence, test result, formal arrest, court sentence, or ultimate legal consequence.
-- Part 1 establishes only the verified premise, bizarre behavior and immediate stakes, then ends on an unresolved confrontation such as a request to search, a suspicious lie, or another evidence-grounded open question.
-- Part 2 advances only the verified middle escalation such as blame, contradiction, argument or refusal, then ends at the boiling-point pre-climax turn before the decisive reveal.
+- PART 1 SCOPE IS STORY-DRIVEN, NOT SOURCE-INTRO-BOUND: Build a complete chapter from genuine observable events across the available source, including later escalation when it makes a natural unresolved ending. Do not spend all 75-110 seconds interviewing one person at one location. Preserve the actual last verified outcome for Part 3.
+- PART 1 EDITORIAL BUDGET: Spend no more than roughly 25-35s on repeated static witness statements unless an actual pivotal quote demands more. Never cut a critical quote mid-meaning.
+- PART 2 advances new verified evidence, consequences and escalation from Part 1, not a replay of the same witness testimony. End on a true unresolved development before the reserved final outcome.
 - RESOLUTION LOCK FOR PART 3: Only Script 4 / Part 3 may reveal the actual last verified consequence in the supplied source. Never invent or require an arrest, sentence, conviction or court outcome. Do not repeat the final verified payoff across multiple Parts.
 ${antiHallucinationRule}
 
