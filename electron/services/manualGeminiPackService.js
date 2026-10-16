@@ -1,4 +1,5 @@
 const fs = require("fs/promises");
+const {isSerialized,blueprintPrompt,partPrompt} = require("./serializedGeminiWorkflowService");
 const path = require("path");
 const { parseGeminiJsonObject } = require("./geminiJsonArtifactService");
 const { buildGeminiInputAccessGate } = require("./geminiInputAccessGate");
@@ -2143,6 +2144,17 @@ function buildPackageReadme({
       warningCount ? `- Có ${warningCount} cảnh báo kỹ thuật trong package-info.json.` : "- Gói được tạo không có cảnh báo kỹ thuật."
     ].join("\n");
   }
+  if (isDraftReview && isSerialized(prompt)) {
+    return [
+      "GEMINI SERIALIZED — BLUEPRINT + 3 PARTS (CÙNG CHAT)",
+      uploadInstruction,
+      "1. Batch FINAL yêu cầu series-blueprint.json DUY NHẤT.",
+      "2. Lưu Blueprint và import vào Studio để khóa.",
+      "3. Mở 02-SERIES-SEQUENTIAL; gửi từng prompt Script 1, Script 3, Script 4 vào CÙNG CHAT.",
+      "4. Chọn cả ba JSON trong Studio; tool kiểm tra chúng với Blueprint đã khóa.",
+      "5. Render và review draft MP4 như trước."
+    ].join("\n");
+  }
   if (isDraftReview) {
     return [
       "GÓI GEMINI DRAFT REVIEW - QUY TRÌNH HAI LƯỢT",
@@ -2643,6 +2655,31 @@ class ManualGeminiPackService {
     }
 
     let directHighlightPrompt = buildDirectHighlightScriptsPrompt(prompt, manifest, actionCandidates, proxyChunksManifest);
+    const sequentialSeriesEnabled = isDraftReview && isSerialized(prompt);
+    const sequentialSeriesProfile = (String(prompt).match(/prompt_profile:\s*(serialized_genz|serialized_interleaved)/)||[])[1] || "";
+    const sequentialSeriesSharedHook = /- shared cold open:\s*true/i.test(String(prompt));
+    const durationBounds = String(prompt).match(/target duration for EACH Part:\s*([\d.]+)\s*-\s*([\d.]+)/i);
+    const minDuration = durationBounds ? Number(durationBounds[1]) : 75;
+    const maxDuration = durationBounds ? Number(durationBounds[2]) : 110;
+    const nextStepsDir = path.join(packageDir,"02-SERIES-SEQUENTIAL");
+    if(sequentialSeriesEnabled){
+      await fs.rm(nextStepsDir,{recursive:true,force:true}).catch(()=>{});
+      await fs.mkdir(nextStepsDir,{recursive:true});
+      for(const scriptId of [1,3,4]) await fs.writeFile(
+        path.join(nextStepsDir,"script-"+scriptId+"-NEXT-PROMPT.txt"),
+        partPrompt(scriptId,sequentialSeriesProfile,sequentialSeriesSharedHook,minDuration,maxDuration),"utf8");
+      await fs.writeFile(path.join(nextStepsDir,"00-WORKFLOW.txt"),[
+        "ONE CHAT / FOUR SMALL JSON TURNS",
+        "1. Upload source batches, FINAL last; Gemini returns only series-blueprint.json.",
+        "2. Save the Blueprint and import it in Studio.",
+        "3. SAME Gemini chat: send script-1-NEXT-PROMPT.txt and save script-1.json.",
+        "4. Then script-3-NEXT-PROMPT.txt and save script-3.json.",
+        "5. Then script-4-NEXT-PROMPT.txt and save script-4.json.",
+        "6. Select all three JSON files in Studio to validate against locked Blueprint.",
+        "Do not upload all next-step prompts at once."
+      ].join("\n"),"utf8");
+      directHighlightPrompt=blueprintPrompt(directHighlightPrompt);
+    }
     if (hookContract?.isUserLocked === true) {
       directHighlightPrompt = injectHookContractToPrompt(directHighlightPrompt, hookContract);
     }
@@ -2679,7 +2716,9 @@ class ManualGeminiPackService {
         [
           "Upload the numbered UPLOAD-BATCH folders to ONE Gemini chat in order.",
           "For every non-final batch, upload all files and ask Gemini only to acknowledge receipt.",
-          "Upload UPLOAD-BATCH-XX-FINAL last. Its prompt requests the final JSON output.",
+          sequentialSeriesEnabled
+            ? "Upload UPLOAD-BATCH-XX-FINAL last. Its prompt requests ONLY series-blueprint.json; see 02-SERIES-SEQUENTIAL for next prompts."
+            : "Upload UPLOAD-BATCH-XX-FINAL last. Its prompt requests the final JSON output.",
           "Do not start a new chat between batches."
         ].join("\n"),
         "utf8"
@@ -2696,7 +2735,12 @@ class ManualGeminiPackService {
     await fs.writeFile(infoPath, JSON.stringify({
       schemaVersion: 1,
       workflow,
-      workflowStage: isDraftReview ? "variant_scripts_pending" : isDiyStoryRemix ? "diy_process_map_pending" : "evidence_pending",
+      sequentialSeriesEnabled,
+      sequentialSeriesProfile,
+      sequentialSeriesSharedHook,
+      sequentialSeriesNextStepsDir: sequentialSeriesEnabled ? nextStepsDir : "",
+      seriesBlueprintPath: "",
+      workflowStage: sequentialSeriesEnabled ? "series_blueprint_pending" : isDraftReview ? "variant_scripts_pending" : isDiyStoryRemix ? "diy_process_map_pending" : "evidence_pending",
       generatedAt: new Date().toISOString(),
       sourceVideoPath,
       packageDir,
@@ -2738,6 +2782,17 @@ class ManualGeminiPackService {
       warnings
     }, null, 2), "utf8");
 
+    if (sequentialSeriesEnabled) {
+      // Add stage metadata to the package-info JSON without altering legacy modes.
+      const stagedInfo = JSON.parse(await fs.readFile(infoPath,"utf8"));
+      stagedInfo.sequentialSeriesEnabled = true;
+      stagedInfo.sequentialSeriesProfile = sequentialSeriesProfile;
+      stagedInfo.sequentialSeriesSharedHook = sequentialSeriesSharedHook;
+      stagedInfo.sequentialSeriesNextStepsDir = nextStepsDir;
+      stagedInfo.seriesBlueprintPath = "";
+      stagedInfo.workflowStage = "series_blueprint_pending";
+      await fs.writeFile(infoPath,JSON.stringify(stagedInfo,null,2),"utf8");
+    }
     onProgress?.({ step: "gemini_pack", percent: 100, message: "Gói phân tích Gemini Pro đã sẵn sàng" });
     return {
       packageDir,
@@ -3185,6 +3240,10 @@ class ManualGeminiPackService {
       info.selectedHookId = contract.hookId;
       info.isMultiVariantHook = contract.isMultiVariant;
       info.hookPolicy = contract.hookPolicy;
+      if(info.sequentialSeriesEnabled){
+        await fs.rm(path.join(packageDir,"series-blueprint.json"),{force:true}).catch(()=>{});
+        info.seriesBlueprintPath="";
+      }
       // For long sources Gemini uploads the FINAL batch, not the root prompt.
       // Synchronize a user-locked Hook Contract into that actual upload folder.
       const batchDirs = Array.isArray(info.proxyUploadBatchDirs) ? info.proxyUploadBatchDirs : [];
