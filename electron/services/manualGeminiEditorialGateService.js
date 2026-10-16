@@ -24,18 +24,25 @@ function getOpeningHook(segments = []) {
  * sample-accurate source of speaker identity or visual/audio proof.
  * Unverifiable semantic claims remain review warnings rather than fabricated passes.
  */
-function auditSerializedBeatBoundaries({script = {}, normalizedScript = {}, transcriptSrt = ""} = {}) {
+function auditSerializedBeatBoundaries({script = {}, normalizedScript = {}, transcriptSrt = "", sourceEvidence = null} = {}) {
   const errors = [], warnings = [];
   const segments = Array.isArray(normalizedScript.segments) ? normalizedScript.segments : [];
   const raw = Array.isArray(script.segments) ? script.segments : [];
   const cues = transcriptSrt ? parseSrtCues(transcriptSrt) : [];
   const part = num(script.part_number ?? script.partNumber, 0);
+  const evidenceList = Array.isArray(sourceEvidence?.evidence) ? sourceEvidence.evidence : [];
+  const evidenceById = new Map(evidenceList.map(e => [txt(e.evidenceId || e.id), e]));
   const beats = new Map();
   const duration = s => Math.max(0, num(s?.sourceEndSec, 0) - num(s?.sourceStartSec, 0));
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i], r = raw[i] || {};
     const mode = txt(s.audioMode || s.audio_mode);
     const id = txt(s.sustainedBeatId || s.sustained_beat_id || r.sustainedBeatId);
+    const evidence = evidenceById.get(txt(r.evidenceId || r.evidence_id || s.evidenceId));
+    if (mode === "voiceover_only" && s.sourceNarratorDetected !== true && r.source_narrator_detected !== true
+      && (r.safeForVoiceover === false || (evidence?.safeForVoiceover === false && evidence?.burnedTextPresent === true))) {
+      errors.push("Segment " + (i + 1) + " selects unsafe voiceover B-roll containing conflicting burned-in source captions. Choose a clean evidence shot.");
+    }
     if (txt(r.cutSafety).toLowerCase() === "unsafe") {
       errors.push("Segment " + (i + 1) + " explicitly declares cutSafety=unsafe.");
     }
@@ -94,7 +101,7 @@ function auditSerializedBeatBoundaries({script = {}, normalizedScript = {}, tran
   return {errors, warnings};
 }
 
-function validateManualGeminiEditorialContract({script = {}, normalizedScript = {}, promptOptions = {}, hookContract = null, transcriptSrt = ""} = {}) {
+function validateManualGeminiEditorialContract({script = {}, normalizedScript = {}, promptOptions = {}, hookContract = null, transcriptSrt = "", sourceEvidence = null} = {}) {
   const errors = [], warnings = [];
   const segments = Array.isArray(normalizedScript.segments) ? normalizedScript.segments : [];
   const scriptId = num(script.scriptId ?? script.script_id);
@@ -141,7 +148,7 @@ function validateManualGeminiEditorialContract({script = {}, normalizedScript = 
     }
   }
   if (serialized) {
-    const integrity = auditSerializedBeatBoundaries({script, normalizedScript, transcriptSrt});
+    const integrity = auditSerializedBeatBoundaries({script, normalizedScript, transcriptSrt, sourceEvidence});
     errors.push(...integrity.errors);
     warnings.push(...integrity.warnings);
   }

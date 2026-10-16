@@ -4391,6 +4391,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const groundingSrt = project.analysisWorkflow === "manual_gemini_draft_review"
       ? await fs.readFile(path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "source-transcript.srt"), "utf8").catch(() => "")
       : "";
+    const sourceEvidence = project.analysisWorkflow === "manual_gemini_draft_review"
+      ? await fs.readFile(path.join(project.manualGeminiPackPath, "scene-evidence.json"), "utf8").then(JSON.parse).catch(() => null)
+      : null;
     for (const [variantIndex, jsonPath] of jsonPaths.entries()) {
       const raw = await fs.readFile(jsonPath, "utf8");
       const parsedArtifact = parseGeminiJsonObject(raw, path.basename(jsonPath));
@@ -4526,7 +4529,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         const hookContract = await fs.readFile(contractFile, "utf8").then(JSON.parse).catch(() => null);
         const editorial = validateManualGeminiEditorialContract({
           script: scriptInput, normalizedScript: script,
-          promptOptions: configuredPromptOptions, hookContract, transcriptSrt: groundingSrt
+          promptOptions: configuredPromptOptions, hookContract, transcriptSrt: groundingSrt, sourceEvidence
         });
         if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
         script.warnings.push(...editorial.warnings);
@@ -5418,7 +5421,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         const editorial = validateManualGeminiEditorialContract({
           script: scriptInput, normalizedScript: script,
           promptOptions: project.manualGeminiPromptOptions || {profile: activeVariant.promptProfile},
-          hookContract
+          hookContract,
+          transcriptSrt: await fs.readFile(path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "source-transcript.srt"), "utf8").catch(() => ""),
+          sourceEvidence: await fs.readFile(path.join(project.manualGeminiPackPath, "scene-evidence.json"), "utf8").then(JSON.parse).catch(() => null)
         });
         if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
         script.warnings.push(...editorial.warnings);
@@ -8431,6 +8436,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       videoPath: outputPath,
       targetDuration: finalTimeline.resolvedDurationSec,
       subtitlePath: manualFinalSubtitlePath || "not_requested",
+      strictBlackFrames: project.analysisWorkflow === "manual_gemini_draft_review",
       expectedAudioSegments: finalTimeline.segments.map((item) => ({
         segmentId: item.segmentId,
         startSec: item.resolved.startSec,
@@ -8443,6 +8449,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }));
     await this.projectStore.writeJson(renderQaPath, renderQa);
     warnings.push(...(renderQa.issues || []).map((issue) => `Render QA: ${issue.message}`));
+    if (project.analysisWorkflow === "manual_gemini_draft_review"
+      && (renderQa.issues || []).some(issue => issue.code === "black_frames" && issue.severity === "error")) {
+      throw new Error("Manual Gemini Render QA: black transition >=0.45s. See " + renderQaPath + " and recut the source before publishing.");
+    }
     const publishedOutputPath = await publishFinalVideo({
       settings,
       project,

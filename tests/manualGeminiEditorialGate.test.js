@@ -41,7 +41,7 @@ test("part-specific repeated source footage emits a warning", () => {
 test("final serialized original_audio cannot end inside a continuing SRT cue", () => {
   const data = sample();
   data.normalizedScript.segments[1] = {storyFunction:"cliffhanger",audioMode:"original_audio",sourceStartSec:80,sourceEndSec:90};
-  data.transcriptSrt = "1\\n00:01:28,000 --> 00:01:32,000\\nAnd the person that did it was...\\n";
+  data.transcriptSrt = ["1","00:01:28,000 --> 00:01:32,000","And the person that did it was...",""].join(String.fromCharCode(10));
   assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /ends inside an SRT cue/);
   data.normalizedScript.segments[1].sourceEndSec = 92;
   assert.equal(validateManualGeminiEditorialContract(data).passed, true);
@@ -72,4 +72,13 @@ test("sustained source beats cannot be interrupted or span a missing scene", () 
   assert.equal(validateManualGeminiEditorialContract(data).passed,true);
   data.script.segments=[{cutSafety:"unsafe"},{}];
   assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /cutSafety=unsafe/);
+});
+
+test("verified burned-in dialogue rejects unsafe narrator B-roll", () => {
+  const data=sample();
+  data.script.segments=[{}, {evidenceId:"e2"}];
+  data.sourceEvidence={evidence:[{evidenceId:"e2",burnedTextPresent:true,safeForVoiceover:false}]};
+  assert.match(validateManualGeminiEditorialContract(data).errors.join(" "),/unsafe voiceover B-roll/);
+  data.sourceEvidence.evidence[0].safeForVoiceover=true;
+  assert.equal(validateManualGeminiEditorialContract(data).passed,true);
 });
