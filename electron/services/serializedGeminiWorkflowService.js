@@ -68,7 +68,7 @@ function partPrompt(scriptId,profile="serialized_genz",sharedHook=false, min=75,
     "Save it as script-"+scriptId+".json. "+(n===1?"Next prompt: script-3.":n===2?"Next prompt: script-4.":"All three scripts complete; select the three JSON files in RecapTool Studio.")
   ].join("\n\n");
 }
-function validateBlueprint(bp,{manifest={},profile="",sharedHook}={}) {
+function validateBlueprint(bp,{manifest={},profile="",sharedHook,hookContract=null}={}) {
  const errors=[],parts=bp?.parts;
  if(str(bp?.artifactType)!=="serialized_story_blueprint")errors.push("Wrong artifactType.");
  if(str(bp?.series_mode)!=="interleaved_multipart")errors.push("Wrong series_mode.");
@@ -91,6 +91,25 @@ function validateBlueprint(bp,{manifest={},profile="",sharedHook}={}) {
    if(!str(p.storyScope)||!str(p.outroPromise))errors.push("Part "+(i+1)+" missing scope or cliffhanger.");
    const a=num(p.hook?.sourceStartSec),b=num(p.hook?.sourceEndSec);
    if(!Number.isFinite(a)||!Number.isFinite(b)||a<0||b<=a||b>num(manifest?.videoDurationSec)+0.3)errors.push("Part "+(i+1)+" invalid Hook range.");
+  }
+  if(hookContract?.isUserLocked){
+   for(let i=0;i<3;i++){
+    const part=parts.find(p=>num(p.scriptId)===[1,3,4][i]);
+    const anchorIndex=bp.shared_hook_enabled?1:i+1;
+    const entry=hookContract.isMultiVariant
+      ? hookContract.variants?.["variant_0"+anchorIndex]
+      : i===0 || bp.shared_hook_enabled ? hookContract : null;
+    if(!entry?.anchorRange||!part?.hook)continue;
+    const expectedStart=num(entry.anchorRange.startSec),actualStart=num(part.hook.sourceStartSec);
+    const expectedEnd=num(entry.anchorRange.endSec),actualEnd=num(part.hook.sourceEndSec);
+    const early=num(entry.trimmingTolerance?.startOffsetMaxSec);
+    const late=num(entry.trimmingTolerance?.endOffsetMaxSec);
+    if(!Number.isFinite(actualStart)||actualStart<expectedStart-(Number.isFinite(early)?early:2)-0.2
+      ||actualStart>expectedEnd+(Number.isFinite(late)?late:3)
+      ||actualEnd<expectedStart-(Number.isFinite(early)?early:2)){
+      errors.push("Part "+(i+1)+" Blueprint Hook disagrees with user-locked Hook Contract.");
+    }
+   }
   }
   if(bp?.shared_hook_enabled){
    const starts=parts.map(p=>num(p.hook?.sourceStartSec)),ends=parts.map(p=>num(p.hook?.sourceEndSec));
@@ -124,7 +143,10 @@ async function importBlueprint({packageDir,blueprintPath}={}){
  if(!info.sequentialSeriesEnabled)throw Error("This package does not use sequential Series output.");
  const manifest=JSON.parse(await fs.readFile(info.manifestPath,"utf8"));
  const bp=parseGeminiJsonObject(await fs.readFile(blueprintPath,"utf8"),path.basename(blueprintPath));
- const result=validateBlueprint(bp,{manifest,profile:info.sequentialSeriesProfile,sharedHook:info.sequentialSeriesSharedHook});
+ const contractPath=path.join(packageDir,"01-GUI-GEMINI","hook-contract.json");
+ const hookContract=await fs.readFile(contractPath,"utf8").then(JSON.parse).catch(()=>null);
+ const result=validateBlueprint(bp,{manifest,profile:info.sequentialSeriesProfile,
+   sharedHook:info.sequentialSeriesSharedHook,hookContract});
  if(!result.passed)throw Error("Invalid Series Blueprint: "+result.errors.join(" | "));
  const target=path.join(packageDir,"series-blueprint.json"),temp=target+".tmp-"+process.pid;
  try{await fs.writeFile(temp,JSON.stringify(bp,null,2),"utf8");await fs.rename(temp,target);}
