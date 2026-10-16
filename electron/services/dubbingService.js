@@ -8351,11 +8351,35 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const finalTimelinePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-resolved-timeline.json`);
     const renderQaPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-render-qa.json`);
     await this.projectStore.writeJson(finalTimelinePath, finalTimeline);
+    let manualFinalSubtitlePath = "";
+    if (project.analysisWorkflow === "manual_gemini_draft_review"
+      && project.manualGeminiEnglishCaptionsEnabled !== false) {
+      const cues = buildManualNarratorEnglishCues({
+        segments, timeline: finalTimeline,
+        voiceReports: finalTimeline.segments.map(item => ({rawVoiceSec: item.voice.durationSec}))
+      });
+      if (cues.length) {
+        manualFinalSubtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-narrator-en.srt`);
+        await this.projectStore.writeText(manualFinalSubtitlePath, buildManualCaptionSrt(cues));
+        const captionedPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-captioned-final.mp4`);
+        await ffmpeg.burnSubtitles({videoPath: outputPath, subtitlePath: manualFinalSubtitlePath, outputPath: captionedPath});
+        const backupPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-pre-caption-backup.mp4`);
+        await fs.rm(backupPath, {force:true}).catch(() => {});
+        await fs.rename(outputPath, backupPath);
+        try {
+          await fs.rename(captionedPath, outputPath);
+        } catch (error) {
+          await fs.rename(backupPath, outputPath).catch(() => {});
+          throw error;
+        }
+        await fs.rm(backupPath, {force:true}).catch(() => {});
+      }
+    }
     await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "qa", percent: 95, message: "Đang kiểm tra chất lượng video cuối (Render QA)..." });
     const renderQa = await new RenderQaService(settings).inspect({
       videoPath: outputPath,
       targetDuration: finalTimeline.resolvedDurationSec,
-      subtitlePath: "not_requested",
+      subtitlePath: manualFinalSubtitlePath || "not_requested",
       expectedAudioSegments: finalTimeline.segments.map((item) => ({
         segmentId: item.segmentId,
         startSec: item.resolved.startSec,
