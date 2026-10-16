@@ -78,3 +78,11 @@ test("narrator source map is immutable across separately generated parts",()=>{
    source_narrator_ranges:[],segments:[{sourceStartSec:100,sourceEndSec:105,storyFunction:"hook"}]};
  assert.match(validateScriptAgainstBlueprint(script,bp).errors.join(" "),/source_narrator_ranges/);
 });
+
+test("truncated per-Part JSON gives targeted regenerate advice rather than accepting partial segments",()=>{
+ const {parseGeminiJsonObject}=require("../electron/services/geminiJsonArtifactService");
+ const cut='{"artifactType":"highlight_cut_script","scriptId":3,"segments":[{"sceneId":"scene_0021",';
+ assert.throws(()=>parseGeminiJsonObject(cut,"script-3.json"),/xuất LẠI chỉ Script 3/);
+ const malformed='{"artifactType":"highlight_cut_script","scriptId":3,"segments":[,]}';
+ assert.throws(()=>parseGeminiJsonObject(malformed,"script-3.json"),/không chứa một JSON object hợp lệ/);
+});
