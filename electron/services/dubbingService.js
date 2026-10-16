@@ -7075,7 +7075,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const lead = members[0];
     const text = safeText(lead.blockNarrationText);
     if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
-    const treatment = getHighlightAudioMode({ ...lead, audioMode: lead.blockSourceAudio }, true, project);
+    // A narrated block spans multiple source scenes. Even if the first scene
+    // has clean ambience, ONE later source-narrator slice must mute the whole
+    // block (we do not have a reliable stem that separates narrator from bed).
+    const blockHasSourceNarrator = members.some(item =>
+      item.sourceNarratorDetected === true || item.source_narrator_detected === true
+      || item.forceSourceMute === true || item.replaceSourceNarrator === true);
+    const treatment = getHighlightAudioMode({
+      ...lead, audioMode: lead.blockSourceAudio, forceSourceMute: blockHasSourceNarrator
+    }, true, project);
     const tag = `draft-highlight-${variantSuffix}-block-${String(startIndex + 1).padStart(4, "0")}`;
     const pieces = members.map((segment) => {
       const sourceStartSec = Math.max(0, Number(segment.sourceStartSec ?? segment.startSec ?? 0));
