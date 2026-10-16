@@ -721,6 +721,9 @@ app.whenReady().then(async () => {
     return service.importBlueprint(payload || {});
   });
 
+  handleIpc("analysis:importSerializedBlueprint", async (_event,payload) =>
+    require("./services/serializedGeminiWorkflowService").importBlueprint(payload || {}));
+
   handleIpc("analysis:getHookCandidates", async (_event, packageDir) => {
     const settings = configStore.getSettings();
     const service = new ManualGeminiPackService(settings);

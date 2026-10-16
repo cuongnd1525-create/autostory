@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld("cineviral", {
   importManualGeminiEvidence: (payload) => ipcRenderer.invoke("analysis:importManualGeminiEvidence", payload),
   importPodcastCandidates: (payload) => ipcRenderer.invoke("analysis:importPodcastCandidates", payload),
   importManualGeminiBlueprint: (payload) => ipcRenderer.invoke("analysis:importManualGeminiBlueprint", payload),
+  importSerializedBlueprint: (payload) => ipcRenderer.invoke("analysis:importSerializedBlueprint", payload),
   inspectGeminiJsonFiles: (filePaths) => ipcRenderer.invoke("analysis:inspectGeminiJsonFiles", filePaths),
   getHookCandidates: (packageDir) => ipcRenderer.invoke("analysis:getHookCandidates", packageDir),
   lockHookContract: (payload) => ipcRenderer.invoke("analysis:lockHookContract", payload),
