@@ -15,6 +15,10 @@ function blueprintPrompt(direct) {
   const source=text.slice(sourceStart,editorialStart)
     .replace(/STEP 0 - VERIFIED INPUT ACCESS GATE[\s\S]*$/,"");
   const editorial=text.slice(editorialStart).replace(/### REQUIRED ROOT SCHEMA FOR EACH FILE[\s\S]*$/,"");
+  const profile=(text.match(/- prompt_profile:\s*(serialized_genz|serialized_interleaved)/)||[])[1]||"serialized_genz";
+  const sharedHook=/- shared cold open:\s*true/i.test(text);
+  const sourceName=(text.match(/- Source video:\s*(.+)/)||[])[1]?.trim()||"";
+  const sourceDuration=Number((text.match(/- Source duration:\s*([\d.]+)/)||[])[1]);
   const instruction=[
     "GEMINI SERIALIZED TRUE CRIME — STAGE 0 OF 4 — SERIES BLUEPRINT ONLY",
     "All uploaded proxy chunks and transcript must be examined in this SAME chat; verify absolute source timestamps and scene boundaries.",
@@ -23,10 +27,11 @@ function blueprintPrompt(direct) {
     "Return exactly ONE JSON code block (save as series-blueprint.json), nothing else:",
     JSON.stringify({
       artifactType:"serialized_story_blueprint",schemaVersion:1,seriesId:"stable-source-case-id",
-      prompt_profile:"serialized_genz",series_mode:"interleaved_multipart",shared_hook_enabled:false,
-      shared_top_banner_text:"One factual common banner",sourceVideo:"actual-source.mp4",
-      sourceDurationSec:1000,centralViewerQuestion:"One central verified question",
+      prompt_profile:profile,series_mode:"interleaved_multipart",shared_hook_enabled:sharedHook,
+      shared_top_banner_text:"One factual common banner",sourceVideo:sourceName,
+      sourceDurationSec:Number.isFinite(sourceDuration)?sourceDuration:0,centralViewerQuestion:"One central verified question",
       verifiedCausalChain:["Verified source event with absolute timestamps"],
+      source_narrator_ranges:[],
       parts:[
         {scriptId:1,part_number:1,role:"setup_and_escalation",hook:{sourceStartSec:20,sourceEndSec:30},storyScope:"Distinct verified chapter",outroPromise:"Verified unresolved turning point"},
         {scriptId:3,part_number:2,role:"escalation_and_revelation",hook:{sourceStartSec:40,sourceEndSec:50},storyScope:"Next verified chapter",outroPromise:"Verified unresolved turning point"},
@@ -34,6 +39,7 @@ function blueprintPrompt(direct) {
       ]},null,2),
     "The numbers and placeholders above are examples ONLY. Use the actual sourceVideo, duration, selected profile and shared-hook policy below.",
     "For shared_hook_enabled=true, all 3 Part hook source ranges MUST match; otherwise Part hooks should be distinct.",
+    "Include source_narrator_ranges with verified external YouTube narrator intervals, replacementText and confidence; use [] if genuinely none, never guess.",
     "Blueprint must be source-grounded and remain LOCKED during subsequent script turns.",
     "VALIDATE the complete JSON.parse response. Do not send any Part segments in this turn."
   ];
@@ -49,7 +55,9 @@ function partPrompt(scriptId,profile="serialized_genz",sharedHook=false, min=75,
     "Write ONLY script-"+scriptId+".json for Part "+n+". DO NOT output the other Parts, and do not output another Blueprint.",
     n>1?"Maintain continuity with prior scripts; do not repeat their body footage or narration.":"Follow only the Part 1 story scope from the Blueprint.",
     "The response is exactly ONE complete fenced JSON object, with artifactType=highlight_cut_script, schemaVersion=1, scriptId="+scriptId+", part_number="+n+", prompt_profile="+profile+", series_mode=interleaved_multipart.",
+    "Include truthful inputAccessAudit and a compact story_blueprint with partQuestion, partPayoffOrCliffhanger and macroBlocks. Never claim you watched an unavailable input.",
     "Copy Blueprint's seriesId to series_id, its shared_top_banner_text and shared_hook_enabled="+sharedHook+".",
+    "Copy EXACTLY Blueprint's source_narrator_ranges into this Script. Keep it identical in all three JSON outputs.",
     "For the Hook, obey Blueprint Part "+n+"'s source range"+(sharedHook?" (identical across all Parts).":" (chapter-specific).")+" If hook-contract.json was explicitly locked, obey it.",
     "Preserve true causal sequence, source speech and complete action, narrator-source mute, original-audio integrity, cliffhanger policy, no invented events, and pacing exceptions from the original master editorial prompt.",
     "Require a nonempty segments array. Every segment: sceneId, sourceStartSec, sourceEndSec, playbackSpeed, storyFunction, audio_mode, voiceover_text (empty for original_audio), source_narrator_detected and a short transitionReason.",
@@ -67,6 +75,10 @@ function validateBlueprint(bp,{manifest={},profile="",sharedHook}={}) {
  if(!str(bp?.seriesId))errors.push("seriesId missing.");
  if(!str(bp?.shared_top_banner_text))errors.push("shared_top_banner_text missing.");
  if(!str(bp?.centralViewerQuestion)||!Array.isArray(bp?.verifiedCausalChain)||!bp.verifiedCausalChain.length)errors.push("Verified case plan missing.");
+ if(!Array.isArray(bp?.source_narrator_ranges)) errors.push("source_narrator_ranges must be an array (possibly empty).");
+ else for(const range of bp.source_narrator_ranges) {
+  if(!Number.isFinite(num(range.startSec))||!Number.isFinite(num(range.endSec))||num(range.endSec)<=num(range.startSec)||!str(range.replacementText))errors.push("Invalid external narrator range.");
+ }
  if(profile&&str(bp?.prompt_profile)!==profile)errors.push("Profile mismatch.");
  if(typeof sharedHook==="boolean"&&bp?.shared_hook_enabled!==sharedHook)errors.push("Shared Hook policy mismatch.");
  if(manifest?.sourceVideo&&path.basename(str(bp?.sourceVideo))!==path.basename(manifest.sourceVideo))errors.push("Source video mismatch.");
@@ -94,6 +106,10 @@ function validateScriptAgainstBlueprint(script,bp){
  if(str(script.shared_top_banner_text||script.sharedTopBannerText)!==str(bp.shared_top_banner_text))errors.push("Shared title changed from locked Blueprint.");
  if(script.shared_hook_enabled!==bp.shared_hook_enabled)errors.push("Shared Hook policy changed.");
  if(str(script.prompt_profile)!==str(bp.prompt_profile))errors.push("Profile changed.");
+ const signature=list=>JSON.stringify((list||[]).map(x=>({
+  startSec:num(x.startSec),endSec:num(x.endSec),replacementText:str(x.replacementText),confidence:str(x.confidence)
+ })));
+ if(signature(script.source_narrator_ranges)!==signature(bp.source_narrator_ranges))errors.push("source_narrator_ranges differ from locked Blueprint.");
  if(plan){
   if(num(script.part_number??script.partNumber)!==num(plan.part_number))errors.push("Part number mismatch.");
   const segments=script.segments||[],first=segments[0],a=num(first?.sourceStartSec);
