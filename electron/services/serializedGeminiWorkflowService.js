@@ -23,24 +23,34 @@ function blueprintPrompt(direct) {
     "GEMINI SERIALIZED TRUE CRIME — STAGE 0 OF 4 — SERIES BLUEPRINT ONLY",
     "All uploaded proxy chunks and transcript must be examined in this SAME chat; verify absolute source timestamps and scene boundaries.",
     "The local action-candidate ranking is NOT evidence of semantic importance. The user-locked hook-contract.json, if supplied, is authoritative.",
-    "Do NOT generate any script JSON yet. Decide one case, the actual causality, and 3 distinct chapters, hooks, unresolved cliffhangers and last verified consequence.",
+    "Do NOT generate any script JSON yet. Decide one case and 3 distinct verified chapters with strong Hooks, chapterBeats, cliffhangers and the last verified consequence.",
+    "BLUEPRINT V2: Each Part MUST contain 2-6 non-Hook chapterBeats in narrative sequence. Each beat has a unique beatId, kind (dialogue|action|visual|context), role, absolute sourceStartSec/sourceEndSec, actual sceneIds, sourceProof (real quote or directly visible event), and mustInclude=true. These are mandatory SOURCE EVIDENCE ANCHORS, not timeline edit segments.",
+    "Hook must include kind (dialogue_conflict|physical_action|mixed|visual_reveal), source time range and hookProof. A verbal confrontation is NOT a physical action: it uses sustainedBeatOverride when needed; actionOverride is ONLY for a verified physical action.",
+    "Do not INVENT evidenceId, sourceRunId, actionCandidateId or sceneId. Use verified source ranges and real sceneIds from supplied manifest. Core chapterBeats must not overlap across Parts, except the separately defined shared Hook when opted in.",
+    "Part 1/2 last beat is a complete spoken or visible unresolved cliffhanger; Part 3 last beat is the last verified consequence. Mark beat sourceProof exactly so later Script import can check source-range coverage.",
     "Return exactly ONE JSON code block (save as series-blueprint.json), nothing else:",
     JSON.stringify({
-      artifactType:"serialized_story_blueprint",schemaVersion:1,seriesId:"stable-source-case-id",
+      artifactType:"serialized_story_blueprint",schemaVersion:2,seriesId:"stable-source-case-id",
       prompt_profile:profile,series_mode:"interleaved_multipart",shared_hook_enabled:sharedHook,
       shared_top_banner_text:"One factual common banner",sourceVideo:sourceName,
       sourceDurationSec:Number.isFinite(sourceDuration)?sourceDuration:0,centralViewerQuestion:"One central verified question",
       verifiedCausalChain:["Verified source event with absolute timestamps"],
       source_narrator_ranges:[],
       parts:[
-        {scriptId:1,part_number:1,role:"setup_and_escalation",hook:{sourceStartSec:20,sourceEndSec:30},storyScope:"Distinct verified chapter",outroPromise:"Verified unresolved turning point"},
-        {scriptId:3,part_number:2,role:"escalation_and_revelation",hook:{sourceStartSec:40,sourceEndSec:50},storyScope:"Next verified chapter",outroPromise:"Verified unresolved turning point"},
-        {scriptId:4,part_number:3,role:"verified_climax_and_outcome",hook:{sourceStartSec:60,sourceEndSec:70},storyScope:"Final verified chapter",outroPromise:"Verified outcome or last documented consequence"}
+        {scriptId:1,part_number:1,role:"setup_and_escalation",hook:{kind:"dialogue_conflict",sourceStartSec:20,sourceEndSec:30,hookProof:"Verified real Hook dialogue"},storyScope:"Distinct verified chapter",outroPromise:"Verified unresolved turning point",chapterBeats:[
+          {beatId:"p1_beat_01",kind:"context",role:"setup",sourceStartSec:100,sourceEndSec:110,sceneIds:["scene_0001"],sourceProof:"Verified source context",mustInclude:true},
+          {beatId:"p1_beat_02",kind:"dialogue",role:"cliffhanger",sourceStartSec:120,sourceEndSec:130,sceneIds:["scene_0002"],sourceProof:"Verified full quote/reaction",mustInclude:true}]},
+        {scriptId:3,part_number:2,role:"escalation_and_revelation",hook:{kind:"physical_action",sourceStartSec:40,sourceEndSec:50,hookProof:"Visible actual event"},storyScope:"Next verified chapter",outroPromise:"Verified unresolved turning point",chapterBeats:[
+          {beatId:"p2_beat_01",kind:"dialogue",role:"escalation",sourceStartSec:200,sourceEndSec:210,sceneIds:["scene_0003"],sourceProof:"Verified confrontation",mustInclude:true},
+          {beatId:"p2_beat_02",kind:"dialogue",role:"cliffhanger",sourceStartSec:220,sourceEndSec:230,sceneIds:["scene_0004"],sourceProof:"Verified contradiction",mustInclude:true}]},
+        {scriptId:4,part_number:3,role:"verified_climax_and_outcome",hook:{kind:"mixed",sourceStartSec:60,sourceEndSec:70,hookProof:"Verified final chapter Hook"},storyScope:"Final verified chapter",outroPromise:"Verified outcome or last documented consequence",chapterBeats:[
+          {beatId:"p3_beat_01",kind:"action",role:"climax",sourceStartSec:300,sourceEndSec:310,sceneIds:["scene_0005"],sourceProof:"Actual event proof",mustInclude:true},
+          {beatId:"p3_beat_02",kind:"visual",role:"consequence",sourceStartSec:320,sourceEndSec:330,sceneIds:["scene_0006"],sourceProof:"Last documented consequence",mustInclude:true}]}
       ]},null,2),
-    "The numbers and placeholders above are examples ONLY. Use the actual sourceVideo, duration, selected profile and shared-hook policy below.",
+    "All sample timestamps, sceneIds, beatIds, Hook types and sourceProof text are PLACEHOLDERS. Replace EVERY example from actual watched source. Do not assume sample IDs are real.",
     "For shared_hook_enabled=true, all 3 Part hook source ranges MUST match; otherwise Part hooks should be distinct.",
     "Include source_narrator_ranges with verified external YouTube narrator intervals, replacementText and confidence; use [] if genuinely none, never guess.",
-    "Blueprint must be source-grounded and remain LOCKED during subsequent script turns.",
+    "Blueprint must be source-grounded and remain LOCKED during subsequent script turns. Each Script MUST include every mustInclude chapterBeat assigned to its own Part; do not replace proof with narration-only summary.",
     "VALIDATE the complete JSON.parse response. Do not send any Part segments in this turn."
   ];
   return [instruction.join("\n"),"SOURCE & CANDIDATES:\n"+source,editorial].join("\n\n");
@@ -51,7 +61,7 @@ function partPrompt(scriptId,profile="serialized_genz",sharedHook=false, min=75,
   return [
     "GEMINI SERIALIZED TRUE CRIME — STAGE "+n+" OF 3 — SCRIPT "+scriptId+" ONLY",
     "Stay in the SAME Gemini chat that watched all uploaded video and generated series-blueprint.json.",
-    "Use the VERIFIED series-blueprint.json from this chat as a LOCKED plan. Do not revise its seriesId, event ranges, title, Part boundaries, hooks, chapter question or true outcome.",
+    "Use the VERIFIED series-blueprint.json from this chat as a LOCKED plan. Do not revise seriesId, ranges, chapterBeats, title, Part boundaries, hooks, chapter question or outcome. Include verified source footage covering EVERY mustInclude chapterBeat for this Part.",
     "Write ONLY script-"+scriptId+".json for Part "+n+". DO NOT output the other Parts, and do not output another Blueprint.",
     n>1?"Maintain continuity with prior scripts; do not repeat their body footage or narration.":"Follow only the Part 1 story scope from the Blueprint.",
     "The response is exactly ONE complete fenced JSON object, with artifactType=highlight_cut_script, schemaVersion=1, scriptId="+scriptId+", part_number="+n+", prompt_profile="+profile+", series_mode=interleaved_multipart.",
@@ -63,6 +73,8 @@ function partPrompt(scriptId,profile="serialized_genz",sharedHook=false, min=75,
     "VOICEOVER PROMISE GATE: When narration says someone confesses, accuses, snitches or admits a lie, the immediately following selected clip MUST contain the exact response; otherwise phrase the setup as an unresolved question. For such assertions, add payoffProof with quote, sourceStartSec and sourceEndSec; avoid unsupported narration.",
     "B-ROLL / CAPTIONS: Set original_audio caption=\"\" and voiceover_text=\"\"; do not use action_notes as subtitle text. Avoid burned-in dialogue captions as background for muted voiceover. Verify external narrator tails and black-frame transitions using source video; do not use blind fixed +0.6s padding.",
     "ENDINGS: Parts 1/2 end after a complete spoken sentence or meaningful reaction, not mid-word or mid-sentence. Optionally finish with a verified 3-5s VO cliffhanger. Preserve true causal sequence, original audio and locked source ranges.",
+    "For every selected chapterBeat, use its locked beatId on the covering segment(s), and show its verified sourceProof in the actual clip. Cut dead air around it but NEVER omit the decisive quote, action or reaction. Non-Hook core beats belong ONLY to their assigned Part.",
+    "For a dialogue-only Hook, set actionOverride=false and use sustainedBeatOverride=true for a multi-scene complete exchange. Use actionOverride=true only for verified physical action (or an actual physical-action portion of a mixed Hook).",
     "Require a nonempty segments array. Every segment: sceneId, sourceStartSec, sourceEndSec, playbackSpeed, storyFunction, audio_mode, voiceover_text (empty for original_audio), source_narrator_detected and a short transitionReason.",
     "Only include macroBlockId, sourceRunId, actionSequenceId, sustainedBeatId, completeNarrativeBeat, sustainedBeatOverride or actionOverride when needed to preserve cross-scene beats. Include payoffProof ONLY for a definite verbal promise about the following audio. OMIT redundant preview_vi, caption, action_notes and scene descriptions; this is COMPACT JSON.",
     "Use original video absolute timestamps from the uploaded proxy; ONE sceneId per segment. The local tool calculates output start/end/duration; NEVER write outputStartSec, outputEndSec, startSec or endSec for segment output.",
