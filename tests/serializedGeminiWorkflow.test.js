@@ -7,7 +7,7 @@ const makeBlueprint=()=>({
   artifactType:"serialized_story_blueprint",schemaVersion:1,seriesId:"case-1",
   prompt_profile:"serialized_genz",series_mode:"interleaved_multipart",shared_hook_enabled:false,
   shared_top_banner_text:"The Real Case",sourceVideo:"input.mp4",sourceDurationSec:1200,
-  centralViewerQuestion:"What happened?",verifiedCausalChain:["The traffic stop escalates"],
+  centralViewerQuestion:"What happened?",verifiedCausalChain:["The traffic stop escalates"],source_narrator_ranges:[],
   parts:[1,3,4].map((id,i)=>({scriptId:id,part_number:i+1,storyScope:"New verified event "+i,outroPromise:"Question "+i,
     hook:{sourceStartSec:100+i*100,sourceEndSec:108+i*100}}))
 });
@@ -67,4 +67,14 @@ test("Blueprint import validates before persisting, bad source never overwrites 
    await assert.rejects(importBlueprint({packageDir:root,blueprintPath:input}),/Source video mismatch/);
    assert.equal(await fs.readFile(result.seriesBlueprintPath,"utf8"),accepted);
  }finally{await fs.rm(root,{recursive:true,force:true});}
+});
+
+test("narrator source map is immutable across separately generated parts",()=>{
+ const bp=makeBlueprint();
+ bp.source_narrator_ranges=[{startSec:20,endSec:30,replacementText:"Verified context",confidence:"high"}];
+ assert.equal(validateBlueprint(bp,{manifest,profile:"serialized_genz",sharedHook:false}).passed,true);
+ const script={scriptId:1,part_number:1,series_id:"case-1",prompt_profile:"serialized_genz",
+   shared_top_banner_text:"The Real Case",shared_hook_enabled:false,
+   source_narrator_ranges:[],segments:[{sourceStartSec:100,sourceEndSec:105,storyFunction:"hook"}]};
+ assert.match(validateScriptAgainstBlueprint(script,bp).errors.join(" "),/source_narrator_ranges/);
 });
