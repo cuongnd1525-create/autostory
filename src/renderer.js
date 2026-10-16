@@ -388,6 +388,9 @@ function queryElements() {
     openManualGeminiPack: $("open-manual-gemini-pack"),
     manualGeminiPackStatus: $("manual-gemini-pack-status"),
     manualGeminiPackPath: $("manual-gemini-pack-path"),
+    importSerializedBlueprint: $("import-serialized-blueprint"),
+    serializedBlueprintStage: $("serialized-blueprint-stage"),
+    serializedBlueprintStatus: $("serialized-blueprint-status"),
     manualGeminiForceRebuild: $("manual-gemini-force-rebuild"),
     runManualAntigravityStage1: $("run-manual-antigravity-stage1"),
     cancelManualAntigravityStage1: $("cancel-manual-antigravity-stage1"),
@@ -2884,6 +2887,7 @@ function setBusy(isBusy) {
     el.runManualAntigravityStage1,
     el.openManualAntigravityResult,
     el.importManualGeminiEvidence,
+    el.importSerializedBlueprint,
     el.importManualGeminiBlueprint,
     el.openManualGeminiPack,
     el.openManualGeminiEvidenceFolder,
@@ -2899,6 +2903,11 @@ function setBusy(isBusy) {
     el.copyVoiceBudgetPrompt.disabled = true;
   }
   syncConfiguredAiWorkflowUi();
+  if (!isBusy && el.importSerializedBlueprint) {
+    el.importSerializedBlueprint.disabled = !el.manualGeminiPackPath?.value
+      || !isManualGeminiProMode()
+      || !["serialized_genz","serialized_interleaved"].includes(readManualGeminiPromptOptions().profile);
+  }
   if (!isBusy && el.importManualGeminiEvidence) {
     el.importManualGeminiEvidence.disabled = !el.manualGeminiPackPath?.value
       || isManualGeminiProMode()
@@ -3526,6 +3535,7 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
   const isGenZ = options.profile === "serialized_genz";
   el.manualIndependentOptions?.classList.toggle("hidden", !isIndependent);
   el.manualSerializedOptions?.classList.toggle("hidden", !isSerialized);
+  el.serializedBlueprintStage?.classList.toggle("hidden", !isSerialized || !isManualGeminiProMode());
   setIndependentHookPriority(options.independent?.hookPriority || DEFAULT_INDEPENDENT_HOOK_PRIORITY);
   if (el.manualSeriesSharedHook) {
     el.manualSeriesSharedHook.disabled = false;
@@ -6037,6 +6047,13 @@ async function createManualGeminiAnalysisPack() {
     const cacheMisses = result.cache?.misses || [];
     const cacheCreated = result.cache?.created || [];
     el.manualGeminiPackPath.value = result.packageDir;
+    if (el.importSerializedBlueprint) {
+      el.importSerializedBlueprint.disabled = !result.sequentialSeriesEnabled;
+      el.serializedBlueprintStage?.classList.toggle("hidden", !result.sequentialSeriesEnabled);
+      if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent = result.sequentialSeriesEnabled
+        ? "1) Gửi proxy/Blueprint prompt. 2) Nhập series-blueprint.json. 3) Gửi lần lượt Script 1, 3, 4 trong thư mục 02-SERIES-SEQUENTIAL."
+        : "";
+    }
     setManualStageFolder(el.openManualGeminiPack, result.pass1UploadDir || result.packageDir, "Mở thư mục GĐ1");
     if (el.runManualAntigravityStage1) {
       el.runManualAntigravityStage1.disabled = !isManualGeminiProMode();
@@ -6081,6 +6098,9 @@ async function createManualGeminiAnalysisPack() {
       || (isPodcastViralMode() && result.workflowMode !== "quality_two_pass");
     writeSetupDraft();
     addLog(`Gói phân tích Gemini Pro đã sẵn sàng: ${result.packageDir}`);
+    if (result.sequentialSeriesEnabled) {
+      addLog("SERIES SEQUENTIAL: Gemini phải xuất Blueprint trước. Các prompt tạo 3 Part nằm tại: "+result.sequentialSeriesNextStepsDir);
+    }
     if (Array.isArray(result.proxyUploadBatchDirs) && result.proxyUploadBatchDirs.length > 1) {
       addLog(`Video dài đã được chia thành ${result.proxyChunkCount} proxy ngắn. Gửi các batch theo thứ tự vào cùng một chat Gemini.`);
       result.proxyUploadBatchDirs.forEach((batchDir, index) => {
@@ -6102,6 +6122,8 @@ async function createManualGeminiAnalysisPack() {
       ? "Đã tạo gói Visual Process Map. Hãy gửi thư mục cho Gemini."
       : isStoryRecutMode()
       ? "Đã tạo gói evidence Story Recut."
+      : result.sequentialSeriesEnabled
+      ? "Gói tuần tự sẵn sàng: Blueprint trước, rồi từng JSON Script 1 → 3 → 4."
       : "Đã tạo gói Lượt 1. Hãy gửi toàn bộ thư mục cho Gemini và tải ba JSON Highlight.");
     if (result?.hookAuditionResult?.topCandidates?.length) {
       el.openHookPickerBtn?.classList.remove("hidden");
@@ -6178,6 +6200,24 @@ async function createAndRunConfiguredStage1() {
   }
   setAutoStatus("5/5 · Vertex đang review từng draft và tạo đề xuất V2...");
   await reviewAllDraftVariantsWithConfiguredAi();
+}
+
+async function importSerializedBlueprintJson() {
+  const packageDir = el.manualGeminiPackPath?.value || "";
+  if (!packageDir) { showToast("Hãy tạo gói Series trước."); return; }
+  const blueprintPath = await window.cineviral.pickJson();
+  if (!blueprintPath) return;
+  setBusy(true);
+  try {
+    const result = await window.cineviral.importSerializedBlueprint({packageDir,blueprintPath});
+    if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent =
+      "Blueprint "+result.seriesId+" đã khóa. Gửi lần lượt 3 prompt Script trong 02-SERIES-SEQUENTIAL rồi chọn đủ ba JSON.";
+    addLog("Series Blueprint được xác minh: "+result.seriesBlueprintPath);
+    showToast("Blueprint hợp lệ. Tiếp tục 3 prompt riêng trong cùng chat Gemini.");
+  } catch (error) {
+    addLog(error.message,"ERROR");
+    showToast(error.message);
+  } finally {setBusy(false);}
 }
 
 async function importManualGeminiEvidence() {
@@ -6399,6 +6439,8 @@ async function importManualGeminiBlueprint() {
 
 function invalidateManualGeminiPack(reason = "") {
   if (!el.manualGeminiPackPath?.value && !el.manualGeminiEvidencePath?.value) return;
+  if (el.importSerializedBlueprint) el.importSerializedBlueprint.disabled = true;
+  if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent = "Blueprint không còn hợp lệ. Tạo lại gói phân tích.";
   el.manualGeminiPackPath.value = "";
   if (el.runManualAntigravityStage1) el.runManualAntigravityStage1.disabled = true;
   if (el.openManualAntigravityResult) {
@@ -11921,6 +11963,7 @@ function bindEvents() {
   });
   el.podcastYoutubeUrl?.addEventListener("input", writeSetupDraft);
   el.importManualGeminiEvidence?.addEventListener("click", importManualGeminiEvidence);
+  el.importSerializedBlueprint?.addEventListener("click", importSerializedBlueprintJson);
   el.importManualGeminiBlueprint?.addEventListener("click", importManualGeminiBlueprint);
   el.openManualGeminiVariants?.addEventListener("click", async () => {
     const variantPath = el.openManualGeminiVariants?.dataset.openPath;
