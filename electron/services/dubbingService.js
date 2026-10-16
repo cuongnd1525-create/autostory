@@ -65,7 +65,7 @@ const {
   buildTikTokKaraokeAssContent,
   buildWordTimestampsFromSegments
 } = require("./karaokeSubtitleService");
-const {buildManualNarratorEnglishCues,toSrt:buildManualCaptionSrt} = require("./manualGeminiCaptionService");
+const {buildManualNarratorEnglishCues,toSrt:buildManualCaptionSrt,toTikTokAss:buildManualCaptionAss} = require("./manualGeminiCaptionService");
 const { getCancelToken, throwIfCancelled } = require("./cancelToken");
 
 function runCommand(command, args, timeoutMs = 600000) {
@@ -6843,6 +6843,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     await this.projectStore.writeText(subtitlePath, manualEnglishCaptionMode
       ? buildManualCaptionSrt(finalPreviewCues)
       : buildSrt(previewSubtitleCues, "translatedText"));
+    const manualCaptionAssPath = subtitlePath.replace(/\.srt$/, ".ass");
+    if (manualEnglishCaptionMode && finalPreviewCues.length) {
+      await this.projectStore.writeText(manualCaptionAssPath, buildManualCaptionAss(finalPreviewCues));
+    }
     const isTikTokKaraoke = project.videoDecoration?.subtitleStyle === "tiktok_karaoke";
     let effectiveSubtitlePath = subtitlePath;
     if (isTikTokKaraoke) {
@@ -6878,7 +6882,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
           : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
       });
-      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: manualEnglishCaptionMode ? subtitlePath : effectiveSubtitlePath, outputPath });
+      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: manualEnglishCaptionMode ? manualCaptionAssPath : effectiveSubtitlePath, outputPath });
     } else {
       await ffmpeg.copyMedia({ inputPath: decoratedOutputPath, outputPath });
     }
@@ -8369,8 +8373,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       if (cues.length) {
         manualFinalSubtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-narrator-en.srt`);
         await this.projectStore.writeText(manualFinalSubtitlePath, buildManualCaptionSrt(cues));
+        const manualAssPath = manualFinalSubtitlePath.replace(/\.srt$/, ".ass");
+        await this.projectStore.writeText(manualAssPath, buildManualCaptionAss(cues));
         const captionedPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-captioned-final.mp4`);
-        await ffmpeg.burnSubtitles({videoPath: outputPath, subtitlePath: manualFinalSubtitlePath, outputPath: captionedPath});
+        await ffmpeg.burnSubtitles({videoPath: outputPath, subtitlePath: manualAssPath, outputPath: captionedPath});
         const backupPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-pre-caption-backup.mp4`);
         await fs.rm(backupPath, {force:true}).catch(() => {});
         await fs.rename(outputPath, backupPath);
