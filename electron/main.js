@@ -721,6 +721,9 @@ app.whenReady().then(async () => {
     return service.importBlueprint(payload || {});
   });
 
+  handleIpc("analysis:importSerializedBlueprint", async (_event,payload) =>
+    require("./services/serializedGeminiWorkflowService").importBlueprint(payload || {}));
+
   handleIpc("analysis:getHookCandidates", async (_event, packageDir) => {
     const settings = configStore.getSettings();
     const service = new ManualGeminiPackService(settings);
@@ -940,13 +943,14 @@ app.whenReady().then(async () => {
     });
   });
 
-  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath) => {
+  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath, options = {}) => {
     const settings = configStore.getSettings();
     return dubbingService.importReviewedScriptProject({
       workspaceRoot: getWorkspaceRoot(),
       projectId,
       settings,
-      jsonPath
+      jsonPath,
+      allowRegression: options?.allowRegression === true
     });
   });
 

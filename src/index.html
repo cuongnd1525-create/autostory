@@ -402,7 +402,8 @@
                   <div>
                     <label>Nhịp xen kẽ</label>
                     <select id="manual-series-pacing">
-                      <option value="strict_10" selected>Chặt 8-12 giây mỗi nhịp</option>
+                      <option value="adaptive_story" selected>Linh hoạt · VO 3-8s, giữ trọn thoại và hành động</option>
+                      <option value="strict_10">Legacy 8-12s (có ngoại lệ Complete Beat)</option>
                       <option value="balanced">Cân bằng 6-18 giây</option>
                       <option value="story_first">Ưu tiên mạch truyện, âm gốc tới 30 giây</option>
                     </select>
@@ -415,7 +416,7 @@
                   </summary>
                   <div class="mode-advanced-options-body">
                     <div class="prompt-toggle-grid">
-                      <label class="check-row"><input id="manual-series-shared-hook" type="checkbox" checked disabled /> Cold Open Hook hành động chung 5-30 giây (bắt buộc)</label>
+                      <label class="check-row"><input id="manual-series-shared-hook" type="checkbox" /> Lặp cùng Hook ở cả 3 Part (mặc định tắt: mỗi Part Hook riêng)</label>
                       <label class="check-row"><input id="manual-series-interleaved-audio" type="checkbox" checked /> Xen kẽ voiceover và âm thanh gốc</label>
                       <label class="check-row"><input id="manual-series-narrator-style" type="checkbox" checked /> <span id="manual-series-narrator-style-label">Văn phong narrator true-crime điện ảnh</span></label>
                       <label class="check-row"><input id="manual-series-cliffhanger" type="checkbox" checked /> Part 1-2 kết thúc bằng cliffhanger</label>
@@ -1166,6 +1167,13 @@
                   <div class="manual-gemini-pack-actions">
                     <button id="create-manual-gemini-pack" class="secondary-button" type="button">Chỉ tạo gói</button>
                     <button id="open-manual-gemini-pack" class="secondary-button" type="button" disabled>Mở thư mục GĐ1</button>
+                  </div>
+                  <div id="serialized-blueprint-stage" class="manual-serialized-blueprint-stage hidden">
+                    <div class="manual-gemini-pack-actions">
+                      <button id="import-serialized-blueprint" class="secondary-button" type="button" disabled>Nhập Series Blueprint JSON</button>
+                      <button id="open-serialized-prompts" class="secondary-button" type="button" disabled>Mở prompt Script 1 / 3 / 4</button>
+                    </div>
+                    <small id="serialized-blueprint-status">Nhập series-blueprint.json để khóa câu chuyện chung, trước khi tạo Script 1, 3, 4.</small>
                   </div>
                   <label class="check-row manual-gemini-cache-option">
                     <input id="manual-gemini-force-rebuild" type="checkbox" />

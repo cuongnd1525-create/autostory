@@ -48,6 +48,9 @@ const {
   rankManualGeminiVariants,
   scoreManualGeminiVariant
 } = require("./manualGeminiViralPreflightService");
+const {validateManualGeminiEditorialContract, auditSerializedVariants} = require("./manualGeminiEditorialGateService");
+const {auditManualSourceGrounding} = require("./manualSourceGroundingAuditService");
+const {validateBlueprint,validateScriptAgainstBlueprint} = require("./serializedGeminiWorkflowService");
 const { compilePodcastEdlFile } = require("./podcastViralService");
 const {
   consolidateStoryRecutSegments,
@@ -63,6 +66,7 @@ const {
   buildTikTokKaraokeAssContent,
   buildWordTimestampsFromSegments
 } = require("./karaokeSubtitleService");
+const {buildManualNarratorEnglishCues,toSrt:buildManualCaptionSrt,toTikTokAss:buildManualCaptionAss} = require("./manualGeminiCaptionService");
 const { getCancelToken, throwIfCancelled } = require("./cancelToken");
 
 function runCommand(command, args, timeoutMs = 600000) {
@@ -523,12 +527,21 @@ function getHighlightNarrationSourceVolume(project = {}) {
 function getHighlightAudioMode(segment = {}, hasVoice = Boolean(getHighlightVoiceText(segment)), project = {}) {
   if (!hasVoice) return "original_audio";
   const requested = String(segment.audioMode || segment.audio_mode || segment.requestedAudioMode || "").toLowerCase();
+  const containsSourceNarrator = segment.sourceNarratorDetected === true
+    || segment.source_narrator_detected === true
+    || segment.forceSourceMute === true
+    || segment.replaceSourceNarrator === true;
+  // Raw source must NEVER leak back into an explicitly muted voiceover segment.
+  if (containsSourceNarrator || requested === "voiceover_only") return "voiceover_only";
+  if (project.analysisWorkflow === "manual_gemini_draft_review") {
+    // Lower volume is not voice separation; manual workflow needs verified clean ambience.
+    return requested === "voiceover_with_ambient" && segment.cleanAmbientVerified === true
+      ? "voiceover_with_ambient" : "voiceover_only";
+  }
   if (requested === "voiceover_with_ambient" || requested === "mixed_ducking") {
     return "voiceover_with_ambient";
   }
-  if (getHighlightNarrationSourceVolume(project) > 0) {
-    return "voiceover_with_ambient";
-  }
+  if (getHighlightNarrationSourceVolume(project) > 0) return "voiceover_with_ambient";
   return "voiceover_only";
 }
 
@@ -4289,6 +4302,21 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       throw new Error("Mode DIY Story Remix chỉ nhận đúng một file diy-story-remix.json.");
     }
 
+    let sequentialSeriesBlueprint = null;
+    if (project.analysisWorkflow === "manual_gemini_draft_review" && project.manualGeminiPackPath) {
+      const packageInfo = await fs.readFile(path.join(project.manualGeminiPackPath,"package-info.json"),"utf8")
+        .then(JSON.parse).catch(()=>({}));
+      if (packageInfo.sequentialSeriesEnabled) {
+        if (jsonPaths.length !== 3) {
+          throw new Error("Series tuần tự cần đủ Script 1, 3 và 4. Hãy hoàn tất từng Part và chọn cả ba JSON trước khi import.");
+        }
+        sequentialSeriesBlueprint = await fs.readFile(
+          path.join(project.manualGeminiPackPath,"series-blueprint.json"),"utf8"
+        ).then(JSON.parse).catch(()=>{
+          throw new Error("Chưa có Blueprint đã khóa. Hãy chọn Nhập Series Blueprint trong GĐ1 trước khi import Script 1, 3, 4.");
+        });
+      }
+    }
     await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "highlight", percent: 15, message: "Dang doc video va Highlight Cut JSON" });
     const media = await ffmpeg.probeVideo(project.sourceVideoPath);
     let manualManifest = null;
@@ -4351,10 +4379,30 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         }
       })
       : null;
+    if (sequentialSeriesBlueprint) {
+      const check = validateBlueprint(sequentialSeriesBlueprint,{
+        manifest: manualManifest,profile:project.manualGeminiPromptOptions?.profile,
+        sharedHook: project.manualGeminiPromptOptions?.sharedHook === true
+      });
+      if (!check.passed) throw new Error("Blueprint đã khóa không khớp nguồn/profile: "+check.errors.join(" | "));
+    }
     const variants = [];
+    const groundingAudits = [];
+    const groundingSrt = project.analysisWorkflow === "manual_gemini_draft_review"
+      ? await fs.readFile(path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "source-transcript.srt"), "utf8").catch(() => "")
+      : "";
+    const sourceEvidence = project.analysisWorkflow === "manual_gemini_draft_review"
+      ? await fs.readFile(path.join(project.manualGeminiPackPath, "scene-evidence.json"), "utf8").then(JSON.parse).catch(() => null)
+      : null;
     for (const [variantIndex, jsonPath] of jsonPaths.entries()) {
       const raw = await fs.readFile(jsonPath, "utf8");
       const parsedArtifact = parseGeminiJsonObject(raw, path.basename(jsonPath));
+      if (sequentialSeriesBlueprint) {
+        const check = validateScriptAgainstBlueprint(parsedArtifact,sequentialSeriesBlueprint);
+        if (!check.passed) {
+          throw new Error("Script "+path.basename(jsonPath)+" không khớp Blueprint đã khóa: "+check.errors.join(" | "));
+        }
+      }
       if (String(parsedArtifact?.artifactType || "") === "gemini_draft_review") {
         throw new Error(
           `File ${path.basename(jsonPath)} là kết quả review V2, không phải variant V1. `
@@ -4476,6 +4524,25 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
+      if (project.analysisWorkflow === "manual_gemini_draft_review") {
+        const contractFile = path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "hook-contract.json");
+        const hookContract = await fs.readFile(contractFile, "utf8").then(JSON.parse).catch(() => null);
+        const editorial = validateManualGeminiEditorialContract({
+          script: scriptInput, normalizedScript: script,
+          promptOptions: configuredPromptOptions, hookContract, transcriptSrt: groundingSrt, sourceEvidence
+        });
+        if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
+        script.warnings.push(...editorial.warnings);
+        const grounding = auditManualSourceGrounding({
+          rawScript: scriptInput, normalizedScript: script,
+          transcriptSrt: groundingSrt, sourceVideo: manualManifest?.sourceVideo || ""
+        });
+        groundingAudits.push({scriptId: editorial.scriptId, ...grounding});
+        if (grounding.quoteManualReviewCount) {
+          script.warnings.push(grounding.quoteManualReviewCount
+            + " quote nguồn chưa khớp SRT; cần nghe trực tiếp trước khi xuất.");
+        }
+      }
       if (configuredPromptOptions.profile === "independent") {
         const importedScriptId = safeNumber(
           scriptInput.scriptId ?? scriptInput.script_id,
@@ -4615,6 +4682,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         message: `Da doc Highlight variant ${variantIndex + 1}/${jsonPaths.length}`
       });
     }
+    if (sequentialSeriesBlueprint) {
+      const actualIds = variants.map(v=>Number(v.scriptId));
+      if (new Set(actualIds).size!==3 || actualIds.slice().sort((a,b)=>a-b).join(",")!=="1,3,4") {
+        throw new Error("Series tuần tự phải có đúng 3 Script 1, 3, 4, không trùng hoặc thiếu Part.");
+      }
+    }
     const explicitSharedTitles = variants
       .map((variant) => safeText(variant.sharedTopBannerText))
       .filter(Boolean);
@@ -4688,11 +4761,24 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         );
       }
     }
+    if (project.analysisWorkflow === "manual_gemini_draft_review") {
+      const seriesWarnings = auditSerializedVariants(variants, project.manualGeminiPromptOptions || {});
+      if (seriesWarnings.length) variants.forEach(variant => variant.warnings.push(...seriesWarnings));
+    }
     if (isTwoPassGeminiWorkflow) {
       const ranked = rankManualGeminiVariants(variants);
       const rankById = new Map(ranked.map((variant) => [variant.id, variant.viralRank]));
       variants.forEach((variant) => {
         variant.viralRank = rankById.get(variant.id) || variants.length;
+      });
+    }
+    const sourceGroundingReportPath = groundingAudits.length
+      ? path.join(paths.analysisDir, "manual-gemini-source-grounding.json") : "";
+    if (sourceGroundingReportPath) {
+      await this.projectStore.writeJson(sourceGroundingReportPath, {
+        artifactType: "manual_gemini_source_grounding_report",
+        generatedAt: new Date().toISOString(),
+        reports: groundingAudits
       });
     }
     const activeVariant = variants[0];
@@ -4771,7 +4857,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       artifacts: {
         highlightCutScriptPath: scriptPath,
         sceneManifestPath,
-        validationPath
+        validationPath,
+        ...(sourceGroundingReportPath ? {sourceGroundingReportPath} : {})
       }
     };
 
@@ -5104,7 +5191,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     return "edge_neural";
   }
 
-  async importReviewedScriptProject({ workspaceRoot, projectId, settings, jsonPath }) {
+  async importReviewedScriptProject({ workspaceRoot, projectId, settings, jsonPath, allowRegression = false }) {
     const project = await this.projectStore.getProject(workspaceRoot, projectId);
     const paths = this.projectStore.getProjectPaths(workspaceRoot, projectId);
     const ffmpeg = new FfmpegService(settings);
@@ -5328,6 +5415,19 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         };
       }
       const script = normalizeHighlightCutScript(scriptInput, media.duration);
+      if (isDraftReviewWorkflow) {
+        const contractFile = path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "hook-contract.json");
+        const hookContract = await fs.readFile(contractFile, "utf8").then(JSON.parse).catch(() => null);
+        const editorial = validateManualGeminiEditorialContract({
+          script: scriptInput, normalizedScript: script,
+          promptOptions: project.manualGeminiPromptOptions || {profile: activeVariant.promptProfile},
+          hookContract,
+          transcriptSrt: await fs.readFile(path.join(project.manualGeminiPackPath, "01-GUI-GEMINI", "source-transcript.srt"), "utf8").catch(() => ""),
+          sourceEvidence: await fs.readFile(path.join(project.manualGeminiPackPath, "scene-evidence.json"), "utf8").then(JSON.parse).catch(() => null)
+        });
+        if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
+        script.warnings.push(...editorial.warnings);
+      }
       if (safeText(activeVariant.promptProfile).toLowerCase() === "independent") {
         const importedScriptId = safeNumber(scriptInput.scriptId ?? scriptInput.script_id, activeVariant.scriptId || 1);
         const configuredMaxDuration = safeNumber(
@@ -5398,6 +5498,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         && candidateScore === previousScore
         && candidateIssueCount > previousIssueCount;
       if (scoreRegressed || sameScoreMoreErrors) {
+        // Do not silently accept a lower-scoring V2. The confirmation is
+        // explicit and scoped only to the reviewed JSON being imported.
+        if (draftReviewArtifact && !allowRegression) {
+          throw new Error(
+            "V2_REGRESSION_CONFIRM: Viral readiness " + previousScore + "/100 -> "
+            + candidateScore + "/100, issue count " + previousIssueCount + " -> "
+            + candidateIssueCount + ". Confirm importing this review or retain V1."
+          );
+        }
         const regressionWarningPath = path.join(paths.analysisDir, "highlight-cut-review-regression-warning.json");
         await this.projectStore.writeJson(regressionWarningPath, {
           generatedAt: now,
@@ -6300,6 +6409,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           .filter((cue) => cue.text && cue.endSec > cue.startSec)
         : [];
       const geminiTranscriptCandidate = audioMode === "original_audio"
+        && project.analysisWorkflow !== "manual_gemini_draft_review"
         ? getOriginalAudioTranscriptCandidate(segment)
         : "";
       if (!project.subtitleSourcePath && shouldUseOriginalAudioTranscriptCandidate({
@@ -6317,9 +6427,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       }
       const rawCandidateVoiceText = safeText(
         getHighlightVoiceText(segment)
-        || segment.caption
-        || segment.translatedText
-        || segment.text
+        || (project.analysisWorkflow === "manual_gemini_draft_review" ? "" : (segment.caption || segment.translatedText || segment.text))
         || ""
       );
       const voiceText = /^(Highlight|Segment|Scene|Cảnh)\s*\d+/i.test(rawCandidateVoiceText.trim()) ? "" : rawCandidateVoiceText;
@@ -6367,6 +6475,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         previewSubtitleCues: originalAudioCues.length ? originalAudioCues : voiceSubtitleCues
       };
     });
+    // US Manual Gemini drafts keep native English ASR/narrator captions.
+    if (project.analysisWorkflow === "manual_gemini_draft_review") {
+      return subtitleSegments.map(segment => ({
+        ...segment,
+        previewSubtitleVi: safeText(segment.text || ""),
+        previewSubtitleCues: (segment.previewSubtitleCues || []).map(cue => ({
+          ...cue, previewSubtitleVi: safeText(cue.text || cue.previewSubtitleVi || "")
+        }))
+      }));
+    }
     const translationItems = subtitleSegments.flatMap((segment) => (
       segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
@@ -6469,7 +6587,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
     const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
     const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
+    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.${project.analysisWorkflow === "manual_gemini_draft_review" ? "en" : "vi"}.srt`);
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
@@ -6731,7 +6849,46 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           translatedText: segment.previewSubtitleVi || ""
         }]
     ));
-    await this.projectStore.writeText(subtitlePath, buildSrt(previewSubtitleCues, "translatedText"));
+    const manualEnglishCaptionMode = project.analysisWorkflow === "manual_gemini_draft_review"
+      && project.manualGeminiEnglishCaptionsEnabled !== false;
+    // Manual True Crime defaults to narrator-only subtitles. Source bodycam often
+    // contains burned-in dialogue captions; never silently layer transcript twice.
+    let finalPreviewCues = previewSubtitleCues;
+    if (manualEnglishCaptionMode) {
+      const showOriginal = project.manualGeminiOriginalAudioCaptionsEnabled === true;
+      const timeline = {segments: previewSubtitleSegments.map(s => ({
+        resolved: {startSec: s.startSec, endSec: s.endSec}
+      }))};
+      const narrator = buildManualNarratorEnglishCues({segments, timeline, voiceReports: draftVoiceReports});
+      finalPreviewCues = [
+        ...(showOriginal ? previewSubtitleCues.filter(cue => {
+          const center = (Number(cue.startSec) + Number(cue.endSec)) / 2;
+          return !narrator.some(n => n.startSec <= center && center < n.endSec);
+        }).map(c => ({...c, text: safeText(c.text || c.translatedText)})) : []),
+        ...narrator
+      ];
+      // One continuous narrated block can cover multiple visual segments.
+      const blocks = blockVoiceReports.length ? placeNarratedBlocks(segments, blockVoiceReports) : [];
+      for (const b of blocks) {
+        const start = Number(b.outputStartSec || 0);
+        const duration = Math.min(Number(b.fittedTtsSec || b.rawTtsSec || b.durationSec || 0), Number(b.durationSec || 0));
+        if (duration <= 0 || !safeText(b.narrationText)) continue;
+        const cues = buildManualNarratorEnglishCues({
+          segments: [{audioMode: "voiceover_only", voiceoverText: b.narrationText, duration}],
+          timeline: {segments: [{resolved: {startSec: start, endSec: start + duration}}]}
+        });
+        finalPreviewCues = finalPreviewCues.filter(c => c.endSec <= start || c.startSec >= start + duration);
+        finalPreviewCues.push(...cues);
+      }
+      finalPreviewCues.sort((a,b) => a.startSec - b.startSec);
+    }
+    await this.projectStore.writeText(subtitlePath, manualEnglishCaptionMode
+      ? buildManualCaptionSrt(finalPreviewCues)
+      : buildSrt(previewSubtitleCues, "translatedText"));
+    const manualCaptionAssPath = subtitlePath.replace(/\.srt$/, ".ass");
+    if (manualEnglishCaptionMode && finalPreviewCues.length) {
+      await this.projectStore.writeText(manualCaptionAssPath, buildManualCaptionAss(finalPreviewCues));
+    }
     const isTikTokKaraoke = project.videoDecoration?.subtitleStyle === "tiktok_karaoke";
     let effectiveSubtitlePath = subtitlePath;
     if (isTikTokKaraoke) {
@@ -6752,8 +6909,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await this.projectStore.writeText(assPath, assContent);
       effectiveSubtitlePath = assPath;
     }
-    const hasPreviewSubtitles = previewSubtitleCues.some((cue) => safeText(cue.translatedText));
-    const embedPreviewSubtitles = (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
+    const hasPreviewSubtitles = manualEnglishCaptionMode
+      ? finalPreviewCues.some(cue => safeText(cue.text || cue.translatedText))
+      : previewSubtitleCues.some(cue => safeText(cue.translatedText));
+    const embedPreviewSubtitles = manualEnglishCaptionMode
+      ? hasPreviewSubtitles
+      : (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
     if (embedPreviewSubtitles) {
       onProgress?.({
         projectId,
@@ -6763,7 +6924,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
           : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
       });
-      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
+      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: manualEnglishCaptionMode ? manualCaptionAssPath : effectiveSubtitlePath, outputPath });
     } else {
       await ffmpeg.copyMedia({ inputPath: decoratedOutputPath, outputPath });
     }
@@ -6872,7 +7033,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: manualEnglishCaptionMode ? "en" : "vi",
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
@@ -6892,7 +7053,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: manualEnglishCaptionMode ? "en" : "vi",
           fastDraftSubtitlesArePreviewOnly: true,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
@@ -6960,7 +7121,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const lead = members[0];
     const text = safeText(lead.blockNarrationText);
     if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
-    const treatment = lead.blockSourceAudio === "voiceover_only" ? "voiceover_only" : "voiceover_with_ambient";
+    // A narrated block spans multiple source scenes. Even if the first scene
+    // has clean ambience, ONE later source-narrator slice must mute the whole
+    // block (we do not have a reliable stem that separates narrator from bed).
+    const blockHasSourceNarrator = members.some(item =>
+      item.sourceNarratorDetected === true || item.source_narrator_detected === true
+      || item.forceSourceMute === true || item.replaceSourceNarrator === true);
+    const treatment = getHighlightAudioMode({
+      ...lead, audioMode: lead.blockSourceAudio, forceSourceMute: blockHasSourceNarrator
+    }, true, project);
     const tag = `draft-highlight-${variantSuffix}-block-${String(startIndex + 1).padStart(4, "0")}`;
     const pieces = members.map((segment) => {
       const sourceStartSec = Math.max(0, Number(segment.sourceStartSec ?? segment.startSec ?? 0));
@@ -8236,11 +8405,38 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const finalTimelinePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-resolved-timeline.json`);
     const renderQaPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-render-qa.json`);
     await this.projectStore.writeJson(finalTimelinePath, finalTimeline);
+    let manualFinalSubtitlePath = "";
+    if (project.analysisWorkflow === "manual_gemini_draft_review"
+      && project.manualGeminiEnglishCaptionsEnabled !== false) {
+      const cues = buildManualNarratorEnglishCues({
+        segments, timeline: finalTimeline,
+        voiceReports: finalTimeline.segments.map(item => ({rawVoiceSec: item.voice.durationSec}))
+      });
+      if (cues.length) {
+        manualFinalSubtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-narrator-en.srt`);
+        await this.projectStore.writeText(manualFinalSubtitlePath, buildManualCaptionSrt(cues));
+        const manualAssPath = manualFinalSubtitlePath.replace(/\.srt$/, ".ass");
+        await this.projectStore.writeText(manualAssPath, buildManualCaptionAss(cues));
+        const captionedPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-captioned-final.mp4`);
+        await ffmpeg.burnSubtitles({videoPath: outputPath, subtitlePath: manualAssPath, outputPath: captionedPath});
+        const backupPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-pre-caption-backup.mp4`);
+        await fs.rm(backupPath, {force:true}).catch(() => {});
+        await fs.rename(outputPath, backupPath);
+        try {
+          await fs.rename(captionedPath, outputPath);
+        } catch (error) {
+          await fs.rename(backupPath, outputPath).catch(() => {});
+          throw error;
+        }
+        await fs.rm(backupPath, {force:true}).catch(() => {});
+      }
+    }
     await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "qa", percent: 95, message: "Đang kiểm tra chất lượng video cuối (Render QA)..." });
     const renderQa = await new RenderQaService(settings).inspect({
       videoPath: outputPath,
       targetDuration: finalTimeline.resolvedDurationSec,
-      subtitlePath: "not_requested",
+      subtitlePath: manualFinalSubtitlePath || "not_requested",
+      strictBlackFrames: project.analysisWorkflow === "manual_gemini_draft_review",
       expectedAudioSegments: finalTimeline.segments.map((item) => ({
         segmentId: item.segmentId,
         startSec: item.resolved.startSec,
@@ -8253,6 +8449,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }));
     await this.projectStore.writeJson(renderQaPath, renderQa);
     warnings.push(...(renderQa.issues || []).map((issue) => `Render QA: ${issue.message}`));
+    if (project.analysisWorkflow === "manual_gemini_draft_review"
+      && (renderQa.issues || []).some(issue => issue.code === "black_frames" && issue.severity === "error")) {
+      throw new Error("Manual Gemini Render QA: black transition >=0.45s. See " + renderQaPath + " and recut the source before publishing.");
+    }
     const publishedOutputPath = await publishFinalVideo({
       settings,
       project,
@@ -9418,6 +9618,8 @@ module.exports.resolveSuggestedTopCaption = resolveSuggestedTopCaption;
 module.exports.resolvePartLabelText = resolvePartLabelText;
 module.exports.resolveEffectiveVideoEditProject = resolveEffectiveVideoEditProject;
 module.exports.resolveVariantFileMetadata = resolveVariantFileMetadata;
+module.exports.getHighlightAudioMode = getHighlightAudioMode;
+module.exports.getHighlightAmbientVolume = getHighlightAmbientVolume;
 module.exports.getSegmentVoiceRenderOptions = getSegmentVoiceRenderOptions;
 module.exports.getEdgeRateWithDelivery = getEdgeRateWithDelivery;
 module.exports.splitTextAfterPhrase = splitTextAfterPhrase;

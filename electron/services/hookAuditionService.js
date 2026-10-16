@@ -14,12 +14,24 @@ const PREFERRED_ARCHETYPES = [
   "Other"
 ];
 
+function assessHookEditorialRisk(candidate = {}) {
+  const dialogue = String(candidate.keyDialogue || "");
+  const visual = Number(candidate.scores?.visual_immediacy ?? 50);
+  const retrospective = /\b(i (?:was|am|had|went|saw|heard|drove)|because|it was too late|she (?:said|told)|he (?:said|told)|working on|last night)\b/i.test(dialogue);
+  const confrontation = /\b(drop it|hands up|stop running|don't move|open the door|put it down|help me|he's got a gun)\b/i.test(dialogue);
+  const likelyStaticWitness = retrospective && !confrontation && visual <= 60;
+  return {
+    likelyStaticWitness,
+    requiresVisualReview: true,
+    reason: likelyStaticWitness ? "SRT nghe như lời kể lại + chuyển động thấp; xem proxy trước khi khóa Hook." : ""
+  };
+}
 function calculateOverallHookScore(scores = {}) {
   const visual = Math.max(0, Math.min(100, Number(scores.visual_immediacy) || 0));
   const conflict = Math.max(0, Math.min(100, Number(scores.conflict) || 0));
   const curiosity = Math.max(0, Math.min(100, Number(scores.curiosity_gap) || 0));
   const dialogue = Math.max(0, Math.min(100, Number(scores.dialogue_strength) || 0));
-  const payoff = Math.max(0, Math.min(100, Number(scores.payoff_potential) || 75));
+  const payoff = Math.max(0, Math.min(100, Number(scores.payoff_potential ?? 75)));
   const spoiler = Math.max(0, Math.min(100, Number(scores.spoiler_risk) || 0));
 
   const weighted = (visual * 0.25)
@@ -34,7 +46,9 @@ function calculateOverallHookScore(scores = {}) {
 
 function formatCandidateForAudit(candidate, rank = 1) {
   const scores = candidate.scores || {};
-  const overall = calculateOverallHookScore(scores);
+  const editorialRisk = assessHookEditorialRisk(candidate);
+  const baseScore = calculateOverallHookScore(scores);
+  const overall = Math.max(1, baseScore - (editorialRisk.likelyStaticWitness ? 28 : 0));
   return {
     rank,
     hookId: candidate.candidateId || `hook_${String(rank).padStart(2, "0")}`,
@@ -54,7 +68,8 @@ function formatCandidateForAudit(candidate, rank = 1) {
       spoiler_risk: Number(scores.spoiler_risk || 15),
       payoff_potential: Number(scores.payoff_potential || 80)
     },
-    rationale: generateHookRationale(candidate, overall)
+    rationale: generateHookRationale(candidate, overall),
+    editorialRisk
   };
 }
 
@@ -134,4 +149,5 @@ class HookAuditionService {
 module.exports = HookAuditionService;
 module.exports.PREFERRED_ARCHETYPES = PREFERRED_ARCHETYPES;
 module.exports.calculateOverallHookScore = calculateOverallHookScore;
+module.exports.assessHookEditorialRisk = assessHookEditorialRisk;
 module.exports.formatCandidateForAudit = formatCandidateForAudit;

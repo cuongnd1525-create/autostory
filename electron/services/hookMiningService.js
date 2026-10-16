@@ -188,7 +188,14 @@ function mineHookCandidateRegions({
     });
 
     if (existing) {
-      // Merge into hybrid
+      // Preserve individual trigger spans; otherwise trimming a long merged region
+      // from its first second discards the strongest quote/action near the end.
+      existing.triggerSpans = [...(existing.triggerSpans || []), {
+        startSec: item.sourceStartSec, endSec: item.sourceEndSec,
+        semanticWeight: item.semanticWeight || 0,
+        motionScore: item.motionScore || 0,
+        audioEnergyScore: item.audioEnergyScore || 0
+      }];
       existing.sourceStartSec = Number(Math.min(existing.sourceStartSec, item.sourceStartSec).toFixed(3));
       existing.sourceEndSec = Number(Math.max(existing.sourceEndSec, item.sourceEndSec).toFixed(3));
       existing.durationSec = Number((existing.sourceEndSec - existing.sourceStartSec).toFixed(3));
@@ -205,7 +212,12 @@ function mineHookCandidateRegions({
         : (item.triggerType || existing.triggerType);
       existing.description = `${existing.description} + ${item.description}`;
     } else {
-      combined.push({ ...item });
+      combined.push({ ...item, triggerSpans: [{
+        startSec: item.sourceStartSec, endSec: item.sourceEndSec,
+        semanticWeight: item.semanticWeight || 0,
+        motionScore: item.motionScore || 0,
+        audioEnergyScore: item.audioEnergyScore || 0
+      }] });
     }
   });
 
@@ -214,6 +226,18 @@ function mineHookCandidateRegions({
     let start = item.sourceStartSec;
     let end = item.sourceEndSec;
     if (end - start > 22) {
+      // Center an 18s editorial window on the strongest measured sub-event,
+      // instead of blindly keeping the opening 18s of a merged confrontation.
+      const peaks = (item.triggerSpans || []).slice().sort((a, b) => {
+        const strength = p => (p.semanticWeight || 0) * 4
+          + (p.motionScore || 0) * 0.3 + (p.audioEnergyScore || 0) * 0.15;
+        return strength(b) - strength(a);
+      });
+      const best = peaks[0];
+      const center = best
+        ? (Number(best.startSec) + Number(best.endSec)) / 2
+        : (start + end) / 2;
+      start = Math.min(end - 18, Math.max(start, center - 8));
       end = start + 18;
     }
     const dur = Number((end - start).toFixed(3));
@@ -230,10 +254,11 @@ function mineHookCandidateRegions({
     const isRoutineMaintenance = /tire|spare|lug\s*nut|wrench|jack/i.test(item.keyDialogue || "") && !/refus|run|flee|drop|hands|gun|knife|tase|hit|crash|smash/i.test(item.keyDialogue || "");
     const maintenancePenalty = isRoutineMaintenance ? 35 : 0;
     
-    // Spoiler penalty: if the candidate is in the last 15% of the video, it's likely aftermath/booking/charges
-    const isLateInVideo = duration > 0 && start >= duration * 0.85;
-    const spoilerRisk = isLateInVideo ? 80 : 15;
-    const payoffPotential = 85;
+    // Position in source is not evidence of a spoiler. Penalize only explicit
+    // outcome language, which still needs full context review by Gemini.
+    const revealsFinalOutcome = /\b(?:sentenced|convicted|pleaded guilty|found guilty|case dismissed|years in prison)\b/i.test(item.keyDialogue || "");
+    const spoilerRisk = revealsFinalOutcome ? 70 : 15;
+    const payoffPotential = item.keyDialogue || (item.motionScore || 0) >= 6 ? 85 : 60;
 
     const overallScore = Math.max(10, Math.min(99, Math.round(
       visual * 0.25 + conflict * 0.25 + curiosity * 0.25 + dialogue * 0.15 + payoffPotential * 0.10 - spoilerRisk * 0.20 - maintenancePenalty

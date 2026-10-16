@@ -30,6 +30,25 @@ function parseGeminiJsonObject(raw, sourceName = "JSON") {
       lastError = error;
     }
   }
+  // A truncated single-Part Gemini response should not trigger speculative
+  // auto-repair. Explain which Part to regenerate from the same source chat.
+  const body = fenced?.[1] || source;
+  let nesting = 0, inString = false, escaped = false;
+  for (const char of body) {
+    if (escaped) { escaped = false; continue; }
+    if (char === "\\" && inString) { escaped = true; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (!inString && (char === "{" || char === "[")) nesting += 1;
+    else if (!inString && (char === "}" || char === "]")) nesting -= 1;
+  }
+  const partial = nesting > 0 || inString;
+  if (partial && /"artifactType"\s*:\s*"highlight_cut_script"/.test(body)) {
+    const scriptId = (body.match(/"scriptId"\s*:\s*(1|3|4)\b/) || [])[1] || "?";
+    throw new Error(sourceName + " bị Gemini cắt giữa chừng (thiếu dấu đóng JSON). "
+      + "Yêu cầu Gemini xuất LẠI chỉ Script " + scriptId
+      + " trong cùng chat, không xuất lại cả series. "
+      + (lastError ? lastError.message : ""));
+  }
   throw new Error(`${sourceName} không chứa một JSON object hợp lệ${lastError ? `: ${lastError.message}` : "."}`);
 }
 

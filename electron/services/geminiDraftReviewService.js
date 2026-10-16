@@ -471,7 +471,8 @@ function buildReviewContext({
   sourceTranscriptSrt,
   transcriptInput,
   semanticDialogueCandidates,
-  reviewTarget
+  reviewTarget,
+  sourceCoverageComplete = false
 }) {
   return {
     artifactType: "gemini_draft_review_context",
@@ -484,6 +485,10 @@ function buildReviewContext({
     voiceTimingReport: voiceTimingReport || null,
     resolvedTimeline: resolvedTimeline || null,
     sourceProxyManifest: proxyChunksManifest || null,
+    sourceCoverageComplete,
+    sourceCoverageNotice: sourceCoverageComplete
+      ? "The supplied source proxy covers the complete source timeline."
+      : "PARTIAL SOURCE COVERAGE: source replacement claims MUST be limited to supplied ranges; request additional source footage to compare omitted scenes.",
     hookAuditMedia: hookAuditMedia || null,
     transcriptInput: transcriptInput || buildTranscriptInput(),
     semanticDialogueCandidates: semanticDialogueCandidates || buildSemanticDialogueCandidates([]),
@@ -788,6 +793,9 @@ function buildReviewPrompt({
 - ${variant.sharedHookEnabled !== false ? "Preserve the exact shared pure-original-audio hook used by the series. It may last 5-30 seconds when the complete action or confrontation requires it. Trim it immediately before any source narrator begins; never shorten a complete high-value beat merely to fit an obsolete 10-second target." : "Keep a complete source-grounded hook appropriate to this Part."}
 - ${variant.interleavedAudioEnabled !== false ? "Preserve the selected Voiceover / Original Audio sandwich rhythm unless a complete quote or causal exchange requires a longer source block." : "Choose audio mode according to story comprehension."}
 - Preserve every sustainedBeatOverride=true Complete Narrative Beat as uninterrupted original_audio. Never insert voiceover inside a high-stakes physical, emotional, or verbal conflict merely to satisfy the selected pacing profile.
+- ASYMMETRIC QUALITY: Prefer concise 3-8s narrator setups (max 10s), followed by COMPLETE authentic dialogue (often 12-25s) or continuous action (often 15-30s+). These are soft targets, not quotas; strict_10 must yield to sentence/answer/reaction completeness.
+- Verify that any narrator promise of a confession, accusation, lie or answer is audibly paid off in the next chosen clip; otherwise correct the narration instead of inserting a fake payoff.
+- Check opening and last clip boundary for speech cut-offs, source narrator tails, black/fade frames and burned-in subtitle conflicts. Part 1/2 can withhold the ultimate outcome but must finish the final audible sentence. In manual Gemini with burned-in source subtitles, generated captions should be narrator-only, not duplicated over original_audio.
 - ${variant.cliffhangerEnabled !== false && safeNumber(variant.partNumber, 1) < 3 ? "End on a verified unresolved beat that naturally drives the viewer to the next Part. Do not invent a cliffhanger." : "Deliver the verified resolution or final available consequence."}
 - SPOILER BAN: Part 1 and Part 2 must not reveal the final plot twist, decisive hidden evidence, test result, formal arrest, court sentence or ultimate legal consequence. Remove any such spoiler introduced by V1. Only Part 3 may deliver those verified reveals. Never repeat the arrest, sentence or final Karma payoff across Parts.
 - Part 1 must stop at a verified unresolved confrontation, suspicious lie, request to search or equivalent open question. Part 2 must stop at the strongest verified boiling-point pre-climax turn. Part 3 owns the verified resolution.
@@ -1530,6 +1538,38 @@ class GeminiDraftReviewService {
     }
     const sourceCoverageComplete = !evidenceReel && (Boolean(sourceProxy)
       || (allProxyChunks.length > 0 && selectedProxyChunks.length === allProxyChunks.length));
+    // Supplemental full-source pack is deliberately OUTSIDE the 10-file
+    // draft review upload folder. The user may upload it in earlier batches
+    // to the SAME Gemini chat when the Evidence Reel lacks a stronger shot.
+    let sourceCoverageExtensionDir = "";
+    let missingSupplementaryChunks = 0;
+    if (!sourceCoverageComplete && allProxyChunks.length) {
+      const extensionDir = path.join(reviewDir, "FULL-SOURCE-EXTENSION");
+      await fs.mkdir(extensionDir, {recursive: true});
+      let deployed = 0;
+      for (const chunk of allProxyChunks) {
+        const sourceFile = await existingFile([
+          chunk.uploadRelativePath && pass1Dir && path.join(pass1Dir, chunk.uploadRelativePath),
+          pass1Dir && path.join(pass1Dir, chunk.file)
+        ]);
+        if (!sourceFile) { missingSupplementaryChunks += 1; continue; }
+        await linkOrCopy(sourceFile, path.join(extensionDir, path.basename(chunk.file)));
+        deployed += 1;
+      }
+      if (deployed) {
+        sourceCoverageExtensionDir = extensionDir;
+        await fs.writeFile(path.join(extensionDir, "00-READ-ME-FIRST.txt"), [
+          "OPTIONAL COMPLETE SOURCE AUDIT FOR GEMINI DRAFT REVIEW",
+          "These are supplemental original-source PROXY chunks, not output draft segments.",
+          "Upload these chunks in manageable batches to the SAME Gemini chat before requesting the final review JSON.",
+          "Ask Gemini to acknowledge each non-final upload batch, not write JSON yet.",
+          "Then upload all files from the normal draft review folder and ask for the final JSON.",
+          "All burned timestamps are absolute SOURCE timestamps, not local chunk playback times.",
+          "The normal package still reports partial coverage because local software cannot prove Gemini actually watched supplemental uploads.",
+          "Available chunks: " + deployed + "/" + allProxyChunks.length
+        ].join("\n"), "utf8");
+      }
+    }
     const selectedProxyManifest = evidenceReel ? evidenceReel.manifest : selectedProxyChunks.length ? {
       ...proxyChunksManifest,
       reviewSelectionOnly: !sourceCoverageComplete,
@@ -1554,7 +1594,8 @@ class GeminiDraftReviewService {
       sourceTranscriptSrt,
       transcriptInput,
       semanticDialogueCandidates,
-      reviewTarget
+      reviewTarget,
+      sourceCoverageComplete
     }), null, 2), "utf8");
     const reviewPromptText = buildReviewPrompt({
       variant: {
@@ -1680,6 +1721,9 @@ class GeminiDraftReviewService {
       reviewTarget,
       segmentCount: draftTimeline.segments.length,
       evidenceMode,
+      sourceCoverageComplete,
+      sourceCoverageExtensionDir,
+      missingSupplementaryChunks,
       evidenceReelWarning,
       reviewInputVideoDurationSec,
       packageMs: Date.now() - packageStartedAt

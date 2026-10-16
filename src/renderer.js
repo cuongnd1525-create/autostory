@@ -388,6 +388,10 @@ function queryElements() {
     openManualGeminiPack: $("open-manual-gemini-pack"),
     manualGeminiPackStatus: $("manual-gemini-pack-status"),
     manualGeminiPackPath: $("manual-gemini-pack-path"),
+    importSerializedBlueprint: $("import-serialized-blueprint"),
+    openSerializedPrompts: $("open-serialized-prompts"),
+    serializedBlueprintStage: $("serialized-blueprint-stage"),
+    serializedBlueprintStatus: $("serialized-blueprint-status"),
     manualGeminiForceRebuild: $("manual-gemini-force-rebuild"),
     runManualAntigravityStage1: $("run-manual-antigravity-stage1"),
     cancelManualAntigravityStage1: $("cancel-manual-antigravity-stage1"),
@@ -2509,7 +2513,7 @@ function writeSetupDraft() {
     manualSeriesOverlays: el.manualSeriesOverlays?.checked ?? true,
     manualSeriesDurationMin: el.manualSeriesDurationMin?.value || "75",
     manualSeriesDurationMax: el.manualSeriesDurationMax?.value || "110",
-    manualSeriesPacing: el.manualSeriesPacing?.value || "strict_10",
+    manualSeriesPacing: el.manualSeriesPacing?.value || "adaptive_story",
     manualSeriesPowerWords: el.manualSeriesPowerWords?.value || DEFAULT_SERIES_POWER_WORDS,
     storyRecutRightsConfirmed: Boolean(el.storyRecutRightsConfirmed?.checked),
     diyStoryAngle: el.diyStoryAngle?.value || "gemini_auto_story",
@@ -2678,7 +2682,7 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (el.manualSeriesOverlays) el.manualSeriesOverlays.checked = draft.manualSeriesOverlays !== false;
   if (el.manualSeriesDurationMin) el.manualSeriesDurationMin.value = draft.manualSeriesDurationMin || "75";
   if (el.manualSeriesDurationMax) el.manualSeriesDurationMax.value = draft.manualSeriesDurationMax || "110";
-  if (el.manualSeriesPacing) el.manualSeriesPacing.value = draft.manualSeriesPacing || "strict_10";
+  if (el.manualSeriesPacing) el.manualSeriesPacing.value = draft.manualSeriesPacing || "adaptive_story";
   if (el.manualSeriesPowerWords) el.manualSeriesPowerWords.value = draft.manualSeriesPowerWords || DEFAULT_SERIES_POWER_WORDS;
   if (el.storyRecutRightsConfirmed) {
     el.storyRecutRightsConfirmed.checked = Boolean(draft.storyRecutRightsConfirmed);
@@ -2764,7 +2768,7 @@ function resetSetupStep(step) {
     if (el.manualSeriesOverlays) el.manualSeriesOverlays.checked = true;
     if (el.manualSeriesDurationMin) el.manualSeriesDurationMin.value = "75";
     if (el.manualSeriesDurationMax) el.manualSeriesDurationMax.value = "110";
-    if (el.manualSeriesPacing) el.manualSeriesPacing.value = "strict_10";
+    if (el.manualSeriesPacing) el.manualSeriesPacing.value = "adaptive_story";
     if (el.manualSeriesPowerWords) el.manualSeriesPowerWords.value = DEFAULT_SERIES_POWER_WORDS;
     syncManualGeminiPromptOptionsUi({ rerenderPrompt: false });
     document.querySelectorAll("[data-mode]").forEach((node) => node.classList.toggle("active", node.dataset.mode === "dubbing"));
@@ -2884,6 +2888,8 @@ function setBusy(isBusy) {
     el.runManualAntigravityStage1,
     el.openManualAntigravityResult,
     el.importManualGeminiEvidence,
+    el.importSerializedBlueprint,
+    el.openSerializedPrompts,
     el.importManualGeminiBlueprint,
     el.openManualGeminiPack,
     el.openManualGeminiEvidenceFolder,
@@ -2899,6 +2905,15 @@ function setBusy(isBusy) {
     el.copyVoiceBudgetPrompt.disabled = true;
   }
   syncConfiguredAiWorkflowUi();
+  if (!isBusy && el.openSerializedPrompts) {
+    el.openSerializedPrompts.disabled = !el.openSerializedPrompts.dataset.openPath
+      || !el.manualGeminiPackPath?.value;
+  }
+  if (!isBusy && el.importSerializedBlueprint) {
+    el.importSerializedBlueprint.disabled = !el.manualGeminiPackPath?.value
+      || !isManualGeminiProMode()
+      || !["serialized_genz","serialized_interleaved"].includes(readManualGeminiPromptOptions().profile);
+  }
   if (!isBusy && el.importManualGeminiEvidence) {
     el.importManualGeminiEvidence.disabled = !el.manualGeminiPackPath?.value
       || isManualGeminiProMode()
@@ -3310,10 +3325,16 @@ function getCurrentVoiceCalibrationPromptBlock({
 } = {}) {
   const selected = getSelectedVoiceConfig();
   const profile = state.finalVoiceCalibration?.profile || {};
-  const budgets = state.finalVoiceCalibration?.wordBudgets || [];
+  const shortVoiceBridges = coveragePolicy === "adaptive_story_short_vo";
+  const budgets = shortVoiceBridges
+    ? [3, 5, 8, 10].map(durationSec => ({durationSec}))
+    : (state.finalVoiceCalibration?.wordBudgets || []);
   const measuredWordsPerSecond = Number(profile.conservativeWordsPerSecond || profile.wordsPerSecond || 0);
   const budgetLines = budgets.length
     ? budgets.map((item) => {
+      if (shortVoiceBridges && !measuredWordsPerSecond) {
+        return `- ${item.durationSec}s bridge: measure the selected voice first; no minimum or guessed word budget.`;
+      }
       if (!coveragePolicy || !measuredWordsPerSecond) {
         return `- ${item.durationSec}s segment: minWords=${item.minWords}, maxWords=${item.maxWords}`;
       }
@@ -3341,6 +3362,8 @@ function getCurrentVoiceCalibrationPromptBlock({
       : "  minWords = floor((endSec - startSec) * measuredWordsPerSecond * targetNarrationCoverageMin)",
     maxOnly ? "  There is deliberately no minWords requirement." : "  maxWords = ceil((endSec - startSec) * measuredWordsPerSecond * targetNarrationCoverageMax)",
     coveragePolicy ? `- coveragePolicy: ${coveragePolicy}` : "",
+    shortVoiceBridges ? "- ADAPTIVE SHORT VO: usually 3-8s (10s maximum); shorten the shot to real TTS duration if necessary. These maximum word counts are SAFETY BUDGETS, not targets. Never pad narration to reach a minimum; preserve full authentic original_audio beats." : "",
+    shortVoiceBridges ? "- Actual rendered TTS timing outranks word estimates; revise wording or duration if a fit fails." : "",
     "- Example measured word budgets:",
     budgetLines
   ].filter(Boolean).join("\n");
@@ -3478,13 +3501,13 @@ function readManualGeminiPromptOptions() {
     : "independent";
   const minDuration = Math.max(60.5, Math.min(300, Number(el.manualSeriesDurationMin?.value || 75)));
   const maxDuration = Math.max(minDuration, Math.min(600, Number(el.manualSeriesDurationMax?.value || 110)));
-  const pacing = ["strict_10", "balanced", "story_first"].includes(el.manualSeriesPacing?.value)
+  const pacing = ["adaptive_story", "strict_10", "balanced", "story_first"].includes(el.manualSeriesPacing?.value)
     ? el.manualSeriesPacing.value
-    : "strict_10";
+    : "adaptive_story";
   return {
     profile,
     independent: readIndependentPromptOptions(),
-    sharedHook: ["serialized_interleaved", "serialized_genz"].includes(profile) ? true : el.manualSeriesSharedHook?.checked !== false,
+    sharedHook: el.manualSeriesSharedHook?.checked === true,
     interleavedAudio: el.manualSeriesInterleavedAudio?.checked !== false,
     cinematicNarrator: el.manualSeriesNarratorStyle?.checked !== false,
     cliffhanger: el.manualSeriesCliffhanger?.checked !== false,
@@ -3526,10 +3549,10 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
   const isGenZ = options.profile === "serialized_genz";
   el.manualIndependentOptions?.classList.toggle("hidden", !isIndependent);
   el.manualSerializedOptions?.classList.toggle("hidden", !isSerialized);
+  el.serializedBlueprintStage?.classList.toggle("hidden", !isSerialized || !isManualGeminiProMode());
   setIndependentHookPriority(options.independent?.hookPriority || DEFAULT_INDEPENDENT_HOOK_PRIORITY);
   if (el.manualSeriesSharedHook) {
-    el.manualSeriesSharedHook.checked = true;
-    el.manualSeriesSharedHook.disabled = isSerialized;
+    el.manualSeriesSharedHook.disabled = false;
   }
   if (el.manualSeriesNarratorStyle) {
     if (isGenZ) el.manualSeriesNarratorStyle.checked = true;
@@ -3547,19 +3570,25 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
 
 function buildSerializedHighlightGeminiPromptTemplate(options = readManualGeminiPromptOptions()) {
   const isGenZ = options.profile === "serialized_genz";
-  const voiceBlock = getCurrentVoiceCalibrationPromptBlock();
-  const pacingRule = options.pacing === "story_first"
-    ? "Voiceover blocks should be 6-12s and original-audio blocks may run 8-30s. Preserve a complete causal exchange even when strict alternation must yield to story comprehension."
+  const voiceBlock = options.pacing === "adaptive_story"
+    ? getCurrentVoiceCalibrationPromptBlock({maxOnly:true,coveragePolicy:"adaptive_story_short_vo"})
+    : getCurrentVoiceCalibrationPromptBlock();
+  const pacingRule = options.pacing === "adaptive_story"
+    ? "ASYMMETRIC PACING: narrator bridges target 3-8s (max 10s), real dialogue/action is selected by COMPLETE meaning, not a timer. Routine witness/context excerpts usually 5-8s, decisive officer-question -> suspect-answer -> pushback/reaction exchanges often 12-25s, continuous physical action often 15-30s or longer as supported. These are SOFT budgets, never minimum filler or hard maximums. Protect complete original_audio beats with sustainedBeatOverride; actionOverride is reserved for actual physical action. Never cut mid-sentence, before the promised answer, or inside an immediate reaction."
+    : options.pacing === "story_first"
+    ? "Voiceover bridges target 3-8s; original-audio blocks may run 8-30s or longer when a complete causal exchange needs it. Sentence, conflict and reaction completion always override these soft targets."
     : options.pacing === "balanced"
-    ? "Voiceover blocks should be 6-12s and original-audio blocks 8-18s. Avoid two same-mode blocks in a row unless splitting would cut a complete quote or reaction."
-    : "Strictly alternate voiceover_only blocks of 8-12s with original_audio blocks of 8-12s. No uninterrupted run of one audio mode may exceed 15s, except a verified actionOverride sequence.";
+    ? "Voiceover bridges target 3-8s; original audio usually 8-18s. Never interrupt a protected sustainedBeatOverride or actionOverride, and NEVER cut a sentence, answer or reaction for pacing."
+    : "LEGACY STRICT_10: Prefer 8-12s alternation for ordinary material only, with a soft 15s upper target. This timer NEVER applies to complete original_audio dialogue, a protected sustainedBeatOverride, or actionOverride. Sentence / question-answer / reaction completeness outranks every strict timer.";
   const hookRule = `COLD OPEN HOOK RULE (Flexible 5-30s for ALL Parts):
 - ACTION-FIRST PRIORITY: Scan the entire source and prioritize the strongest clear high-adrenaline visual/audio sequence, including an intense argument, forced entry, physical struggle, pursuit, weapon draw, gunshot, panic, or immediate reaction. Strong action with a clear climax and payoff outranks a bizarre confession, extreme entitlement, absurd excuse, or psychological contradiction.
 - A semantic or psychological quote may become the Hook only when no verified action sequence provides stronger visual impact, understandable conflict, and a more powerful payoff.
 - COMPLETE ACTION HOOK: Preserve the useful progression from setup or warning -> confrontation or action -> climax -> immediate reaction. The Hook may last up to 30 seconds when needed to keep that continuous action understandable and complete. Do not cut a strong action Hook merely to satisfy a shorter duration target.
-- MULTI-SEGMENT HOOK REQUIRED WHEN NEEDED: If the selected action crosses scene-manifest boundaries, return consecutive scene-bounded JSON segments. Assign storyFunction="hook", audio_mode="original_audio", empty voiceover_text, and the same macroBlockId, sourceRunId, actionSequenceId, sustainedBeatId, completeNarrativeBeat=true, sustainedBeatOverride=true, and actionOverride=true to every Hook slice. Preserve source order without gaps and place no voiceover or unrelated footage between slices.
+- MULTI-SEGMENT HOOK REQUIRED WHEN NEEDED: If a complete Hook crosses scene-manifest boundaries, return consecutive scene-bounded original_audio segments with the same macroBlockId, sourceRunId, sustainedBeatId, completeNarrativeBeat=true and sustainedBeatOverride=true. For a VERBAL-ONLY confrontation Hook, set actionOverride=false and omit actionSequenceId unless it is genuinely supported. For a PHYSICAL action Hook, assign one verified actionSequenceId and actionOverride=true to its physical action slices only. Preserve source order without gaps and never insert VO inside the same complete beat.
 - HOOK PAYOFF COMPLETENESS: Ending an action Hook before its verified climax or immediate reaction is invalid. Loudness alone is insufficient; the action must remain understandable to a cold viewer and deliver a concrete visual or audible payoff.
-- EVERY Part MUST start with the EXACT SAME complete signature cold open Hook sequence. The Hook MUST use pure original_audio and may last from 5 to 30 seconds. Cut immediately before an external source narrator begins; never retain that narrator merely to complete a duration target.`;
+- ${options.sharedHook
+    ? "SHARED SIGNATURE: Every Part starts with the SAME verified complete signature Hook (5-30s); after the shared Hook each Part tells NEW chapter events and narration."
+    : "PART-SPECIFIC: Every Part starts with its OWN strongest verified Hook from its chapter scope (5-30s), never replay the complete Part 1 Hook. Use at most a 3s recap if essential."} Use pure original_audio for clean direct action/dialogue. Cut immediately before an external source narrator begins; never retain that narrator merely to complete a duration target.`;
   const audioRule = options.interleavedAudio
     ? pacingRule
     : "Choose audio_mode according to story needs. Preserve important source dialogue as original_audio and use voiceover_only only where source dialogue can be safely muted.";
@@ -3579,8 +3608,8 @@ The first voiceover sentence of EVERY Part must contain a curiosity gap. Do not 
     : "Set shared_top_banner_text, top_banner_text, and part_badge to empty strings and on_screen_elements to an empty array.";
 
   const persona = isGenZ
-    ? "You are a viral Gen-Z/Millennial TikTok true-crime and bodycam storyteller. Analyze the complete uploaded source, scene-manifest.json, locked evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. Your ultimate goal is to maximize audience outrage, curiosity, and watch time for 9:16 short-form platforms. You speak in fast-paced, conversational internet English. You are gossiping with the viewer about a wild situation, but strictly using verified facts."
-    : "You are a senior TikTok true-crime editor. Analyze the complete uploaded source, scene-manifest.json, locked evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. The Parts must advance the same story rather than retell three unrelated angles.";
+    ? "You are a viral Gen-Z/Millennial TikTok true-crime and bodycam storyteller. Analyze the complete uploaded source, scene-manifest.json, available source evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. Your ultimate goal is to maximize audience outrage, curiosity, and watch time for 9:16 short-form platforms. You speak in fast-paced, conversational internet English. You are gossiping with the viewer about a wild situation, but strictly using verified facts."
+    : "You are a senior TikTok true-crime editor. Analyze the complete uploaded source, scene-manifest.json, available source evidence, transcript, and proxy before selecting footage. Build one coherent case narrative split into Part 1, Part 2, and Part 3. The Parts must advance the same story rather than retell three unrelated angles.";
   const antiHallucinationRule = isGenZ
     ? `- ANTI-HALLUCINATION VISUAL RULE: Do not write aggressive physical-action claims such as "fighting officers" unless the frames visibly show a physical fight. Verbal arguing must be described precisely.
 - TONE DECOUPLING RULE (CRITICAL): Be 100% factually accurate, but describe verified facts using dramatic, casual internet language rather than police-report prose. For example, verified "disorderly intoxication" may be phrased as "she was completely wasted"; verified "resisting without violence" may be phrased as "she threw a massive tantrum and refused to get in the car". Factuality governs the underlying truth, not vocabulary formality.`
@@ -3589,11 +3618,11 @@ The first voiceover sentence of EVERY Part must contain a curiosity gap. Do not 
     ? `4. NON-REDUNDANT NARRATION (REACTION-DRIVEN COPYWRITING)
 - FORBIDDEN: Using voiceover merely to describe an action already obvious on screen, such as saying "The officer reads her charges" while the officer is reading charges.
 - Voiceover must act as the audience's inner voice: react to verified absurdity, add verified context, highlight stakes, or call out evidence-supported contradictions. Example: "She literally just attacked a kid and now she's playing the victim" is allowed only when every underlying fact is supported by locked evidence.
-- Every added fact must remain 100% supported by evidence.`
+- Every added fact must be supported by supplied source footage, direct audio, or transcript.`
     : `4. NON-REDUNDANT NARRATION (VALUE-ADD COPYWRITING)
 - FORBIDDEN: Using voiceover merely to describe an action that is already completely obvious on screen.
 - Voiceover must add verified context, causal connection, timeline orientation, stakes, background, or consequence that the visual and authentic dialogue cannot communicate alone.
-- Every added fact must be supported by visualFacts, dialogueEvidence, sourceNarratorText, storyMeaning, keywords, or payoff in the same locked evidence. Never invent internal thoughts, motives, criminal history, charges, or outcomes.`;
+- Every added fact must be verified against supplied source footage, direct audio, or transcript. Do not treat model-generated notes as independent evidence. Never invent thoughts, motives, criminal history, charges, or outcomes.`;
 
   return `USER TASK INSTRUCTION - BUILD A 3-PART SERIALIZED TRUE-CRIME SERIES
 
@@ -3604,6 +3633,8 @@ ${persona}
 - series_mode: interleaved_multipart
 - target duration for EACH Part: ${options.minDuration}-${options.maxDuration} seconds after playbackSpeed
 - shared cold open: ${options.sharedHook}
+- editorial_format: serialized_story
+- hook_policy: ${options.sharedHook ? "shared_signature" : "part_specific"}
 - interleaved audio sandwich: ${options.interleavedAudio}
 - cinematic narrator: ${options.cinematicNarrator}
 - cliffhanger endings: ${options.cliffhanger}
@@ -3617,9 +3648,12 @@ ${persona}
 - Never output Script 2. The unusual IDs preserve compatibility with the editing tool.
 
 ### EDITORIAL RULES
-1. STORY FIRST: Write one factual series blueprint before choosing clips. Define the central person, conflict, verified causal chain, escalation, climax, resolution, and the unique audience question carried into each Part.
+1. STORY FIRST: Watch the complete source and write one factual series blueprint before choosing clips. Define the central conflict, verified causal chain, escalation, climax, last verified outcome, and each Part's unique viewer question.
+   HOOK SELECTION AUDIT: Compare multiple actual video-and-audio moments, not just action-candidates JSON. A high local Hook score is merely a search hint. Unless isUserLocked=true, no candidate is mandatory. Reject quiet post-incident recounts when a clearer genuine event from the same story exists.
+   FIRST 35 SECONDS CHECK: Reject long stationary interviews, repeated camera angles, dead air, extended black-screen phone shots, and narrator bleed; recut the opening before returning JSON.
 2. ${hookRule}
 3. AUDIO SANDWICH: ${audioRule}
+   - Never label a verbal argument, denial, accusation or verbal-only confession as physical action. Use sustainedBeatOverride for a complete critical dialogue exchange; reserve actionOverride for verified physical action.
 4. VISUAL ACTION OVERRIDE: Do not over-rely on transcript density. Major physical events such as escape, vehicle theft, pursuit, struggle, crash, weapon draw, forced entry, takedown, panic, or immediate physical reaction outrank ordinary dialogue. Every narrativeEssential/mustInclude action must appear.
 5. ACTION SEQUENCE EXCEPTION: Keep an unbroken high-adrenaline action and its immediate reaction as sustained original_audio. Do not interrupt it to satisfy audio alternation. There is no fixed maximum; cut only at a natural lull, repetition, or loss of story value. Mark linked segments actionOverride=true and keep one actionSequenceId.
 6. SUSTAINED BEAT OVERRIDE (CRITICAL EXCEPTION):
@@ -3627,15 +3661,22 @@ ${persona}
    - A Complete Narrative Beat is defined as: (1) high-adrenaline physical action such as a car chase, suspect escaping, or physical struggle; or (2) high-stakes emotional or verbal conflict such as a critical lie, breakdown, chilling confession, or direct confrontation.
    - If a source run contains a Complete Narrative Beat, preserve it as one unbroken original_audio segment lasting up to 30 seconds, or longer when continuous tension justifies it. Do NOT artificially chop this beat into 8-12s fragments. Do NOT interrupt a critical dialogue exchange with voiceover.
    - Set completeNarrativeBeat=true, sustainedBeatOverride=true, and one stable sustainedBeatId. If scene-manifest boundaries force multiple scene-bounded segments, keep them consecutive with the same sustainedBeatId and original_audio; they form one uninterrupted sustained beat and no voiceover may appear between them.
+6A. STATIC WITNESS INTERVIEW BUDGET:
+   - A post-incident witness/victim recount is normally context, NOT a cold open merely because the SRT contains a keyword. Watch the actual visual and audio before selecting a Hook.
+   - Unless a concise authentic quote itself delivers a critical revelation, target 5-8s for routine stationary talking heads; never cut an indispensable answer, revelation, or direct pushback to meet this budget.
+   - Do not replay the full opening Hook again in the Part body, or show two lengthy near-identical witness angles in the first 30s.
+   - Do not pad the 75-110s target using stationary testimony. Advance into later verified events that lead toward the Part's own non-spoiling cliffhanger.
+   - Never invent a chase, pursuit, arrest or violent event absent from the actual source. The best Hook creates a truthful question and leads naturally into the verified story.
 7. NARRATOR: ${narratorRule}
 8. SERIAL ENDINGS: ${cliffhangerRule}
+   - CLEAN ENDING BOUNDARY: Part 1 and Part 2 must end after a complete verified sentence/reaction, NEVER during a word or unanswered sentence. The unresolved QUESTION may remain open; the audible sentence itself must finish. If needed, use a short 3-5s fact-grounded narrator bridge after the last complete quote (not an invented tease). Part 3 ends at the last verified consequence.
 9. VISUAL METADATA: ${overlayRule}
 10. COMPLETE BEATS: Never cut a spoken sentence, decisive action, command-response pair, or immediate reaction in half. Do not assemble a montage of isolated high-score moments.
 11. SOURCE GROUNDING: Every claim must be supported by the selected evidenceId, visual frames, source audio, or transcript. If a detail is not verified, omit it.
 12. TIMELINES: sourceStartSec/sourceEndSec refer only to the original video. Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec; the local tool derives the Part timeline.
     ONE-SCENE-PER-SEGMENT: Every source range must remain inside exactly one selected sceneId. If a logical beat crosses a scene boundary, split it into scene-bounded segments, preserve macroBlockId/sourceRunId/actionSequenceId and divide voiceover without duplication.
 13. DURATION: output duration = (sourceEndSec - sourceStartSec) / playbackSpeed, computed by the local tool. playbackSpeed defaults to 1; set it only for a justified speed change.
-14. AUDIO MODES: original_audio requires voiceover_text="". voiceover_only requires English voiceover_text and means source audio will be ducked to 20% volume.
+14. AUDIO MODES: original_audio requires voiceover_text="" and caption="" (caption is NOT a transcript or action note). It plays authentic source sound. voiceover_only requires verified English voiceover_text and MUTES all source sound (0%). voiceover_with_ambient may retain source ambience at 10-20% ONLY when no intelligible source speech is present. For VO visuals prefer clean B-roll without burned-in dialogue or talking faces; scene-evidence safeForVoiceover=false or burnedTextPresent=true needs explicit visual review or a different shot. Never confuse action_notes with spoken subtitle text.
 15. DURATION GATE: Every Part must be within ${options.minDuration}-${options.maxDuration}s and never below 60.5s. Add relevant complete evidence, never silence, freeze frames, credits, or filler.
 
 ================================================================================
@@ -3644,18 +3685,19 @@ ${persona}
 
 0. SERIALIZATION & MYSTERY PRESERVATION RULES (CRITICAL)
 - SPOILER BAN FOR PART 1 AND PART 2: Script 1 / Part 1 and Script 3 / Part 2 must not reveal the final plot twist, decisive hidden evidence, test result, formal arrest, court sentence, or ultimate legal consequence.
-- Part 1 establishes only the verified premise, bizarre behavior and immediate stakes, then ends on an unresolved confrontation such as a request to search, a suspicious lie, or another evidence-grounded open question.
-- Part 2 advances only the verified middle escalation such as blame, contradiction, argument or refusal, then ends at the boiling-point pre-climax turn before the decisive reveal.
-- RESOLUTION LOCK FOR PART 3: Only Script 4 / Part 3 may reveal the ultimate verified truth, decisive hidden evidence, formal arrest and final court consequence. Do not repeat the same arrest, sentence or Karma payoff across multiple Parts.
+- PART 1 SCOPE IS STORY-DRIVEN, NOT SOURCE-INTRO-BOUND: Build a complete chapter from genuine observable events across the available source, including later escalation when it makes a natural unresolved ending. Do not spend all 75-110 seconds interviewing one person at one location. Preserve the actual last verified outcome for Part 3.
+- PART 1 EDITORIAL BUDGET: Spend no more than roughly 25-35s on repeated static witness statements unless an actual pivotal quote demands more. Never cut a critical quote mid-meaning.
+- PART 2 advances new verified evidence, consequences and escalation from Part 1, not a replay of the same witness testimony. End on a true unresolved development before the reserved final outcome.
+- RESOLUTION LOCK FOR PART 3: Only Script 4 / Part 3 may reveal the actual last verified consequence in the supplied source. Never invent or require an arrest, sentence, conviction or court outcome. Do not repeat the final verified payoff across multiple Parts.
 ${antiHallucinationRule}
 
 1. ANTI-CLONE VOICEOVER RULE (SERIALIZATION INTEGRITY)
-- Even when shared_hook_enabled=true uses the exact same 5-30s pure original_audio Hook sequence across Part 1, Part 2, and Part 3, the first voiceover_only segment after the complete Hook MUST be unique in wording and narrative purpose for each Part.
+- ${options.sharedHook ? "With shared_hook_enabled=true, the same 5-30s original-audio signature Hook is replayed intentionally." : "With shared_hook_enabled=false, the Parts use distinct verified chapter Hook events."} The first voiceover_only segment after the Hook MUST be unique in wording and narrative purpose for each Part.
 - FORBIDDEN: Copying, lightly paraphrasing, or reusing the same opening narration across multiple Parts.
 - Part 1 opening voiceover establishes the verified premise and immediate stakes.
 - Part 2 opening voiceover is a rapid evidence-grounded recap/bridge from Part 1 into the new conflict covered by Part 2.
 - Part 3 opening voiceover orients the verified final chapter, consequence, or unresolved question covered by Part 3.
-- The role descriptions above are structural examples only. Never mention an abduction, escape, interrogation, charge, motive, or outcome unless LOCKED_SCENE_EVIDENCE supports it.
+- The role descriptions above are structural examples only. Never claim an abduction, escape, interrogation, charge, motive, or outcome unless supplied source audio, footage or transcript supports it.
 
 2. ZERO-TOLERANCE SOURCE NARRATOR FILTER (SUPREME OVERRIDE)
 - original_audio is permitted only when sourceNarratorPresent=false, source_narrator_detected=false, and every audible speaker is a directly involved officer, suspect, victim, witness, interview subject, 911/radio dispatcher, or authentic ambient/action sound.
@@ -3670,6 +3712,8 @@ ${antiHallucinationRule}
 3. ACTION PAYOFF & VISUAL MATCHING (ANTI-CLICKBAIT)
 - High-adrenaline narration must be paid off immediately by the matching verified visual action. Do not promise a chase, escape, weapon, crash, struggle, arrest, or confrontation and then cut directly to static aftermath or an unrelated location.
 - Select the corresponding evidenceId/actionSequenceId immediately after the setup voiceover. Use actionOverride=true and sustainedBeatOverride=true where supported to preserve the complete action and immediate reaction before moving to the resolution.
+- VERBAL PROMISE-TO-PROOF: A narrator claim that a witness confesses, accuses someone, admits a lie, snitches or answers a crucial question MUST be audible in the following selected original_audio source range, or be reworded as a still-open question. Supply payoffProof with the quoted words, sourceStartSec and sourceEndSec when making such a definite narrator-to-clip promise; NEVER assert an answer when the next clip contains only questions.
+- CUT BOUNDARY SAFETY: Verify the actual final word/reaction and scene fade frames against the source before choosing sourceStartSec/sourceEndSec. Avoid black transitions. External narrator boundaries need source audio confirmation; never assume SRT endSec is sample-accurate and never blindly add fixed padding that would cut direct speech.
 - actionOverride and sustainedBeatOverride do not invent or locate footage. The selected evidence and source timestamps themselves must visibly contain the promised action.
 
 ${nonRedundantRule}
@@ -5896,15 +5940,29 @@ async function confirmHookAndLock() {
     (id2 && id3 && id2 === id3)
   );
 
+  const weakAnchors = [v1, v2, v3].filter(v => v?.candidate?.editorialRisk?.likelyStaticWitness === true);
+  if (weakAnchors.length) {
+    const proceed = await showConfirmAction({
+      title: "Hook có nguy cơ mở đầu quá tĩnh",
+      message: weakAnchors.map(v =>
+        (v?.variantName || "Part") + ": " + (v?.candidate?.title || "witness interview")
+      ).join(" · ") + ". Các candidate này được chấm bằng heuristic, không phải AI xác minh từ MP4. Nếu vẫn khóa, Gemini sẽ bắt buộc dùng đúng cảnh đó. Hãy xem proxy trước khi xác nhận.",
+      confirmLabel: "Tôi đã xem, vẫn khóa"
+    });
+    if (!proceed) return;
+  }
   setBusy(true);
   try {
     const profile = (typeof readManualGeminiPromptOptions === "function") ? readManualGeminiPromptOptions().profile : "";
     const isTikTokCrimePart1 = profile === "viral_tiktok_crime_part1";
+    const isSerializedProfile = ["serialized_interleaved", "serialized_genz"].includes(profile);
+    const selectedSharedHook = readManualGeminiPromptOptions().sharedHook;
 
     const lockResult = await window.cineviral.lockHookContract({
       packageDir,
       isMultiVariant: true,
       hasDuplicates,
+      hookPolicy: isSerializedProfile ? (selectedSharedHook ? "shared_signature" : "part_specific") : "",
       variants: {
         variant_01: {
           scriptId: 1,
@@ -5912,7 +5970,7 @@ async function confirmHookAndLock() {
           candidate: v1.candidate,
           userAnchorRange: v1.userAnchorRange,
           trimmingTolerance: v1.trimmingTolerance,
-          storyAngle: isTikTokCrimePart1 ? "part_1_confrontation" : "high_octane_thriller"
+          storyAngle: (isTikTokCrimePart1 || isSerializedProfile) ? "part_1_confrontation" : "high_octane_thriller"
         },
         variant_02: {
           scriptId: 3,
@@ -5920,7 +5978,7 @@ async function confirmHookAndLock() {
           candidate: v2.candidate,
           userAnchorRange: v2.userAnchorRange,
           trimmingTolerance: v2.trimmingTolerance,
-          storyAngle: isTikTokCrimePart1 ? "part_2_interrogation" : "non_linear_in_medias_res"
+          storyAngle: (isTikTokCrimePart1 || isSerializedProfile) ? "part_2_escalation" : "non_linear_in_medias_res"
         },
         variant_03: {
           scriptId: 4,
@@ -5928,12 +5986,16 @@ async function confirmHookAndLock() {
           candidate: v3.candidate,
           userAnchorRange: v3.userAnchorRange,
           trimmingTolerance: v3.trimmingTolerance,
-          storyAngle: isTikTokCrimePart1 ? "part_3_verdict_arrest" : "tactical_standoff_breach"
+          storyAngle: (isTikTokCrimePart1 || isSerializedProfile) ? "part_3_verified_outcome" : "tactical_standoff_breach"
         }
       }
     });
 
     addLog(`Đã khóa Hook Contract cho cả 3 Variant (${hasDuplicates ? 'Phát hiện Hook trùng -> Đã kích hoạt Divergence Protocol' : 'Mỗi variant 1 Hook độc lập'}).`);
+    if (isSerializedProfile && el.serializedBlueprintStatus) {
+      el.serializedBlueprintStatus.textContent = "Hook đã đổi. Blueprint cũ bị vô hiệu hóa; yêu cầu Gemini tạo và nhập Blueprint mới trước khi gửi các Script.";
+      addLog("Đã đổi Hook: cần tạo lại series-blueprint.json trước khi import ba Part.", "WARNING");
+    }
     showToast("Đã khóa Hook Contract thành công!");
     closeHookPickerModal(false);
   } catch (error) {
@@ -5944,7 +6006,7 @@ async function confirmHookAndLock() {
   }
 }
 
-async function createManualGeminiAnalysisPack() {
+async function createManualGeminiAnalysisPack({sequentialManual = true} = {}) {
   if (!isManualGeminiWorkflowMode()) return;
   if (isStoryRecutMode() && !el.storyRecutRightsConfirmed?.checked) {
     showToast("Hãy xác nhận quyền sử dụng video nguồn trước khi tạo gói Story Recut.");
@@ -6004,13 +6066,25 @@ async function createManualGeminiAnalysisPack() {
       cleanupMode: el.podcastCleanupMode?.value || "balanced",
       sourceLanguage: el.sourceLanguage?.value || "auto",
       autoWhisper: Boolean(el.autoWhisper?.checked),
-      forceRebuild: Boolean(el.manualGeminiForceRebuild?.checked)
+      forceRebuild: Boolean(el.manualGeminiForceRebuild?.checked),
+      sequentialManual
     });
     createdResult = result;
     const cacheHits = result.cache?.hits || [];
     const cacheMisses = result.cache?.misses || [];
     const cacheCreated = result.cache?.created || [];
     el.manualGeminiPackPath.value = result.packageDir;
+    if (el.importSerializedBlueprint) {
+      el.importSerializedBlueprint.disabled = !result.sequentialSeriesEnabled;
+      if (el.openSerializedPrompts) {
+        el.openSerializedPrompts.dataset.openPath = result.sequentialSeriesNextStepsDir || "";
+        el.openSerializedPrompts.disabled = !result.sequentialSeriesEnabled;
+      }
+      el.serializedBlueprintStage?.classList.toggle("hidden", !result.sequentialSeriesEnabled);
+      if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent = result.sequentialSeriesEnabled
+        ? "1) Gửi proxy/Blueprint prompt. 2) Nhập series-blueprint.json. 3) Gửi lần lượt Script 1, 3, 4 trong thư mục 02-SERIES-SEQUENTIAL."
+        : "";
+    }
     setManualStageFolder(el.openManualGeminiPack, result.pass1UploadDir || result.packageDir, "Mở thư mục GĐ1");
     if (el.runManualAntigravityStage1) {
       el.runManualAntigravityStage1.disabled = !isManualGeminiProMode();
@@ -6055,6 +6129,9 @@ async function createManualGeminiAnalysisPack() {
       || (isPodcastViralMode() && result.workflowMode !== "quality_two_pass");
     writeSetupDraft();
     addLog(`Gói phân tích Gemini Pro đã sẵn sàng: ${result.packageDir}`);
+    if (result.sequentialSeriesEnabled) {
+      addLog("SERIES SEQUENTIAL: Gemini phải xuất Blueprint trước. Các prompt tạo 3 Part nằm tại: "+result.sequentialSeriesNextStepsDir);
+    }
     if (Array.isArray(result.proxyUploadBatchDirs) && result.proxyUploadBatchDirs.length > 1) {
       addLog(`Video dài đã được chia thành ${result.proxyChunkCount} proxy ngắn. Gửi các batch theo thứ tự vào cùng một chat Gemini.`);
       result.proxyUploadBatchDirs.forEach((batchDir, index) => {
@@ -6076,6 +6153,8 @@ async function createManualGeminiAnalysisPack() {
       ? "Đã tạo gói Visual Process Map. Hãy gửi thư mục cho Gemini."
       : isStoryRecutMode()
       ? "Đã tạo gói evidence Story Recut."
+      : result.sequentialSeriesEnabled
+      ? "Gói tuần tự sẵn sàng: Blueprint trước, rồi từng JSON Script 1 → 3 → 4."
       : "Đã tạo gói Lượt 1. Hãy gửi toàn bộ thư mục cho Gemini và tải ba JSON Highlight.");
     if (result?.hookAuditionResult?.topCandidates?.length) {
       el.openHookPickerBtn?.classList.remove("hidden");
@@ -6106,7 +6185,7 @@ async function createAndRunConfiguredStage1() {
     addLog(message);
   };
   setAutoStatus("1/5 · Đang tạo và kiểm tra gói phân tích...");
-  const result = await createManualGeminiAnalysisPack();
+  const result = await createManualGeminiAnalysisPack({sequentialManual:false});
   if (!result || !isManualGeminiProMode()) return;
 
   if (result.hookAuditionResult?.topCandidates?.length) {
@@ -6152,6 +6231,24 @@ async function createAndRunConfiguredStage1() {
   }
   setAutoStatus("5/5 · Vertex đang review từng draft và tạo đề xuất V2...");
   await reviewAllDraftVariantsWithConfiguredAi();
+}
+
+async function importSerializedBlueprintJson() {
+  const packageDir = el.manualGeminiPackPath?.value || "";
+  if (!packageDir) { showToast("Hãy tạo gói Series trước."); return; }
+  const blueprintPath = await window.cineviral.pickJson();
+  if (!blueprintPath) return;
+  setBusy(true);
+  try {
+    const result = await window.cineviral.importSerializedBlueprint({packageDir,blueprintPath});
+    if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent =
+      "Blueprint "+result.seriesId+" đã khóa. Gửi lần lượt 3 prompt Script trong 02-SERIES-SEQUENTIAL rồi chọn đủ ba JSON.";
+    addLog("Series Blueprint được xác minh: "+result.seriesBlueprintPath);
+    showToast("Blueprint hợp lệ. Tiếp tục 3 prompt riêng trong cùng chat Gemini.");
+  } catch (error) {
+    addLog(error.message,"ERROR");
+    showToast(error.message);
+  } finally {setBusy(false);}
 }
 
 async function importManualGeminiEvidence() {
@@ -6373,6 +6470,9 @@ async function importManualGeminiBlueprint() {
 
 function invalidateManualGeminiPack(reason = "") {
   if (!el.manualGeminiPackPath?.value && !el.manualGeminiEvidencePath?.value) return;
+  if (el.importSerializedBlueprint) el.importSerializedBlueprint.disabled = true;
+  if (el.openSerializedPrompts) {el.openSerializedPrompts.disabled = true; delete el.openSerializedPrompts.dataset.openPath;}
+  if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent = "Blueprint không còn hợp lệ. Tạo lại gói phân tích.";
   el.manualGeminiPackPath.value = "";
   if (el.runManualAntigravityStage1) el.runManualAntigravityStage1.disabled = true;
   if (el.openManualAntigravityResult) {
@@ -6408,10 +6508,19 @@ function invalidateManualGeminiPack(reason = "") {
 
 function renderHighlightPromptTemplate() {
   if (!el.highlightPromptTemplate) return;
-  el.highlightPromptTemplate.value = buildHighlightGeminiPromptTemplate();
+  const selectedProfile = readManualGeminiPromptOptions().profile;
+  el.highlightPromptTemplate.value = isManualGeminiProMode()
+    && ["serialized_genz","serialized_interleaved"].includes(selectedProfile)
+    ? "SERIES: Không gửi prompt mẫu này trực tiếp cho Gemini. Hãy bấm Chỉ tạo gói, upload proxy/batch cuối và làm theo prompt Series Blueprint trong 01-GUI-GEMINI. Sau đó nhập Blueprint và gửi từng prompt Script 1, 3, 4 trong 02-SERIES-SEQUENTIAL, cùng một chat."
+    : buildHighlightGeminiPromptTemplate();
 }
 
 async function copyHighlightPromptTemplate() {
+  if (isManualGeminiProMode()
+    && ["serialized_genz","serialized_interleaved"].includes(readManualGeminiPromptOptions().profile)) {
+    showToast("Series dùng prompt trong gói đã tạo (Blueprint rồi từng Part). Không copy prompt 3 JSON cũ.");
+    return;
+  }
   const prompt = buildHighlightGeminiPromptTemplate();
   await navigator.clipboard.writeText(prompt);
   showToast("Đã copy prompt mẫu cho Gemini.");
@@ -8069,6 +8178,34 @@ function renderHighlightVariantBar(project = state.currentProject) {
   el.highlightVariantBar.innerHTML = "";
 }
 
+function buildHighlightRevisionComparison(before, after) {
+  const oldSegments = Array.isArray(before?.segments) ? before.segments : [];
+  const newSegments = Array.isArray(after?.segments) ? after.segments : [];
+  const signature = s => [
+    Number(s.sourceStartSec || 0).toFixed(2), Number(s.sourceEndSec || 0).toFixed(2),
+    String(s.audioMode || ""), String(s.voiceoverText || "").trim()
+  ].join("|");
+  const oldSet = new Set(oldSegments.map(signature));
+  const newSet = new Set(newSegments.map(signature));
+  const kept = newSegments.filter(s => oldSet.has(signature(s))).length;
+  const removed = oldSegments.filter(s => !newSet.has(signature(s))).length;
+  const duration = list => list.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+  const narrator = list => list.filter(s => s.audioMode !== "original_audio").reduce((sum, s) => sum + Number(s.duration || 0), 0);
+  const hook = list => list.length ? Number(list[0].sourceStartSec || 0).toFixed(1) + "s" : "—";
+  const score = entry => Number.isFinite(Number(entry?.viralPreflight?.score))
+    ? String(entry.viralPreflight.score) + "/100" : "—";
+  const rows = [
+    "Giữ " + kept + " cảnh, thêm " + (newSegments.length - kept) + ", bỏ " + removed,
+    "Hook nguồn: " + hook(oldSegments) + " → " + hook(newSegments),
+    "Thời lượng: " + duration(oldSegments).toFixed(1) + "s → " + duration(newSegments).toFixed(1) + "s",
+    "Đoạn narrator: " + narrator(oldSegments).toFixed(1) + "s → " + narrator(newSegments).toFixed(1) + "s",
+    "Preflight (heuristic): " + score(before) + " → " + score(after),
+    "Review: " + String(after?.review?.reviewDecision || "updated")
+  ];
+  return '<div class="revision-compare-summary">' + rows.map(row =>
+    '<span>' + escapeHtml(row) + '</span>').join("") + '</div>';
+}
+
 function renderHighlightRevisionBar(project = state.currentProject) {
   if (!el.highlightRevisionBar) return;
   const variant = getActiveHighlightVariant(project);
@@ -8077,6 +8214,9 @@ function renderHighlightRevisionBar(project = state.currentProject) {
     revisionNumber: Number(variant.revisionNumber || 1),
     label: variant.revisionLabel || `V${Number(variant.revisionNumber || 1)}`,
     artifacts: variant.artifacts || {},
+    segments: variant.segments || [],
+    viralPreflight: variant.viralPreflight || null,
+    review: variant.draftReview || null,
     current: true
   } : null;
   const revisions = [...history, currentRevision]
@@ -8099,6 +8239,7 @@ function renderHighlightRevisionBar(project = state.currentProject) {
         : item.current;
       return `<button type="button" class="revision-button ${active ? "active" : ""}" data-revision-preview="${escapeHtml(draftPath)}">${escapeHtml(item.label || `V${item.revisionNumber}`)}</button>`;
     }).join("")}
+    ${revisions.length > 1 ? buildHighlightRevisionComparison(revisions[revisions.length - 2], revisions[revisions.length - 1]) : ""}
   `;
 }
 
@@ -10295,6 +10436,19 @@ async function createGeminiDraftReviewPackage() {
     addLog(`Gói Lượt 2 đã sẵn sàng: ${result.reviewDir}`);
     addLog(`Gửi ${result.uploadFileCount || "tất cả"} file trong thư mục này cho một chat Gemini Pro mới (tối đa 10 file): ${result.reviewDir}`);
     addLog(`Prompt review: ${result.promptPath}`);
+    if (result.sourceCoverageExtensionDir) {
+      addLog(
+        "Đã tạo gói nguồn bổ sung: " + result.sourceCoverageExtensionDir
+        + ". Để Gemini tìm cảnh thay thế toàn nguồn, upload lần lượt các proxy ở đây vào CÙNG chat Gemini trước khi gửi prompt review cuối.",
+        "INFO"
+      );
+    }
+    if (result.sourceCoverageComplete === false) {
+      addLog(
+        "CẢNH BÁO: Gói review chỉ chứa một phần video nguồn (Evidence Reel/proxy tuyển chọn). Gemini không thể xác nhận đây là lựa chọn tốt nhất trên toàn bộ nguồn; cần tìm bổ sung nếu muốn thay cảnh ngoài vùng đã gửi.",
+        "WARNING"
+      );
+    }
     showToast(`Đã tạo gói review V${result.revision}: ${result.uploadFileCount || 0}/10 file.`);
   } catch (error) {
     addLog(error.message, "ERROR");
@@ -10836,7 +10990,26 @@ async function importReviewedScriptPath(jsonPath, { autoRouted = false } = {}) {
       await saveCurrentSegments();
     }
     addLog(`${autoRouted ? "Đã nhận diện file review V2. Đang tự chuyển luồng import" : "Đang import JSON Gemini đã sửa"}: ${jsonPath}`);
-    state.currentProject = await window.cineviral.importReviewedScriptProject(state.currentProject.id, jsonPath);
+    let importedProject;
+    try {
+      importedProject = await window.cineviral.importReviewedScriptProject(state.currentProject.id, jsonPath);
+    } catch (error) {
+      if (!String(error.message || "").startsWith("V2_REGRESSION_CONFIRM:")) throw error;
+      const confirmed = await showConfirmAction({
+        title: "Bản V2 bị giảm điểm chất lượng",
+        message: String(error.message).replace("V2_REGRESSION_CONFIRM:", "")
+          + " Bạn có muốn chấp nhận V2 thay vì giữ bản hiện tại không?",
+        confirmLabel: "Vẫn import V2"
+      });
+      if (!confirmed) {
+        addLog("Đã giữ nguyên V1/V hiện tại; không import V2 giảm chất lượng.", "WARNING");
+        return;
+      }
+      importedProject = await window.cineviral.importReviewedScriptProject(
+        state.currentProject.id, jsonPath, {allowRegression: true}
+      );
+    }
+    state.currentProject = importedProject;
     state.revisionPreviewPath = "";
     state.selectedSegmentIndex = 0;
     state.expandedScenePickerIndex = -1;
@@ -11831,6 +12004,12 @@ function bindEvents() {
   });
   el.podcastYoutubeUrl?.addEventListener("input", writeSetupDraft);
   el.importManualGeminiEvidence?.addEventListener("click", importManualGeminiEvidence);
+  el.importSerializedBlueprint?.addEventListener("click", importSerializedBlueprintJson);
+  el.openSerializedPrompts?.addEventListener("click", () => {
+    const folder = el.openSerializedPrompts.dataset.openPath;
+    if (folder) window.cineviral.openFile(folder);
+    else showToast("Chưa tạo gói Series tuần tự.");
+  });
   el.importManualGeminiBlueprint?.addEventListener("click", importManualGeminiBlueprint);
   el.openManualGeminiVariants?.addEventListener("click", async () => {
     const variantPath = el.openManualGeminiVariants?.dataset.openPath;
