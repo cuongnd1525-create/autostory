@@ -220,6 +220,7 @@ function buildSeriesHookContractBlock(contract = {}, sharedHookEnabled = false) 
 
 function injectHookContractToPrompt(basePrompt = "", contract = {}) {
   const text = String(basePrompt || "");
+  if (!contract?.isUserLocked) return text; // heuristic suggestions are not user locks
   const isMulti = Boolean(contract?.isMultiVariant && contract?.variants);
   const range = contract?.anchorRange;
   const tol = contract?.trimmingTolerance || { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 };

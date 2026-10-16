@@ -2642,7 +2642,7 @@ class ManualGeminiPackService {
     }
 
     let directHighlightPrompt = buildDirectHighlightScriptsPrompt(prompt, manifest, actionCandidates, proxyChunksManifest);
-    if (hookContract) {
+    if (hookContract?.isUserLocked === true) {
       directHighlightPrompt = injectHookContractToPrompt(directHighlightPrompt, hookContract);
     }
 

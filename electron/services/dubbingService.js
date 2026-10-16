@@ -525,12 +525,21 @@ function getHighlightNarrationSourceVolume(project = {}) {
 function getHighlightAudioMode(segment = {}, hasVoice = Boolean(getHighlightVoiceText(segment)), project = {}) {
   if (!hasVoice) return "original_audio";
   const requested = String(segment.audioMode || segment.audio_mode || segment.requestedAudioMode || "").toLowerCase();
+  const containsSourceNarrator = segment.sourceNarratorDetected === true
+    || segment.source_narrator_detected === true
+    || segment.forceSourceMute === true
+    || segment.replaceSourceNarrator === true;
+  // Raw source must NEVER leak back into an explicitly muted voiceover segment.
+  if (containsSourceNarrator || requested === "voiceover_only") return "voiceover_only";
+  if (project.analysisWorkflow === "manual_gemini_draft_review") {
+    // Lower volume is not voice separation; manual workflow needs verified clean ambience.
+    return requested === "voiceover_with_ambient" && segment.cleanAmbientVerified === true
+      ? "voiceover_with_ambient" : "voiceover_only";
+  }
   if (requested === "voiceover_with_ambient" || requested === "mixed_ducking") {
     return "voiceover_with_ambient";
   }
-  if (getHighlightNarrationSourceVolume(project) > 0) {
-    return "voiceover_with_ambient";
-  }
+  if (getHighlightNarrationSourceVolume(project) > 0) return "voiceover_with_ambient";
   return "voiceover_only";
 }
 
@@ -7019,7 +7028,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const lead = members[0];
     const text = safeText(lead.blockNarrationText);
     if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
-    const treatment = lead.blockSourceAudio === "voiceover_only" ? "voiceover_only" : "voiceover_with_ambient";
+    const treatment = getHighlightAudioMode({ ...lead, audioMode: lead.blockSourceAudio }, true, project);
     const tag = `draft-highlight-${variantSuffix}-block-${String(startIndex + 1).padStart(4, "0")}`;
     const pieces = members.map((segment) => {
       const sourceStartSec = Math.max(0, Number(segment.sourceStartSec ?? segment.startSec ?? 0));
