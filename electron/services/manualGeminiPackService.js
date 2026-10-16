@@ -2808,6 +2808,8 @@ class ManualGeminiPackService {
       hookContract,
       proxyChunksManifestPath: proxyChunksManifest ? path.join(pass1UploadDir, "proxy-chunks-manifest.json") : "",
       proxyChunkCount: proxyChunksManifest?.chunks?.length || 0,
+      sequentialSeriesEnabled,
+      sequentialSeriesNextStepsDir: sequentialSeriesEnabled ? nextStepsDir : "",
       proxyUploadBatchDirs: proxyChunkLayout.uploadBatchDirs,
       promptPath,
       evidencePromptPath,
