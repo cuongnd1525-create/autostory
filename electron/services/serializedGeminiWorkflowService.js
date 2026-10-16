@@ -177,8 +177,8 @@ function validateBlueprint(bp,{manifest={},profile="",sharedHook,hookContract=nu
  if(manifest?.sourceVideo&&path.basename(str(bp?.sourceVideo))!==path.basename(manifest.sourceVideo))errors.push("Source video mismatch.");
  if(Number.isFinite(num(manifest?.videoDurationSec))&&Math.abs(num(bp?.sourceDurationSec)-num(manifest.videoDurationSec))>0.3)errors.push("Source duration mismatch.");
  if(!Array.isArray(parts)||parts.length!==3)errors.push("Exactly three chapter plans required.");
- else errors.push(...checkChapterBeats(bp,manifest));
  else {
+  errors.push(...checkChapterBeats(bp,manifest));
   for(let i=0;i<3;i++){
    const p=parts.find(x=>num(x.scriptId)===PART_IDS[i]);
    if(!p||num(p.part_number)!==i+1){errors.push("Part mapping incorrect for script "+PART_IDS[i]);continue;}
