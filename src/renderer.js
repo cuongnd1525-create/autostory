@@ -2513,7 +2513,7 @@ function writeSetupDraft() {
     manualSeriesOverlays: el.manualSeriesOverlays?.checked ?? true,
     manualSeriesDurationMin: el.manualSeriesDurationMin?.value || "75",
     manualSeriesDurationMax: el.manualSeriesDurationMax?.value || "110",
-    manualSeriesPacing: el.manualSeriesPacing?.value || "strict_10",
+    manualSeriesPacing: el.manualSeriesPacing?.value || "adaptive_story",
     manualSeriesPowerWords: el.manualSeriesPowerWords?.value || DEFAULT_SERIES_POWER_WORDS,
     storyRecutRightsConfirmed: Boolean(el.storyRecutRightsConfirmed?.checked),
     diyStoryAngle: el.diyStoryAngle?.value || "gemini_auto_story",
@@ -2682,7 +2682,7 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (el.manualSeriesOverlays) el.manualSeriesOverlays.checked = draft.manualSeriesOverlays !== false;
   if (el.manualSeriesDurationMin) el.manualSeriesDurationMin.value = draft.manualSeriesDurationMin || "75";
   if (el.manualSeriesDurationMax) el.manualSeriesDurationMax.value = draft.manualSeriesDurationMax || "110";
-  if (el.manualSeriesPacing) el.manualSeriesPacing.value = draft.manualSeriesPacing || "strict_10";
+  if (el.manualSeriesPacing) el.manualSeriesPacing.value = draft.manualSeriesPacing || "adaptive_story";
   if (el.manualSeriesPowerWords) el.manualSeriesPowerWords.value = draft.manualSeriesPowerWords || DEFAULT_SERIES_POWER_WORDS;
   if (el.storyRecutRightsConfirmed) {
     el.storyRecutRightsConfirmed.checked = Boolean(draft.storyRecutRightsConfirmed);
@@ -2768,7 +2768,7 @@ function resetSetupStep(step) {
     if (el.manualSeriesOverlays) el.manualSeriesOverlays.checked = true;
     if (el.manualSeriesDurationMin) el.manualSeriesDurationMin.value = "75";
     if (el.manualSeriesDurationMax) el.manualSeriesDurationMax.value = "110";
-    if (el.manualSeriesPacing) el.manualSeriesPacing.value = "strict_10";
+    if (el.manualSeriesPacing) el.manualSeriesPacing.value = "adaptive_story";
     if (el.manualSeriesPowerWords) el.manualSeriesPowerWords.value = DEFAULT_SERIES_POWER_WORDS;
     syncManualGeminiPromptOptionsUi({ rerenderPrompt: false });
     document.querySelectorAll("[data-mode]").forEach((node) => node.classList.toggle("active", node.dataset.mode === "dubbing"));
@@ -3493,9 +3493,9 @@ function readManualGeminiPromptOptions() {
     : "independent";
   const minDuration = Math.max(60.5, Math.min(300, Number(el.manualSeriesDurationMin?.value || 75)));
   const maxDuration = Math.max(minDuration, Math.min(600, Number(el.manualSeriesDurationMax?.value || 110)));
-  const pacing = ["strict_10", "balanced", "story_first"].includes(el.manualSeriesPacing?.value)
+  const pacing = ["adaptive_story", "strict_10", "balanced", "story_first"].includes(el.manualSeriesPacing?.value)
     ? el.manualSeriesPacing.value
-    : "strict_10";
+    : "adaptive_story";
   return {
     profile,
     independent: readIndependentPromptOptions(),
@@ -3563,11 +3563,13 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
 function buildSerializedHighlightGeminiPromptTemplate(options = readManualGeminiPromptOptions()) {
   const isGenZ = options.profile === "serialized_genz";
   const voiceBlock = getCurrentVoiceCalibrationPromptBlock();
-  const pacingRule = options.pacing === "story_first"
-    ? "Voiceover blocks should be 6-12s and original-audio blocks may run 8-30s. Preserve a complete causal exchange even when strict alternation must yield to story comprehension."
+  const pacingRule = options.pacing === "adaptive_story"
+    ? "ASYMMETRIC PACING: narrator bridges target 3-8s (max 10s), real dialogue/action is selected by COMPLETE meaning, not a timer. Routine witness/context excerpts usually 5-8s, decisive officer-question -> suspect-answer -> pushback/reaction exchanges often 12-25s, continuous physical action often 15-30s or longer as supported. These are SOFT budgets, never minimum filler or hard maximums. Protect complete original_audio beats with sustainedBeatOverride; actionOverride is reserved for actual physical action. Never cut mid-sentence, before the promised answer, or inside an immediate reaction."
+    : options.pacing === "story_first"
+    ? "Voiceover bridges target 3-8s; original-audio blocks may run 8-30s or longer when a complete causal exchange needs it. Sentence, conflict and reaction completion always override these soft targets."
     : options.pacing === "balanced"
-    ? "Voiceover blocks should be 6-12s and original-audio blocks 8-18s. Avoid two same-mode blocks in a row unless splitting would cut a complete quote or reaction."
-    : "Strictly alternate voiceover_only blocks of 8-12s with original_audio blocks of 8-12s. No uninterrupted run of one audio mode may exceed 15s, except a verified actionOverride sequence.";
+    ? "Voiceover bridges target 3-8s; original audio usually 8-18s. Never interrupt a protected sustainedBeatOverride or actionOverride, and NEVER cut a sentence, answer or reaction for pacing."
+    : "LEGACY STRICT_10: Prefer 8-12s alternation for ordinary material only, with a soft 15s upper target. This timer NEVER applies to complete original_audio dialogue, a protected sustainedBeatOverride, or actionOverride. Sentence / question-answer / reaction completeness outranks every strict timer.";
   const hookRule = `COLD OPEN HOOK RULE (Flexible 5-30s for ALL Parts):
 - ACTION-FIRST PRIORITY: Scan the entire source and prioritize the strongest clear high-adrenaline visual/audio sequence, including an intense argument, forced entry, physical struggle, pursuit, weapon draw, gunshot, panic, or immediate reaction. Strong action with a clear climax and payoff outranks a bizarre confession, extreme entitlement, absurd excuse, or psychological contradiction.
 - A semantic or psychological quote may become the Hook only when no verified action sequence provides stronger visual impact, understandable conflict, and a more powerful payoff.
@@ -3650,19 +3652,20 @@ ${persona}
    - Set completeNarrativeBeat=true, sustainedBeatOverride=true, and one stable sustainedBeatId. If scene-manifest boundaries force multiple scene-bounded segments, keep them consecutive with the same sustainedBeatId and original_audio; they form one uninterrupted sustained beat and no voiceover may appear between them.
 6A. STATIC WITNESS INTERVIEW BUDGET:
    - A post-incident witness/victim recount is normally context, NOT a cold open merely because the SRT contains a keyword. Watch the actual visual and audio before selecting a Hook.
-   - Unless a concise authentic quote itself delivers a critical revelation, limit a stationary talking-head interview to roughly 5-8s; summarize redundant verified context over truthful B-roll.
+   - Unless a concise authentic quote itself delivers a critical revelation, target 5-8s for routine stationary talking heads; never cut an indispensable answer, revelation, or direct pushback to meet this budget.
    - Do not replay the full opening Hook again in the Part body, or show two lengthy near-identical witness angles in the first 30s.
    - Do not pad the 75-110s target using stationary testimony. Advance into later verified events that lead toward the Part's own non-spoiling cliffhanger.
    - Never invent a chase, pursuit, arrest or violent event absent from the actual source. The best Hook creates a truthful question and leads naturally into the verified story.
 7. NARRATOR: ${narratorRule}
 8. SERIAL ENDINGS: ${cliffhangerRule}
+   - CLEAN ENDING BOUNDARY: Part 1 and Part 2 must end after a complete verified sentence/reaction, NEVER during a word or unanswered sentence. The unresolved QUESTION may remain open; the audible sentence itself must finish. If needed, use a short 3-5s fact-grounded narrator bridge after the last complete quote (not an invented tease). Part 3 ends at the last verified consequence.
 9. VISUAL METADATA: ${overlayRule}
 10. COMPLETE BEATS: Never cut a spoken sentence, decisive action, command-response pair, or immediate reaction in half. Do not assemble a montage of isolated high-score moments.
 11. SOURCE GROUNDING: Every claim must be supported by the selected evidenceId, visual frames, source audio, or transcript. If a detail is not verified, omit it.
 12. TIMELINES: sourceStartSec/sourceEndSec refer only to the original video. Do not calculate or return output startSec/endSec/outputStartSec/outputEndSec; the local tool derives the Part timeline.
     ONE-SCENE-PER-SEGMENT: Every source range must remain inside exactly one selected sceneId. If a logical beat crosses a scene boundary, split it into scene-bounded segments, preserve macroBlockId/sourceRunId/actionSequenceId and divide voiceover without duplication.
 13. DURATION: output duration = (sourceEndSec - sourceStartSec) / playbackSpeed, computed by the local tool. playbackSpeed defaults to 1; set it only for a justified speed change.
-14. AUDIO MODES: original_audio requires voiceover_text="" and plays the authentic source soundtrack. voiceover_only requires verified English voiceover_text and MUTES the entire source soundtrack (0%). voiceover_with_ambient may retain source ambience at 10-20% ONLY when no intelligible source dialogue/narrator is present; reducing volume does not remove speech.
+14. AUDIO MODES: original_audio requires voiceover_text="" and caption="" (caption is NOT a transcript or action note). It plays authentic source sound. voiceover_only requires verified English voiceover_text and MUTES all source sound (0%). voiceover_with_ambient may retain source ambience at 10-20% ONLY when no intelligible source speech is present. For VO visuals prefer clean B-roll without burned-in dialogue or talking faces; scene-evidence safeForVoiceover=false or burnedTextPresent=true needs explicit visual review or a different shot. Never confuse action_notes with spoken subtitle text.
 15. DURATION GATE: Every Part must be within ${options.minDuration}-${options.maxDuration}s and never below 60.5s. Add relevant complete evidence, never silence, freeze frames, credits, or filler.
 
 ================================================================================
@@ -3698,6 +3701,8 @@ ${antiHallucinationRule}
 3. ACTION PAYOFF & VISUAL MATCHING (ANTI-CLICKBAIT)
 - High-adrenaline narration must be paid off immediately by the matching verified visual action. Do not promise a chase, escape, weapon, crash, struggle, arrest, or confrontation and then cut directly to static aftermath or an unrelated location.
 - Select the corresponding evidenceId/actionSequenceId immediately after the setup voiceover. Use actionOverride=true and sustainedBeatOverride=true where supported to preserve the complete action and immediate reaction before moving to the resolution.
+- VERBAL PROMISE-TO-PROOF: A narrator claim that a witness confesses, accuses someone, admits a lie, snitches or answers a crucial question MUST be audible in the following selected original_audio source range, or be reworded as a still-open question. Supply payoffProof with the quoted words, sourceStartSec and sourceEndSec when making such a definite narrator-to-clip promise; NEVER assert an answer when the next clip contains only questions.
+- CUT BOUNDARY SAFETY: Verify the actual final word/reaction and scene fade frames against the source before choosing sourceStartSec/sourceEndSec. Avoid black transitions. External narrator boundaries need source audio confirmation; never assume SRT endSec is sample-accurate and never blindly add fixed padding that would cut direct speech.
 - actionOverride and sustainedBeatOverride do not invent or locate footage. The selected evidence and source timestamps themselves must visibly contain the promised action.
 
 ${nonRedundantRule}

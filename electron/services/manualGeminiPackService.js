@@ -1494,6 +1494,10 @@ ANTI-HALLUCINATION PROTOCOL:
 VOICE AND CONTINUITY:
 - The first voiceover after the shared Hook must be unique to Part ${partNumber} and perform this Part's chapter role.
 - Preserve authentic commands, cries, confessions, dispatcher calls, impacts, and reactions as original_audio when no external narrator overlaps them.
+- ASYMMETRIC BEATS: Keep VO bridges generally 3-8s (max 10s); original audio covers complete dialogue exchanges (typically 12-25s when needed), or action runs (15-30s+ where justified). These are soft targets; do not cut an answer, reveal, action, or reaction to match a timer. Mark sustainedBeatOverride=true and a stable sustainedBeatId for a critical verbal exchange (actionOverride is only for actual action).
+- PROMISE-TO-PROOF: A definite narration claim of confession, blame, accusation or answered question must be audible within the immediately following original_audio evidence. Include payoffProof with quote and verified sourceStartSec/sourceEndSec or rewrite as an unanswered question.
+- CLEAN VISUALS/CAPTIONS: For original_audio, caption and voiceover_text are empty. Narrator VO B-roll must not conflict with source burned-in dialogue captions; prefer safeForVoiceover=true evidence. Check fade/black frames and third-party narrator tails against actual media, not guessed timestamps.
+- CLEAN CLIFFHANGER: A Part may end with an unresolved case question but NEVER midway through a spoken sentence; use a complete source response or short fact-grounded closing VO.
 - Every voiceover_only claim must be supported by its own evidenceId and fit the calibrated word budget.
 - Every segment after the first needs a concrete causal/temporal transitionReason. Preserve complete spoken lines and immediate reactions.
 - ONE-SCENE-PER-SEGMENT: sourceStartSec/sourceEndSec stay inside both the locked evidence and exactly one sceneId. Never cross a scene boundary in one segment. Split at boundaries, preserve macroBlockId/sourceRunId/actionSequenceId, divide narration without duplication, and recalculate startSec/endSec continuously from zero.
