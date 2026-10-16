@@ -65,6 +65,7 @@ const {
   buildTikTokKaraokeAssContent,
   buildWordTimestampsFromSegments
 } = require("./karaokeSubtitleService");
+const {buildManualNarratorEnglishCues,toSrt:buildManualCaptionSrt} = require("./manualGeminiCaptionService");
 const { getCancelToken, throwIfCancelled } = require("./cancelToken");
 
 function runCommand(command, args, timeoutMs = 600000) {
@@ -6435,6 +6436,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         previewSubtitleCues: originalAudioCues.length ? originalAudioCues : voiceSubtitleCues
       };
     });
+    // US Manual Gemini drafts keep native English ASR/narrator captions.
+    if (project.analysisWorkflow === "manual_gemini_draft_review") {
+      return subtitleSegments.map(segment => ({
+        ...segment,
+        previewSubtitleVi: safeText(segment.text || ""),
+        previewSubtitleCues: (segment.previewSubtitleCues || []).map(cue => ({
+          ...cue, previewSubtitleVi: safeText(cue.text || cue.previewSubtitleVi || "")
+        }))
+      }));
+    }
     const translationItems = subtitleSegments.flatMap((segment) => (
       segment.previewSubtitleCues?.length ? segment.previewSubtitleCues : (segment.text ? [segment] : [])
     ));
@@ -6537,7 +6548,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
     const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
     const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
+    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.${project.analysisWorkflow === "manual_gemini_draft_review" ? "en" : "vi"}.srt`);
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
@@ -6799,7 +6810,39 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           translatedText: segment.previewSubtitleVi || ""
         }]
     ));
-    await this.projectStore.writeText(subtitlePath, buildSrt(previewSubtitleCues, "translatedText"));
+    const manualEnglishCaptionMode = project.analysisWorkflow === "manual_gemini_draft_review"
+      && project.manualGeminiEnglishCaptionsEnabled !== false;
+    let finalPreviewCues = previewSubtitleCues;
+    if (manualEnglishCaptionMode) {
+      const timeline = {segments: previewSubtitleSegments.map(s => ({
+        resolved: {startSec: s.startSec, endSec: s.endSec}
+      }))};
+      const narrator = buildManualNarratorEnglishCues({segments, timeline, voiceReports: draftVoiceReports});
+      finalPreviewCues = [
+        ...previewSubtitleCues.filter(cue => {
+          const center = (Number(cue.startSec) + Number(cue.endSec)) / 2;
+          return !narrator.some(n => n.startSec <= center && center < n.endSec);
+        }).map(c => ({...c, text: safeText(c.text || c.translatedText)})),
+        ...narrator
+      ];
+      // One continuous narrated block can cover multiple visual segments.
+      const blocks = blockVoiceReports.length ? placeNarratedBlocks(segments, blockVoiceReports) : [];
+      for (const b of blocks) {
+        const start = Number(b.outputStartSec || 0);
+        const duration = Math.min(Number(b.fittedTtsSec || b.rawTtsSec || b.durationSec || 0), Number(b.durationSec || 0));
+        if (duration <= 0 || !safeText(b.narrationText)) continue;
+        const cues = buildManualNarratorEnglishCues({
+          segments: [{audioMode: "voiceover_only", voiceoverText: b.narrationText, duration}],
+          timeline: {segments: [{resolved: {startSec: start, endSec: start + duration}}]}
+        });
+        finalPreviewCues = finalPreviewCues.filter(c => c.endSec <= start || c.startSec >= start + duration);
+        finalPreviewCues.push(...cues);
+      }
+      finalPreviewCues.sort((a,b) => a.startSec - b.startSec);
+    }
+    await this.projectStore.writeText(subtitlePath, manualEnglishCaptionMode
+      ? buildManualCaptionSrt(finalPreviewCues)
+      : buildSrt(previewSubtitleCues, "translatedText"));
     const isTikTokKaraoke = project.videoDecoration?.subtitleStyle === "tiktok_karaoke";
     let effectiveSubtitlePath = subtitlePath;
     if (isTikTokKaraoke) {
@@ -6820,8 +6863,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await this.projectStore.writeText(assPath, assContent);
       effectiveSubtitlePath = assPath;
     }
-    const hasPreviewSubtitles = previewSubtitleCues.some((cue) => safeText(cue.translatedText));
-    const embedPreviewSubtitles = (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
+    const hasPreviewSubtitles = manualEnglishCaptionMode
+      ? finalPreviewCues.some(cue => safeText(cue.text || cue.translatedText))
+      : previewSubtitleCues.some(cue => safeText(cue.translatedText));
+    const embedPreviewSubtitles = manualEnglishCaptionMode
+      ? hasPreviewSubtitles
+      : (hasPreviewSubtitles && project.analysisWorkflow !== "vertex_auto_story") || isTikTokKaraoke;
     if (embedPreviewSubtitles) {
       onProgress?.({
         projectId,
@@ -6831,7 +6878,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           ? "Đang nhúng phụ đề TikTok Karaoke vào bản nháp"
           : "Đang nhúng phụ đề tiếng Việt vào bản nháp"
       });
-      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: effectiveSubtitlePath, outputPath });
+      await ffmpeg.burnSubtitles({ videoPath: decoratedOutputPath, subtitlePath: manualEnglishCaptionMode ? subtitlePath : effectiveSubtitlePath, outputPath });
     } else {
       await ffmpeg.copyMedia({ inputPath: decoratedOutputPath, outputPath });
     }
@@ -6940,7 +6987,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: manualEnglishCaptionMode ? "en" : "vi",
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftVoiceWarningReportPath: voiceWarningReportPath,
           fastDraftResolvedTimelinePath: resolvedTimelinePath,
@@ -6960,7 +7007,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           internalFastDraftVideoPath: outputPath,
           fastDraftBaseVideoPath: undecoratedOutputPath,
           fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
+          fastDraftSubtitleLanguage: manualEnglishCaptionMode ? "en" : "vi",
           fastDraftSubtitlesArePreviewOnly: true,
           fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
           fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
