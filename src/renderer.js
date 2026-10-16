@@ -5980,7 +5980,7 @@ async function confirmHookAndLock() {
   }
 }
 
-async function createManualGeminiAnalysisPack() {
+async function createManualGeminiAnalysisPack({sequentialManual = true} = {}) {
   if (!isManualGeminiWorkflowMode()) return;
   if (isStoryRecutMode() && !el.storyRecutRightsConfirmed?.checked) {
     showToast("Hãy xác nhận quyền sử dụng video nguồn trước khi tạo gói Story Recut.");
@@ -6040,7 +6040,8 @@ async function createManualGeminiAnalysisPack() {
       cleanupMode: el.podcastCleanupMode?.value || "balanced",
       sourceLanguage: el.sourceLanguage?.value || "auto",
       autoWhisper: Boolean(el.autoWhisper?.checked),
-      forceRebuild: Boolean(el.manualGeminiForceRebuild?.checked)
+      forceRebuild: Boolean(el.manualGeminiForceRebuild?.checked),
+      sequentialManual
     });
     createdResult = result;
     const cacheHits = result.cache?.hits || [];
@@ -6154,7 +6155,7 @@ async function createAndRunConfiguredStage1() {
     addLog(message);
   };
   setAutoStatus("1/5 · Đang tạo và kiểm tra gói phân tích...");
-  const result = await createManualGeminiAnalysisPack();
+  const result = await createManualGeminiAnalysisPack({sequentialManual:false});
   if (!result || !isManualGeminiProMode()) return;
 
   if (result.hookAuditionResult?.topCandidates?.length) {

@@ -2254,6 +2254,7 @@ class ManualGeminiPackService {
     sourceLanguage = "auto",
     autoWhisper = true,
     forceRebuild = false,
+    sequentialManual = true,
     onProgress
   }) {
     if (!sourceVideoPath) {
@@ -2655,7 +2656,7 @@ class ManualGeminiPackService {
     }
 
     let directHighlightPrompt = buildDirectHighlightScriptsPrompt(prompt, manifest, actionCandidates, proxyChunksManifest);
-    const sequentialSeriesEnabled = isDraftReview && isSerialized(prompt);
+    const sequentialSeriesEnabled = isDraftReview && sequentialManual !== false && isSerialized(prompt);
     const sequentialSeriesProfile = (String(prompt).match(/prompt_profile:\s*(serialized_genz|serialized_interleaved)/)||[])[1] || "";
     const sequentialSeriesSharedHook = /- shared cold open:\s*true/i.test(String(prompt));
     const durationBounds = String(prompt).match(/target duration for EACH Part:\s*([\d.]+)\s*-\s*([\d.]+)/i);
