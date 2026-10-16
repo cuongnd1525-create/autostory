@@ -39,9 +39,14 @@ function auditSerializedBeatBoundaries({script = {}, normalizedScript = {}, tran
     const mode = txt(s.audioMode || s.audio_mode);
     const id = txt(s.sustainedBeatId || s.sustained_beat_id || r.sustainedBeatId);
     const evidence = evidenceById.get(txt(r.evidenceId || r.evidence_id || s.evidenceId));
-    if (mode === "voiceover_only" && s.sourceNarratorDetected !== true && r.source_narrator_detected !== true
-      && (r.safeForVoiceover === false || (evidence?.safeForVoiceover === false && evidence?.burnedTextPresent === true))) {
-      errors.push("Segment " + (i + 1) + " selects unsafe voiceover B-roll containing conflicting burned-in source captions. Choose a clean evidence shot.");
+    if (mode === "voiceover_only" && s.sourceNarratorDetected !== true && r.source_narrator_detected !== true) {
+      if (r.burnedTextPresent === true && r.safeForVoiceover === false) {
+        errors.push("Segment " + (i + 1) + " selects unsafe voiceover B-roll containing conflicting burned-in source captions. Choose a clean evidence shot.");
+      } else if (evidence?.safeForVoiceover === false && evidence?.burnedTextPresent === true) {
+        // Evidence windows can be wider than the selected clip. Do not infer a
+        // visually unsafe FRAME from coarse scene metadata alone.
+        warnings.push("Segment " + (i + 1) + " uses B-roll from evidence with burned-in captions; inspect the selected source frames for a text collision.");
+      }
     }
     if (txt(r.cutSafety).toLowerCase() === "unsafe") {
       errors.push("Segment " + (i + 1) + " explicitly declares cutSafety=unsafe.");
@@ -76,7 +81,8 @@ function auditSerializedBeatBoundaries({script = {}, normalizedScript = {}, tran
       }
       if (mode === "original_audio" || !quote || !Number.isFinite(ps) || !Number.isFinite(pe) || pe <= ps
           || !run.length || ps < num(run[0].sourceStartSec) - 0.1 || pe > num(run.at(-1).sourceEndSec) + 0.1
-          || !run.some(x => num(x.sourceStartSec) <= ps + 0.1 && num(x.sourceEndSec) >= Math.min(pe, num(x.sourceEndSec)) - 0.1)) {
+          || run.some((x,k) => k > 0 && Math.abs(num(run[k-1].sourceEndSec)-num(x.sourceStartSec)) > 0.15)
+          || !run.some(x => num(x.sourceStartSec) <= ps + 0.1 && num(x.sourceEndSec) >= ps - 0.1)) {
         errors.push("Segment " + (i + 1) + " payoffProof is missing or lies outside immediately following original_audio.");
       } else if (cues.length) {
         const spoken = cues.filter(c => c.startSec < pe && c.endSec > ps).map(c => c.text).join(" ").toLowerCase();

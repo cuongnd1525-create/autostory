@@ -41,9 +41,10 @@ jobs:
           node --check electron/services/manualGeminiCaptionService.js
           node --check electron/services/manualSourceGroundingAuditService.js
           node --check electron/services/dubbingService.js
+          node --check electron/services/renderQaService.js
           node --check electron/services/geminiDraftReviewService.js
       - name: Manual editorial gate unit tests
-        run: node --test tests/manualGeminiEditorialGate.test.js tests/manualSourceGroundingAudit.test.js tests/manualGeminiCaption.test.js tests/manualGeminiAudioIsolation.test.js tests/serializedGeminiWorkflow.test.js
+        run: node --test tests/manualGeminiEditorialGate.test.js tests/manualSourceGroundingAudit.test.js tests/manualGeminiCaption.test.js tests/manualGeminiAudioIsolation.test.js tests/serializedGeminiWorkflow.test.js tests/manualGeminiRenderQa.test.js
       - name: Related workflow regressions
         run: |
           node tests/hookAudition.test.js

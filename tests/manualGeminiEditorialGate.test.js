@@ -78,7 +78,9 @@ test("verified burned-in dialogue rejects unsafe narrator B-roll", () => {
   const data=sample();
   data.script.segments=[{}, {evidenceId:"e2"}];
   data.sourceEvidence={evidence:[{evidenceId:"e2",burnedTextPresent:true,safeForVoiceover:false}]};
+  const uncertain=validateManualGeminiEditorialContract(data);
+  assert.equal(uncertain.passed,true);
+  assert.match(uncertain.warnings.join(" "),/burned-in captions/);
+  data.script.segments[1]={evidenceId:"e2",burnedTextPresent:true,safeForVoiceover:false};
   assert.match(validateManualGeminiEditorialContract(data).errors.join(" "),/unsafe voiceover B-roll/);
-  data.sourceEvidence.evidence[0].safeForVoiceover=true;
-  assert.equal(validateManualGeminiEditorialContract(data).passed,true);
 });
