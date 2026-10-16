@@ -83,9 +83,87 @@ function partPrompt(scriptId,profile="serialized_genz",sharedHook=false, min=75,
     "Save it as script-"+scriptId+".json. "+(n===1?"Next prompt: script-3.":n===2?"Next prompt: script-4.":"All three scripts complete; select the three JSON files in RecapTool Studio.")
   ].join("\n\n");
 }
+
+function checkChapterBeats(bp,manifest){
+  const errors=[],seen=new Set(),windows=[];
+  const videoEnd=num(manifest?.videoDurationSec);
+  const sourceEnd=Number.isFinite(videoEnd)?videoEnd:num(bp?.sourceDurationSec);
+  const sceneMap=new Map((manifest?.scenes||[])
+    .filter(s=>str(s.sceneId||s.id))
+    .map(s=>[str(s.sceneId||s.id),s]));
+  for(let i=0;i<3;i++){
+    const part=(bp.parts||[]).find(p=>num(p.scriptId)===PART_IDS[i]);
+    if(!part)continue;
+    if(!["dialogue_conflict","physical_action","mixed","visual_reveal"].includes(str(part.hook?.kind))
+       || !str(part.hook?.hookProof))errors.push("Part "+(i+1)+" Hook needs verified kind and hookProof.");
+    const beats=part.chapterBeats;
+    if(!Array.isArray(beats)||beats.length<2||beats.length>8){
+      errors.push("Part "+(i+1)+" requires 2-8 locked chapterBeats, not only Hook/summary.");
+      continue;
+    }
+    for(const [j,b] of beats.entries()){
+      const id=str(b.beatId),a=num(b.sourceStartSec),z=num(b.sourceEndSec);
+      if(!id||seen.has(id))errors.push("Missing or duplicated chapterBeat beatId: "+(id||"(empty)"));
+      seen.add(id);
+      if(!["dialogue","action","visual","context"].includes(str(b.kind)))
+        errors.push("Part "+(i+1)+" chapterBeat "+id+" has invalid kind.");
+      if(!str(b.role)||!str(b.sourceProof))
+        errors.push("Part "+(i+1)+" chapterBeat "+id+" needs a role and real sourceProof.");
+      if(b.mustInclude!==true)errors.push("Part "+(i+1)+" chapterBeat "+id+" mustInclude must be true.");
+      if(!Number.isFinite(a)||!Number.isFinite(z)||a<0||z<=a||!Number.isFinite(sourceEnd)||z>sourceEnd+0.3)
+        errors.push("Part "+(i+1)+" chapterBeat "+id+" has invalid source time range.");
+      if(!Array.isArray(b.sceneIds)||!b.sceneIds.length||b.sceneIds.some(s=>!str(s)))
+        errors.push("Part "+(i+1)+" chapterBeat "+id+" needs source-verified sceneIds.");
+      else if(sceneMap.size){
+        if(b.sceneIds.some(s=>!sceneMap.has(str(s))))
+          errors.push("Part "+(i+1)+" chapterBeat "+id+" references unknown sceneId.");
+        else if(Number.isFinite(a)&&Number.isFinite(z) && !b.sceneIds.some(s=>{
+          const scene=sceneMap.get(str(s));
+          return num(scene.startSec)<z && num(scene.endSec)>a;
+        }))errors.push("Part "+(i+1)+" chapterBeat "+id+" sceneIds do not overlap source range.");
+      }
+      if(Number.isFinite(a)&&Number.isFinite(z)&&z>a){
+        windows.push({part:i+1,id,a,z});
+        if(Math.min(z,num(part.hook?.sourceEndSec))-Math.max(a,num(part.hook?.sourceStartSec))>0.25)
+          errors.push("Part "+(i+1)+" chapterBeat "+id+" repeats its own Hook.");
+      }
+      if(j===beats.length-1 && i<2 && !["cliffhanger","escalation","contradiction","reveal"].includes(str(b.role)))
+        errors.push("Part "+(i+1)+" final chapterBeat should preserve a verified unresolved turn.");
+      if(j===beats.length-1 && i===2 && !["resolution","consequence","payoff"].includes(str(b.role)))
+        errors.push("Part 3 last chapterBeat must show the final verified consequence.");
+    }
+  }
+  for(let i=0;i<windows.length;i++)for(let j=i+1;j<windows.length;j++){
+    const a=windows[i],b=windows[j];
+    if(a.part!==b.part&&Math.min(a.z,b.z)-Math.max(a.a,b.a)>0.25)
+      errors.push("Core chapterBeats reuse footage across Parts "+a.part+"/"+b.part+": "+a.id+" / "+b.id);
+  }
+  return errors;
+}
+function coveredSourceSeconds(segments,beat){
+  const a=num(beat.sourceStartSec),b=num(beat.sourceEndSec),ranges=[];
+  if(!Number.isFinite(a)||!Number.isFinite(b)||b<=a)return 0;
+  for(const s of segments){
+    const x=num(s.sourceStartSec??s.source_start_sec),y=num(s.sourceEndSec??s.source_end_sec);
+    if(!Number.isFinite(x)||!Number.isFinite(y)||y<=x)continue;
+    if(str(beat.kind)==="dialogue"&&str(s.audio_mode||s.audioMode)!=="original_audio")continue;
+    const start=Math.max(a,x),end=Math.min(b,y);
+    if(end>start)ranges.push([start,end]);
+  }
+  ranges.sort((x,y)=>x[0]-y[0]);
+  const merged=[];
+  for(const span of ranges){
+    const last=merged.at(-1);
+    if(last&&span[0]<=last[1])last[1]=Math.max(last[1],span[1]);
+    else merged.push([...span]);
+  }
+  return merged.reduce((total,r)=>total+r[1]-r[0],0);
+}
+
 function validateBlueprint(bp,{manifest={},profile="",sharedHook,hookContract=null}={}) {
  const errors=[],parts=bp?.parts;
  if(str(bp?.artifactType)!=="serialized_story_blueprint")errors.push("Wrong artifactType.");
+ if(num(bp?.schemaVersion)!==2)errors.push("Blueprint schemaVersion=2 required with chapterBeats. Regenerate Stage 0 using the updated Gemini package.");
  if(str(bp?.series_mode)!=="interleaved_multipart")errors.push("Wrong series_mode.");
  if(!str(bp?.seriesId))errors.push("seriesId missing.");
  if(!str(bp?.shared_top_banner_text))errors.push("shared_top_banner_text missing.");
@@ -99,6 +177,7 @@ function validateBlueprint(bp,{manifest={},profile="",sharedHook,hookContract=nu
  if(manifest?.sourceVideo&&path.basename(str(bp?.sourceVideo))!==path.basename(manifest.sourceVideo))errors.push("Source video mismatch.");
  if(Number.isFinite(num(manifest?.videoDurationSec))&&Math.abs(num(bp?.sourceDurationSec)-num(manifest.videoDurationSec))>0.3)errors.push("Source duration mismatch.");
  if(!Array.isArray(parts)||parts.length!==3)errors.push("Exactly three chapter plans required.");
+ else errors.push(...checkChapterBeats(bp,manifest));
  else {
   for(let i=0;i<3;i++){
    const p=parts.find(x=>num(x.scriptId)===PART_IDS[i]);
@@ -148,6 +227,19 @@ function validateScriptAgainstBlueprint(script,bp){
   if(num(script.part_number??script.partNumber)!==num(plan.part_number))errors.push("Part number mismatch.");
   const segments=script.segments||[],first=segments[0],a=num(first?.sourceStartSec);
   if(!first||Math.abs(a-num(plan.hook.sourceStartSec))>2.1)errors.push("Opening Hook is outside locked Blueprint tolerance.");
+  const hookSegments=[];
+  for(const s of segments){if(!hookSegments.length||/hook/i.test(str(s.storyFunction||s.story_function)))hookSegments.push(s);else break;}
+  if(str(plan.hook?.kind)==="dialogue_conflict"&&hookSegments.some(s=>s.actionOverride===true||s.action_override===true))
+    errors.push("Dialogue Hook may not use actionOverride=true; use sustainedBeatOverride for complete exchange.");
+  const beats=Array.isArray(plan.chapterBeats)?plan.chapterBeats:[];
+  const allowed=new Set(beats.map(b=>str(b.beatId)));
+  for(const segment of segments){const id=str(segment.beatId||segment.beat_id);if(id&&!allowed.has(id))errors.push("Segment references chapterBeat outside its locked Part: "+id);}
+  for(const beat of beats.filter(b=>b.mustInclude===true)){
+    const duration=num(beat.sourceEndSec)-num(beat.sourceStartSec);
+    const minimum=Math.min(3,Math.max(1,duration*0.4));
+    const actual=coveredSourceSeconds(segments,beat);
+    if(actual+0.05<minimum)errors.push("Missing locked chapterBeat "+str(beat.beatId)+" in Part "+num(plan.part_number)+": only "+actual.toFixed(2)+"s of verified source range selected.");
+  }
  }
  return {passed:errors.length===0,errors};
 }
