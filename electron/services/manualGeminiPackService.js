@@ -2631,10 +2631,11 @@ class ManualGeminiPackService {
           durationSec: media.duration,
           topCount: 5
         });
-        if (hookAuditionResult?.defaultRecommendedHook) {
-          hookContract = buildHookContract({ candidate: hookAuditionResult.defaultRecommendedHook, isUserLocked: false });
+        if (hookAuditionResult?.topCandidates?.length) {
+          // An automatic score is not user approval: ship only suggestions.
+          // Writing hook-contract.json here made even *unlocked* candidates
+          // look binding when Gemini read the folder directly.
           await writeJsonAtomic(path.join(pass1UploadDir, "hook-candidates.json"), hookAuditionResult);
-          await writeJsonAtomic(path.join(pass1UploadDir, "hook-contract.json"), hookContract);
         }
       } catch (hookErr) {
         warnings.push(`Không tạo được Hook Candidates: ${hookErr.message}`);
