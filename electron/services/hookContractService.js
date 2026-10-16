@@ -195,7 +195,7 @@ function buildSeriesHookContractBlock(contract = {}, sharedHookEnabled = false) 
     `HOOK POLICY: ${sharedHookEnabled ? "shared_signature" : "part_specific"}. Obey this policy even when a legacy prompt example suggests otherwise.`,
     "",
     describeAnchor(v1 || {}, "PART 1 (Script 1) cold-open hook anchor"),
-    "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
+    "   - Mandate: Script 1 Beat 1 MUST open with this user-approved anchor. Do not treat a heuristic recommendation as equivalent to user approval."
   ];
   if (v2 && !sharedHookEnabled && !sameStart(v2, v1)) {
     lines.push("", describeAnchor(v2, "PART 2 (Script 3) opener anchor"), "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.");

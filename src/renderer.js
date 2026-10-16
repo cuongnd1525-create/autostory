@@ -3630,6 +3630,12 @@ ${persona}
    - A Complete Narrative Beat is defined as: (1) high-adrenaline physical action such as a car chase, suspect escaping, or physical struggle; or (2) high-stakes emotional or verbal conflict such as a critical lie, breakdown, chilling confession, or direct confrontation.
    - If a source run contains a Complete Narrative Beat, preserve it as one unbroken original_audio segment lasting up to 30 seconds, or longer when continuous tension justifies it. Do NOT artificially chop this beat into 8-12s fragments. Do NOT interrupt a critical dialogue exchange with voiceover.
    - Set completeNarrativeBeat=true, sustainedBeatOverride=true, and one stable sustainedBeatId. If scene-manifest boundaries force multiple scene-bounded segments, keep them consecutive with the same sustainedBeatId and original_audio; they form one uninterrupted sustained beat and no voiceover may appear between them.
+6A. STATIC WITNESS INTERVIEW BUDGET:
+   - A post-incident witness/victim recount is normally context, NOT a cold open merely because the SRT contains a keyword. Watch the actual visual and audio before selecting a Hook.
+   - Unless a concise authentic quote itself delivers a critical revelation, limit a stationary talking-head interview to roughly 5-8s; summarize redundant verified context over truthful B-roll.
+   - Do not replay the full opening Hook again in the Part body, or show two lengthy near-identical witness angles in the first 30s.
+   - Do not pad the 75-110s target using stationary testimony. Advance into later verified events that lead toward the Part's own non-spoiling cliffhanger.
+   - Never invent a chase, pursuit, arrest or violent event absent from the actual source. The best Hook creates a truthful question and leads naturally into the verified story.
 7. NARRATOR: ${narratorRule}
 8. SERIAL ENDINGS: ${cliffhangerRule}
 9. VISUAL METADATA: ${overlayRule}
@@ -5899,6 +5905,17 @@ async function confirmHookAndLock() {
     (id2 && id3 && id2 === id3)
   );
 
+  const weakAnchors = [v1, v2, v3].filter(v => v?.candidate?.editorialRisk?.likelyStaticWitness === true);
+  if (weakAnchors.length) {
+    const proceed = await showConfirmAction({
+      title: "Hook có nguy cơ mở đầu quá tĩnh",
+      message: weakAnchors.map(v =>
+        (v?.variantName || "Part") + ": " + (v?.candidate?.title || "witness interview")
+      ).join(" · ") + ". Các candidate này được chấm bằng heuristic, không phải AI xác minh từ MP4. Nếu vẫn khóa, Gemini sẽ bắt buộc dùng đúng cảnh đó. Hãy xem proxy trước khi xác nhận.",
+      confirmLabel: "Tôi đã xem, vẫn khóa"
+    });
+    if (!proceed) return;
+  }
   setBusy(true);
   try {
     const profile = (typeof readManualGeminiPromptOptions === "function") ? readManualGeminiPromptOptions().profile : "";
