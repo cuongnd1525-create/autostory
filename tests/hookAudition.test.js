@@ -199,6 +199,10 @@ Suspect: That's not my child!
     ...multiContractWithDup, hookPolicy: "shared_signature"
   });
   assert.ok(shared.includes("HOOK POLICY: shared_signature"));
+  // Unlocked, heuristic hook recommendations must never overwrite Gemini's
+  // source-driven editorial choice with mandatory source range instructions.
+  const advisory = buildHookContract({candidate: candidateA, isUserLocked: false});
+  assert.strictEqual(injectHookContractToPrompt(seriesPrompt, advisory), seriesPrompt);
   console.log("\nALL HOOK AUDITION & CONTRACT TESTS PASSED SUCCESSFULLY! 🎉");
 }
 
