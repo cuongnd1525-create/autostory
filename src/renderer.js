@@ -389,6 +389,7 @@ function queryElements() {
     manualGeminiPackStatus: $("manual-gemini-pack-status"),
     manualGeminiPackPath: $("manual-gemini-pack-path"),
     importSerializedBlueprint: $("import-serialized-blueprint"),
+    openSerializedPrompts: $("open-serialized-prompts"),
     serializedBlueprintStage: $("serialized-blueprint-stage"),
     serializedBlueprintStatus: $("serialized-blueprint-status"),
     manualGeminiForceRebuild: $("manual-gemini-force-rebuild"),
@@ -2888,6 +2889,7 @@ function setBusy(isBusy) {
     el.openManualAntigravityResult,
     el.importManualGeminiEvidence,
     el.importSerializedBlueprint,
+    el.openSerializedPrompts,
     el.importManualGeminiBlueprint,
     el.openManualGeminiPack,
     el.openManualGeminiEvidenceFolder,
@@ -2903,6 +2905,10 @@ function setBusy(isBusy) {
     el.copyVoiceBudgetPrompt.disabled = true;
   }
   syncConfiguredAiWorkflowUi();
+  if (!isBusy && el.openSerializedPrompts) {
+    el.openSerializedPrompts.disabled = !el.openSerializedPrompts.dataset.openPath
+      || !el.manualGeminiPackPath?.value;
+  }
   if (!isBusy && el.importSerializedBlueprint) {
     el.importSerializedBlueprint.disabled = !el.manualGeminiPackPath?.value
       || !isManualGeminiProMode()
@@ -5970,6 +5976,10 @@ async function confirmHookAndLock() {
     });
 
     addLog(`Đã khóa Hook Contract cho cả 3 Variant (${hasDuplicates ? 'Phát hiện Hook trùng -> Đã kích hoạt Divergence Protocol' : 'Mỗi variant 1 Hook độc lập'}).`);
+    if (isSerializedProfile && el.serializedBlueprintStatus) {
+      el.serializedBlueprintStatus.textContent = "Hook đã đổi. Blueprint cũ bị vô hiệu hóa; yêu cầu Gemini tạo và nhập Blueprint mới trước khi gửi các Script.";
+      addLog("Đã đổi Hook: cần tạo lại series-blueprint.json trước khi import ba Part.", "WARNING");
+    }
     showToast("Đã khóa Hook Contract thành công!");
     closeHookPickerModal(false);
   } catch (error) {
@@ -6050,6 +6060,10 @@ async function createManualGeminiAnalysisPack({sequentialManual = true} = {}) {
     el.manualGeminiPackPath.value = result.packageDir;
     if (el.importSerializedBlueprint) {
       el.importSerializedBlueprint.disabled = !result.sequentialSeriesEnabled;
+      if (el.openSerializedPrompts) {
+        el.openSerializedPrompts.dataset.openPath = result.sequentialSeriesNextStepsDir || "";
+        el.openSerializedPrompts.disabled = !result.sequentialSeriesEnabled;
+      }
       el.serializedBlueprintStage?.classList.toggle("hidden", !result.sequentialSeriesEnabled);
       if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent = result.sequentialSeriesEnabled
         ? "1) Gửi proxy/Blueprint prompt. 2) Nhập series-blueprint.json. 3) Gửi lần lượt Script 1, 3, 4 trong thư mục 02-SERIES-SEQUENTIAL."
@@ -6441,6 +6455,7 @@ async function importManualGeminiBlueprint() {
 function invalidateManualGeminiPack(reason = "") {
   if (!el.manualGeminiPackPath?.value && !el.manualGeminiEvidencePath?.value) return;
   if (el.importSerializedBlueprint) el.importSerializedBlueprint.disabled = true;
+  if (el.openSerializedPrompts) {el.openSerializedPrompts.disabled = true; delete el.openSerializedPrompts.dataset.openPath;}
   if (el.serializedBlueprintStatus) el.serializedBlueprintStatus.textContent = "Blueprint không còn hợp lệ. Tạo lại gói phân tích.";
   el.manualGeminiPackPath.value = "";
   if (el.runManualAntigravityStage1) el.runManualAntigravityStage1.disabled = true;
@@ -11965,6 +11980,11 @@ function bindEvents() {
   el.podcastYoutubeUrl?.addEventListener("input", writeSetupDraft);
   el.importManualGeminiEvidence?.addEventListener("click", importManualGeminiEvidence);
   el.importSerializedBlueprint?.addEventListener("click", importSerializedBlueprintJson);
+  el.openSerializedPrompts?.addEventListener("click", () => {
+    const folder = el.openSerializedPrompts.dataset.openPath;
+    if (folder) window.cineviral.openFile(folder);
+    else showToast("Chưa tạo gói Series tuần tự.");
+  });
   el.importManualGeminiBlueprint?.addEventListener("click", importManualGeminiBlueprint);
   el.openManualGeminiVariants?.addEventListener("click", async () => {
     const variantPath = el.openManualGeminiVariants?.dataset.openPath;
