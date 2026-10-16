@@ -37,3 +37,39 @@ test("part-specific repeated source footage emits a warning", () => {
   assert.match(auditSerializedVariants(variants,{profile:"serialized_genz",sharedHook:false}).join(" "),/reuse 10.0s/);
   assert.equal(auditSerializedVariants(variants,{profile:"serialized_genz",sharedHook:true}).length,0);
 });
+
+test("final serialized original_audio cannot end inside a continuing SRT cue", () => {
+  const data = sample();
+  data.normalizedScript.segments[1] = {storyFunction:"cliffhanger",audioMode:"original_audio",sourceStartSec:80,sourceEndSec:90};
+  data.transcriptSrt = "1\\n00:01:28,000 --> 00:01:32,000\\nAnd the person that did it was...\\n";
+  assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /ends inside an SRT cue/);
+  data.normalizedScript.segments[1].sourceEndSec = 92;
+  assert.equal(validateManualGeminiEditorialContract(data).passed, true);
+});
+test("payoffProof must land inside the immediately following authentic footage", () => {
+  const data = sample();
+  data.script.segments = [{payoffProof:{quote:"She confessed",sourceStartSec:35,sourceEndSec:38}},{}];
+  assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /payoffProof/);
+  data.script.segments[0].payoffProof = {quote:"The truth",sourceStartSec:121,sourceEndSec:124};
+  // A proof on original_audio itself cannot stand in for a narrated setup.
+  assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /payoffProof/);
+  data.normalizedScript.segments = [
+    {storyFunction:"hook",audioMode:"original_audio",sourceStartSec:10,sourceEndSec:18},
+    {storyFunction:"context",audioMode:"voiceover_only",sourceStartSec:20,sourceEndSec:26},
+    {storyFunction:"escalation",audioMode:"original_audio",sourceStartSec:30,sourceEndSec:40}
+  ];
+  data.script.segments = [{},{payoffProof:{quote:"I took it",sourceStartSec:33,sourceEndSec:36}},{}];
+  assert.equal(validateManualGeminiEditorialContract(data).passed, true);
+});
+test("sustained source beats cannot be interrupted or span a missing scene", () => {
+  const data = sample();
+  data.normalizedScript.segments = [
+    {storyFunction:"hook",audioMode:"original_audio",sourceStartSec:1,sourceEndSec:5,sustainedBeatId:"b"},
+    {storyFunction:"hook",audioMode:"original_audio",sourceStartSec:6,sourceEndSec:10,sustainedBeatId:"b"}
+  ];
+  assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /source gap/);
+  data.normalizedScript.segments[1].sourceStartSec=5;
+  assert.equal(validateManualGeminiEditorialContract(data).passed,true);
+  data.script.segments=[{cutSafety:"unsafe"},{}];
+  assert.match(validateManualGeminiEditorialContract(data).errors.join(" "), /cutSafety=unsafe/);
+});

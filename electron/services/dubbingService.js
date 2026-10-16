@@ -4526,7 +4526,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         const hookContract = await fs.readFile(contractFile, "utf8").then(JSON.parse).catch(() => null);
         const editorial = validateManualGeminiEditorialContract({
           script: scriptInput, normalizedScript: script,
-          promptOptions: configuredPromptOptions, hookContract
+          promptOptions: configuredPromptOptions, hookContract, transcriptSrt: groundingSrt
         });
         if (!editorial.passed) throw new Error("Manual Gemini Editorial Contract: " + editorial.errors.join(" | "));
         script.warnings.push(...editorial.warnings);
@@ -6404,6 +6404,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           .filter((cue) => cue.text && cue.endSec > cue.startSec)
         : [];
       const geminiTranscriptCandidate = audioMode === "original_audio"
+        && project.analysisWorkflow !== "manual_gemini_draft_review"
         ? getOriginalAudioTranscriptCandidate(segment)
         : "";
       if (!project.subtitleSourcePath && shouldUseOriginalAudioTranscriptCandidate({
@@ -6421,9 +6422,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       }
       const rawCandidateVoiceText = safeText(
         getHighlightVoiceText(segment)
-        || segment.caption
-        || segment.translatedText
-        || segment.text
+        || (project.analysisWorkflow === "manual_gemini_draft_review" ? "" : (segment.caption || segment.translatedText || segment.text))
         || ""
       );
       const voiceText = /^(Highlight|Segment|Scene|Cảnh)\s*\d+/i.test(rawCandidateVoiceText.trim()) ? "" : rawCandidateVoiceText;
@@ -6847,17 +6846,20 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     ));
     const manualEnglishCaptionMode = project.analysisWorkflow === "manual_gemini_draft_review"
       && project.manualGeminiEnglishCaptionsEnabled !== false;
+    // Manual True Crime defaults to narrator-only subtitles. Source bodycam often
+    // contains burned-in dialogue captions; never silently layer transcript twice.
     let finalPreviewCues = previewSubtitleCues;
     if (manualEnglishCaptionMode) {
+      const showOriginal = project.manualGeminiOriginalAudioCaptionsEnabled === true;
       const timeline = {segments: previewSubtitleSegments.map(s => ({
         resolved: {startSec: s.startSec, endSec: s.endSec}
       }))};
       const narrator = buildManualNarratorEnglishCues({segments, timeline, voiceReports: draftVoiceReports});
       finalPreviewCues = [
-        ...previewSubtitleCues.filter(cue => {
+        ...(showOriginal ? previewSubtitleCues.filter(cue => {
           const center = (Number(cue.startSec) + Number(cue.endSec)) / 2;
           return !narrator.some(n => n.startSec <= center && center < n.endSec);
-        }).map(c => ({...c, text: safeText(c.text || c.translatedText)})),
+        }).map(c => ({...c, text: safeText(c.text || c.translatedText)})) : []),
         ...narrator
       ];
       // One continuous narrated block can cover multiple visual segments.

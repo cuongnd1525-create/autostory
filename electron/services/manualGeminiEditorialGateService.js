@@ -1,6 +1,7 @@
 "use strict";
 const SERIES_PROFILES = new Set(["serialized_interleaved", "serialized_genz"]);
 const PART_BY_SCRIPT = new Map([[1, 1], [3, 2], [4, 3]]);
+const {parseSrtCues} = require("./hookMiningService");
 const txt = v => String(v == null ? "" : v).trim();
 const num = (v, fallback = NaN) => v == null || v === "" || !Number.isFinite(Number(v)) ? fallback : Number(v);
 
@@ -17,7 +18,83 @@ function getOpeningHook(segments = []) {
   }
   return result;
 }
-function validateManualGeminiEditorialContract({script = {}, normalizedScript = {}, promptOptions = {}, hookContract = null} = {}) {
+
+/**
+ * Deterministic editorial checks. SRT text is an approximate cue, not a
+ * sample-accurate source of speaker identity or visual/audio proof.
+ * Unverifiable semantic claims remain review warnings rather than fabricated passes.
+ */
+function auditSerializedBeatBoundaries({script = {}, normalizedScript = {}, transcriptSrt = ""} = {}) {
+  const errors = [], warnings = [];
+  const segments = Array.isArray(normalizedScript.segments) ? normalizedScript.segments : [];
+  const raw = Array.isArray(script.segments) ? script.segments : [];
+  const cues = transcriptSrt ? parseSrtCues(transcriptSrt) : [];
+  const part = num(script.part_number ?? script.partNumber, 0);
+  const beats = new Map();
+  const duration = s => Math.max(0, num(s?.sourceEndSec, 0) - num(s?.sourceStartSec, 0));
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i], r = raw[i] || {};
+    const mode = txt(s.audioMode || s.audio_mode);
+    const id = txt(s.sustainedBeatId || s.sustained_beat_id || r.sustainedBeatId);
+    if (txt(r.cutSafety).toLowerCase() === "unsafe") {
+      errors.push("Segment " + (i + 1) + " explicitly declares cutSafety=unsafe.");
+    }
+    if (id) {
+      if (mode !== "original_audio") errors.push("Sustained beat " + id + " must use original_audio.");
+      const previous = beats.get(id);
+      if (previous !== undefined && i !== previous + 1) errors.push("Sustained beat " + id + " is interrupted by another segment.");
+      if (previous !== undefined) {
+        const a = segments[previous];
+        if (Math.abs(num(a.sourceEndSec) - num(s.sourceStartSec)) > 0.15) {
+          errors.push("Sustained beat " + id + " has a source gap/cut between scene slices.");
+        }
+      }
+      beats.set(id, i);
+    }
+    if (mode !== "original_audio" && duration(s) > 10.5) {
+      warnings.push("VO segment " + (i + 1) + " exceeds the 10s adaptive bridge target; measure actual TTS before trimming.");
+    }
+    if (mode === "original_audio" && txt(r.caption || s.caption)) {
+      warnings.push("Segment " + (i + 1) + ": original_audio caption metadata ignored by narrator-only overlay; move visual edit notes to action_notes.");
+    }
+    // Only an explicitly declared source quote can be range-validated.
+    const proof = r.payoffProof || r.payoff_proof;
+    if (proof) {
+      const ps = num(proof.sourceStartSec), pe = num(proof.sourceEndSec);
+      const quote = txt(proof.quote);
+      const run = [];
+      for (let k = i + 1; k < segments.length; k++) {
+        if (txt(segments[k].audioMode) !== "original_audio") break;
+        run.push(segments[k]);
+      }
+      if (mode === "original_audio" || !quote || !Number.isFinite(ps) || !Number.isFinite(pe) || pe <= ps
+          || !run.length || ps < num(run[0].sourceStartSec) - 0.1 || pe > num(run.at(-1).sourceEndSec) + 0.1
+          || !run.some(x => num(x.sourceStartSec) <= ps + 0.1 && num(x.sourceEndSec) >= Math.min(pe, num(x.sourceEndSec)) - 0.1)) {
+        errors.push("Segment " + (i + 1) + " payoffProof is missing or lies outside immediately following original_audio.");
+      } else if (cues.length) {
+        const spoken = cues.filter(c => c.startSec < pe && c.endSec > ps).map(c => c.text).join(" ").toLowerCase();
+        const words = [...new Set(quote.toLowerCase().replace(/[^a-z0-9'\s]/g," ").split(/\s+/).filter(w=>w.length>2))];
+        const overlap = words.filter(w=>spoken.includes(w)).length;
+        if (words.length && overlap / words.length < 0.6) {
+          warnings.push("Segment " + (i + 1) + " payoffProof quote not strongly supported by SRT: listen to source before render.");
+        }
+      } else {
+        warnings.push("Segment " + (i + 1) + " payoffProof has source-range support only; no SRT available to verify quoted words.");
+      }
+    } else if (mode !== "original_audio" && /\b(?:confess(?:ed|es)?|admit(?:ted|s)?|accus(?:es?|ed)|snitch(?:es|ed)?|told (?:the )?(?:cop|police|officer)s?\s+(?:that|who)|reveals? (?:that|who))\b/i.test(txt(s.voiceoverText || r.voiceover_text))) {
+      warnings.push("Segment " + (i + 1) + " narrates a specific verbal reveal without payoffProof; verify the following source dialogue.");
+    }
+  }
+  const last = segments.at(-1);
+  if ((part === 1 || part === 2) && last && txt(last.audioMode) === "original_audio" && cues.length) {
+    const end = num(last.sourceEndSec), start = num(last.sourceStartSec);
+    const crossing = cues.find(c => c.startSec + 0.15 < end && end + 0.45 < c.endSec && c.endSec > start);
+    if (crossing) errors.push("Part " + part + " final original_audio ends inside an SRT cue (" + crossing.startSec + "-" + crossing.endSec + "s). Complete the spoken line or end on a verified VO cliffhanger.");
+  }
+  return {errors, warnings};
+}
+
+function validateManualGeminiEditorialContract({script = {}, normalizedScript = {}, promptOptions = {}, hookContract = null, transcriptSrt = ""} = {}) {
   const errors = [], warnings = [];
   const segments = Array.isArray(normalizedScript.segments) ? normalizedScript.segments : [];
   const scriptId = num(script.scriptId ?? script.script_id);
@@ -63,6 +140,11 @@ function validateManualGeminiEditorialContract({script = {}, normalizedScript = 
       }
     }
   }
+  if (serialized) {
+    const integrity = auditSerializedBeatBoundaries({script, normalizedScript, transcriptSrt});
+    errors.push(...integrity.errors);
+    warnings.push(...integrity.warnings);
+  }
   if (serialized && !sharedHook && hookContract?.isUserLocked && hookContract?.hasDuplicates) {
     warnings.push("Part-specific Hook contract repeats a candidate; check chapter replay.");
   }
@@ -94,4 +176,4 @@ function auditSerializedVariants(variants = [], options = {}) {
   }
   return warnings;
 }
-module.exports = {validateManualGeminiEditorialContract, auditSerializedVariants, getOpeningHook};
+module.exports = {validateManualGeminiEditorialContract, auditSerializedVariants, auditSerializedBeatBoundaries, getOpeningHook};
