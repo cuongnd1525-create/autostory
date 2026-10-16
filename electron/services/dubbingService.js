@@ -50,6 +50,7 @@ const {
 } = require("./manualGeminiViralPreflightService");
 const {validateManualGeminiEditorialContract, auditSerializedVariants} = require("./manualGeminiEditorialGateService");
 const {auditManualSourceGrounding} = require("./manualSourceGroundingAuditService");
+const {validateBlueprint,validateScriptAgainstBlueprint} = require("./serializedGeminiWorkflowService");
 const { compilePodcastEdlFile } = require("./podcastViralService");
 const {
   consolidateStoryRecutSegments,
@@ -4301,6 +4302,21 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       throw new Error("Mode DIY Story Remix chỉ nhận đúng một file diy-story-remix.json.");
     }
 
+    let sequentialSeriesBlueprint = null;
+    if (project.analysisWorkflow === "manual_gemini_draft_review" && project.manualGeminiPackPath) {
+      const packageInfo = await fs.readFile(path.join(project.manualGeminiPackPath,"package-info.json"),"utf8")
+        .then(JSON.parse).catch(()=>({}));
+      if (packageInfo.sequentialSeriesEnabled) {
+        if (jsonPaths.length !== 3) {
+          throw new Error("Series tuần tự cần đủ Script 1, 3 và 4. Hãy hoàn tất từng Part và chọn cả ba JSON trước khi import.");
+        }
+        sequentialSeriesBlueprint = await fs.readFile(
+          path.join(project.manualGeminiPackPath,"series-blueprint.json"),"utf8"
+        ).then(JSON.parse).catch(()=>{
+          throw new Error("Chưa có Blueprint đã khóa. Hãy chọn Nhập Series Blueprint trong GĐ1 trước khi import Script 1, 3, 4.");
+        });
+      }
+    }
     await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "highlight", percent: 15, message: "Dang doc video va Highlight Cut JSON" });
     const media = await ffmpeg.probeVideo(project.sourceVideoPath);
     let manualManifest = null;
@@ -4363,6 +4379,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         }
       })
       : null;
+    if (sequentialSeriesBlueprint) {
+      const check = validateBlueprint(sequentialSeriesBlueprint,{
+        manifest: manualManifest,profile:project.manualGeminiPromptOptions?.profile,
+        sharedHook: project.manualGeminiPromptOptions?.sharedHook === true
+      });
+      if (!check.passed) throw new Error("Blueprint đã khóa không khớp nguồn/profile: "+check.errors.join(" | "));
+    }
     const variants = [];
     const groundingAudits = [];
     const groundingSrt = project.analysisWorkflow === "manual_gemini_draft_review"
@@ -4371,6 +4394,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     for (const [variantIndex, jsonPath] of jsonPaths.entries()) {
       const raw = await fs.readFile(jsonPath, "utf8");
       const parsedArtifact = parseGeminiJsonObject(raw, path.basename(jsonPath));
+      if (sequentialSeriesBlueprint) {
+        const check = validateScriptAgainstBlueprint(parsedArtifact,sequentialSeriesBlueprint);
+        if (!check.passed) {
+          throw new Error("Script "+path.basename(jsonPath)+" không khớp Blueprint đã khóa: "+check.errors.join(" | "));
+        }
+      }
       if (String(parsedArtifact?.artifactType || "") === "gemini_draft_review") {
         throw new Error(
           `File ${path.basename(jsonPath)} là kết quả review V2, không phải variant V1. `
@@ -4649,6 +4678,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         percent: Math.min(70, 20 + Math.round(((variantIndex + 1) / Math.max(1, jsonPaths.length)) * 45)),
         message: `Da doc Highlight variant ${variantIndex + 1}/${jsonPaths.length}`
       });
+    }
+    if (sequentialSeriesBlueprint) {
+      const actualIds = variants.map(v=>Number(v.scriptId));
+      if (new Set(actualIds).size!==3 || actualIds.slice().sort((a,b)=>a-b).join(",")!=="1,3,4") {
+        throw new Error("Series tuần tự phải có đúng 3 Script 1, 3, 4, không trùng hoặc thiếu Part.");
+      }
     }
     const explicitSharedTitles = variants
       .map((variant) => safeText(variant.sharedTopBannerText))
