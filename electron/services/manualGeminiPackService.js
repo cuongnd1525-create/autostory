@@ -2105,7 +2105,8 @@ function buildPackageReadme({
   workflow = "manual_gemini_pro_two_pass",
   proxyChunksManifest = null,
   uploadBatchDirs = [],
-  prompt = ""
+  prompt = "",
+  sequentialSeriesEnabled = false
 }) {
   const isStoryRecut = workflow === "manual_gemini_story_recut";
   const isDraftReview = workflow === "manual_gemini_draft_review";
@@ -2144,7 +2145,7 @@ function buildPackageReadme({
       warningCount ? `- Có ${warningCount} cảnh báo kỹ thuật trong package-info.json.` : "- Gói được tạo không có cảnh báo kỹ thuật."
     ].join("\n");
   }
-  if (isDraftReview && isSerialized(prompt)) {
+  if (isDraftReview && sequentialSeriesEnabled) {
     return [
       "GEMINI SERIALIZED — BLUEPRINT + 3 PARTS (CÙNG CHAT)",
       uploadInstruction,
@@ -2731,7 +2732,8 @@ class ManualGeminiPackService {
       workflow,
       proxyChunksManifest,
       uploadBatchDirs: proxyChunkLayout.uploadBatchDirs,
-      prompt
+      prompt,
+      sequentialSeriesEnabled
     }), "utf8");
     await fs.writeFile(infoPath, JSON.stringify({
       schemaVersion: 1,

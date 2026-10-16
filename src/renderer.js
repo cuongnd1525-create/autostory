@@ -6492,10 +6492,19 @@ function invalidateManualGeminiPack(reason = "") {
 
 function renderHighlightPromptTemplate() {
   if (!el.highlightPromptTemplate) return;
-  el.highlightPromptTemplate.value = buildHighlightGeminiPromptTemplate();
+  const selectedProfile = readManualGeminiPromptOptions().profile;
+  el.highlightPromptTemplate.value = isManualGeminiProMode()
+    && ["serialized_genz","serialized_interleaved"].includes(selectedProfile)
+    ? "SERIES: Không gửi prompt mẫu này trực tiếp cho Gemini. Hãy bấm Chỉ tạo gói, upload proxy/batch cuối và làm theo prompt Series Blueprint trong 01-GUI-GEMINI. Sau đó nhập Blueprint và gửi từng prompt Script 1, 3, 4 trong 02-SERIES-SEQUENTIAL, cùng một chat."
+    : buildHighlightGeminiPromptTemplate();
 }
 
 async function copyHighlightPromptTemplate() {
+  if (isManualGeminiProMode()
+    && ["serialized_genz","serialized_interleaved"].includes(readManualGeminiPromptOptions().profile)) {
+    showToast("Series dùng prompt trong gói đã tạo (Blueprint rồi từng Part). Không copy prompt 3 JSON cũ.");
+    return;
+  }
   const prompt = buildHighlightGeminiPromptTemplate();
   await navigator.clipboard.writeText(prompt);
   showToast("Đã copy prompt mẫu cho Gemini.");
