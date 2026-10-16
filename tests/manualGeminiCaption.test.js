@@ -1,6 +1,6 @@
 "use strict";
 const test=require("node:test"), assert=require("node:assert/strict");
-const {buildManualNarratorEnglishCues,captionPhrases,toSrt}=require("../electron/services/manualGeminiCaptionService");
+const {buildManualNarratorEnglishCues,captionPhrases,toSrt,toTikTokAss}=require("../electron/services/manualGeminiCaptionService");
 test("narrator only: output concise English captions and no original-audio captions",()=>{
  const segments=[
   {audioMode:"original_audio",duration:5,voiceoverText:""},
@@ -15,4 +15,13 @@ test("narrator only: output concise English captions and no original-audio capti
 test("caption phrases preserve complete words and avoid duplicate text",()=>{
  const input="This is the actual first line of an English narrator.";
  assert.equal(captionPhrases(input).flatMap(v=>v.split(" ")).join(" "),input);
+});
+
+test("9:16 ASS captions use bottom-safe TikTok styling and bounded timestamps",()=>{
+  const output=toTikTokAss([{startSec:0.1,endSec:2.45,text:"She never saw that coming."}]);
+  assert.match(output,/PlayResX: 1080/);
+  assert.match(output,/PlayResY: 1920/);
+  assert.match(output,/Style: TikTok,Arial,57/);
+  assert.match(output,/Dialogue: 0,0:00:00.10,0:00:02.45,TikTok/);
+  assert.match(output,/She never saw that coming/);
 });
