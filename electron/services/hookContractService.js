@@ -185,12 +185,16 @@ function buildSeriesHookContractBlock(contract = {}) {
   const sameStart = (a, b) => a && b && Math.abs(Number(a.anchorRange?.startSec) - Number(b.anchorRange?.startSec)) < 0.5;
   const lines = [
     "================================================================================",
-    "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)",
+    contract.isUserLocked === true
+      ? "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)"
+      : "SERIES HOOK SUGGESTION (AUTO-RANKED, NOT USER-LOCKED)",
     "================================================================================",
     "Script 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.",
     "",
     describeAnchor(v1 || {}, "PART 1 (Script 1) cold-open hook anchor"),
-    "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
+    contract.isUserLocked === true
+      ? "   - Mandate: Script 1 Beat 1 MUST use the explicitly USER-LOCKED anchor (only source-valid trimming is allowed)."
+      : "   - Provisional candidate ONLY: Script 1 may replace this auto-ranked anchor if its first three seconds are visually obstructed, inaudible, unclear to a new viewer or unconnected to the actual Part payoff. Choose a stronger verified source moment and explain why in v1EditorialAudit; do NOT preserve a bad auto Hook just because its preliminary score was high.",
   ];
   if (v2 && !sameStart(v2, v1)) {
     lines.push("", describeAnchor(v2, "PART 2 (Script 3) opener anchor"), "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.");
@@ -201,9 +205,9 @@ function buildSeriesHookContractBlock(contract = {}) {
   lines.push(
     "",
     "SERIES RULES:",
-    "- PART 1 = The Confrontation, PART 2 = The Interrogation, PART 3 = The Verdict & Arrest, in source chronology.",
+    "- PART 1 = The Incident Begins, PART 2 = The Investigation Deepens, PART 3 = The Verified Outcome. These are editorial chapters, not factual claims about an arrest/verdict.",
     "- Each Part opens on its own strongest verified moment inside its own scope. Never reuse PART 1's hook footage as another Part's opener (a recap of at most 3s is allowed).",
-    "- Spoiler boundary: PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Only PART 3 delivers the payoff.",
+    "- Spoiler boundary: PART 1/2 must not spoil the actual source-verified final outcome. PART 3 delivers the verified resolution, whether medical, investigation, or legal. Never invent an arrest or verdict.",
     "- PART 1 and PART 2 end on verified unresolved cliffhangers that lead into the next Part.",
     "- When a locked series-plan.json is supplied, it is binding for scope, scene allocation and cliffhangers.",
     "================================================================================"
