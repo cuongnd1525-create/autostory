@@ -1,0 +1,36 @@
+name: Stage 1 Antigravity auth regression
+
+on:
+  pull_request:
+    paths:
+      - "electron/services/manualAntigravityStage1Service.js"
+      - "tests/antigravityAuthBudget.test.js"
+      - "tests/manualAntigravityStage1Service.test.js"
+      - "tests/phaseARecovery.test.js"
+      - "tests/sourceUnderstandingMapReduce.test.js"
+      - ".github/workflows/stage1-auth-regression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Syntax and Stage 1 tests
+        run: |
+          node --check electron/services/manualAntigravityStage1Service.js
+          node --check tests/antigravityAuthBudget.test.js
+          node tests/antigravityAuthBudget.test.js
+          node tests/manualAntigravityStage1Service.test.js
+          node tests/phaseARecovery.test.js
+          node tests/sourceUnderstandingMapReduce.test.js
+          node tests/seriesPlan.test.js
