@@ -673,6 +673,162 @@ class VertexAiService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Multi-turn session primitives (Vertex Series Stage 1). Same endpoint and
+  // budget ledger as generateJsonFromFiles, but the caller owns `contents`, so
+  // a conversation (Blueprint -> Script 1 -> 3 -> 4) can be replayed exactly
+  // like the Gemini chat, with the model's own content (incl. thought
+  // signatures) echoed back verbatim.
+  // ---------------------------------------------------------------------------
+
+  /** gs:// fileData part for a video (uploaded once, reused by object name). */
+  async buildVideoPart(filePath, signal) {
+    const token = await this.getAccessToken();
+    return this.uploadToGcs(filePath, token, signal);
+  }
+
+  /** Cheap availability check (countTokens): true when the model answers 200. */
+  async probeModel(model, signal) {
+    try {
+      const token = await this.getAccessToken();
+      this.validateSettings();
+      const url = vertexEndpoint(this.projectId, this.location, model).replace(/:generateContent$/, ":countTokens");
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "ping" }] }] }),
+        signal,
+        dispatcher: this.dispatcher
+      });
+      return { ok: response.ok, status: response.status };
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      return { ok: false, status: 0, error: error.message };
+    }
+  }
+
+  /** Context cache over caller-built parts. Returns { name } or { name: null, error }. */
+  async createCacheFromParts({ parts = [], model, ttlSeconds = 3600, systemText = "", signal } = {}) {
+    try {
+      const token = await this.getAccessToken();
+      this.validateSettings();
+      const region = this.location;
+      const host = region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+      const url = `https://${host}/v1/projects/${encodeURIComponent(this.projectId)}/locations/${encodeURIComponent(region)}/cachedContents`;
+      const body = {
+        model: `projects/${this.projectId}/locations/${region}/publishers/google/models/${model}`,
+        contents: [{ role: "user", parts }],
+        ttl: `${Math.max(60, Math.round(ttlSeconds))}s`,
+        ...(systemText ? { systemInstruction: { role: "system", parts: [{ text: systemText }] } } : {})
+      };
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal,
+        dispatcher: this.dispatcher
+      });
+      if (!response.ok) return { name: null, error: `HTTP ${response.status}: ${(await response.text()).slice(0, 400)}` };
+      const payload = await response.json();
+      return { name: payload?.name || null, usage: payload?.usageMetadata || null };
+    } catch (error) {
+      if (error?.name === "AbortError") throw error;
+      return { name: null, error: error.message };
+    }
+  }
+
+  async deleteCachedContent(name) {
+    if (!name) return false;
+    try {
+      const token = await this.getAccessToken();
+      const region = this.location;
+      const host = region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+      const response = await fetch(`https://${host}/v1/${name}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+        dispatcher: this.dispatcher
+      });
+      return response.ok;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  /**
+   * One generateContent call over caller-owned multi-turn `contents`.
+   * Returns { text, content, finishReason, blockReason, usage, modelMs }.
+   * HTTP errors throw with `httpStatus` (and `retryAfterMs` when sent).
+   */
+  async generateContent({
+    contents = [],
+    model,
+    cachedContent = null,
+    temperature = 0.2,
+    responseMimeType = "application/json",
+    safetySettings = null,
+    taskType = "stage1",
+    signal
+  } = {}) {
+    await this.assertBudgetAvailable();
+    const token = await this.getAccessToken();
+    this.validateSettings();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const abort = () => controller.abort(signal?.reason);
+    if (signal?.aborted) abort();
+    else signal?.addEventListener("abort", abort, { once: true });
+    const startedAt = Date.now();
+    try {
+      const response = await fetchWithRetry(vertexEndpoint(this.projectId, this.location, model), () => ({
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(cachedContent ? { cachedContent } : {}),
+          contents,
+          ...(Array.isArray(safetySettings) && safetySettings.length ? { safetySettings } : {}),
+          generationConfig: { temperature, ...(responseMimeType ? { responseMimeType } : {}) }
+        }),
+        signal: controller.signal,
+        dispatcher: this.dispatcher
+      }), {
+        label: `Vertex AI model ${model}`,
+        attempts: 3,
+        retryCodes: ["ENOTFOUND", "EAI_AGAIN", "UND_ERR_CONNECT_TIMEOUT", "ECONNREFUSED", "ENETUNREACH", "EHOSTUNREACH", "ECONNRESET", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"],
+        retryDelayMs: 1500
+      });
+      if (!response.ok) {
+        const body = await response.text();
+        const error = formatVertexApiError(response.status, body, this.projectId);
+        error.httpStatus = response.status;
+        const retryAfter = response.headers?.get?.("retry-after");
+        if (retryAfter && /^\d+(\.\d+)?$/.test(retryAfter)) error.retryAfterMs = Number(retryAfter) * 1000;
+        throw error;
+      }
+      const payload = await response.json();
+      const usage = estimateUsageCost(model, payload.usageMetadata || {});
+      this.lastUsage = usage;
+      await this.recordUsage(usage, taskType);
+      const candidate = payload.candidates?.[0] || null;
+      return {
+        text: extractResponseText(payload),
+        content: candidate?.content || null,
+        finishReason: candidate?.finishReason || "",
+        blockReason: payload.promptFeedback?.blockReason || "",
+        usage,
+        usageMetadata: payload.usageMetadata || {},
+        modelMs: Date.now() - startedAt
+      };
+    } catch (error) {
+      if (controller.signal.aborted && !signal?.aborted) {
+        throw new Error(`Vertex AI model ${model} vượt quá thời gian chờ ${Math.round(this.timeoutMs / 60000)} phút.`, { cause: error });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+    }
+  }
+
   async generateJson(prompt, temperature = 0.2, taskType = "text_utility") {
     return this.generateJsonFromFiles({ filePaths: [], prompt, temperature, taskType });
   }

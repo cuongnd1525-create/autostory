@@ -35,6 +35,9 @@ const {
   resolveEffectiveVideoEditProject,
   resolveSuggestedTopCaption,
   resolvePartLabelText,
+  resolveFramingSettings,
+  resolvePartTopBanner,
+  FOREGROUND_CROP_ASPECTS,
   resolveSourceSubtitleMask,
   resolveVariantFileMetadata,
   resolveVideoCanvasDimensions,
@@ -544,6 +547,37 @@ function getHighlightAudioMode(segment = {}, hasVoice = Boolean(getHighlightVoic
   if (getHighlightNarrationSourceVolume(project) > 0) return "voiceover_with_ambient";
   return "voiceover_only";
 }
+
+const clipSourceStart = (segment = {}) => Number(segment.sourceStartSec ?? segment.startSec ?? 0);
+const clipSourceEnd = (segment = {}) => Number(segment.sourceEndSec ?? segment.endSec ?? clipSourceStart(segment));
+const clipAudioMode = (segment = {}) => String(segment.audioMode || segment.audio_mode || "original_audio");
+
+/**
+ * Per-clip audio edge fades for the final concat: only at HARD joins (source
+ * jump or audio-mode change), so a VO -> original handoff or a jump cut does
+ * not slam from silence into a siren, while contiguous slices of one spoken
+ * line join without a dip. groups[i] = the timeline segments clip i covers.
+ */
+function buildClipEdgeFades(groups = [], { fadeInSec = 0.05, fadeOutSec = 0.08 } = {}) {
+  const hard = (a, b) => !a || !b || Math.abs(clipSourceEnd(a) - clipSourceStart(b)) > 0.15 || clipAudioMode(a) !== clipAudioMode(b);
+  return groups.map((group, index) => {
+    const first = group?.[0], last = group?.[group.length - 1];
+    const previous = groups[index - 1], next = groups[index + 1];
+    return {
+      in: hard(previous?.[previous.length - 1], first) ? fadeInSec : 0,
+      out: hard(last, next?.[0]) ? fadeOutSec : 0
+    };
+  });
+}
+
+function clipMembers(segment = {}) {
+  return Array.isArray(segment.renderMembers) && segment.renderMembers.length
+    ? segment.renderMembers.map((member) => member?.segment || member)
+    : [segment];
+}
+
+const useHighlightEdgeFades = (project = {}, settings = {}) => project.analysisWorkflow === "manual_gemini_draft_review"
+  && settings.highlightEdgeFades !== false && project.highlightEdgeFades !== false;
 
 function getHighlightAmbientVolume(segment = {}, project = {}) {
   if (getHighlightAudioMode(segment, Boolean(getHighlightVoiceText(segment)), project) !== "voiceover_with_ambient") return 0;
@@ -2040,6 +2074,11 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
       voiceoverText,
       sourceVolume,
       sourceAmbientVolume,
+      // Model attested the VO bed has no speech/burned-in dialogue (bed_check); only
+      // then may the manual workflow keep the ambient bed (~-16 dB) under the narrator.
+      cleanAmbientVerified: normalizedAudioMode === "voiceover_with_ambient"
+        && (segment.clean_ambient_verified === true || segment.cleanAmbientVerified === true)
+        && !(segment.bed_check?.has_dialogue === true || segment.bed_check?.has_burned_in_dialogue_captions === true),
       text: voiceoverText || previewSubtitleVi || caption || "",
       originalText: actionNotes,
       translatedText: caption,
@@ -2163,6 +2202,7 @@ function normalizeHighlightCutScript(rawScript, videoDuration = 0) {
     subtitleStyle: safeText(parsed.subtitle_style || parsed.subtitleStyle || ""),
     sharedTopBannerText: safeText(parsed.shared_top_banner_text || parsed.sharedTopBannerText || ""),
     topHeader: safeText(parsed.top_banner_text || parsed.top_header || parsed.topHeader || ""),
+    partTopBannerText: safeText(parsed.part_top_banner_text || parsed.partTopBannerText || "").slice(0, 120),
     onScreenElements: Array.isArray(parsed.on_screen_elements || parsed.onScreenElements)
       ? (parsed.on_screen_elements || parsed.onScreenElements)
       : [],
@@ -3566,11 +3606,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       ? project
       : { ...project, sourceSubtitleMask: resolvedMask };
     const canvasEnabled = Boolean(decoration.canvasEnabled);
-    const blurBackgroundEnabled = Boolean(decoration.blurBackgroundEnabled);
+    const framing = resolveFramingSettings(project, decoration);
+    const blurBackgroundEnabled = framing.blurBackgroundEnabled;
+    const foregroundCropAspect = FOREGROUND_CROP_ASPECTS[framing.foregroundCropAspect] || 0;
     const topCaptionEnabled = Boolean(decoration.topCaptionEnabled);
     const partLabelText = resolvePartLabelText(project, decoration);
     const partLabelEnabled = Boolean(decoration.partLabelEnabled && partLabelText);
-    const foregroundLayoutEnabled = Number(decoration.foregroundScalePercent ?? 100) !== 100
+    const foregroundLayoutEnabled = foregroundCropAspect > 0
+      || Number(decoration.foregroundScalePercent ?? 100) !== 100
       || Math.abs(Number(decoration.foregroundXPercent ?? 50) - 50) > 0.01
       || Math.abs(Number(decoration.foregroundYPercent ?? 50) - 50) > 0.01;
     const maskEnabled = Boolean(resolvedMask?.enabled);
@@ -3588,7 +3631,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const automaticTitle = decoration.topCaptionAutoFromScript === true
       ? resolveSuggestedTopCaption(project)
       : "";
-    const rawTitleSource = automaticTitle || decoration.topCaptionText || project.title || "";
+    const rawTitleSource = resolvePartTopBanner(project, decoration) || automaticTitle || decoration.topCaptionText || project.title || "";
     const titleStyle = decoration.topCaptionStyle || decoration.titleStyle || "default";
     const isTikTokHook = titleStyle === "tiktok_hook";
     const isUppercaseTitle = isTikTokHook
@@ -3667,6 +3710,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       foregroundScalePercent: decoration.foregroundScalePercent ?? 100,
       foregroundXPercent: decoration.foregroundXPercent ?? 50,
       foregroundYPercent: decoration.foregroundYPercent ?? 50,
+      foregroundCropAspect,
       width: canvas.width,
       height: canvas.height,
       preset: draft ? "ultrafast" : "fast",
@@ -4639,6 +4683,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         titleStyle: script.titleStyle,
         subtitleStyle: script.subtitleStyle,
         sharedTopBannerText: script.sharedTopBannerText,
+        partTopBannerText: script.partTopBannerText,
         topHeader: script.topHeader,
         onScreenElements: script.onScreenElements,
         sharedHookEnabled: script.sharedHookEnabled,
@@ -6591,6 +6636,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
     const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
+    const clipGroups = [];
     const draftVoiceReports = [];
     const draftVoiceProvider = this.getFastDraftVoiceProvider(project, settings);
     const draftVoiceExt = audioExtensionForProvider(draftVoiceProvider);
@@ -6630,6 +6676,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           members: renderSegments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics
         });
         clipPaths.push(block.clipPath);
+        clipGroups.push(renderSegments.slice(blockRun.start, blockRun.end + 1));
         blockVoiceReports.push(block.report);
         block.memberReports.forEach((report, offset) => { draftVoiceReports[blockRun.start + offset] = report; });
         index = blockRun.end;
@@ -6716,6 +6763,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
             draftVoiceReports[index] = { ...report, index, sceneId: segment.sceneId || segment.id, fittedVoicePath: autoClipCache.voice };
           }
           clipPaths.push(autoClipCache.clip);
+          clipGroups.push(clipMembers(segment));
           renderMetrics.segmentCacheHits += 1;
           renderMetrics.segmentCacheLog.push(`Beat ${index + 1} HIT`);
           continue;
@@ -6802,6 +6850,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       } else {
         clipPaths.push(normalizedClipPath);
       }
+      clipGroups.push(clipMembers(segment));
       if (autoClipCache) {
         await fs.copyFile(clipPaths.at(-1), autoClipCache.clip);
         if (voiceText) await fs.copyFile(fittedVoicePath, autoClipCache.voice);
@@ -6810,7 +6859,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }
 
     onProgress?.({ projectId, step: "draft", percent: 90, message: "Đang ghép bản nháp Highlight" });
-    await ffmpeg.concatSegmentsByFilter(clipPaths, undecoratedOutputPath);
+    await ffmpeg.concatSegmentsByFilter(clipPaths, undecoratedOutputPath, useHighlightEdgeFades(project, settings) && clipGroups.length === clipPaths.length
+      ? { edgeFades: buildClipEdgeFades(clipGroups) } : {});
     if (project.sourceSubtitleMask?.enabled) {
       const mask = project.sourceSubtitleMask;
       onProgress?.({
@@ -8342,6 +8392,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       message: `Đang ghép nối ${renderSegments.length} đoạn video...`
     });
     await ffmpeg.concatSegmentsByFilter(clipPaths, undecoratedOutputPath, {
+      ...(useHighlightEdgeFades(project, settings) && clipPaths.length === renderSegments.length
+        ? { edgeFades: buildClipEdgeFades(renderSegments.map((item) => clipMembers(item))) } : {}),
       totalDurationSec,
       onProgress: ({ currentSec }) => {
         const concatPct = 74 + Math.round((Math.min(currentSec, totalDurationSec) / Math.max(1, totalDurationSec)) * 13);
@@ -9634,3 +9686,4 @@ module.exports.getHighlightNarrationSourceVolume = getHighlightNarrationSourceVo
 module.exports.normalizeRollingSubtitleCues = normalizeRollingSubtitleCues;
 module.exports.buildDraftVoiceTranscriptEntries = buildDraftVoiceTranscriptEntries;
 
+module.exports.buildClipEdgeFades = buildClipEdgeFades;

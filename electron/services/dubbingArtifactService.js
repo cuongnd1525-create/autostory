@@ -72,6 +72,47 @@ function safeHexColor(value, fallback) {
   return /^#[0-9a-f]{6}$/i.test(normalized) ? normalized : fallback;
 }
 
+// 16:9 sources in a 9:16 canvas: a plain fit fills ~31% of the height (review
+// B-05 "tiny letterbox"). Cropping the foreground to 4:3 and filling the rest
+// with a blurred copy makes faces/captions ~35% larger while keeping most of
+// the bodycam field of view; 1:1 is tighter (~56% height).
+const FOREGROUND_CROP_ASPECTS = { source: 0, "4:3": 4 / 3, "5:4": 5 / 4, "1:1": 1 };
+
+function resolveFramingSettings(project = {}, decoration = project.videoDecoration || {}) {
+  const explicit = safeText(decoration.foregroundCropAspect || "");
+  if (explicit) {
+    return {
+      foregroundCropAspect: Object.prototype.hasOwnProperty.call(FOREGROUND_CROP_ASPECTS, explicit) ? explicit : "source",
+      blurBackgroundEnabled: Boolean(decoration.blurBackgroundEnabled),
+      preset: "explicit"
+    };
+  }
+  if (project.analysisWorkflow === "manual_gemini_draft_review") {
+    return { foregroundCropAspect: "4:3", blurBackgroundEnabled: true, preset: "manual_gemini_vertical_default" };
+  }
+  return { foregroundCropAspect: "source", blurBackgroundEnabled: Boolean(decoration.blurBackgroundEnabled), preset: "legacy" };
+}
+
+const normalizeBanner = (value) => safeText(value).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/**
+ * Per-Part top banner (review C-09: Part 3 reused Part 2's "stole a cop car"
+ * banner over a K9 manhunt). The rendered variant's part_top_banner_text wins
+ * while the caption is still the automatic/shared one; a caption the user
+ * typed themselves is never replaced.
+ */
+function resolvePartTopBanner(project = {}, decoration = project.videoDecoration || {}) {
+  const analysis = project.analysis || {};
+  const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
+  const active = variants.find((variant) => variant.id === analysis.activeVariantId) || null;
+  const banner = safeText(active?.partTopBannerText || active?.part_top_banner_text || "");
+  if (!banner) return "";
+  const caption = normalizeBanner(decoration.topCaptionText);
+  const shared = normalizeBanner(analysis.sharedTopBannerText || analysis.shared_top_banner_text || active?.sharedTopBannerText);
+  if (decoration.topCaptionAutoFromScript === true || !caption || (shared && caption === shared)) return banner.slice(0, 180);
+  return "";
+}
+
 function resolvePartLabelText(project = {}, decoration = project.videoDecoration || {}) {
   if (!decoration.partLabelEnabled) return "";
   if (decoration.partLabelAutoFromPart !== false) {
@@ -449,6 +490,9 @@ module.exports = {
   publishFinalVideo,
   resolveSuggestedTopCaption,
   resolvePartLabelText,
+  resolveFramingSettings,
+  resolvePartTopBanner,
+  FOREGROUND_CROP_ASPECTS,
   resolveSourceSubtitleMask,
   resolveEffectiveVideoEditProject,
   resolveVariantFileMetadata,

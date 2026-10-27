@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("cineviral", {
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
+  onOperationFinished: (callback) => {
+    ipcRenderer.removeAllListeners("app:operationFinished");
+    ipcRenderer.on("app:operationFinished", (_event, payload) => callback(payload));
+  },
   productionQueueList: () => ipcRenderer.invoke('production:list'),
   productionQueueAdd: (ids) => ipcRenderer.invoke('production:add', ids),
   productionQueueAddVideos: (templateId) => ipcRenderer.invoke('production:addVideos', templateId),
@@ -28,6 +32,9 @@ contextBridge.exposeInMainWorld("cineviral", {
   saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   checkSettings: (payload) => ipcRenderer.invoke("settings:check", payload),
   testVertex: (payload) => ipcRenderer.invoke("vertex:test", payload),
+  saveGeminiWebCookies: (payload) => ipcRenderer.invoke("geminiWeb:saveCookies", payload),
+  clearGeminiWebCookies: () => ipcRenderer.invoke("geminiWeb:clearCookies"),
+  testGeminiWeb: (payload) => ipcRenderer.invoke("geminiWeb:test", payload),
   getVertexBudgetStatus: (payload) => ipcRenderer.invoke("vertex:budgetStatus", payload),
   listOllamaModels: () => ipcRenderer.invoke("ollama:listModels"),
   getOllamaModelInfo: (modelName) => ipcRenderer.invoke("ollama:modelInfo", modelName),

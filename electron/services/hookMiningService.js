@@ -45,7 +45,11 @@ function parseSrtTimestamp(value = "") {
 }
 
 function parseSrtCues(text = "") {
-  const normalized = String(text || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  // Some YouTube SRT exports put a lone "\r" line between the timing line and the
+  // text ("-->...\r\n\r\r\n>> Help!"); without re-joining, that text was dropped.
+  const normalized = String(text || "")
+    .replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    .replace(/(-->[^\n]*)\n[ \t]*\n(?=[ \t]*\S)(?![ \t]*\d+[ \t]*\n[^\n]*-->)/g, "$1\n");
   const blocks = normalized.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean);
   const cues = [];
   blocks.forEach((block, index) => {

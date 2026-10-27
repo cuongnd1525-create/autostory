@@ -2,6 +2,7 @@
 const fs=require("fs/promises");
 const path=require("path");
 const {parseGeminiJsonObject}=require("./geminiJsonArtifactService");
+const EditorialRules=require("./seriesEditorialRules");
 const PART_IDS=[1,3,4];
 const str=v=>String(v==null?"":v).trim();
 const num=v=>(v==null||v===""||!Number.isFinite(Number(v)))?NaN:Number(v);
@@ -51,6 +52,7 @@ function blueprintPrompt(direct) {
     "For shared_hook_enabled=true, all 3 Part hook source ranges MUST match; otherwise Part hooks should be distinct.",
     "Include source_narrator_ranges with verified external YouTube narrator intervals, replacementText and confidence; use [] if genuinely none, never guess.",
     "Blueprint must be source-grounded and remain LOCKED during subsequent script turns. Each Script MUST include every mustInclude chapterBeat assigned to its own Part; do not replace proof with narration-only summary.",
+    EditorialRules.blueprintRules(),
     "VALIDATE the complete JSON.parse response. Do not send any Part segments in this turn."
   ];
   return [instruction.join("\n"),"SOURCE & CANDIDATES:\n"+source,editorial].join("\n\n");
@@ -69,10 +71,11 @@ function partPrompt(scriptId,profile="serialized_genz",sharedHook=false, min=75,
     "Copy Blueprint's seriesId to series_id, its shared_top_banner_text and shared_hook_enabled="+sharedHook+".",
     "Copy EXACTLY Blueprint's source_narrator_ranges into this Script. Keep it identical in all three JSON outputs.",
     "For the Hook, obey Blueprint Part "+n+"'s source range"+(sharedHook?" (identical across all Parts).":" (chapter-specific).")+" If hook-contract.json was explicitly locked, obey it.",
-    "MANDATORY ASYMMETRIC PACING: 3-8s punchy VO bridges (max 10s) -> complete original_audio proof. Routine recounts generally 5-8s; genuine question/denial/pushback exchanges may run 12-25s; physical action may run 15-30s+. SOFT targets only: a complete sentence, answer and immediate reaction override any timer, including strict_10. Never force alternation inside a sustainedBeatOverride or actionOverride.",
+    EditorialRules.partRules(),
+    "MANDATORY ASYMMETRIC PACING: 3-7s punchy VO bridges (max 7.5s, <= 18 words) -> complete original_audio proof. Routine recounts generally 5-8s; genuine question/denial/pushback exchanges may run 12-25s; physical action may run 15-30s+. SOFT targets only: a complete sentence, answer and immediate reaction override any timer, including strict_10. Never force alternation inside a sustainedBeatOverride or actionOverride.",
     "VOICEOVER PROMISE GATE: When narration says someone confesses, accuses, snitches or admits a lie, the immediately following selected clip MUST contain the exact response; otherwise phrase the setup as an unresolved question. For such assertions, add payoffProof with quote, sourceStartSec and sourceEndSec; avoid unsupported narration.",
-    "B-ROLL / CAPTIONS: Set original_audio caption=\"\" and voiceover_text=\"\"; do not use action_notes as subtitle text. Avoid burned-in dialogue captions as background for muted voiceover. Verify external narrator tails and black-frame transitions using source video; do not use blind fixed +0.6s padding.",
-    "ENDINGS: Parts 1/2 end after a complete spoken sentence or meaningful reaction, not mid-word or mid-sentence. Optionally finish with a verified 3-5s VO cliffhanger. Preserve true causal sequence, original audio and locked source ranges.",
+    "B-ROLL / CAPTIONS: Set original_audio caption=\"\" and voiceover_text=\"\"; do not use action_notes as subtitle text. Never use footage with dialogue or burned-in dialogue captions as a VO bed. Verify external narrator tails and black-frame transitions using source video; do not use blind fixed +0.6s padding.",
+    "ENDINGS: Parts 1/2 end after a complete spoken sentence or meaningful reaction, not mid-word or mid-sentence. Prefer ending on an original-audio spike; a VO cliffhanger is allowed only as one specific unresolved question (<= 3s, no generic filler). Preserve true causal sequence, original audio and locked source ranges.",
     "For every selected chapterBeat, use its locked beatId on the covering segment(s), and show its verified sourceProof in the actual clip. Cut dead air around it but NEVER omit the decisive quote, action or reaction. Non-Hook core beats belong ONLY to their assigned Part.",
     "For a dialogue-only Hook, set actionOverride=false and use sustainedBeatOverride=true for a multi-scene complete exchange. Use actionOverride=true only for verified physical action (or an actual physical-action portion of a mixed Hook).",
     "Require a nonempty segments array. Every segment: sceneId, sourceStartSec, sourceEndSec, playbackSpeed, storyFunction, audio_mode, voiceover_text (empty for original_audio), source_narrator_detected and a short transitionReason.",

@@ -1152,10 +1152,17 @@ class FfmpegService {
     const args = ["-y"];
     const filterParts = [];
     let concatInputs = "";
+    // Optional short fades at HARD audio cuts only (caller decides which joins are
+    // hard; contiguous slices of one spoken line must not dip). areverse lets the
+    // fade-out work without knowing each clip's exact duration.
+    const edgeFades = Array.isArray(options.edgeFades) ? options.edgeFades : [];
     segmentPaths.forEach((segmentPath, index) => {
       args.push("-i", segmentPath);
+      const edge = edgeFades[index] || {};
+      const fadeIn = Number(edge.in) > 0 ? `,afade=t=in:st=0:d=${Number(edge.in).toFixed(3)}` : "";
+      const fadeOut = Number(edge.out) > 0 ? `,areverse,afade=t=in:st=0:d=${Number(edge.out).toFixed(3)},areverse` : "";
       filterParts.push(`[${index}:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,format=yuv420p[v${index}]`);
-      filterParts.push(`[${index}:a]aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,asetpts=N/SR/TB[a${index}]`);
+      filterParts.push(`[${index}:a]aresample=48000:async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,asetpts=N/SR/TB${fadeIn}${fadeOut}[a${index}]`);
       concatInputs += `[v${index}][a${index}]`;
     });
     filterParts.push(`${concatInputs}concat=n=${segmentPaths.length}:v=1:a=1[v][a]`);
@@ -1279,6 +1286,7 @@ class FfmpegService {
     foregroundScalePercent = 100,
     foregroundXPercent = 50,
     foregroundYPercent = 50,
+    foregroundCropAspect = 0,
     width = 1080,
     height = 1920,
     preset = "fast",
@@ -1319,9 +1327,14 @@ class FfmpegService {
       ? `,drawbox=x=${horizontalInset}:y=${captionTop}:w=${captionWidth}:h=${captionHeight}:color=white@0.96:t=fill,drawtext=fontfile='${fontPath}':textfile='${escapedTitlePath}':reload=0:fontcolor=black:fontsize=${fontSize}:line_spacing=${lineSpacing}:boxw=${captionWidth}:boxh=${captionHeight}:text_align=center+middle:fix_bounds=1:x=${horizontalInset}:y=${captionTop}`
       : "";
     const canvasLabel = titleOverlayPath ? "[canvas]" : "[v]";
+    // Center crop of the foreground to a narrower aspect (only ever narrows).
+    const cropAspect = Number(foregroundCropAspect) || 0;
+    const foregroundCrop = cropAspect > 0.3
+      ? `crop=w=min(iw\\,ih*${cropAspect.toFixed(4)}):h=min(ih\\,iw/${cropAspect.toFixed(4)}),`
+      : "";
     const baseFilter = blurBackgroundEnabled
-      ? `[0:v]split=2[bgsrc][fgsrc];[bgsrc]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},boxblur=${safeBlur}:${Math.max(2, Math.round(safeBlur / 3))},eq=saturation=1.08[bg];[fgsrc]scale=${foregroundBoxWidth}:${foregroundBoxHeight}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=${overlayPosition}:shortest=1${titleFilter},format=rgba${canvasLabel}`
-      : `color=c=black:s=${targetWidth}x${targetHeight}:r=30[bg];[0:v]scale=${foregroundBoxWidth}:${foregroundBoxHeight}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=${overlayPosition}:shortest=1${titleFilter},format=rgba${canvasLabel}`;
+      ? `[0:v]split=2[bgsrc][fgsrc];[bgsrc]scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight},boxblur=${safeBlur}:${Math.max(2, Math.round(safeBlur / 3))},eq=saturation=1.08[bg];[fgsrc]${foregroundCrop}scale=${foregroundBoxWidth}:${foregroundBoxHeight}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=${overlayPosition}:shortest=1${titleFilter},format=rgba${canvasLabel}`
+      : `color=c=black:s=${targetWidth}x${targetHeight}:r=30[bg];[0:v]${foregroundCrop}scale=${foregroundBoxWidth}:${foregroundBoxHeight}:force_original_aspect_ratio=decrease[fg];[bg][fg]overlay=${overlayPosition}:shortest=1${titleFilter},format=rgba${canvasLabel}`;
     const backgroundFilter = titleOverlayPath
       ? `${baseFilter};[1:v]scale=${targetWidth}:${targetHeight},format=rgba[title];[canvas][title]overlay=0:0:shortest=1,format=yuv420p[v]`
       : baseFilter.replace("format=rgba[v]", "format=yuv420p[v]");

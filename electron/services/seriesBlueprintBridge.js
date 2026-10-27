@@ -140,6 +140,9 @@ function applyBlueprintToScript(script, blueprint) {
   out.series_mode = blueprint.series_mode;
   out.source_narrator_ranges = clone(blueprint.source_narrator_ranges || []);
   if (plan) out.part_number = plan.part_number;
+  // Per-Part banner (review C-09): the Script's own value wins, else the Blueprint plan's.
+  const partBanner = str(out.part_top_banner_text || out.partTopBannerText || plan?.part_top_banner_text || plan?.partTopBannerText);
+  if (partBanner) out.part_top_banner_text = partBanner;
   const allowed = new Set((plan?.chapterBeats || []).map((beat) => str(beat.beatId)));
   for (const segment of Array.isArray(out.segments) ? out.segments : []) {
     if (!segment || typeof segment !== "object") continue;

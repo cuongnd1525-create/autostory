@@ -610,6 +610,16 @@ function queryElements() {
     vertexDailyLimitUsd: $("vertex-daily-limit-usd"),
     vertexTimeoutMs: $("vertex-timeout-ms"),
     testVertex: $("test-vertex"),
+    geminiWebCookies: $("gemini-web-cookies"),
+    saveGeminiWebCookies: $("save-gemini-web-cookies"),
+    clearGeminiWebCookies: $("clear-gemini-web-cookies"),
+    geminiWebCookieStatus: $("gemini-web-cookie-status"),
+    geminiWebAuthUser: $("gemini-web-auth-user"),
+    geminiWebModel: $("gemini-web-model"),
+    geminiWebThinking: $("gemini-web-thinking"),
+    geminiWebBranching: $("gemini-web-branching"),
+    testGeminiWeb: $("test-gemini-web"),
+    geminiWebStatus: $("gemini-web-status"),
     vertexStatus: $("vertex-status"),
     antigravityCommand: $("antigravity-command"),
     antigravityArgs: $("antigravity-args"),
@@ -809,6 +819,7 @@ function queryElements() {
     partLabelY: $("part-label-y"),
     partLabelYValue: $("part-label-y-value"),
     foregroundScale: $("foreground-scale"),
+    foregroundCropAspect: $("foreground-crop-aspect"),
     foregroundScaleValue: $("foreground-scale-value"),
     foregroundX: $("foreground-x"),
     foregroundY: $("foreground-y"),
@@ -1268,6 +1279,7 @@ function getVariantScopedVideoEditSettings(settings) {
       foregroundScalePercent: decoration.foregroundScalePercent,
       foregroundXPercent: decoration.foregroundXPercent,
       foregroundYPercent: decoration.foregroundYPercent,
+      foregroundCropAspect: decoration.foregroundCropAspect,
       partLabelEnabled: decoration.partLabelEnabled,
       partLabelAutoFromPart: decoration.partLabelAutoFromPart,
       partLabelText: decoration.partLabelText,
@@ -1437,7 +1449,8 @@ function getCurrentProjectSettings() {
       partLabelYPercent: Number(el.partLabelY?.value || 8),
       foregroundScalePercent: Number(el.foregroundScale?.value || 100),
       foregroundXPercent: Number(el.foregroundX?.value || 50),
-      foregroundYPercent: Number(el.foregroundY?.value || 50)
+      foregroundYPercent: Number(el.foregroundY?.value || 50),
+      foregroundCropAspect: el.foregroundCropAspect?.value || "source"
     },
     sourceSubtitleMask: getCurrentSourceSubtitleMask(),
     transitionStyle: $("transition-style")?.value || "hard_cut",
@@ -1494,7 +1507,11 @@ function syncProjectSettingsControls(project = state.currentProject) {
   if (el.videoCanvasAspect) el.videoCanvasAspect.value = videoDecoration.canvasAspect || "9:16";
   if (el.videoCanvasWidth) el.videoCanvasWidth.value = String(videoDecoration.customWidth ?? 1080);
   if (el.videoCanvasHeight) el.videoCanvasHeight.value = String(videoDecoration.customHeight ?? 1920);
-  if (el.blurBackgroundEnabled) el.blurBackgroundEnabled.checked = Boolean(videoDecoration.blurBackgroundEnabled);
+  // Manual Gemini (bodycam 16:9 -> TikTok 9:16) defaults to a 4:3 crop over a
+  // blurred background until the user picks a framing (same rule as the renderer).
+  const framingDefault = !videoDecoration.foregroundCropAspect && project.analysisWorkflow === "manual_gemini_draft_review";
+  if (el.blurBackgroundEnabled) el.blurBackgroundEnabled.checked = framingDefault || Boolean(videoDecoration.blurBackgroundEnabled);
+  if (el.foregroundCropAspect) el.foregroundCropAspect.value = videoDecoration.foregroundCropAspect || (framingDefault ? "4:3" : "source");
   if (el.blurBackgroundStrength) el.blurBackgroundStrength.value = String(videoDecoration.blurStrength ?? 24);
   if (el.blurBackgroundStrengthValue) el.blurBackgroundStrengthValue.textContent = String(el.blurBackgroundStrength?.value || 24);
   if (el.topCaptionEnabled) el.topCaptionEnabled.checked = Boolean(videoDecoration.topCaptionEnabled);
@@ -1571,6 +1588,21 @@ function syncProjectSettingsControls(project = state.currentProject) {
   }
   updateVideoDecorationPreview();
   updateVideoEditStaleStatus(state.currentProject);
+}
+
+// Same rule as dubbingArtifactService.resolvePartTopBanner: the rendered Part's
+// own banner replaces the shared/automatic caption, never a user-typed one.
+function getPartTopBannerForPreview(project = state.currentProject, captionValue = "") {
+  const analysis = project?.analysis || {};
+  const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
+  const active = variants.find((variant) => variant.id === analysis.activeVariantId);
+  const banner = String(active?.partTopBannerText || "").trim();
+  if (!banner) return "";
+  const norm = (value) => String(value || "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const caption = norm(captionValue);
+  const shared = norm(analysis.sharedTopBannerText || active?.sharedTopBannerText);
+  const auto = project?.videoDecoration?.topCaptionAutoFromScript === true;
+  return auto || !caption || (shared && caption === shared) ? banner.slice(0, 180) : "";
 }
 
 function getSuggestedTopCaption(project = state.currentProject) {
@@ -1963,6 +1995,7 @@ function updateVideoDecorationPreview() {
     || el.topCaptionEnabled?.checked
     || el.partLabelEnabled?.checked
     || Number(el.foregroundScale?.value || 100) !== 100
+    || (el.foregroundCropAspect?.value || "source") !== "source"
     || Math.abs(Number(el.foregroundX?.value || 50) - 50) > 0.01
     || Math.abs(Number(el.foregroundY?.value || 50) - 50) > 0.01
   );
@@ -1980,7 +2013,8 @@ function updateVideoDecorationPreview() {
   const previewHeight = previewWidth / ratio;
   const blurEnabled = Boolean(el.blurBackgroundEnabled?.checked);
   const captionEnabled = Boolean(el.topCaptionEnabled?.checked);
-  const captionText = String(el.topCaptionText?.value || state.currentProject?.title || "").trim();
+  const captionText = getPartTopBannerForPreview(state.currentProject, el.topCaptionText?.value)
+    || String(el.topCaptionText?.value || state.currentProject?.title || "").trim();
   const foregroundScale = Math.max(0.5, Math.min(1.6, Number(el.foregroundScale?.value || 100) / 100));
   const foregroundX = Math.max(0, Math.min(100, Number(el.foregroundX?.value || 50)));
   const foregroundY = Math.max(0, Math.min(100, Number(el.foregroundY?.value || 50)));
@@ -2058,7 +2092,10 @@ function updateVideoDecorationPreview() {
     el.videoPartLabelOverlay.style.paddingRight = `${canvasPaddingX * scale}px`;
   }
   if (el.previewPlayer) {
-    const sourceRatio = sourceWidth / Math.max(1, sourceHeight);
+    const cropRatio = { "4:3": 4 / 3, "5:4": 5 / 4, "1:1": 1 }[el.foregroundCropAspect?.value || "source"] || 0;
+    const rawSourceRatio = sourceWidth / Math.max(1, sourceHeight);
+    const sourceRatio = cropRatio && decorationCanvasActive ? Math.min(rawSourceRatio, cropRatio) : rawSourceRatio;
+    el.previewPlayer.style.objectFit = sourceRatio < rawSourceRatio ? "cover" : "";
     const frameRatio = previewWidth / Math.max(1, previewHeight);
     const baseWidth = sourceRatio > frameRatio ? previewWidth : previewHeight * sourceRatio;
     const baseHeight = sourceRatio > frameRatio ? previewWidth / sourceRatio : previewHeight;
@@ -2230,7 +2267,7 @@ function renderScenePreviewMedia({ videoUrl, startSec = 0, thumbnailPath = "", c
     return `<img class="${escapeHtml(className)}" src="${escapeHtml(thumbUrl)}" alt="Ảnh cảnh" loading="lazy" />`;
   }
   if (videoUrl) {
-    return `<video class="${escapeHtml(className)}" muted playsinline preload="metadata" data-scene-preview data-start-sec="${Number(startSec || 0)}" src="${escapeHtml(videoUrl)}"></video>`;
+    return `<video class="${escapeHtml(className)}" muted playsinline preload="none" data-scene-preview data-start-sec="${Number(startSec || 0)}" data-src="${escapeHtml(videoUrl)}"></video>`;
   }
   return `<div class="scene-thumb-placeholder">${escapeHtml(placeholder)}</div>`;
 }
@@ -2245,6 +2282,9 @@ function getAiProviderLabel(value = el.aiProvider?.value) {
   }
   if (value === "antigravity_cli") {
     return "Antigravity CLI";
+  }
+  if (value === "gemini_web") {
+    return "Gemini Web";
   }
   if (value === "ollama_local") {
     return "Ollama Local";
@@ -2264,6 +2304,16 @@ function getConfiguredAiUiInfo(settings = null) {
       label: "Antigravity",
       model: (window.AntigravityModelCatalog?.displayName(effectiveSettings.antigravityModel) || effectiveSettings.antigravityModel) || "model mặc định CLI",
       supported: true
+    };
+  }
+  if (provider === "gemini_web") {
+    const saved = Boolean(effectiveSettings.geminiWebCookiesSaved ?? state.settings?.geminiWebCookiesSaved);
+    return {
+      provider,
+      label: "Gemini Web",
+      model: effectiveSettings.geminiWebModel || "Pro của tài khoản",
+      supported: saved,
+      reason: saved ? "" : "Chưa lưu cookie Gemini Web (tài khoản phụ) trong Cài đặt."
     };
   }
   if (provider === "gemini") {
@@ -6185,7 +6235,12 @@ async function createAndRunConfiguredStage1() {
     addLog(message);
   };
   setAutoStatus("1/5 · Đang tạo và kiểm tra gói phân tích...");
-  const result = await createManualGeminiAnalysisPack({sequentialManual:false});
+  // Vertex runs the Series as a multi-turn session (Blueprint -> Script 1/3/4,
+  // vertexSeriesStage1Service), so it needs the sequential Series package.
+  // Other automated providers keep the one-request multi-script package.
+  const vertexSeriesSession = aiInfo.provider === "gemini_web"
+    || (aiInfo.provider === "vertex_ai" && (state.settings?.vertexSeriesSession !== false));
+  const result = await createManualGeminiAnalysisPack({sequentialManual: vertexSeriesSession});
   if (!result || !isManualGeminiProMode()) return;
 
   if (result.hookAuditionResult?.topCandidates?.length) {
@@ -7242,6 +7297,13 @@ function setSettingsTab(tabName = "ai") {
   });
 }
 
+function syncGeminiWebCookieStatus(settings = state.settings || {}) {
+  if (!el.geminiWebCookieStatus) return;
+  el.geminiWebCookieStatus.textContent = settings.geminiWebCookiesSaved
+    ? `Đã lưu cookie (mã hóa) lúc ${settings.geminiWebCookiesSavedAt ? new Date(settings.geminiWebCookiesSavedAt).toLocaleString() : "?"}. Dán cookie mới để thay.`
+    : "Chưa có cookie. Mở gemini.google.com bằng tài khoản phụ, F12 > Network, chọn một request batchexecute, copy giá trị header Cookie.";
+}
+
 function syncAiProviderSettingsUi() {
   const provider = el.aiProvider?.value || "gemini";
   document.querySelectorAll("[data-ai-provider-settings]").forEach((section) => {
@@ -7252,6 +7314,7 @@ function syncAiProviderSettingsUi() {
     const descriptions = {
       gemini: "Gemini API được dùng cho review, viết lại và các tác vụ AI tự động.",
       vertex_ai: "Vertex AI dùng credit Google Cloud, tự chọn model theo tác vụ và áp hard limit chi phí.",
+      gemini_web: "Thử nghiệm: GĐ1 và review draft chạy trong chat gemini.google.com của tài khoản phụ (không tính phí theo token, tính vào quota gói).",
       antigravity_cli: "Antigravity CLI trên máy được dùng cho review, viết lại và phân tích cảnh.",
       ollama_local: "Ollama chạy hoàn toàn cục bộ; model Vision Assist được chọn bên dưới.",
       local: "Chế độ dự phòng chỉ dùng các phép kiểm tra cục bộ, không gọi model bên ngoài."
@@ -7286,6 +7349,11 @@ function fillSettings(settings) {
   el.vertexEconomyModel.value = settings.vertexEconomyModel || "gemini-2.5-flash-lite";
   el.vertexAnalysisModel.value = settings.vertexAnalysisModel || "gemini-2.5-flash";
   el.vertexQualityModel.value = settings.vertexQualityModel || "gemini-2.5-pro";
+  if (el.geminiWebAuthUser) el.geminiWebAuthUser.value = settings.geminiWebAuthUser || "";
+  if (el.geminiWebModel) el.geminiWebModel.value = settings.geminiWebModel || "";
+  if (el.geminiWebThinking) el.geminiWebThinking.value = settings.geminiWebThinking || "";
+  if (el.geminiWebBranching) el.geminiWebBranching.value = settings.geminiWebBranching === "branch" ? "branch" : "linear";
+  syncGeminiWebCookieStatus(settings);
   for (const name of ["Plan", "Edit", "Review", "Repair", "Final"]) {
     const node = $("vertex-auto-story-" + name.toLowerCase() + "-model");
     if (node) node.value = settings["vertexAutoStory" + name + "Model"] || "";
@@ -7454,6 +7522,10 @@ function readSettings() {
     vertexEconomyModel: el.vertexEconomyModel.value.trim() || "gemini-2.5-flash-lite",
     vertexAnalysisModel: el.vertexAnalysisModel.value.trim() || "gemini-2.5-flash",
     vertexQualityModel: el.vertexQualityModel.value.trim() || "gemini-2.5-pro",
+    geminiWebAuthUser: el.geminiWebAuthUser?.value.trim() || "",
+    geminiWebModel: el.geminiWebModel?.value.trim() || "",
+    geminiWebThinking: el.geminiWebThinking?.value || "",
+    geminiWebBranching: el.geminiWebBranching?.value === "branch" ? "branch" : "linear",
     ...Object.fromEntries(["Plan", "Edit", "Review", "Repair", "Final"].map(name => ["vertexAutoStory" + name + "Model", $("vertex-auto-story-" + name.toLowerCase() + "-model").value.trim()])),
     vertexAutoStoryMaxCalls: Math.max(1, Math.min(100, Number($("vertex-auto-story-max-calls").value) || 16)),
     vertexBudgetUsd: Number(el.vertexBudgetUsd.value || 0),
@@ -7825,6 +7897,7 @@ function initStudioSplitters() {
 
 function showStudio(project) {
   state.currentProject = project;
+  try { if (project?.id) localStorage.setItem("cineviral:lastStudioProjectId", project.id); } catch (_error) {}
   syncProjectSettingsControls(project);
   el.setupView.classList.add("hidden");
   el.studioView.classList.remove("hidden");
@@ -9394,22 +9467,12 @@ async function removeSegment(index) {
   renderStudio();
 }
 
+// Lazy, capped scene previews (src/scenePreviewManager.js): ~180 eager AV1
+// 1080p60 preview players made the renderer run out of memory (2026-10-21).
+const scenePreviewManager = window.ScenePreviewManager?.createScenePreviewManager({ maxLive: 8 }) || null;
+
 function hydrateSegmentScenePreviews() {
-  document.querySelectorAll("video[data-scene-preview]").forEach((video) => {
-    const start = Number(video.dataset.startSec || 0);
-    const seek = () => {
-      try {
-        if (Number.isFinite(start) && Math.abs((video.currentTime || 0) - start) > 0.25) {
-          video.currentTime = Math.max(0, start);
-        }
-      } catch (_error) {
-        // Some codecs delay seekability until more metadata is available.
-      }
-    };
-    video.addEventListener("loadedmetadata", seek, { once: true });
-    video.addEventListener("seeked", () => video.pause(), { once: true });
-    if (video.readyState >= 1) seek();
-  });
+  scenePreviewManager?.hydrate(document);
 }
 
 function getHighlightSegmentText(segment) {
@@ -9598,7 +9661,7 @@ function renderSegments(segments) {
         </div>
         <div class="segment-scene-preview ${expanded ? "" : "collapsed"}">
           <div class="scene-main-preview" data-scene-preview-click="${index}" data-start-sec="${scene.start}">
-            ${scenePreviewUrl ? `<video muted playsinline preload="metadata" data-scene-preview data-start-sec="${scene.start}" src="${escapeHtml(scenePreviewUrl)}"></video>` : `<div class="scene-thumb-placeholder">Chưa có video</div>`}
+            ${scenePreviewUrl ? `<video muted playsinline preload="none" data-scene-preview data-start-sec="${scene.start}" data-src="${escapeHtml(scenePreviewUrl)}"></video>` : `<div class="scene-thumb-placeholder">Chưa có video</div>`}
             <span>${escapeHtml(scene.sceneId)} - di chuột lên thumbnail để xem</span>
           </div>
           <div class="scene-meta">
@@ -9617,7 +9680,7 @@ function renderSegments(segments) {
               return `
                 <button type="button" class="scene-choice ${selected ? "selected" : ""}" data-select-scene="${index}" data-scene-key="${escapeHtml(key)}" data-start-sec="${candidate.startSec}" data-end-sec="${candidate.endSec}">
                   <span class="scene-choice-thumb">
-                    ${scenePreviewUrl ? `<video muted playsinline preload="metadata" data-scene-preview data-start-sec="${candidate.startSec}" src="${escapeHtml(scenePreviewUrl)}"></video>` : `<i>no video</i>`}
+                    ${scenePreviewUrl ? `<video muted playsinline preload="none" data-scene-preview data-start-sec="${candidate.startSec}" data-src="${escapeHtml(scenePreviewUrl)}"></video>` : `<i>no video</i>`}
                   </span>
                   <small>#${candidateIndex + 1} · ${fmt(candidate.duration, 0)}s</small>
                 </button>
@@ -9995,7 +10058,7 @@ function renderTimeline(segments, scenes) {
     <div class="timeline-track" style="width:${width}px">
       ${sceneClips.map((clip) => `
         <div class="clip video timeline-video-clip" ${clip.segmentIndex >= 0 ? `data-timeline-segment-index="${clip.segmentIndex}"` : ""} style="left:${clip.left}px;width:${clip.width}px">
-          ${scenePreviewUrl ? `<video muted playsinline preload="metadata" data-scene-preview data-start-sec="${clip.startSec}" src="${escapeHtml(scenePreviewUrl)}"></video>` : ""}
+          ${scenePreviewUrl ? `<video muted playsinline preload="none" data-scene-preview data-start-sec="${clip.startSec}" data-src="${escapeHtml(scenePreviewUrl)}"></video>` : ""}
           <span>${escapeHtml(clip.label)}</span>
         </div>
       `).join("")}
@@ -12135,7 +12198,7 @@ function bindEvents() {
     el.videoCanvasEnabled, el.videoCanvasAspect, el.videoCanvasWidth, el.videoCanvasHeight,
     el.blurBackgroundEnabled, el.topCaptionEnabled, el.topCaptionText, el.topCaptionStyle,
     el.cameraLabelEnabled, el.cameraLabelText
-    , el.foregroundScale, el.partLabelEnabled, el.partLabelAuto, el.partLabelText,
+    , el.foregroundScale, el.foregroundCropAspect, el.partLabelEnabled, el.partLabelAuto, el.partLabelText,
     el.partLabelStyle, el.partLabelAlignment, el.partLabelUppercase,
     el.partLabelTextColor, el.partLabelBackgroundColor
   ].filter(Boolean).forEach((input) => {
@@ -12732,6 +12795,43 @@ function bindEvents() {
     const filePath = await window.cineviral.pickJson();
     if (filePath) el.vertexCredentialPath.value = filePath;
   });
+  el.saveGeminiWebCookies?.addEventListener("click", async () => {
+    const cookies = el.geminiWebCookies?.value || "";
+    if (!cookies.trim()) { showToast("Dán header Cookie trước."); return; }
+    try {
+      const result = await window.cineviral.saveGeminiWebCookies({ cookies });
+      el.geminiWebCookies.value = "";
+      state.settings = { ...(state.settings || {}), geminiWebCookiesSaved: true, geminiWebCookiesSavedAt: result.savedAt };
+      syncGeminiWebCookieStatus(state.settings);
+      syncConfiguredAiWorkflowUi();
+      showToast("Đã lưu cookie Gemini Web (đã mã hóa).");
+    } catch (error) {
+      showToast(error.message);
+    }
+  });
+  el.clearGeminiWebCookies?.addEventListener("click", async () => {
+    await window.cineviral.clearGeminiWebCookies();
+    state.settings = { ...(state.settings || {}), geminiWebCookiesSaved: false, geminiWebCookiesSavedAt: "" };
+    syncGeminiWebCookieStatus(state.settings);
+    syncConfiguredAiWorkflowUi();
+  });
+  el.testGeminiWeb?.addEventListener("click", async () => {
+    el.testGeminiWeb.disabled = true;
+    el.testGeminiWeb.textContent = "Đang kiểm tra...";
+    if (el.geminiWebStatus) el.geminiWebStatus.textContent = "Đang khởi động bridge, đăng nhập và gửi 1 câu hỏi ngắn...";
+    try {
+      const result = await window.cineviral.testGeminiWeb(readSettings());
+      const served = result.downgraded ? `${result.servedModel} (bị hạ từ ${result.requestedModel}!)` : result.servedModel;
+      if (el.geminiWebStatus) el.geminiWebStatus.textContent = `${result.ok ? "Kết nối tốt" : "Có trả lời nhưng không đúng mẫu"} · trả lời bằng ${served} · ${(result.replyMs / 1000).toFixed(1)}s · model của tài khoản: ${result.models.join(", ")}`;
+      showToast(result.downgraded ? "Gemini Web đang trả lời bằng model thấp hơn (hết quota Pro)." : "Gemini Web đã sẵn sàng.");
+    } catch (error) {
+      if (el.geminiWebStatus) el.geminiWebStatus.textContent = `Lỗi: ${error.message}`;
+      showToast(error.message);
+    } finally {
+      el.testGeminiWeb.disabled = false;
+      el.testGeminiWeb.textContent = "Kiểm tra kết nối Gemini Web";
+    }
+  });
   el.testVertex?.addEventListener("click", async () => {
     el.testVertex.disabled = true;
     el.testVertex.textContent = "Đang kiểm tra...";
@@ -12826,6 +12926,54 @@ function bindEvents() {
   el.toggleStudioRawLog?.addEventListener("click", () => switchStudioLogTab(!state.studioRawLogVisible));
 }
 
+/**
+ * The renderer was killed (crash/OOM) and reloaded by the main process while a
+ * job kept running there. Reopen the project instead of showing step 1, keep
+ * the UI busy until that job finishes, then refresh the project.
+ */
+async function recoverAfterRendererReload(recovery) {
+  if (!recovery) return;
+  const operations = Array.isArray(recovery.activeOperations) ? recovery.activeOperations : [];
+  let lastProjectId = "";
+  try { lastProjectId = localStorage.getItem("cineviral:lastStudioProjectId") || ""; } catch (_error) {}
+  const projectId = operations.find((item) => item.projectId)?.projectId || lastProjectId;
+  const at = new Date(recovery.at).toLocaleTimeString();
+  addLog(
+    `Giao diện bị dừng đột ngột lúc ${at} (${recovery.reason}, exit ${recovery.exitCode}) và đã tự tải lại.`
+    + (operations.length ? ` Tác vụ vẫn chạy nền: ${operations.map((item) => item.channel).join(", ")}.` : ""),
+    "WARNING"
+  );
+  if (projectId) {
+    try {
+      const project = await window.cineviral.getProject(projectId);
+      if (project) {
+        showStudio(project);
+        addLog(`Đã mở lại dự án ${project.title || project.id}.`);
+      }
+    } catch (error) {
+      addLog(`Không mở lại được dự án ${projectId}: ${error.message}`, "WARNING");
+    }
+  }
+  if (operations.length) {
+    state.recoveryPendingOperations = operations.length;
+    state.activeOperation = `Đang chạy nền: ${operations[0].channel}`;
+    setBusy(true);
+    showToast("Giao diện đã tự tải lại; tác vụ render/AI vẫn chạy nền. Đợi hoàn tất, đừng tạo dự án mới.");
+  }
+  window.cineviral.onOperationFinished?.(async (event) => {
+    addLog(`Tác vụ nền ${event.channel} đã ${event.ok ? "hoàn tất" : `lỗi: ${event.error || ""}`}.`, event.ok ? "INFO" : "ERROR");
+    state.recoveryPendingOperations = Math.max(0, (state.recoveryPendingOperations || 1) - 1);
+    if (!state.recoveryPendingOperations) setBusy(false);
+    const id = event.projectId || state.currentProject?.id;
+    if (id) {
+      try {
+        const project = await window.cineviral.getProject(id);
+        if (project) showStudio(project);
+      } catch (_error) {}
+    }
+  });
+}
+
 async function bootstrap() {
   queryElements();
   renderSteps();
@@ -12856,6 +13004,7 @@ async function bootstrap() {
     addLog(`Phát hiện ${payload.recoverableRenderJobs.length} lần xuất bị gián đoạn. Mở dự án tương ứng và bấm Tiếp tục xuất.`, "WARNING");
   }
   autoCheckConfiguration();
+  await recoverAfterRendererReload(payload.rendererRecovery);
 
   window.cineviral.onProgress((payload) => {
     recapSetupUi?.handleProgress(payload);

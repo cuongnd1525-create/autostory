@@ -801,7 +801,7 @@ function buildReviewPrompt({
 - Part 1 must stop at a verified unresolved confrontation, suspicious lie, request to search or equivalent open question. Part 2 must stop at the strongest verified boiling-point pre-climax turn. Part 3 owns the verified resolution.
 - ANTI-HALLUCINATION VISUAL RULE: Do not describe fighting, resisting arrest or a violent struggle unless the rendered/source frames visibly show physical fighting, wrestling, restraint or handcuffs being applied. Keep verbal arguing, crying, blame and tantrums described as what is actually visible.
 - Review this Part as one chapter of the same story. Do not convert it into one of the legacy independent Script 1/3/4 profiles.
-- Preserve shared_top_banner_text exactly as the one common banner for the complete three-Part story. Do not create a different banner for this Part. Retain part_badge and on_screen_elements as editor metadata. Never claim an overlay was rendered unless it is visibly present in the draft.`
+- Preserve shared_top_banner_text exactly as the one common series banner. Put a Part-specific 4-9 word banner for THIS Part's own visual payoff in part_top_banner_text (it is what renders on this Part). Retain part_badge and on_screen_elements as editor metadata. Never claim an overlay was rendered unless it is visibly present in the draft.`
     : "";
   const serializedGenZReviewRules = isSerializedGenZ
     ? `SERIALIZED GEN-Z TONE REVIEW OVERRIDE - HIGHER PRIORITY THAN GENERIC NARRATOR STYLE:
