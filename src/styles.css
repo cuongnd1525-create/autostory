@@ -2323,6 +2323,7 @@ dd {
 }
 
 .revision-bar {
+  flex-wrap: wrap;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -2331,6 +2332,17 @@ dd {
   border: 1px solid #253040;
   border-radius: 8px;
   background: #0b111a;
+}
+
+.revision-compare-summary {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  border-top: 1px solid #253040;
+  padding-top: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 .revision-label {

@@ -87,6 +87,16 @@ Suspect: That's not my child!
   assert.ok(doorHybrid.scores.overall > 60, "Door hybrid should score highly");
   console.log("✓ Candidate regions mining and merging passed");
 
+  // Best-subwindow regression: the decisive quote at 30s must not be
+  // dropped just because the merged action range starts at 0s.
+  const longEvent = mineHookCandidateRegions({
+    durationSec: 55,
+    transcriptCues: [{startSec: 30, endSec: 33, text: "Officer: Why is there a child in the trunk?"}],
+    actionCandidates: [{sourceStartSec: 0, sourceEndSec: 40, motionScore: 5, audioEnergyScore: 5}],
+    maxCandidates: 10
+  });
+  assert.ok(longEvent.some(h => h.sourceStartSec > 15 && h.sourceEndSec >= 30),
+    "Late compelling quote should survive long event trimming");
   // 4. Test HookAuditionService
   const auditionService = new HookAuditionService();
   const auditionResult = await auditionService.audition({
@@ -174,6 +184,25 @@ Suspect: That's not my child!
   assert.ok(injectedMulti.includes("SCRIPT 4 (VARIANT 03) — Hook Anchor:"), "Must include Script 4 Anchor");
   console.log("✓ Multi-Variant Contract & Duplicate Divergence Protocol passed");
 
+  // Serialized profiles are ONE case in three chapters, not legacy alternatives.
+  const seriesPrompt = "DIRECT HIGHLIGHT CONTENT RULES:\n- Watch the complete video input.\n"
+    + "prompt_profile: serialized_genz\nseries_mode: interleaved_multipart\n"
+    + "- shared cold open: false";
+  const seriesInjected = injectHookContractToPrompt(seriesPrompt, {
+    ...multiContractWithDup, hookPolicy: "part_specific"
+  });
+  assert.ok(seriesInjected.includes("SERIES HOOK CONTRACT"));
+  assert.ok(seriesInjected.includes("HOOK POLICY: part_specific"));
+  assert.ok(!seriesInjected.includes("3-VARIANT NARRATIVE DIFFERENTIATION MATRIX"));
+  assert.ok(!seriesInjected.includes("bare rim grinding sparks"));
+  const shared = injectHookContractToPrompt(seriesPrompt, {
+    ...multiContractWithDup, hookPolicy: "shared_signature"
+  });
+  assert.ok(shared.includes("HOOK POLICY: shared_signature"));
+  // Unlocked, heuristic hook recommendations must never overwrite Gemini's
+  // source-driven editorial choice with mandatory source range instructions.
+  const advisory = buildHookContract({candidate: candidateA, isUserLocked: false});
+  assert.strictEqual(injectHookContractToPrompt(seriesPrompt, advisory), seriesPrompt);
   console.log("\nALL HOOK AUDITION & CONTRACT TESTS PASSED SUCCESSFULLY! 🎉");
 }
 

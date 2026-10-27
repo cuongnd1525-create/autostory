@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("cineviral", {
   bootstrap: () => ipcRenderer.invoke("app:bootstrap"),
+  onOperationFinished: (callback) => {
+    ipcRenderer.removeAllListeners("app:operationFinished");
+    ipcRenderer.on("app:operationFinished", (_event, payload) => callback(payload));
+  },
   productionQueueList: () => ipcRenderer.invoke('production:list'),
   productionQueueAdd: (ids) => ipcRenderer.invoke('production:add', ids),
   productionQueueAddVideos: (templateId) => ipcRenderer.invoke('production:addVideos', templateId),
@@ -28,6 +32,9 @@ contextBridge.exposeInMainWorld("cineviral", {
   saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   checkSettings: (payload) => ipcRenderer.invoke("settings:check", payload),
   testVertex: (payload) => ipcRenderer.invoke("vertex:test", payload),
+  saveGeminiWebCookies: (payload) => ipcRenderer.invoke("geminiWeb:saveCookies", payload),
+  clearGeminiWebCookies: () => ipcRenderer.invoke("geminiWeb:clearCookies"),
+  testGeminiWeb: (payload) => ipcRenderer.invoke("geminiWeb:test", payload),
   getVertexBudgetStatus: (payload) => ipcRenderer.invoke("vertex:budgetStatus", payload),
   listOllamaModels: () => ipcRenderer.invoke("ollama:listModels"),
   getOllamaModelInfo: (modelName) => ipcRenderer.invoke("ollama:modelInfo", modelName),
@@ -40,6 +47,7 @@ contextBridge.exposeInMainWorld("cineviral", {
   importManualGeminiEvidence: (payload) => ipcRenderer.invoke("analysis:importManualGeminiEvidence", payload),
   importPodcastCandidates: (payload) => ipcRenderer.invoke("analysis:importPodcastCandidates", payload),
   importManualGeminiBlueprint: (payload) => ipcRenderer.invoke("analysis:importManualGeminiBlueprint", payload),
+  importSerializedBlueprint: (payload) => ipcRenderer.invoke("analysis:importSerializedBlueprint", payload),
   inspectGeminiJsonFiles: (filePaths) => ipcRenderer.invoke("analysis:inspectGeminiJsonFiles", filePaths),
   getHookCandidates: (packageDir) => ipcRenderer.invoke("analysis:getHookCandidates", packageDir),
   lockHookContract: (payload) => ipcRenderer.invoke("analysis:lockHookContract", payload),
@@ -59,7 +67,7 @@ contextBridge.exposeInMainWorld("cineviral", {
   rewriteScriptProject: (projectId) => ipcRenderer.invoke("project:rewriteScript", projectId),
   importStorytimeProject: (projectId) => ipcRenderer.invoke("project:importStorytime", projectId),
   importHighlightCutProject: (projectId) => ipcRenderer.invoke("project:importHighlightCut", projectId),
-  importReviewedScriptProject: (projectId, jsonPath) => ipcRenderer.invoke("project:importReviewedScript", projectId, jsonPath),
+  importReviewedScriptProject: (projectId, jsonPath, options = {}) => ipcRenderer.invoke("project:importReviewedScript", projectId, jsonPath, options),
   createGeminiDraftReviewPackage: (projectId) => ipcRenderer.invoke("project:createGeminiDraftReviewPackage", projectId),
   runConfiguredAiDraftReview: (projectId, packageDir) => ipcRenderer.invoke("project:runConfiguredAiDraftReview", projectId, packageDir),
   getDraftReviewReport: (projectId, variantId) => ipcRenderer.invoke("project:getDraftReviewReport", projectId, variantId),

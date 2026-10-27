@@ -4,6 +4,8 @@ const path = require("path");
 const GeminiService = require("./geminiService");
 const VertexAiService = require("./vertexAiService");
 const ManualAntigravityStage1Service = require("./manualAntigravityStage1Service");
+const VertexSeriesStage1Service = require("./vertexSeriesStage1Service");
+const GeminiWebTransport = require("./geminiWebTransport");
 const { inspectGeminiJsonFiles } = require("./geminiJsonArtifactService");
 const { mergeVariantTiming } = require("./pipelineTimingService");
 
@@ -36,6 +38,10 @@ function providerDescriptor(settings = {}) {
       || settings.antigravityModel
       || "mặc định CLI";
     return { provider, label: "Antigravity", model };
+  }
+  if (provider === "gemini_web") {
+    if (!settings.geminiWebCookiesEnc) throw new Error("Gemini Web (thử nghiệm) chưa có cookie. Vào Cài đặt > AI > Gemini Web để lưu cookie tài khoản phụ.");
+    return { provider, label: "Gemini Web", model: settings.geminiWebModel || "Pro của tài khoản" };
   }
   if (provider === "ollama_local") {
     throw new Error("Ollama Local chưa được dùng cho phân tích package video đa phương thức. Hãy chọn Gemini hoặc Antigravity trong Cài đặt.");
@@ -202,9 +208,10 @@ function buildDraftTransportPrompt(promptText, packageDir, options = {}) {
 }
 
 class ConfiguredAiWorkflowService {
-  constructor(settings = {}, projectStore = null) {
+  constructor(settings = {}, projectStore = null, dependencies = {}) {
     this.settings = settings;
     this.projectStore = projectStore;
+    this.geminiWebBridge = dependencies.geminiWebBridge || null;
     this.activeDelegate = null;
     this.abortController = null;
   }
@@ -251,6 +258,24 @@ class ConfiguredAiWorkflowService {
     } finally {
       this.abortController = null;
     }
+  }
+
+  /** One fresh Gemini Web conversation: the files as attachments + the prompt. */
+  async runGeminiWeb({ files, prompt, onProgress, step }) {
+    if (!this.geminiWebBridge) throw new Error("Gemini Web bridge chưa được khởi tạo.");
+    const transport = new GeminiWebTransport(this.settings, { bridge: this.geminiWebBridge });
+    const { model } = await transport.resolveSeriesModel();
+    const parts = [{ text: "UPLOADED FILES OF THIS CHAT. Inspect every file; they are the source of truth." }];
+    for (const file of files) {
+      parts.push({ text: `FILE ${path.basename(file)}:` });
+      parts.push(/\.(mp4|mov|webm|mkv)$/i.test(file) ? await transport.buildVideoPart(file) : await transport.buildTextPart(file));
+    }
+    await transport.createCacheFromParts({ parts });
+    onProgress?.({ step, percent: 20, message: `[GEMINI_WEB] Đang gửi ${files.length} file + prompt cho ${model}...` });
+    const startedAt = Date.now();
+    const result = await transport.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }], model });
+    onProgress?.({ step, percent: 90, message: `[GEMINI_WEB] Đã nhận trả lời từ ${result.servedModel || model} sau ${((Date.now() - startedAt) / 1000).toFixed(1)}s.` });
+    return result.text;
   }
 
   async runAntigravity({ folder, prompt, onProgress, options = {} }) {
@@ -305,6 +330,43 @@ class ConfiguredAiWorkflowService {
     if (info.workflow !== "manual_gemini_draft_review") {
       throw new Error("Phân tích tự động GĐ1 hiện chỉ dùng cho chế độ Viết kịch bản rồi review video thật.");
     }
+    const sessionProvider = descriptor.provider === "vertex_ai" || descriptor.provider === "gemini_web";
+    const routingPrompt = sessionProvider
+      ? await fs.readFile(path.resolve(info.promptPath || path.join(root, "01-GUI-GEMINI", "01-gemini-highlight-scripts-prompt.txt")), "utf8").catch(() => "")
+      : "";
+    if (descriptor.provider === "gemini_web" && VertexSeriesStage1Service.isApplicable(info, { ...this.settings, vertexSeriesSession: true }, routingPrompt)) {
+      // Same Series chat session (Blueprint -> editor turns -> Script 1/3/4 + QA)
+      // over ONE real Gemini Web conversation instead of Vertex.
+      if (!this.geminiWebBridge) throw new Error("Gemini Web bridge chưa được khởi tạo.");
+      const transport = new GeminiWebTransport(this.settings, { bridge: this.geminiWebBridge });
+      const delegate = new VertexSeriesStage1Service({
+        ...this.settings,
+        vertexSeriesModel: "",
+        vertexSeriesContextCache: true,
+        vertexSeriesPartMode: transport.mode === "branch" ? (this.settings.geminiWebPartMode || "parallel") : "sequential",
+        vertexSeriesHttpRetries: 1,
+        vertexSeriesRetryBaseMs: 20000
+      }, { vertex: transport, tag: "GEMINI_WEB" });
+      this.activeDelegate = delegate;
+      try {
+        const result = await delegate.run({ packageDir: root, onProgress });
+        return { ...descriptor, ...result, model: result.model };
+      } finally {
+        this.activeDelegate = null;
+      }
+    }
+    if (descriptor.provider === "vertex_ai" && VertexSeriesStage1Service.isApplicable(info, this.settings, routingPrompt)) {
+      // Sequential Series: replay the Gemini chat (Blueprint -> Script 1/3/4) as a
+      // cached multi-turn Vertex session instead of one all-in-one request.
+      const delegate = new VertexSeriesStage1Service(this.settings);
+      this.activeDelegate = delegate;
+      try {
+        const result = await delegate.run({ packageDir: root, onProgress });
+        return { ...descriptor, ...result };
+      } finally {
+        this.activeDelegate = null;
+      }
+    }
     const collected = await collectStage1InputFiles(root, info);
     const inputDir = collected.inputDir;
     const promptPath = path.resolve(info.promptPath || path.join(inputDir, "01-gemini-highlight-scripts-prompt.txt"));
@@ -318,6 +380,9 @@ class ConfiguredAiWorkflowService {
     const resultDir = path.join(root, STAGE1_RESULT_DIR);
     await fs.mkdir(resultDir, { recursive: true });
     onProgress?.({ step: "configured_ai_stage1", percent: 5, message: `Đang chuẩn bị GĐ1 cho ${descriptor.label}` });
+    if (descriptor.provider === "vertex_ai") {
+      onProgress?.({ step: "configured_ai_stage1", percent: 5, message: "[VERTEX] Luồng 1 request (gói không phải Series nối tiếp hoặc vertexSeriesSession=false)." });
+    }
     const vertexRun = descriptor.provider === "vertex_ai"
       ? await this.runVertex({
           files,
@@ -326,11 +391,16 @@ class ConfiguredAiWorkflowService {
           onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_stage1" })
         })
       : null;
-    const response = vertexRun?.response || await this.runGemini({
+    const response = vertexRun?.response || (descriptor.provider === "gemini_web" ? await this.runGeminiWeb({
+        files,
+        prompt: buildStage1TransportPrompt(promptText),
+        onProgress,
+        step: "configured_ai_stage1"
+      }) : await this.runGemini({
         files,
         prompt: buildStage1TransportPrompt(promptText),
         onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_stage1" })
-      });
+      }));
     const envelope = ManualAntigravityStage1Service.findArtifactEnvelope(response);
     if (!envelope?.artifacts?.length) throw new Error(`${descriptor.label} không trả về artifacts JSON hợp lệ.`);
     const normalized = envelope.artifacts.map(ManualAntigravityStage1Service.normalizeArtifact);
@@ -427,7 +497,9 @@ class ConfiguredAiWorkflowService {
             onProgress: (progress) => onProgress?.({ ...progress, step: "configured_ai_draft_review" })
           })
         : null;
-      const raw = descriptor.provider === "gemini"
+      const raw = descriptor.provider === "gemini_web"
+        ? await this.runGeminiWeb({ files, prompt: transportPrompt, onProgress, step: "configured_ai_draft_review" })
+        : descriptor.provider === "gemini"
         ? await this.runGemini({
             files,
             prompt: transportPrompt,

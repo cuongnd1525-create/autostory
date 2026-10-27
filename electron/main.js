@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell, safeStorage } = require("electron");
 const path = require("path");
 const fs = require("fs/promises");
 const { spawn } = require("child_process");
@@ -10,6 +10,8 @@ const DubbingService = require("./services/dubbingService");
 const ManualGeminiPackService = require("./services/manualGeminiPackService");
 const ManualAntigravityStage1Service = require("./services/manualAntigravityStage1Service");
 const ConfiguredAiWorkflowService = require("./services/configuredAiWorkflowService");
+const GeminiWebBridgeProcess = require("./services/geminiWebBridgeProcess");
+const GeminiWebTransport = require("./services/geminiWebTransport");
 const VertexAiService = require("./services/vertexAiService");
 const AutoStoryPipelineService = require("./services/autoStoryFastService");
 const PodcastViralService = require("./services/podcastViralService");
@@ -45,6 +47,7 @@ let renderJobService;
 let geminiDraftReviewService;
 let manualAntigravityStage1Service;
 let configuredAiWorkflowService;
+let geminiWebBridge = null;
 let recapPipelineService;
 let recapHardwareService;
 let storytimePipeline;
@@ -55,6 +58,30 @@ let recoveredRenderJobs = [];
 let renderRecoveryScanned = false;
 let productionQueue;
 let foregroundOperations = 0;
+// Renderer-crash recovery: the main-process work (render, AI, TTS) keeps running
+// when the renderer dies and is reloaded, but the fresh page used to start at
+// step 1 with no idea a job was still running (live 2026-10-21: draft render of
+// project 1021-01-1701c22a kept writing files while the UI was back at step 1,
+// and a second project was created on top of it).
+let operationCounter = 0;
+const activeOperations = new Map();
+let lastRendererCrash = null;
+let rendererGeneration = 0;
+function operationProjectId(args = []) {
+  const first = args[0];
+  if (typeof first === "string" && /^[\w.-]{6,}$/.test(first)) return first;
+  if (first && typeof first === "object" && typeof first.projectId === "string") return first.projectId;
+  return null;
+}
+function notifyOperationFinished(operation, outcome) {
+  if (operation.rendererGeneration === rendererGeneration) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  try {
+    mainWindow.webContents.send("app:operationFinished", {
+      channel: operation.channel, projectId: operation.projectId, startedAt: operation.startedAt, ...outcome
+    });
+  } catch (_error) { /* window gone */ }
+}
 function handleIpc(channel, listener) {
   ipcMain.handle(channel, async (event, ...args) => {
     const readOnly = new Set(['project:list', 'project:get', 'project:openFolder', 'project:openOutput', 'project:audioPlan', 'project:getViralRepairContext', 'recap:getReviewState', 'recap:detectHardware', 'storytime:getMatrixOptions']);
@@ -63,8 +90,22 @@ function handleIpc(channel, listener) {
       || ['voice:test', 'voice:calibrate', 'video:mirrorFlip', 'source:downloadUrl', 'translation:prepareHyMt2'].includes(channel);
     if (mutating && productionQueue?.isRunning()) throw new Error('Hàng đợi đang xử lý. Tạm dừng nhận việc mới và đợi các video đang chạy hoàn tất trước khi chỉnh sửa hoặc chạy thủ công.');
     if (mutating) foregroundOperations++;
-    try { return await listener(event, ...args); }
-    finally { if (mutating) foregroundOperations--; }
+    const operation = mutating ? {
+      id: ++operationCounter, channel, projectId: operationProjectId(args),
+      startedAt: new Date().toISOString(), rendererGeneration
+    } : null;
+    if (operation) activeOperations.set(operation.id, operation);
+    try {
+      const result = await listener(event, ...args);
+      if (operation) notifyOperationFinished(operation, { ok: true });
+      return result;
+    } catch (error) {
+      if (operation) notifyOperationFinished(operation, { ok: false, error: String(error?.message || error).slice(0, 500) });
+      throw error;
+    } finally {
+      if (mutating) foregroundOperations--;
+      if (operation) activeOperations.delete(operation.id);
+    }
   });
 }
 
@@ -178,6 +219,36 @@ function runCheckCommand(command, args = [], timeoutMs = 8000) {
   });
 }
 
+// Gemini Web (experimental provider): the Google cookie is a full account
+// credential, so it is kept encrypted with the OS keychain (DPAPI on Windows)
+// and never sent back to the renderer.
+function encryptSecret(text) {
+  if (!safeStorage.isEncryptionAvailable()) throw new Error("Hệ điều hành không cho mã hóa bí mật (safeStorage); không lưu cookie.");
+  return safeStorage.encryptString(String(text)).toString("base64");
+}
+
+function decryptGeminiWebCookies(settings = {}) {
+  if (!settings.geminiWebCookiesEnc) throw Object.assign(new Error("Chưa lưu cookie Gemini Web trong Cài đặt."), { code: "cookie_missing" });
+  return safeStorage.decryptString(Buffer.from(settings.geminiWebCookiesEnc, "base64"));
+}
+
+function getGeminiWebBridge() {
+  if (!geminiWebBridge) {
+    geminiWebBridge = new GeminiWebBridgeProcess({
+      getSettings: () => configStore.getSettings(),
+      decryptCookies: decryptGeminiWebCookies,
+      logDir: path.join(app.getPath("userData"), "logs"),
+      workDir: path.join(app.getPath("userData"), "gemini-web-bridge")
+    });
+  }
+  return geminiWebBridge;
+}
+
+function publicSettings(settings = {}) {
+  const { geminiWebCookiesEnc, ...rest } = settings;
+  return { ...rest, geminiWebCookiesSaved: Boolean(geminiWebCookiesEnc) };
+}
+
 async function checkConfiguration(settings) {
   const checks = [];
   const add = (key, label, status, message, hint = "") => checks.push({ key, label, status, message, hint });
@@ -251,6 +322,12 @@ async function checkConfiguration(settings) {
     } catch (error) {
       add("ollama", "Ollama Local", "error", "Không chạy được Ollama Local.", error.message);
     }
+  } else if (aiProvider === "gemini_web") {
+    const binary = GeminiWebBridgeProcess.defaultBinaryPath();
+    const hasBinary = await fs.access(String(settings.geminiWebBridgePath || binary)).then(() => true, () => false);
+    add("geminiWeb", "Gemini Web (thử nghiệm)", hasBinary && settings.geminiWebCookiesEnc ? "warning" : "error",
+      !hasBinary ? "Thiếu tools/gemini-web-bridge/bin/gemini-web-bridge.exe." : settings.geminiWebCookiesEnc ? "Đã có cookie; bấm Kiểm tra kết nối Gemini Web để xác nhận." : "Chưa lưu cookie tài khoản phụ.",
+      "Provider không chính thức: dùng tài khoản Google phụ, có thể bị Google giới hạn hoặc khóa.");
   } else if (aiProvider === "vertex_ai") {
     let resolvedProjectId = String(settings.vertexProjectId || "").trim();
     let projectReady = Boolean(resolvedProjectId);
@@ -434,11 +511,26 @@ function createWindow() {
   mainWindow.webContents.on("did-finish-load", () => {
     mainWindowRendererReady = true;
   });
+  // Only the app page itself may be shown; a stray navigation (e.g. a file
+  // dropped outside a drop zone) would replace the UI and lose its state.
+  mainWindow.webContents.on("will-navigate", (navigationEvent, url) => {
+    if (url !== mainWindow.webContents.getURL()) navigationEvent.preventDefault();
+  });
   mainWindow.webContents.on("render-process-gone", (_event, details = {}) => {
     mainWindowRendererReady = false;
     const reason = String(details.reason || "unknown");
     const exitCode = Number(details.exitCode || 0);
     console.error(`Renderer process stopped during operation: ${reason} (exit ${exitCode}).`);
+    rendererGeneration += 1;
+    lastRendererCrash = {
+      reason, exitCode, at: new Date().toISOString(),
+      activeOperations: [...activeOperations.values()].map(({ channel, projectId, startedAt }) => ({ channel, projectId, startedAt }))
+    };
+    try {
+      const logDir = path.join(app.getPath("userData"), "logs");
+      require("fs").mkdirSync(logDir, { recursive: true });
+      require("fs").appendFileSync(path.join(logDir, "renderer-crashes.log"), `${JSON.stringify(lastRendererCrash)}\n`, "utf8");
+    } catch (_logError) { /* best effort */ }
     const now = Date.now();
     rendererRecoveryAttempts = rendererRecoveryAttempts.filter((stamp) => now - stamp < 60000);
     if (!mainWindow || mainWindow.isDestroyed() || rendererRecoveryAttempts.length >= 2) {
@@ -454,7 +546,28 @@ function createWindow() {
       }
     }, 800);
   });
+  // While a job runs, sample the renderer's memory every 15 s into
+  // logs/renderer-memory.log (verifies the scene-preview OOM fix in production).
+  const memorySampler = setInterval(() => {
+    if (!activeOperations.size || !mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      const pid = mainWindow.webContents.getOSProcessId();
+      const metric = app.getAppMetrics().find((item) => item.pid === pid);
+      if (!metric) return;
+      const line = JSON.stringify({
+        at: new Date().toISOString(),
+        workingSetMb: Math.round((metric.memory?.workingSetSize || 0) / 1024),
+        peakWorkingSetMb: Math.round((metric.memory?.peakWorkingSetSize || 0) / 1024),
+        operations: [...activeOperations.values()].map((item) => item.channel)
+      });
+      const logDir = path.join(app.getPath("userData"), "logs");
+      require("fs").mkdirSync(logDir, { recursive: true });
+      require("fs").appendFileSync(path.join(logDir, "renderer-memory.log"), `${line}\n`, "utf8");
+    } catch (_error) { /* best effort */ }
+  }, 15000);
+  memorySampler.unref?.();
   mainWindow.on("closed", () => {
+    clearInterval(memorySampler);
     mainWindowRendererReady = false;
     mainWindow = null;
   });
@@ -475,7 +588,11 @@ async function bootstrapState() {
     renderRecoveryScanned = true;
   }
   const projects = await projectStore.listProjects(getWorkspaceRoot());
-  return { settings, projects, recoverableRenderJobs: recoveredRenderJobs };
+  const rendererRecovery = lastRendererCrash
+    ? { ...lastRendererCrash, activeOperations: [...activeOperations.values()].map(({ channel, projectId, startedAt }) => ({ channel, projectId, startedAt })) }
+    : null;
+  lastRendererCrash = null;
+  return { settings, projects, recoverableRenderJobs: recoveredRenderJobs, rendererRecovery };
 }
 
 app.whenReady().then(async () => {
@@ -606,7 +723,7 @@ app.whenReady().then(async () => {
     return true;
   });
 
-  handleIpc("settings:get", async () => configStore.getSettings());
+  handleIpc("settings:get", async () => publicSettings(configStore.getSettings()));
   handleIpc("settings:antigravityModels", async (_event, options = {}) => {
     const settings = { ...configStore.getSettings(), ...(options.command ? { antigravityCommand: options.command } : {}) };
     return { models: await require("./services/antigravityModelDiscovery").list(settings, { force: Boolean(options.force) }) };
@@ -614,13 +731,14 @@ app.whenReady().then(async () => {
 
   handleIpc("settings:save", async (_event, payload) => {
     const previousWorkspaceRoot = configStore.getSettings().workspaceRoot;
-    const saved = await configStore.saveSettings(payload);
+    const { geminiWebCookiesEnc: _ignoredSecret, geminiWebCookiesSaved: _ignoredFlag, ...safePayload } = payload || {};
+    const saved = await configStore.saveSettings(safePayload);
     if (saved.workspaceRoot !== previousWorkspaceRoot) {
       renderRecoveryScanned = false;
       recoveredRenderJobs = [];
     }
     const projects = await projectStore.listProjects(saved.workspaceRoot);
-    return { settings: saved, projects };
+    return { settings: publicSettings(saved), projects };
   });
 
   handleIpc("settings:check", async (_event, payload) => {
@@ -629,6 +747,50 @@ app.whenReady().then(async () => {
       ...(payload || {})
     };
     return checkConfiguration(settings);
+  });
+
+  handleIpc("geminiWeb:saveCookies", async (_event, payload = {}) => {
+    const cookies = GeminiWebBridgeProcess.normalizeCookieHeader(payload.cookies);
+    await configStore.saveSettings({
+      geminiWebCookiesEnc: encryptSecret(cookies),
+      geminiWebCookiesSavedAt: new Date().toISOString(),
+      geminiWebCookieNames: cookies.split(";").map((pair) => pair.split("=")[0].trim()).filter(Boolean).length
+    });
+    await geminiWebBridge?.stop();
+    return { saved: true, savedAt: configStore.getSettings().geminiWebCookiesSavedAt };
+  });
+
+  handleIpc("geminiWeb:clearCookies", async () => {
+    await geminiWebBridge?.stop();
+    await configStore.saveSettings({ geminiWebCookiesEnc: "", geminiWebCookiesSavedAt: "" });
+    return { cleared: true };
+  });
+
+  // Starts the bridge, lists the account's models and sends one tiny prompt so
+  // the user sees which model actually answers (quota downgrades included).
+  handleIpc("geminiWeb:test", async (_event, payload = {}) => {
+    const settings = { ...configStore.getSettings(), ...(payload || {}) };
+    const bridge = getGeminiWebBridge();
+    const started = Date.now();
+    const { status } = await bridge.ensureStarted();
+    const transport = new GeminiWebTransport({ ...settings, geminiWebAllowDowngrade: true }, { bridge });
+    const { model } = await transport.resolveSeriesModel();
+    await transport.createCacheFromParts({ parts: [] });
+    const reply = await transport.generateContent({ contents: [{ role: "user", parts: [{ text: "Reply with exactly: OK" }] }], model });
+    return {
+      ok: /\bOK\b/i.test(reply.text),
+      models: status.models || [],
+      requestedModel: model,
+      servedModel: reply.servedModel || model,
+      downgraded: Boolean(reply.servedModel && reply.servedModel !== model),
+      replyMs: reply.modelMs,
+      totalMs: Date.now() - started
+    };
+  });
+
+  handleIpc("geminiWeb:stop", async () => {
+    await geminiWebBridge?.stop();
+    return { stopped: true };
   });
 
   handleIpc("vertex:test", async (_event, payload) => {
@@ -685,7 +847,7 @@ app.whenReady().then(async () => {
     if (configuredAiWorkflowService) {
       throw new Error("AI đang xử lý một tác vụ khác. Hãy đợi hoặc bấm Dừng.");
     }
-    configuredAiWorkflowService = new ConfiguredAiWorkflowService(configStore.getSettings(), projectStore);
+    configuredAiWorkflowService = new ConfiguredAiWorkflowService(configStore.getSettings(), projectStore, { geminiWebBridge: getGeminiWebBridge() });
     try {
       return await configuredAiWorkflowService.runStage1({
         packageDir: payload?.packageDir,
@@ -720,6 +882,9 @@ app.whenReady().then(async () => {
     const service = new ManualGeminiPackService(settings);
     return service.importBlueprint(payload || {});
   });
+
+  handleIpc("analysis:importSerializedBlueprint", async (_event,payload) =>
+    require("./services/serializedGeminiWorkflowService").importBlueprint(payload || {}));
 
   handleIpc("analysis:getHookCandidates", async (_event, packageDir) => {
     const settings = configStore.getSettings();
@@ -940,13 +1105,14 @@ app.whenReady().then(async () => {
     });
   });
 
-  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath) => {
+  handleIpc("project:importReviewedScript", async (_event, projectId, jsonPath, options = {}) => {
     const settings = configStore.getSettings();
     return dubbingService.importReviewedScriptProject({
       workspaceRoot: getWorkspaceRoot(),
       projectId,
       settings,
-      jsonPath
+      jsonPath,
+      allowRegression: options?.allowRegression === true
     });
   });
 
@@ -962,7 +1128,7 @@ app.whenReady().then(async () => {
     if (configuredAiWorkflowService) {
       throw new Error("AI đang xử lý một tác vụ khác. Hãy đợi hoặc bấm Dừng.");
     }
-    configuredAiWorkflowService = new ConfiguredAiWorkflowService(configStore.getSettings(), projectStore);
+    configuredAiWorkflowService = new ConfiguredAiWorkflowService(configStore.getSettings(), projectStore, { geminiWebBridge: getGeminiWebBridge() });
     try {
       return await configuredAiWorkflowService.runDraftReview({
         workspaceRoot: getWorkspaceRoot(),
@@ -1654,6 +1820,7 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   manualAntigravityStage1Service?.cancel();
+  geminiWebBridge?.stop();
   OmniVoiceService.shutdownPersistentWorkers?.();
   KokoroVoiceService.shutdownPersistentWorkers?.();
   LocalTranslationService.shutdownPersistentWorkers?.();

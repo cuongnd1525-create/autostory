@@ -1,4 +1,5 @@
 const fs = require("fs/promises");
+const {isSerialized,blueprintPrompt,partPrompt} = require("./serializedGeminiWorkflowService");
 const path = require("path");
 const { parseGeminiJsonObject } = require("./geminiJsonArtifactService");
 const { buildGeminiInputAccessGate } = require("./geminiInputAccessGate");
@@ -1457,10 +1458,10 @@ SERIALIZATION IDENTITY - HIGHEST PRIORITY:
 
 ${genZRules}
 
-SHARED COLD OPEN:
-- Start with the exact complete shared Hook macro-block assigned to [1,2,3]. Every Part must use the same ordered evidenceId/sceneId/sourceStartSec/sourceEndSec sequence.
+CHAPTER COLD OPEN (SHARED ONLY WHEN USER CHOSE SHARED HOOK):
+- Start with this Part\u0027s locked Hook. If shared_hook_enabled=true the Hook source range must match all Parts; if false, the Hook is chapter-specific and must not be cloned from Part 1.
 - The Hook must be pure original_audio and may last 5-30 seconds. Preserve setup/warning -> confrontation/action -> climax -> immediate reaction. Do not cut before the verified payoff merely to shorten it.
-- When the Hook crosses a scene boundary, return consecutive Hook segments with storyFunction="hook" and the same macroBlockId, sourceRunId, actionSequenceId, sustainedBeatId, actionOverride=true, and sustainedBeatOverride=true. No voiceover or unrelated footage may appear between Hook slices.
+- When the Hook crosses a scene boundary, return consecutive original_audio Hook segments with the same macroBlockId, sourceRunId and sustainedBeatId; use sustainedBeatOverride=true. For verbal-only conflict set actionOverride=false, even if it is intense. Set actionOverride=true and one actionSequenceId ONLY for verified physical action. No voiceover or unrelated footage may interrupt a complete Hook.
 - End immediately before any external source narrator starts. Never extend the Hook into narrator speech merely to reach a duration target.
 
 SERIALIZATION & MYSTERY PRESERVATION - SUPREME STORY RULE:
@@ -1493,7 +1494,11 @@ ANTI-HALLUCINATION PROTOCOL:
 VOICE AND CONTINUITY:
 - The first voiceover after the shared Hook must be unique to Part ${partNumber} and perform this Part's chapter role.
 - Preserve authentic commands, cries, confessions, dispatcher calls, impacts, and reactions as original_audio when no external narrator overlaps them.
-- Every voiceover_only claim must be supported by its own evidenceId and fit the calibrated word budget.
+- ASYMMETRIC BEATS: Keep VO bridges generally 3-8s (max 10s); original audio covers complete dialogue exchanges (typically 12-25s when needed), or action runs (15-30s+ where justified). These are soft targets; do not cut an answer, reveal, action, or reaction to match a timer. Mark sustainedBeatOverride=true and a stable sustainedBeatId for a critical verbal exchange (actionOverride is only for actual action).
+- PROMISE-TO-PROOF: A definite narration claim of confession, blame, accusation or answered question must be audible within the immediately following original_audio evidence. Include payoffProof with quote and verified sourceStartSec/sourceEndSec or rewrite as an unanswered question.
+- CLEAN VISUALS/CAPTIONS: For original_audio, caption and voiceover_text are empty. Narrator VO B-roll must not conflict with source burned-in dialogue captions; prefer safeForVoiceover=true evidence. Check fade/black frames and third-party narrator tails against actual media, not guessed timestamps.
+- CLEAN CLIFFHANGER: A Part may end with an unresolved case question but NEVER midway through a spoken sentence; use a complete source response or short fact-grounded closing VO.
+- Every voiceover_only claim must be supported by its own evidenceId and fit calibrated speech timing; no artificial minimum word target. Measured TTS duration outranks word estimates.
 - Every segment after the first needs a concrete causal/temporal transitionReason. Preserve complete spoken lines and immediate reactions.
 - ONE-SCENE-PER-SEGMENT: sourceStartSec/sourceEndSec stay inside both the locked evidence and exactly one sceneId. Never cross a scene boundary in one segment. Split at boundaries, preserve macroBlockId/sourceRunId/actionSequenceId, divide narration without duplication, and recalculate startSec/endSec continuously from zero.
 - endSec-startSec=(sourceEndSec-sourceStartSec)/playbackSpeed. No silence, freeze frames, credits, filler, or repeated footage to reach duration.
@@ -2104,7 +2109,8 @@ function buildPackageReadme({
   workflow = "manual_gemini_pro_two_pass",
   proxyChunksManifest = null,
   uploadBatchDirs = [],
-  prompt = ""
+  prompt = "",
+  sequentialSeriesEnabled = false
 }) {
   const isStoryRecut = workflow === "manual_gemini_story_recut";
   const isDraftReview = workflow === "manual_gemini_draft_review";
@@ -2141,6 +2147,17 @@ function buildPackageReadme({
       "- Không đảo ngược các bước có dependency vật lý.",
       "- Chỉ dùng original_audio cho âm thao tác DIY khi đoạn nguồn không có lời nói.",
       warningCount ? `- Có ${warningCount} cảnh báo kỹ thuật trong package-info.json.` : "- Gói được tạo không có cảnh báo kỹ thuật."
+    ].join("\n");
+  }
+  if (isDraftReview && sequentialSeriesEnabled) {
+    return [
+      "GEMINI SERIALIZED — BLUEPRINT + 3 PARTS (CÙNG CHAT)",
+      uploadInstruction,
+      "1. Batch FINAL yêu cầu series-blueprint.json DUY NHẤT.",
+      "2. Lưu Blueprint và import vào Studio để khóa.",
+      "3. Mở 02-SERIES-SEQUENTIAL; gửi từng prompt Script 1, Script 3, Script 4 vào CÙNG CHAT.",
+      "4. Chọn cả ba JSON trong Studio; tool kiểm tra chúng với Blueprint đã khóa.",
+      "5. Render và review draft MP4 như trước."
     ].join("\n");
   }
   if (isDraftReview) {
@@ -2242,6 +2259,7 @@ class ManualGeminiPackService {
     sourceLanguage = "auto",
     autoWhisper = true,
     forceRebuild = false,
+    sequentialManual = true,
     onProgress
   }) {
     if (!sourceVideoPath) {
@@ -2631,10 +2649,11 @@ class ManualGeminiPackService {
           durationSec: media.duration,
           topCount: 5
         });
-        if (hookAuditionResult?.defaultRecommendedHook) {
-          hookContract = buildHookContract({ candidate: hookAuditionResult.defaultRecommendedHook, isUserLocked: false });
+        if (hookAuditionResult?.topCandidates?.length) {
+          // An automatic score is not user approval: ship only suggestions.
+          // Writing hook-contract.json here made even *unlocked* candidates
+          // look binding when Gemini read the folder directly.
           await writeJsonAtomic(path.join(pass1UploadDir, "hook-candidates.json"), hookAuditionResult);
-          await writeJsonAtomic(path.join(pass1UploadDir, "hook-contract.json"), hookContract);
         }
       } catch (hookErr) {
         warnings.push(`Không tạo được Hook Candidates: ${hookErr.message}`);
@@ -2642,7 +2661,32 @@ class ManualGeminiPackService {
     }
 
     let directHighlightPrompt = buildDirectHighlightScriptsPrompt(prompt, manifest, actionCandidates, proxyChunksManifest);
-    if (hookContract) {
+    const sequentialSeriesEnabled = isDraftReview && sequentialManual !== false && isSerialized(prompt);
+    const sequentialSeriesProfile = (String(prompt).match(/prompt_profile:\s*(serialized_genz|serialized_interleaved)/)||[])[1] || "";
+    const sequentialSeriesSharedHook = /- shared cold open:\s*true/i.test(String(prompt));
+    const durationBounds = String(prompt).match(/target duration for EACH Part:\s*([\d.]+)\s*-\s*([\d.]+)/i);
+    const minDuration = durationBounds ? Number(durationBounds[1]) : 75;
+    const maxDuration = durationBounds ? Number(durationBounds[2]) : 110;
+    const nextStepsDir = path.join(packageDir,"02-SERIES-SEQUENTIAL");
+    if(sequentialSeriesEnabled){
+      await fs.rm(nextStepsDir,{recursive:true,force:true}).catch(()=>{});
+      await fs.mkdir(nextStepsDir,{recursive:true});
+      for(const scriptId of [1,3,4]) await fs.writeFile(
+        path.join(nextStepsDir,"script-"+scriptId+"-NEXT-PROMPT.txt"),
+        partPrompt(scriptId,sequentialSeriesProfile,sequentialSeriesSharedHook,minDuration,maxDuration),"utf8");
+      await fs.writeFile(path.join(nextStepsDir,"00-WORKFLOW.txt"),[
+        "ONE CHAT / FOUR SMALL JSON TURNS",
+        "1. Upload source batches, FINAL last; Gemini returns only series-blueprint.json.",
+        "2. Save the Blueprint and import it in Studio.",
+        "3. SAME Gemini chat: send script-1-NEXT-PROMPT.txt and save script-1.json.",
+        "4. Then script-3-NEXT-PROMPT.txt and save script-3.json.",
+        "5. Then script-4-NEXT-PROMPT.txt and save script-4.json.",
+        "6. Select all three JSON files in Studio to validate against locked Blueprint.",
+        "Do not upload all next-step prompts at once."
+      ].join("\n"),"utf8");
+      directHighlightPrompt=blueprintPrompt(directHighlightPrompt);
+    }
+    if (hookContract?.isUserLocked === true) {
       directHighlightPrompt = injectHookContractToPrompt(directHighlightPrompt, hookContract);
     }
 
@@ -2678,7 +2722,9 @@ class ManualGeminiPackService {
         [
           "Upload the numbered UPLOAD-BATCH folders to ONE Gemini chat in order.",
           "For every non-final batch, upload all files and ask Gemini only to acknowledge receipt.",
-          "Upload UPLOAD-BATCH-XX-FINAL last. Its prompt requests the final JSON output.",
+          sequentialSeriesEnabled
+            ? "Upload UPLOAD-BATCH-XX-FINAL last. Its prompt requests ONLY series-blueprint.json; see 02-SERIES-SEQUENTIAL for next prompts."
+            : "Upload UPLOAD-BATCH-XX-FINAL last. Its prompt requests the final JSON output.",
           "Do not start a new chat between batches."
         ].join("\n"),
         "utf8"
@@ -2690,12 +2736,18 @@ class ManualGeminiPackService {
       workflow,
       proxyChunksManifest,
       uploadBatchDirs: proxyChunkLayout.uploadBatchDirs,
-      prompt
+      prompt,
+      sequentialSeriesEnabled
     }), "utf8");
     await fs.writeFile(infoPath, JSON.stringify({
       schemaVersion: 1,
       workflow,
-      workflowStage: isDraftReview ? "variant_scripts_pending" : isDiyStoryRemix ? "diy_process_map_pending" : "evidence_pending",
+      sequentialSeriesEnabled,
+      sequentialSeriesProfile,
+      sequentialSeriesSharedHook,
+      sequentialSeriesNextStepsDir: sequentialSeriesEnabled ? nextStepsDir : "",
+      seriesBlueprintPath: "",
+      workflowStage: sequentialSeriesEnabled ? "series_blueprint_pending" : isDraftReview ? "variant_scripts_pending" : isDiyStoryRemix ? "diy_process_map_pending" : "evidence_pending",
       generatedAt: new Date().toISOString(),
       sourceVideoPath,
       packageDir,
@@ -2737,6 +2789,17 @@ class ManualGeminiPackService {
       warnings
     }, null, 2), "utf8");
 
+    if (sequentialSeriesEnabled) {
+      // Add stage metadata to the package-info JSON without altering legacy modes.
+      const stagedInfo = JSON.parse(await fs.readFile(infoPath,"utf8"));
+      stagedInfo.sequentialSeriesEnabled = true;
+      stagedInfo.sequentialSeriesProfile = sequentialSeriesProfile;
+      stagedInfo.sequentialSeriesSharedHook = sequentialSeriesSharedHook;
+      stagedInfo.sequentialSeriesNextStepsDir = nextStepsDir;
+      stagedInfo.seriesBlueprintPath = "";
+      stagedInfo.workflowStage = "series_blueprint_pending";
+      await fs.writeFile(infoPath,JSON.stringify(stagedInfo,null,2),"utf8");
+    }
     onProgress?.({ step: "gemini_pack", percent: 100, message: "Gói phân tích Gemini Pro đã sẵn sàng" });
     return {
       packageDir,
@@ -2752,6 +2815,8 @@ class ManualGeminiPackService {
       hookContract,
       proxyChunksManifestPath: proxyChunksManifest ? path.join(pass1UploadDir, "proxy-chunks-manifest.json") : "",
       proxyChunkCount: proxyChunksManifest?.chunks?.length || 0,
+      sequentialSeriesEnabled,
+      sequentialSeriesNextStepsDir: sequentialSeriesEnabled ? nextStepsDir : "",
       proxyUploadBatchDirs: proxyChunkLayout.uploadBatchDirs,
       promptPath,
       evidencePromptPath,
@@ -3138,7 +3203,8 @@ class ManualGeminiPackService {
     storyFormat = "non_linear_rewind",
     isMultiVariant = false,
     hasDuplicates = false,
-    variants = null
+    variants = null,
+    hookPolicy = ""
   } = {}) {
     if (!packageDir) throw new Error("Chưa có đường dẫn gói phân tích.");
     if (!candidate && !variants) throw new Error("Chưa chọn ứng viên Hook.");
@@ -3150,7 +3216,8 @@ class ManualGeminiPackService {
       isUserLocked: true,
       isMultiVariant: Boolean(isMultiVariant || variants),
       hasDuplicates: Boolean(hasDuplicates),
-      variants
+      variants,
+      hookPolicy
     });
     const pass1UploadDir = path.join(packageDir, "01-GUI-GEMINI");
     const contractPath = path.join(pass1UploadDir, "hook-contract.json");
@@ -3181,6 +3248,19 @@ class ManualGeminiPackService {
       info.hookContractPath = contractPath;
       info.selectedHookId = contract.hookId;
       info.isMultiVariantHook = contract.isMultiVariant;
+      info.hookPolicy = contract.hookPolicy;
+      if(info.sequentialSeriesEnabled){
+        await fs.rm(path.join(packageDir,"series-blueprint.json"),{force:true}).catch(()=>{});
+        info.seriesBlueprintPath="";
+      }
+      // For long sources Gemini uploads the FINAL batch, not the root prompt.
+      // Synchronize a user-locked Hook Contract into that actual upload folder.
+      const batchDirs = Array.isArray(info.proxyUploadBatchDirs) ? info.proxyUploadBatchDirs : [];
+      const finalBatchDir = batchDirs.length > 1 ? batchDirs[batchDirs.length - 1] : "";
+      if (finalBatchDir && await nonEmptyFileExists(promptPath)) {
+        await copyFileAtomic(promptPath, path.join(finalBatchDir, path.basename(promptPath)));
+        await copyFileAtomic(contractPath, path.join(finalBatchDir, "hook-contract.json"));
+      }
       await writeJsonAtomic(infoPath, info);
     }
 

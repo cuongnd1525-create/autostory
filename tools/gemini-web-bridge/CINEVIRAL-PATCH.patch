@@ -1,0 +1,687 @@
+From 35b35ac78b9f923cf11ba9888fa4d5c270b35382 Mon Sep 17 00:00:00 2001
+From: cineviral <noreply@anthropic.com>
+Date: Wed, 21 Oct 2026 13:45:55 +0700
+Subject: [PATCH 1/2] CineViral bridge: loopback+token, body limit, /bridge/v1
+ conversation endpoint, configurable generate timeout
+
+---
+ internal/commons/configs/configs.go           |   8 +
+ internal/modules/bridge/bridge.go             | 144 ++++++++++++++++++
+ internal/modules/bridge/bridge_test.go        | 105 +++++++++++++
+ internal/modules/combine_module.go            |   2 +
+ .../modules/providers/gemini_conversation.go  |  52 +++++++
+ internal/modules/providers/gemini_service.go  |   2 +-
+ internal/server/auth.go                       |  27 ++++
+ internal/server/server.go                     |  28 +++-
+ 8 files changed, 359 insertions(+), 9 deletions(-)
+ create mode 100644 internal/modules/bridge/bridge.go
+ create mode 100644 internal/modules/bridge/bridge_test.go
+ create mode 100644 internal/modules/providers/gemini_conversation.go
+ create mode 100644 internal/server/auth.go
+
+diff --git a/internal/commons/configs/configs.go b/internal/commons/configs/configs.go
+index f64afa2..335ee51 100644
+--- a/internal/commons/configs/configs.go
++++ b/internal/commons/configs/configs.go
+@@ -48,6 +48,11 @@ type OpenAIConfig struct {
+ 
+ type ServerConfig struct {
+ 	Port string
++	// CineViral bridge: listen address (default loopback only), required
++	// bearer token, and request body limit for the text parts of a request.
++	Host        string
++	Token       string
++	BodyLimitMB int
+ }
+ 
+ const (
+@@ -68,6 +73,9 @@ func New() (*Config, error) {
+ 
+ 	// Server
+ 	cfg.Server.Port = getEnv("PORT", defaultServerPort)
++	cfg.Server.Host = getEnv("HOST", "127.0.0.1")
++	cfg.Server.Token = strings.TrimSpace(os.Getenv("BRIDGE_TOKEN"))
++	cfg.Server.BodyLimitMB = getEnvInt("BODY_LIMIT_MB", 32)
+ 
+ 	// General
+ 	cfg.LogLevel = getEnv("LOG_LEVEL", defaultLogLevel)
+diff --git a/internal/modules/bridge/bridge.go b/internal/modules/bridge/bridge.go
+new file mode 100644
+index 0000000..c28899a
+--- /dev/null
++++ b/internal/modules/bridge/bridge.go
+@@ -0,0 +1,144 @@
++// Package bridge is the CineViral (RecapTool Studio) endpoint: one message per
++// call, optional continuation of a Gemini Web conversation, attachments read
++// from local file paths (no base64 in JSON), and machine-readable error codes.
++package bridge
++
++import (
++	"context"
++	"errors"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"gemini-web-to-api/internal/modules/providers"
++
++	"github.com/gofiber/fiber/v3"
++	"go.uber.org/fx"
++	"go.uber.org/zap"
++)
++
++const Version = "cineviral-bridge-1"
++
++var Module = fx.Options(fx.Invoke(RegisterRoutes))
++
++type Conversation struct {
++	ConversationID string `json:"cid"`
++	ResponseID     string `json:"rid"`
++	ChoiceID       string `json:"rcid"`
++}
++
++type FileRef struct {
++	Path string `json:"path"`
++}
++
++type GenerateRequest struct {
++	Model        string        `json:"model"`
++	Prompt       string        `json:"prompt"`
++	Files        []FileRef     `json:"files"`
++	Conversation *Conversation `json:"conversation"`
++	Thinking     string        `json:"thinking"`
++}
++
++type GenerateResponse struct {
++	Text           string       `json:"text"`
++	Model          string       `json:"model"`
++	RequestedModel string       `json:"requestedModel"`
++	Downgraded     bool         `json:"downgraded"`
++	Conversation   Conversation `json:"conversation"`
++	ElapsedMs      int64        `json:"elapsedMs"`
++	Files          int          `json:"files"`
++}
++
++type generator interface {
++	IsHealthy() bool
++	ListModelsIDs() []string
++	ResolveModel(string) (providers.ModelInfo, error)
++	GenerateInConversation(context.Context, string, *providers.SessionMetadata, ...providers.GenerateOption) (*providers.Response, error)
++}
++
++func RegisterRoutes(app *fiber.App, client *providers.Client, log *zap.Logger) {
++	Register(app, client, log)
++}
++
++func Register(app *fiber.App, client generator, log *zap.Logger) {
++	group := app.Group("/bridge/v1")
++	group.Get("/status", func(c fiber.Ctx) error {
++		return c.JSON(fiber.Map{"version": Version, "healthy": client.IsHealthy(), "models": client.ListModelsIDs()})
++	})
++	group.Post("/generate", func(c fiber.Ctx) error {
++		var req GenerateRequest
++		if err := c.Bind().Body(&req); err != nil {
++			return fail(c, fiber.StatusBadRequest, "bad_request", err.Error())
++		}
++		if strings.TrimSpace(req.Prompt) == "" && len(req.Files) == 0 {
++			return fail(c, fiber.StatusBadRequest, "bad_request", "prompt or files required")
++		}
++		if !client.IsHealthy() {
++			return fail(c, fiber.StatusServiceUnavailable, "auth_expired", "Gemini Web session is not healthy (cookies expired or not initialized)")
++		}
++		info, err := client.ResolveModel(req.Model)
++		if err != nil {
++			return fail(c, fiber.StatusBadRequest, "unknown_model", err.Error())
++		}
++		paths := make([]string, 0, len(req.Files))
++		for _, f := range req.Files {
++			p := filepath.Clean(f.Path)
++			st, statErr := os.Stat(p)
++			if statErr != nil || st.IsDir() {
++				return fail(c, fiber.StatusBadRequest, "file_not_found", "cannot read "+p)
++			}
++			paths = append(paths, p)
++		}
++		opts := []providers.GenerateOption{providers.WithModel(info.ID)}
++		if len(paths) > 0 {
++			opts = append(opts, providers.WithFiles(paths))
++		}
++		if strings.TrimSpace(req.Thinking) != "" {
++			opts = append(opts, providers.WithThinkingLevel(req.Thinking))
++		}
++		var conv *providers.SessionMetadata
++		if req.Conversation != nil && req.Conversation.ConversationID != "" {
++			conv = &providers.SessionMetadata{ConversationID: req.Conversation.ConversationID, ResponseID: req.Conversation.ResponseID, ChoiceID: req.Conversation.ChoiceID}
++		}
++		started := time.Now()
++		resp, err := client.GenerateInConversation(c.Context(), req.Prompt, conv, opts...)
++		if err != nil {
++			code, status := classify(err)
++			log.Warn("bridge generate failed", zap.String("code", code), zap.Error(err))
++			return fail(c, status, code, err.Error())
++		}
++		next := providers.ConversationOf(resp)
++		return c.JSON(GenerateResponse{
++			Text:           resp.Text,
++			Model:          resp.Model,
++			RequestedModel: info.ID,
++			Downgraded:     resp.Model != "" && resp.Model != info.ID,
++			Conversation:   Conversation{ConversationID: next.ConversationID, ResponseID: next.ResponseID, ChoiceID: next.ChoiceID},
++			ElapsedMs:      time.Since(started).Milliseconds(),
++			Files:          len(paths),
++		})
++	})
++}
++
++func classify(err error) (string, int) {
++	msg := strings.ToLower(err.Error())
++	switch {
++	case errors.Is(err, context.Canceled):
++		return "cancelled", 499
++	case errors.Is(err, context.DeadlineExceeded) || strings.Contains(msg, "timeout"):
++		return "timeout", fiber.StatusGatewayTimeout
++	case strings.Contains(msg, "429") || strings.Contains(msg, "unusual traffic") || strings.Contains(msg, "rate"):
++		return "rate_limited", fiber.StatusTooManyRequests
++	case strings.Contains(msg, "status: 401") || strings.Contains(msg, "status: 403") || strings.Contains(msg, "not initialized"):
++		return "auth_expired", fiber.StatusUnauthorized
++	case strings.Contains(msg, "upload"):
++		return "upload_failed", fiber.StatusBadGateway
++	default:
++		return "generate_failed", fiber.StatusBadGateway
++	}
++}
++
++func fail(c fiber.Ctx, status int, code, message string) error {
++	return c.Status(status).JSON(fiber.Map{"error": fiber.Map{"code": code, "message": message}})
++}
+diff --git a/internal/modules/bridge/bridge_test.go b/internal/modules/bridge/bridge_test.go
+new file mode 100644
+index 0000000..66fd4ce
+--- /dev/null
++++ b/internal/modules/bridge/bridge_test.go
+@@ -0,0 +1,105 @@
++package bridge
++
++import (
++	"bytes"
++	"context"
++	"encoding/json"
++	"errors"
++	"io"
++	"net/http/httptest"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"gemini-web-to-api/internal/modules/providers"
++	"gemini-web-to-api/internal/server"
++
++	"github.com/gofiber/fiber/v3"
++	"go.uber.org/zap"
++)
++
++type fakeClient struct {
++	healthy bool
++	gotConv *providers.SessionMetadata
++	gotOpts int
++	served  string
++	err     error
++}
++
++func (f *fakeClient) IsHealthy() bool         { return f.healthy }
++func (f *fakeClient) ListModelsIDs() []string { return []string{"gemini-3.1-pro"} }
++func (f *fakeClient) ResolveModel(m string) (providers.ModelInfo, error) {
++	if m != "gemini-3.1-pro" {
++		return providers.ModelInfo{}, errors.New("unknown model")
++	}
++	return providers.ModelInfo{ID: m}, nil
++}
++func (f *fakeClient) GenerateInConversation(_ context.Context, _ string, conv *providers.SessionMetadata, opts ...providers.GenerateOption) (*providers.Response, error) {
++	f.gotConv, f.gotOpts = conv, len(opts)
++	if f.err != nil {
++		return nil, f.err
++	}
++	model := f.served
++	if model == "" {
++		model = "gemini-3.1-pro"
++	}
++	return &providers.Response{Text: "ok", Model: model, Metadata: map[string]any{"cid": "c_1", "rid": "r_2", "rcid": "rc_3"}}, nil
++}
++
++func call(t *testing.T, app *fiber.App, body any, token string) (int, map[string]any) {
++	raw, _ := json.Marshal(body)
++	req := httptest.NewRequest("POST", "/bridge/v1/generate", bytes.NewReader(raw))
++	req.Header.Set("Content-Type", "application/json")
++	if token != "" {
++		req.Header.Set("Authorization", "Bearer "+token)
++	}
++	resp, err := app.Test(req)
++	if err != nil {
++		t.Fatal(err)
++	}
++	data, _ := io.ReadAll(resp.Body)
++	out := map[string]any{}
++	_ = json.Unmarshal(data, &out)
++	return resp.StatusCode, out
++}
++
++func TestBridgeGenerate(t *testing.T) {
++	dir := t.TempDir()
++	video := filepath.Join(dir, "chunk.mp4")
++	_ = os.WriteFile(video, []byte("x"), 0o600)
++	fake := &fakeClient{healthy: true}
++	app := fiber.New()
++	app.Use(server.RequireToken("s3cret"))
++	Register(app, fake, zap.NewNop())
++
++	if status, _ := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, ""); status != 401 {
++		t.Fatalf("no token must be rejected, got %d", status)
++	}
++	status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi", Files: []FileRef{{Path: video}},
++		Conversation: &Conversation{ConversationID: "c_0", ResponseID: "r_0", ChoiceID: "rc_0"}}, "s3cret")
++	if status != 200 {
++		t.Fatalf("status %d %v", status, out)
++	}
++	conv := out["conversation"].(map[string]any)
++	if conv["cid"] != "c_1" || conv["rid"] != "r_2" || conv["rcid"] != "rc_3" {
++		t.Fatalf("conversation ids not returned: %v", conv)
++	}
++	if fake.gotConv == nil || fake.gotConv.ResponseID != "r_0" || fake.gotOpts != 2 {
++		t.Fatalf("continuation/files not passed: %+v %d", fake.gotConv, fake.gotOpts)
++	}
++	if status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi", Files: []FileRef{{Path: filepath.Join(dir, "missing.mp4")}}}, "s3cret"); status != 400 || out["error"].(map[string]any)["code"] != "file_not_found" {
++		t.Fatalf("missing file: %d %v", status, out)
++	}
++	fake.served = "gemini-3.6-flash"
++	if _, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, "s3cret"); out["downgraded"] != true {
++		t.Fatalf("downgrade not flagged: %v", out)
++	}
++	fake.err = errors.New("generate failed with status: 429")
++	if status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, "s3cret"); status != 429 || out["error"].(map[string]any)["code"] != "rate_limited" {
++		t.Fatalf("429: %d %v", status, out)
++	}
++	fake.healthy = false
++	if status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, "s3cret"); status != 503 || out["error"].(map[string]any)["code"] != "auth_expired" {
++		t.Fatalf("unhealthy: %d %v", status, out)
++	}
++}
+diff --git a/internal/modules/combine_module.go b/internal/modules/combine_module.go
+index 1099b50..6b83f3b 100644
+--- a/internal/modules/combine_module.go
++++ b/internal/modules/combine_module.go
+@@ -1,6 +1,7 @@
+ package modules
+ 
+ import (
++"gemini-web-to-api/internal/modules/bridge"
+ "gemini-web-to-api/internal/modules/claude"
+ "gemini-web-to-api/internal/modules/gemini"
+ "gemini-web-to-api/internal/modules/openai"
+@@ -13,4 +14,5 @@ gemini.Module,
+ claude.Module,
+ openai.Module,
+ providers.Module,
++bridge.Module,
+ )
+diff --git a/internal/modules/providers/gemini_conversation.go b/internal/modules/providers/gemini_conversation.go
+new file mode 100644
+index 0000000..8cb6691
+--- /dev/null
++++ b/internal/modules/providers/gemini_conversation.go
+@@ -0,0 +1,52 @@
++package providers
++
++import (
++	"context"
++	"os"
++	"strconv"
++	"time"
++)
++
++// generateTimeout bounds one Gemini Web generate round trip. Long video
++// analyses with thinking can exceed the upstream 5 minute default.
++func generateTimeout() time.Duration {
++	if v, err := strconv.Atoi(os.Getenv("GEMINI_GENERATE_TIMEOUT_SEC")); err == nil && v >= 60 {
++		return time.Duration(v) * time.Second
++	}
++	return 10 * time.Minute
++}
++
++// GenerateInConversation sends one message, optionally continuing an existing
++// Gemini Web conversation at a given response (cid/rid/rcid). Passing the ids
++// of an earlier response replies to that point of the conversation.
++func (c *Client) GenerateInConversation(ctx context.Context, prompt string, conversation *SessionMetadata, options ...GenerateOption) (*Response, error) {
++	var metadata []interface{}
++	if conversation != nil && conversation.ConversationID != "" {
++		metadata = []interface{}{conversation.ConversationID, conversation.ResponseID, conversation.ChoiceID}
++	}
++	return c.generateContent(ctx, prompt, metadata, options...)
++}
++
++// ConversationOf extracts the ids needed to continue after this response.
++func ConversationOf(response *Response) SessionMetadata {
++	out := SessionMetadata{}
++	if response == nil {
++		return out
++	}
++	if v, ok := response.Metadata["cid"].(string); ok {
++		out.ConversationID = v
++	}
++	if v, ok := response.Metadata["rid"].(string); ok {
++		out.ResponseID = v
++	}
++	if v, ok := response.Metadata["rcid"].(string); ok {
++		out.ChoiceID = v
++	}
++	if out.ConversationID == "" {
++		out.ConversationID = response.ConversationID
++	}
++	if out.ResponseID == "" {
++		out.ResponseID = response.ResponseID
++	}
++	return out
++}
+diff --git a/internal/modules/providers/gemini_service.go b/internal/modules/providers/gemini_service.go
+index c7b4d9e..5cfc782 100644
+--- a/internal/modules/providers/gemini_service.go
++++ b/internal/modules/providers/gemini_service.go
+@@ -617,7 +617,7 @@ func (c *Client) generateContent(ctx context.Context, prompt string, metadata []
+ 	}
+ 
+ 	// Use a plain http.Client to avoid cookie accumulation issues with the req library
+-	plainClient := &http.Client{Timeout: 5 * time.Minute}
++	plainClient := &http.Client{Timeout: generateTimeout()}
+ 
+ 	totalStart := time.Now()
+ 
+diff --git a/internal/server/auth.go b/internal/server/auth.go
+new file mode 100644
+index 0000000..369a159
+--- /dev/null
++++ b/internal/server/auth.go
+@@ -0,0 +1,27 @@
++package server
++
++import (
++	"crypto/subtle"
++	"strings"
++
++	"github.com/gofiber/fiber/v3"
++)
++
++// RequireToken rejects every request (except GET /health) that does not carry
++// the bridge token as "Authorization: Bearer <token>" or "x-api-key: <token>".
++func RequireToken(token string) fiber.Handler {
++	want := []byte(token)
++	return func(c fiber.Ctx) error {
++		if c.Method() == fiber.MethodGet && c.Path() == "/health" {
++			return c.Next()
++		}
++		got := strings.TrimSpace(c.Get("x-api-key"))
++		if auth := strings.TrimSpace(c.Get("Authorization")); strings.HasPrefix(strings.ToLower(auth), "bearer ") {
++			got = strings.TrimSpace(auth[7:])
++		}
++		if subtle.ConstantTimeCompare([]byte(got), want) != 1 {
++			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": fiber.Map{"code": "unauthorized", "message": "missing or invalid bridge token"}})
++		}
++		return c.Next()
++	}
++}
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 5ac1c0a..7e41304 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -17,16 +17,28 @@ import (
+ 
+ // New creates a new Fiber app instance
+ func NewGeminiWebToAPI(log *zap.Logger, cfg *configs.Config) *fiber.App {
++	bodyLimit := cfg.Server.BodyLimitMB
++	if bodyLimit <= 0 {
++		bodyLimit = 32
++	}
+ 	app := fiber.New(fiber.Config{
+-		AppName: "Gemini Web To API",
++		AppName:   "Gemini Web To API",
++		BodyLimit: bodyLimit * 1024 * 1024,
+ 	})
+ 
+-	app.Use(cors.New(cors.Config{
+-		AllowOrigins:     []string{"*"},
+-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "x-api-key", "anthropic-version"},
+-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+-		AllowCredentials: false,
+-	}))
++	// CineViral bridge: with a token the server serves only its owner process,
++	// so no browser origin is allowed (CORS "*" let any web page drive the
++	// signed-in Google account). Without a token the upstream behaviour stays.
++	if cfg.Server.Token == "" {
++		app.Use(cors.New(cors.Config{
++			AllowOrigins:     []string{"*"},
++			AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "x-api-key", "anthropic-version"},
++			AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
++			AllowCredentials: false,
++		}))
++	} else {
++		app.Use(RequireToken(cfg.Server.Token))
++	}
+ 
+ 	app.Use(recover.New())
+ 
+@@ -69,7 +81,7 @@ func Register404Handler(app *fiber.App) {
+ // RegisterFiberLifecycle registers the Fiber app lifecycle hooks
+ func RegisterFiberLifecycle(lc fx.Lifecycle, app *fiber.App, cfg *configs.Config, log *zap.Logger) {
+ 	port := cfg.Server.Port
+-	address := fmt.Sprintf(":%s", port)
++	address := fmt.Sprintf("%s:%s", cfg.Server.Host, port)
+ 
+ 	lc.Append(fx.Hook{
+ 		OnStart: func(ctx context.Context) error {
+-- 
+2.43.0
+
+
+From 76c9a72bf938bfc15689002f741aef0a55646ac7 Mon Sep 17 00:00:00 2001
+From: cineviral <noreply@anthropic.com>
+Date: Wed, 21 Oct 2026 14:31:20 +0700
+Subject: [PATCH 2/2] CineViral bridge: no panic on short Gemini frames, keep
+ rid for continuation, panic->coded error, request logs
+
+---
+ internal/modules/bridge/bridge.go             | 19 +++++++++--
+ internal/modules/bridge/bridge_test.go        | 11 +++++++
+ .../providers/gemini_parse_cineviral_test.go  | 32 +++++++++++++++++++
+ internal/modules/providers/gemini_service.go  | 17 ++++++++--
+ internal/server/server.go                     |  2 +-
+ 5 files changed, 75 insertions(+), 6 deletions(-)
+ create mode 100644 internal/modules/providers/gemini_parse_cineviral_test.go
+
+diff --git a/internal/modules/bridge/bridge.go b/internal/modules/bridge/bridge.go
+index c28899a..5457daf 100644
+--- a/internal/modules/bridge/bridge.go
++++ b/internal/modules/bridge/bridge.go
+@@ -6,8 +6,10 @@ package bridge
+ import (
+ 	"context"
+ 	"errors"
++	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"runtime/debug"
+ 	"strings"
+ 	"time"
+ 
+@@ -66,7 +68,15 @@ func Register(app *fiber.App, client generator, log *zap.Logger) {
+ 	group.Get("/status", func(c fiber.Ctx) error {
+ 		return c.JSON(fiber.Map{"version": Version, "healthy": client.IsHealthy(), "models": client.ListModelsIDs()})
+ 	})
+-	group.Post("/generate", func(c fiber.Ctx) error {
++	group.Post("/generate", func(c fiber.Ctx) (handlerErr error) {
++		// A panic inside the upstream client (e.g. an unexpected Gemini Web
++		// response shape) must come back as a coded, logged error, not a bare 500.
++		defer func() {
++			if r := recover(); r != nil {
++				log.Error("bridge generate panic", zap.String("panic", fmt.Sprint(r)), zap.ByteString("stack", debug.Stack()))
++				handlerErr = fail(c, fiber.StatusInternalServerError, "bridge_panic", fmt.Sprint(r))
++			}
++		}()
+ 		var req GenerateRequest
+ 		if err := c.Bind().Body(&req); err != nil {
+ 			return fail(c, fiber.StatusBadRequest, "bad_request", err.Error())
+@@ -82,12 +92,14 @@ func Register(app *fiber.App, client generator, log *zap.Logger) {
+ 			return fail(c, fiber.StatusBadRequest, "unknown_model", err.Error())
+ 		}
+ 		paths := make([]string, 0, len(req.Files))
++		var totalBytes int64
+ 		for _, f := range req.Files {
+ 			p := filepath.Clean(f.Path)
+ 			st, statErr := os.Stat(p)
+ 			if statErr != nil || st.IsDir() {
+ 				return fail(c, fiber.StatusBadRequest, "file_not_found", "cannot read "+p)
+ 			}
++			totalBytes += st.Size()
+ 			paths = append(paths, p)
+ 		}
+ 		opts := []providers.GenerateOption{providers.WithModel(info.ID)}
+@@ -102,12 +114,15 @@ func Register(app *fiber.App, client generator, log *zap.Logger) {
+ 			conv = &providers.SessionMetadata{ConversationID: req.Conversation.ConversationID, ResponseID: req.Conversation.ResponseID, ChoiceID: req.Conversation.ChoiceID}
+ 		}
+ 		started := time.Now()
++		log.Info("bridge generate start", zap.String("model", info.ID), zap.Int("files", len(paths)), zap.Int64("file_bytes", totalBytes),
++			zap.Int("prompt_chars", len(req.Prompt)), zap.Bool("continues_conversation", conv != nil))
+ 		resp, err := client.GenerateInConversation(c.Context(), req.Prompt, conv, opts...)
+ 		if err != nil {
+ 			code, status := classify(err)
+-			log.Warn("bridge generate failed", zap.String("code", code), zap.Error(err))
++			log.Warn("bridge generate failed", zap.String("code", code), zap.Duration("elapsed", time.Since(started)), zap.Error(err))
+ 			return fail(c, status, code, err.Error())
+ 		}
++		log.Info("bridge generate done", zap.String("served_model", resp.Model), zap.Int("text_chars", len(resp.Text)), zap.Duration("elapsed", time.Since(started)))
+ 		next := providers.ConversationOf(resp)
+ 		return c.JSON(GenerateResponse{
+ 			Text:           resp.Text,
+diff --git a/internal/modules/bridge/bridge_test.go b/internal/modules/bridge/bridge_test.go
+index 66fd4ce..c518e33 100644
+--- a/internal/modules/bridge/bridge_test.go
++++ b/internal/modules/bridge/bridge_test.go
+@@ -24,6 +24,7 @@ type fakeClient struct {
+ 	gotOpts int
+ 	served  string
+ 	err     error
++	panic   bool
+ }
+ 
+ func (f *fakeClient) IsHealthy() bool         { return f.healthy }
+@@ -36,6 +37,10 @@ func (f *fakeClient) ResolveModel(m string) (providers.ModelInfo, error) {
+ }
+ func (f *fakeClient) GenerateInConversation(_ context.Context, _ string, conv *providers.SessionMetadata, opts ...providers.GenerateOption) (*providers.Response, error) {
+ 	f.gotConv, f.gotOpts = conv, len(opts)
++	if f.panic {
++		var m map[string]int
++		m["boom"] = 1
++	}
+ 	if f.err != nil {
+ 		return nil, f.err
+ 	}
+@@ -98,6 +103,12 @@ func TestBridgeGenerate(t *testing.T) {
+ 	if status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, "s3cret"); status != 429 || out["error"].(map[string]any)["code"] != "rate_limited" {
+ 		t.Fatalf("429: %d %v", status, out)
+ 	}
++	fake.err = nil
++	fake.panic = true
++	if status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, "s3cret"); status != 500 || out["error"].(map[string]any)["code"] != "bridge_panic" {
++		t.Fatalf("panic: %d %v", status, out)
++	}
++	fake.panic = false
+ 	fake.healthy = false
+ 	if status, out := call(t, app, GenerateRequest{Model: "gemini-3.1-pro", Prompt: "hi"}, "s3cret"); status != 503 || out["error"].(map[string]any)["code"] != "auth_expired" {
+ 		t.Fatalf("unhealthy: %d %v", status, out)
+diff --git a/internal/modules/providers/gemini_parse_cineviral_test.go b/internal/modules/providers/gemini_parse_cineviral_test.go
+new file mode 100644
+index 0000000..ac9710b
+--- /dev/null
++++ b/internal/modules/providers/gemini_parse_cineviral_test.go
+@@ -0,0 +1,32 @@
++package providers
++
++import (
++	"encoding/json"
++	"testing"
++
++	"go.uber.org/zap"
++)
++
++func frame(t *testing.T, payload any) string {
++	inner, _ := json.Marshal(payload)
++	outer, _ := json.Marshal([]any{[]any{"wrb.fr", nil, string(inner)}})
++	return string(outer)
++}
++
++// Short status frames must not panic, and [cid, rid] must both be kept.
++func TestParseResponseShortFrameAndRid(t *testing.T) {
++	c := &Client{log: zap.NewNop()}
++	text := ")]}'\n" + frame(t, []any{nil, []any{"c_1", "r_1"}}) + "\n" +
++		frame(t, []any{nil, []any{"c_1", "r_1"}, nil, nil, []any{[]any{"rc_1", []any{"hello"}}}}) + "\n"
++	resp, err := c.parseResponse(text)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if resp.Text != "hello" {
++		t.Fatalf("text %q", resp.Text)
++	}
++	got := ConversationOf(resp)
++	if got.ConversationID != "c_1" || got.ResponseID != "r_1" || got.ChoiceID != "rc_1" {
++		t.Fatalf("conversation ids %+v", got)
++	}
++}
+diff --git a/internal/modules/providers/gemini_service.go b/internal/modules/providers/gemini_service.go
+index 5cfc782..d5cc70d 100644
+--- a/internal/modules/providers/gemini_service.go
++++ b/internal/modules/providers/gemini_service.go
+@@ -1050,7 +1050,8 @@ func (c *Client) parseResponse(text string) (*Response, error) {
+ 				// acknowledgement) stream a turn as numbered-field updates,
+ 				// e.g. [null,["c_...","r_..."],{"7":["text"],"44":true}],
+ 				// instead of the classic candidates array at index 4.
+-				if len(payload) < 5 {
++				// CineViral: short status frames (len < 3) used to panic here.
++				if len(payload) < 5 && len(payload) > 2 {
+ 					if fields, ok := payload[2].(map[string]interface{}); ok {
+ 						if parts, ok := fields["7"].([]interface{}); ok && len(parts) > 0 {
+ 							if reply, ok := parts[0].(string); ok && reply != "" {
+@@ -1105,8 +1106,18 @@ func (c *Client) parseResponse(text string) (*Response, error) {
+ 										}
+ 									}
+ 									if len(payload) > 1 {
+-										if id, ok := payload[1].(string); ok {
+-											cid = id
++										// payload[1] is either "c_..." or ["c_...","r_..."];
++										// rid is needed to continue the conversation.
++										switch ids := payload[1].(type) {
++										case string:
++											cid = ids
++										case []interface{}:
++											if len(ids) > 0 {
++												cid, _ = ids[0].(string)
++											}
++											if len(ids) > 1 {
++												rid, _ = ids[1].(string)
++											}
+ 										}
+ 									}
+ 
+diff --git a/internal/server/server.go b/internal/server/server.go
+index 7e41304..8cc31f2 100644
+--- a/internal/server/server.go
++++ b/internal/server/server.go
+@@ -40,7 +40,7 @@ func NewGeminiWebToAPI(log *zap.Logger, cfg *configs.Config) *fiber.App {
+ 		app.Use(RequireToken(cfg.Server.Token))
+ 	}
+ 
+-	app.Use(recover.New())
++	app.Use(recover.New(recover.Config{EnableStackTrace: true}))
+ 
+ 	if cfg.RateLimit.Enabled {
+ 		app.Use(limiter.New(limiter.Config{
+-- 
+2.43.0
+

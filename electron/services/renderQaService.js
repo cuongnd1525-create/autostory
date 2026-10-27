@@ -176,6 +176,7 @@ class RenderQaService {
     narrationGroundingReport,
     attentionQa,
     expectedAudioSegments = [],
+    strictBlackFrames = false,
     expectedWidth = 0,
     expectedHeight = 0
   }) {
@@ -218,7 +219,7 @@ class RenderQaService {
     }));
     if (visual.blackStarts.length) {
       issues.push({
-        severity: "warning",
+        severity: strictBlackFrames ? "error" : "warning",
         code: "black_frames",
         message: `Detected possible black frames at ${visual.blackStarts.slice(0, 5).map((value) => `${value.toFixed(1)}s`).join(", ")}.`
       });
