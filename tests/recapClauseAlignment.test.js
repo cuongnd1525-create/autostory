@@ -1,6 +1,52 @@
 const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs/promises"), path = require("node:path"), os = require("node:os");
 const Alignment = require("../electron/services/recap/recapClauseAlignmentService");
+test("Kabuto checkpoint regression: verified Jiraiya action cannot borrow the preceding Orochimaru shot", () => {
+  const event = { id: "hair_attack", anchorMethod: "scene_frames", source_start: 243.512, source_end: 245.625 };
+  const solution = new RecapSyncSolver().solve({ speechUnits: [{ id: "speech_0009", text: "Jiraiya attacks Kabuto.",
+    visual_event_ids: [event.id] }], visualEvents: [event], scenes: [{ startSec: 241.5, endSec: 245.625 }],
+    audioTracks: { speech_0009: { durationSec: 2.88 } }, sourceDurationSec: 829.408 });
+  assert.equal(solution.decisions[0].clips[0].source_start, 243.512);
+  assert.ok(solution.decisions[0].clips[0].source_end <= 245.625);
+});
+test("an exhausted grounded event requests repair instead of borrowing another clause's footage", () => {
+  const events = [{ id: "used", anchorMethod: "scene_frames", source_start: 10, source_end: 12 },
+    { id: "other", anchorMethod: "scene_frames", source_start: 20, source_end: 30 }];
+  const solution = new RecapSyncSolver({ allowShotReuse: false }).solve({
+    speechUnits: [{ id: "one", text: "First action.", visual_event_ids: ["used"] },
+      { id: "two", text: "Repeated action. Another action.", visual_event_ids: ["used", "other"] }], visualEvents: events,
+    scenes: [{ startSec: 0, endSec: 40 }], sourceDurationSec: 40,
+    audioTracks: { one: { durationSec: 3 }, two: { durationSec: 4, clauseSpans: [
+      { startSec: 0, endSec: 2, text: "Repeated action.", visual_event_ids: ["used"], clauseIds: ["a"] },
+      { startSec: 2, endSec: 4, text: "Another action.", visual_event_ids: ["other"], clauseIds: ["b"] }] } } });
+  for (const clip of solution.decisions.flatMap(decision => decision.clips)) {
+    const event = events.find(item => item.id === clip.event_id);
+    assert.ok(clip.source_start >= event.source_start && clip.source_end <= event.source_end);
+  }
+});
 const { RecapSyncSolver } = require("../electron/services/recap/recapSyncSolver");
+
+test("overlapping chapter IDs already shown in the same clause do not create a false missing shot or a blank slot", () => {
+  const events = [{ id: "parent", source_start: 10, source_end: 12, anchorMethod: "scene_frames" },
+    { id: "nested", source_start: 10.5, source_end: 12, anchorMethod: "scene_frames" },
+    { id: "next", source_start: 20, source_end: 22, anchorMethod: "scene_frames" }];
+  const unit = { id: "body", text: "She decides to leave and then walks out.", visual_event_ids: events.map(e => e.id) };
+  const solve = seconds => new RecapSyncSolver({ allowShotReuse: false }).solve({ speechUnits: [unit], visualEvents: events,
+    audioTracks: { body: { durationSec: seconds } }, sourceDurationSec: 30 });
+  const result = solve(5.1), budget = result.clauseBudgets[0], clips = result.decisions[0].clips;
+  assert.deepEqual(budget.missingEventIds, []);
+  assert.deepEqual(budget.coveredReferences, [{ eventId: "nested", coveredByEventId: "parent" }]);
+  assert.equal(clips.length, 2, "the same source pixels are rendered once");
+  assert.equal(clips[0].output_end, clips[1].output_start, "an alias must not reserve a blank output slot");
+  assert.ok(Math.abs(clips.reduce((n, clip) => n + clip.output_end - clip.output_start, 0) - result.metrics.totalTimelineDurationSec) < .001);
+  assert.ok(budget.holdSec >= 1.49, "coverage aliases add no footage or hold allowance");
+  assert.equal(solve(8).clauseBudgets[0].passed, false, "a genuinely long clause still needs repair");
+  const acrossUnits = new RecapSyncSolver({ allowShotReuse: false }).solve({ visualEvents: events, sourceDurationSec: 30,
+    speechUnits: [{ id: "first", text: "She decides.", visual_event_ids: ["parent"] },
+      { id: "later", text: "She repeats it.", visual_event_ids: ["nested"] }],
+    audioTracks: { first: { durationSec: 3 }, later: { durationSec: 1 } } });
+  assert.ok(acrossUnits.clauseBudgets.find(group => group.speechUnitId === "later").missingEventIds.includes("nested"),
+    "a reference seen under earlier speech cannot support a later clause");
+});
 const unit = { id: "walkway", text: "Marge is trapped. A coworker explains the NDA.", visual_event_ids: ["trap", "nda"], clauses: [
   { clause_id: "trap_words", text: "Marge is trapped.", visual_event_ids: ["trap"] },
   { clause_id: "nda_words", text: "A coworker explains the NDA.", visual_event_ids: ["nda"] }

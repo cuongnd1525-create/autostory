@@ -9,7 +9,13 @@ const { createScopedToken, cancelToken, runWithCancelToken } = require("../elect
 async function verifyMaster(media, project, state, file) {
   const metadata = await media.probeVideo(file), target = Number(project.targetDurationSec);
   const frameTolerance = 1 / (metadata.fps || 30);
-  assert.ok(metadata.duration >= target * .85 - frameTolerance && metadata.duration <= target * 1.05 + frameTolerance, "Actual exported duration must pass the requested target gate within one encoded frame");
+  if (state.durationGate?.soft) {
+    assert.ok(Math.abs(metadata.duration - target) <= target * .35 + frameTolerance,
+      "A soft-duration master may not silently deviate more than 35% from its target");
+    assert.equal(state.qualityGate?.passed, true, "The actual draft must pass quality review");
+    assert.ok(state.qualityScore >= .8, "Quality review must score at least 8/10");
+    assert.equal(state.qualityDurationAssessment?.verdict, "appropriate", "The complete narrative must justify its duration");
+  } else assert.ok(metadata.duration >= target * .85 - frameTolerance && metadata.duration <= target * 1.05 + frameTolerance, "Actual exported duration must pass the requested target gate within one encoded frame");
   assert.ok(metadata.hasAudio, "Master must contain narration audio");
   if (project.recapAspectRatio === "9:16") { assert.equal(metadata.width, 1080); assert.equal(metadata.height, 1920); }
   const lastSpeechEnd = Math.max(...(state.decisions || []).map(d => {
@@ -51,7 +57,7 @@ async function main() {
     // Bound each verification response and leave at least $0.05 below the
     // human-approved ceiling for its final billed usage. Never save this setting.
     settings.vertexDailyLimitUsd = Math.min(limit, 5.95);
-    settings.recapVertexMaxOutputTokens = 8192;
+    settings.recapVertexMaxOutputTokens = 16384;
   }
   const sourceProject = JSON.parse(await fs.readFile(path.join(sourceDir, "project.json"), "utf8"));
   const sourceState = JSON.parse(await fs.readFile(path.join(sourceDir, "analysis", "recap_state.json"), "utf8"));
@@ -115,7 +121,7 @@ async function main() {
           visual_event_ids: clause.visual_event_ids, targetWordCount: clause.text.split(/\s+/).filter(Boolean).length });
       }
     }
-    if (groups.length) {
+    if (groups.length && !process.argv.includes("--regenerate-narration")) {
       const Ai = require("../electron/services/recap/recapAiService");
       const revised = await new Ai(settings).rewriteRecap({ events: state.visualEvents, recapPlan: state.recapPlan, speechUnits: state.speechUnits,
         options: { language: project.recapNarrationLanguage || "en" }, feedback: { duration: { passed: true }, clauseBudgets: groups },

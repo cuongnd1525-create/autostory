@@ -8,6 +8,9 @@ const { pythonArgs, runtimeError } = require("./pythonRuntimeService");
 
 const DEFAULT_WHISPER_BASE_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_WHISPER_TIMEOUT_MS = 300000; // Backwards-compatible constant for legacy test assertions
+const RUNTIME_CACHE_TTL_MS = 5 * 60 * 1000;
+let cachedNvidiaVram = null;
+const cachedRuntimeProfiles = new Map();
 
 function safeNumber(value, fallback = 0) {
   const parsed = Number(value);
@@ -149,22 +152,44 @@ class SubtitleService {
   }
 
   async detectNvidiaVramMb() {
+    if (this.runtimeCommand === runCommand && cachedNvidiaVram && (Date.now() - cachedNvidiaVram.at) < RUNTIME_CACHE_TTL_MS) {
+      return cachedNvidiaVram.value;
+    }
     try {
       const result = await runCommand(
         "nvidia-smi",
         ["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
         5000
       );
-      return Math.max(
+      const value = Math.max(
         0,
         ...String(result.stdout || "").split(/\r?\n/).map((line) => safeNumber(line.trim(), 0))
       );
+      if (this.runtimeCommand === runCommand) cachedNvidiaVram = { value, at: Date.now() };
+      return value;
     } catch (_error) {
+      if (this.runtimeCommand === runCommand) cachedNvidiaVram = { value: 0, at: Date.now() };
       return 0;
     }
   }
 
   async detectRuntime({ language = "auto", checkDependency = true } = {}) {
+    const useCache = this.runtimeCommand === runCommand;
+    const runtimeKey = useCache ? JSON.stringify({
+      python: this.whisperPythonCommand,
+      engine: this.whisperEngine,
+      model: this.whisperModel,
+      device: this.whisperDevice,
+      computeType: this.whisperComputeType,
+      language: normalizeLanguage(language),
+      checkDependency
+    }) : "";
+    if (useCache && cachedRuntimeProfiles.has(runtimeKey)) {
+      const entry = cachedRuntimeProfiles.get(runtimeKey);
+      if ((Date.now() - entry.at) < RUNTIME_CACHE_TTL_MS) {
+        return structuredClone(entry.profile);
+      }
+    }
     const totalMemoryGb = os.totalmem() / (1024 ** 3);
     const cpuThreads = os.cpus()?.length || 1;
     const nvidiaVramMb = await this.detectNvidiaVramMb();
@@ -236,6 +261,9 @@ class SubtitleService {
       profile.reason = nvidiaVramMb
         ? `NVIDIA Parakeet thử nghiệm trên GPU ${Math.round(nvidiaVramMb / 1024)} GB`
         : "NVIDIA Parakeet đang chạy CPU; tốc độ có thể chậm";
+    }
+    if (useCache) {
+      cachedRuntimeProfiles.set(runtimeKey, { profile: structuredClone(profile), at: Date.now() });
     }
     return profile;
   }
@@ -333,6 +361,87 @@ class SubtitleService {
       details,
       cacheDir: chunkCacheDir
     };
+  }
+
+  async transcribeBatch({
+    items = [],
+    outputDir,
+    narrationLanguage = "auto",
+    cacheDir = "",
+    timeoutMs = null
+  }) {
+    if (!items.length) return {};
+    await fs.mkdir(outputDir, { recursive: true });
+    const profile = await this.detectRuntime({ language: narrationLanguage });
+    if (profile.engine !== "faster-whisper" || profile.fasterWhisperAvailable === false) {
+      const results = {};
+      for (const item of items) {
+        results[item.audioPath] = await this.transcribeToSrt({
+          audioPath: item.audioPath,
+          outputDir,
+          narrationLanguage,
+          cacheDir,
+          timeoutMs
+        });
+      }
+      return results;
+    }
+    if (profile.device === "cuda" && profile.cudaRuntimeAvailable === false) {
+      throw new Error(`Python đã chọn thiếu CUDA runtime cho ASR GPU: ${profile.cudaRuntimeError?.message || "CUDA unavailable"}. Chọn device Auto/CPU hoặc cài cuBLAS CUDA 12 và cuDNN 9.`);
+    }
+    const scriptPath = this.settings.fasterWhisperScript
+      || path.join(__dirname, "..", "..", "tools", "faster_whisper_transcribe.py");
+    const decoder = this.settings.whisperBatchSize || this.settings.whisperBeamSize
+      ? `-batch${Number(this.settings.whisperBatchSize) || "auto"}-beam${Number(this.settings.whisperBeamSize) || 1}` : "";
+    const profileCacheName = `${profile.model}-${profile.device}-${profile.computeType}${decoder}`.replace(/[^a-z0-9._-]+/gi, "-");
+    const manifestEntries = [];
+    for (const item of items) {
+      const outputPath = path.join(outputDir, `${path.parse(item.audioPath).name}.srt`);
+      const audioCacheKey = await buildAudioCacheKey(item.audioPath);
+      const chunkCacheDir = cacheDir
+        ? path.join(cacheDir, profileCacheName, audioCacheKey)
+        : path.join(outputDir, `.faster-whisper-${profileCacheName}-${audioCacheKey}`);
+      manifestEntries.push({
+        audio: item.audioPath,
+        output: outputPath,
+        cacheDir: chunkCacheDir
+      });
+    }
+    const manifestPath = path.join(outputDir, `asr-batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.json`);
+    await fs.writeFile(manifestPath, JSON.stringify(manifestEntries), "utf8");
+    try {
+      const args = [
+        scriptPath,
+        "--batch-manifest", manifestPath,
+        "--model", profile.model,
+        "--language", normalizeLanguage(narrationLanguage),
+        "--device", profile.device,
+        "--compute-type", profile.computeType,
+        "--batch-size", String(Number(this.settings.whisperBatchSize) > 0 ? Math.min(32, Math.round(Number(this.settings.whisperBatchSize))) : profile.device === "cuda"
+          ? (Number(profile.nvidiaVramMb || 0) >= 6144 ? 16 : 8)
+          : (Number(profile.totalMemoryGb || 0) >= 16 ? 4 : 2)),
+        "--beam-size", String(Math.max(1, Math.min(10, Number(this.settings.whisperBeamSize) || 1))),
+        "--chunk-sec", String(this.whisperChunkSec)
+      ];
+      await runCommand(
+        this.whisperPythonCommand,
+        pythonArgs(this.whisperPythonCommand, args),
+        timeoutMs || this.whisperTimeoutMs
+      );
+      const outputMap = {};
+      for (const entry of manifestEntries) {
+        outputMap[entry.audio] = {
+          provider: "faster_whisper",
+          subtitlePath: entry.output,
+          wordTimestampsPath: entry.output.replace(/\.srt$/i, ".words.json"),
+          profile,
+          cacheDir: entry.cacheDir
+        };
+      }
+      return outputMap;
+    } finally {
+      await fs.unlink(manifestPath).catch(() => {});
+    }
   }
 
   async transcribeWithOpenAiWhisper({ audioPath, outputDir, narrationLanguage, model, timeoutMs = null }) {

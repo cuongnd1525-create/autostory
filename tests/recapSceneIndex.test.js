@@ -31,3 +31,20 @@ test("outro graphics cannot become story evidence and a long combined action mus
   assert.throws(() => Index.compile({ events: [{ scene_ids: ["long"], description: "Multiple actions" }] }, long,
     { ...chunk, sourceEndSec: 140, durationSec: 40 }), /24 giây/);
 });
+
+test("six consecutive short shots of one action are valid without a four-ID quota; the 24-second bound still applies", async () => {
+  const Ai = require("../electron/services/recap/recapAiService"), entries = Array.from({ length: 6 }, (_, i) => ({
+    scene_id: `s${i}`, source_start: i * 3, source_end: (i + 1) * 3, source_time: i * 3 + 1.5
+  }));
+  let calls = 0;
+  const ai = new Ai({ aiProvider: "vertex_ai" }, { vertex: { generateJsonFromFiles: async () => {
+    calls++; return { summary: "A continuous action.", events: [{ scene_ids: entries.map(e => e.scene_id),
+      anchor_scene_id: "s0", description: "She follows him through the doorway.", content_kind: "story" }] };
+  } } });
+  const result = await ai.analyzeSceneIndex({ sceneIndex: { entries, filePaths: ["scenes.png"] }, info: { chunkIndex: 1, sourceStartSec: 0, sourceEndSec: 40 } });
+  assert.equal(calls, 1, "valid source data must not trigger a paid fallback just because the edit has many short shots");
+  assert.equal(result.events[0].anchorSceneIds.length, 6); assert.equal(result.events[0].source_end, 18);
+  assert.throws(() => Index.compile({ events: [{ scene_ids: entries.map(e => e.scene_id), description: "Too long." }] },
+    { entries: entries.map((e, i) => ({ ...e, source_start: i * 6, source_end: (i + 1) * 6, source_time: i * 6 + 3 })) },
+    { chunkIndex: 1, sourceStartSec: 0, sourceEndSec: 40 }), /24 giây/);
+});

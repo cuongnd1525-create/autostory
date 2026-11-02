@@ -6,6 +6,7 @@ const Provider = require("../electron/services/recap/recapProviderService");
 const tokens = require("../electron/services/cancelToken");
 const Vertex = require("../electron/services/vertexAiService");
 const Discovery = require("../electron/services/antigravityModelDiscovery");
+const { vertexTransport } = require("../electron/services/recap/recapSchemaBoundary");
 const inventory = Discovery.parseModels(["gemini-3.8-flash-high\tGemini 3.8 Flash (High)", "gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)",
   "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)", "gemini-3.7-flash-high\tGemini 3.7 Flash (High)", "gemini-3.7-flash-low\tGemini 3.7 Flash (Low)",
   "gemini-3.1-pro-high\tGemini 3.1 Pro (High)", "gemini-3.1-pro-low\tGemini 3.1 Pro (Low)"].join("\n"));
@@ -21,6 +22,60 @@ test("provider validation rejects array overflow and fractional indexes before a
   assert.throws(() => Provider.validateResponse([1, 2, 3], bounded), /array length/);
   assert.throws(() => Provider.validateResponse([], bounded), /array length/);
   assert.throws(() => Provider.validateResponse([1.5], bounded), /integer/);
+});
+
+test("Vertex transport retains the local contract and ID enums while removing decoder array bounds", () => {
+  const contract = { type: "object", properties: {
+    minItems: { type: "string" },
+    units: { type: "array", minItems: 12, description: "Ordered narration.", items: { type: "object", properties: {
+      ids: { type: "array", minItems: 1, maxItems: 3, items: { type: "string", enum: ["a", "b"] } },
+      score: { type: "number", minimum: 0, maximum: 1 }
+    } } }
+  } };
+  const saved = structuredClone(contract), wire = vertexTransport(contract);
+  assert.deepEqual(contract, saved, "never mutate the validation contract");
+  assert.deepEqual(wire.properties.minItems, { type: "string" }, "schema property names are not keywords");
+  assert.equal(wire.properties.units.minItems, undefined);
+  assert.match(wire.properties.units.description, /Ordered narration.*at least 12 items/);
+  const nested = wire.properties.units.items.properties;
+  assert.equal(nested.ids.maxItems, undefined); assert.equal(nested.ids.minItems, undefined);
+  assert.deepEqual(nested.ids.items.enum, ["a", "b"]);
+  assert.deepEqual(nested.score, { type: "number", minimum: 0, maximum: 1 });
+  assert.equal(vertexTransport(null), null);
+});
+
+test("301-event long recap sends a compilable Vertex schema and still rejects short or ungrounded output locally", async () => {
+  const settings = { aiProvider: "vertex_ai", vertexProjectId: "fixture-project", vertexQualityModel: "gemini-2.5-pro" };
+  const vertex = new Vertex(settings);
+  vertex.assertBudgetAvailable = async () => {}; vertex.getAccessToken = async () => "fixture-token";
+  vertex.validateSettings = () => {}; vertex.recordUsage = async () => {};
+  const events = Array.from({ length: 301 }, (_, index) => ({ id: `chunk_${Math.floor(index / 44) + 1}_scene_event_${index + 1}`,
+    source_start: index * 5, source_end: index * 5 + 5, duration: 5, description: "He closes the distance." }));
+  const beats = Array.from({ length: 14 }, (_, index) => ({ beat_id: `beat_${index + 1}`, role: "development", visual_event_ids: [events[index].id] }));
+  const valid = { speech_units: Array.from({ length: 12 }, (_, index) => ({ id: `speech_${index + 1}`, beat_id: beats[index].beat_id,
+    text: "He closes the distance.", visual_event_ids: [events[index].id],
+    clauses: [{ clause_id: `c${index}`, text: "He closes the distance.", visual_event_ids: [events[index].id] }] })) };
+  let reply = valid, originalSchema; const requests = [], previousFetch = global.fetch;
+  global.fetch = async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: JSON.stringify(reply) }] } }] }) };
+  };
+  try {
+    const ai = new Ai(settings, { vertex });
+    const invoke = ai.runVertexCall.bind(ai);
+    ai.runVertexCall = request => { originalSchema = request.responseSchema; return invoke(request); };
+    const result = await ai.generateNarration({ events, recapPlan: { target_duration_sec: 1000, beats } });
+    assert.equal(result.length, 12);
+    const wire = requests[0].generationConfig.responseSchema.properties.speech_units;
+    assert.equal(originalSchema.properties.speech_units.minItems, 12);
+    assert.equal(wire.minItems, undefined); assert.match(wire.description, /at least 12 items/);
+    assert.equal(wire.items.properties.clauses.items.properties.visual_event_ids.items.enum.length, 301);
+    const call = () => ai.providerService.generateJsonFromFiles({ prompt: "Narration", responseSchema: originalSchema });
+    reply = { speech_units: valid.speech_units.slice(0, 11) };
+    await assert.rejects(call(), /array length/);
+    reply = structuredClone(valid); reply.speech_units[0].clauses[0].visual_event_ids = ["invented_source"];
+    await assert.rejects(call(), /clauses\[0\].visual_event_ids\[0\]/);
+  } finally { global.fetch = previousFetch; await vertex.dispatcher.close(); }
 });
 const story = { title: "Story", logline: "Story", conflict: "Conflict", characters: [], major_events: [], climax: "Climax", ending: { description: "End" } };
 const plan = { target_duration_sec: 5, selected_event_ids: ["event_1"], hook_event_ids: ["event_1"], beats: [] };
@@ -39,6 +94,55 @@ test("Vertex Pro capacity failure switches to the configured Flash with the same
   assert.deepEqual(calls[0].filePaths, calls[1].filePaths);
   provider.dependencies.vertex.generateJsonFromFiles = async () => { throw Object.assign(new Error("Spending limit"), { kind: "budget" }); };
   await assert.rejects(ai.runVertexCall({ prompt: "Review", modelOverride: "gemini-2.5-pro" }), { kind: "budget" });
+});
+
+test("a per-request Vertex deadline aborts the HTTP call and remains a retryable timeout", async t => {
+  const vertex = new Vertex({ vertexProjectId: "fixture-project", vertexTimeoutMs: 900000 });
+  vertex.assertBudgetAvailable = async () => {}; vertex.getAccessToken = async () => "fixture-token";
+  vertex.validateSettings = () => {};
+  const previousFetch = global.fetch; let seen;
+  const started = new Promise(resolve => { seen = resolve; });
+  global.fetch = async (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+    seen(options.signal);
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const pending = vertex.generateJsonFromFiles({ prompt: "Review", requestTimeoutMs: 120000 });
+    const signal = await started;
+    t.mock.timers.tick(119999); assert.equal(signal.aborted, false);
+    t.mock.timers.tick(1);
+    await assert.rejects(pending, error => error.kind === "request_timeout" && /2.0 phút/.test(error.message));
+    assert.equal(signal.aborted, true);
+  } finally { global.fetch = previousFetch; t.mock.timers.reset(); await vertex.dispatcher.close(); }
+});
+
+test("review timeout fallback gives each model its own deadline and preserves media", async () => {
+  const calls = [], ai = new Ai({ aiProvider: "vertex_ai", vertexAnalysisModel: "gemini-2.5-flash", vertexQualityModel: "gemini-2.5-pro" }, {
+    vertex: { generateJsonFromFiles: async input => {
+      calls.push(input);
+      if (calls.length === 1) throw Object.assign(new Error("Timed out"), { kind: "request_timeout" });
+      return { ok: true };
+    } }
+  });
+  await ai.runVertexCall({ filePaths: ["same-review.mp4"], prompt: "Review", responseSchema: schema,
+    modelOverride: "gemini-2.5-flash", requestTimeoutMs: { flash: 120000, pro: 240000 } });
+  assert.deepEqual(calls.map(call => [call.modelOverride, call.requestTimeoutMs]), [["gemini-2.5-flash", 120000], ["gemini-2.5-pro", 240000]]);
+  assert.deepEqual(calls[0].filePaths, calls[1].filePaths);
+});
+
+test("Vertex capacity cooldown skips repeated overloaded models and restores the preferred model after expiry", async () => {
+  let now = 100, overloaded = true; const calls = [], messages = [];
+  const ai = new Ai({}, { now: () => now, providerService: { provider: "vertex_ai",
+    getFallbackModels: () => ["pro", "flash"], generateJsonFromFiles: async request => {
+      calls.push(request.modelOverride); assert.equal(request.skipCapacityRetry, true);
+      if (request.modelOverride === "pro" && overloaded) throw new Error("429 Resource exhausted");
+      return { ok: true };
+    } } });
+  const request = { prompt: "fixture", modelOverride: "pro", onProgress: item => messages.push(item.message || "") };
+  await ai.runVertexCall(request); await ai.runVertexCall(request);
+  assert.deepEqual(calls, ["pro", "flash", "flash"]); assert.ok(messages.some(message => /2 phút/.test(message)));
+  now += 120001; overloaded = false; await ai.runVertexCall(request); assert.equal(calls.at(-1), "pro");
 });
 
 test("operation tokens provide a valid signal and cancellation aborts it", () => {

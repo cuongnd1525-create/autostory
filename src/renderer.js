@@ -8763,6 +8763,12 @@ function renderRecapEditorialPanel(project) {
   const preferences = { preset: project.recapPreset || "recap", duration: project.targetDurationSec || project.targetDuration || 60,
     language: project.recapNarrationLanguage || "en", style: project.recapNarrationStyle || "natural", aspect: project.recapAspectRatio || "original", framing: project.recapFraming || "fit_blur", captions: project.recapCaptionStyle || "off" };
   for (const [key, value] of Object.entries(preferences)) if ($(`recap-studio-${key}`)) $(`recap-studio-${key}`).value = value;
+  const studioDuration = $("recap-studio-duration");
+  if (studioDuration) {
+    const sourceSec = Number(project.sourceDurationSec);
+    if (Number.isFinite(sourceSec) && sourceSec >= 15) studioDuration.max = String(Math.floor(sourceSec));
+    else studioDuration.removeAttribute("max");
+  }
   const editorial = project.recapEditorial || {};
   $("recap-angle-choice").innerHTML = (editorial.angles || []).map((angle) => `<option value="${escapeHtml(angle.id)}">${escapeHtml(angle.title)} · ${angle.score}/10</option>`).join("");
   $("recap-angle-choice").value = editorial.selectedAngleId || "";
@@ -11159,15 +11165,20 @@ async function applySourceSelection({ videoPath, subtitlePath, sourceUrl = "", t
   if (!el.projectTitle.value.trim() || el.projectTitle.value === "project_default") {
     el.projectTitle.value = title || fileName(videoPath).replace(/\.[^.]+$/, "");
   }
+  const sourceHint = document.getElementById("target-duration-source-hint");
   try {
     const meta = await window.cineviral.probeVideo(videoPath);
     if (meta?.duration) {
-      el.targetDuration.max = String(Math.max(8, Math.floor(meta.duration)));
+      const maxSec = Math.max(8, Math.floor(meta.duration));
+      el.targetDuration.max = String(maxSec);
       if (Number(el.targetDuration.value || 0) > meta.duration) {
-        el.targetDuration.value = String(Math.max(8, Math.floor(meta.duration)));
+        el.targetDuration.value = String(maxSec);
       }
+      if (sourceHint) sourceHint.textContent = `Tối đa ${maxSec} giây (độ dài video gốc).`;
     }
   } catch (error) {
+    el.targetDuration.removeAttribute("max");
+    if (sourceHint) sourceHint.textContent = "";
     addLog(`Không thể kiểm tra thời lượng nguồn: ${error.message}`, "WARNING");
   }
   updateSourceSelectionUi();

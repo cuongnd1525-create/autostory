@@ -8,6 +8,25 @@ const Tts = require("../electron/services/recap/recapTtsService");
 const ProjectStore = require("../electron/services/projectStore");
 const { createScopedToken } = require("../electron/services/cancelToken");
 
+test("missing downloaded source reports a recoverable selection error before media or AI work", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "recap-missing-source-"));
+  try {
+    const sourceVideoPath = path.join(root, "download.f398+251-7.f398.mp4"), store = new ProjectStore();
+    const project = await store.createProject(root, { title: "Missing source", sourceVideoPath, mode: "recap" });
+    let calls = 0;
+    const unexpected = () => { calls++; throw new Error("Unexpected expensive work"); };
+    const service = new Pipeline({ projectStore: store, logger: { log() {} }, serviceFactories: {
+      media: () => ({ probeVideo: unexpected, ensureAnalysisProxy: unexpected }),
+      ai: () => ({ analyzeVideoChunk: unexpected }), tts: () => ({}), renderer: () => ({})
+    } });
+    await assert.rejects(service.runRecapProject({ workspaceRoot: root, projectId: project.id }), error => {
+      assert.equal(error.code, "SOURCE_VIDEO_NOT_FOUND"); assert.equal(error.cause.code, "ENOENT");
+      assert.match(error.message, /chọn lại file video hoàn chỉnh/); assert.ok(error.message.includes(sourceVideoPath)); return true;
+    });
+    assert.equal(calls, 0);
+  } finally { await fs.rm(root, { recursive: true, force: true }); }
+});
+
 test("bad timestamp checkpoints invalidate derived edits while valid chunks survive", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "recap-bad-anchor-"));
   try {
@@ -59,7 +78,8 @@ test("pipeline runs all stages, preserves absolute chunk timestamps, and saves f
         buildStoryModel: async ({ events: actual }) => { assert.equal(actual[1].source_start, 62); return { title: "Story", story_arcs: [] }; },
         planRecap: async ({ allowShotReuse }) => { assert.equal(allowShotReuse, true); return { beats: events.map((event, i) => ({ beat_id: `beat_${i}`, role: "development", visual_event_ids: [event.id] })), selected_event_ids: events.map((event) => event.id) }; },
         generateNarration: async () => units,
-        reviewDraft: async () => { reviews++; return { overall_score: 0.9, summary: "OK", issues: [] }; }
+        reviewDraft: async ({ editorialContext }) => { reviews++; assert.equal(editorialContext.qualityFirst, true);
+          return { overall_score: 0.9, summary: "OK", issues: [], duration_assessment: { verdict: "appropriate", reason: "Complete causal story without padding." } }; }
       }),
       tts: () => ({
         getVoiceProfile: async (workspaceRoot, actualProject) => { assert.equal(workspaceRoot, root); assert.equal(actualProject.id, project.id); return { wordsPerSecond: 2.5 }; },

@@ -8,10 +8,12 @@
 const fs = require("fs/promises");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const { spawn } = require("child_process");
 const RecapHardwareService = require("./recapHardwareService");
 const { throwIfCancelled, trackChild } = require("../cancelToken");
 const RecapCaptionService = require("./recapCaptionService");
+const RecapRenderCacheService = require("./recapRenderCacheService");
 
 class RecapRenderer {
   constructor(options = {}) {
@@ -20,6 +22,7 @@ class RecapRenderer {
     this.hardwareService = options.hardwareService || new RecapHardwareService({ ffmpegPath: this.ffmpegPath });
     this.logger = options.logger || console;
     this.captionService = options.captionService || new RecapCaptionService(options.settings || {});
+    this.segmentCache = options.segmentCache || new RecapRenderCacheService();
   }
 
   async runCommand(binary, args, { cancelToken = null, captureStdout = false } = {}) {
@@ -50,12 +53,79 @@ class RecapRenderer {
         }
         const stderr = Buffer.concat(stderrChunks).toString();
         if (code !== 0) {
-          const errMsg = `FFmpeg failed (code ${code}): ${stderr.slice(-600)}`;
-          return reject(new Error(errMsg));
+          const causes = stderr.split(/[\r\n]+/).filter(line => /error|failed|cannot allocate|pthread|out of memory|resource temporarily unavailable|no space|permission denied/i.test(line));
+          const detail = [...new Set([...causes.slice(0, 6), ...stderr.trim().split(/[\r\n]+/).slice(-5)])].join("\n");
+          return reject(Object.assign(new Error(`FFmpeg failed (code ${code}): ${detail.slice(0, 2400)}`), {
+            kind: "ffmpeg_exit", exitCode: code, stderr, command: { binary, args: [...args] }
+          }));
         }
         resolve(captureStdout ? Buffer.concat(stdoutChunks).toString() : stderr);
       });
     });
+  }
+
+  videoThreadArgs(args, concurrency = 1, safe = false) {
+    const cpus = Math.max(1, os.availableParallelism?.() || os.cpus().length || 1);
+    const threads = safe ? Math.min(2, cpus) : Math.max(1, Math.min(8, Math.floor(cpus / concurrency)));
+    const input = args.indexOf("-i");
+    if (input < 0) throw new Error("Render command is missing its input.");
+    // Input decoder, filter pools and output encoder each have separate thread
+    // settings. Three encoders must not each allocate the whole machine.
+    return ["-filter_threads", safe ? "1" : "2", "-filter_complex_threads", safe ? "1" : "2",
+      ...args.slice(0, input), "-threads", safe ? "1" : "2", ...args.slice(input, -1),
+      "-threads:v", String(threads), args.at(-1)];
+  }
+
+  canRetryVideo(error) {
+    return error.kind === "ffmpeg_exit"
+      && !/no space left|permission denied|invalid argument|no such file|unknown encoder|not divisible by 2/i.test(error.stderr || "")
+      && /generic error in an external library|cannot allocate memory|out of memory|pthread_create|resource temporarily unavailable|thread.*(?:failed|error)|error (?:while )?opening encoder/i.test(error.stderr || "");
+  }
+
+  async recordRenderFailure(error, { outputPath, stage, index }) {
+    const file = path.join(path.dirname(outputPath), ".recap-render-errors",
+      `${stage}-${index + 1}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.log`);
+    try {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, `${JSON.stringify({ stage, segment: index + 1, exitCode: error.exitCode,
+        command: error.command, message: error.message }, null, 2)}\n\n${error.stderr || ""}`);
+      error.diagnosticPath = file;
+    } catch (logError) { this.logger.warn?.(`Cannot save recap render diagnostic: ${logError.message}`); }
+    return error;
+  }
+
+  async renderVideoBatches({ count, concurrency, render, outputPath, stage, onProgress = () => {}, cancelToken }) {
+    for (let start = 0; start < count; start += concurrency) {
+      throwIfCancelled(cancelToken);
+      const indices = Array.from({ length: Math.min(concurrency, count - start) }, (_, i) => start + i);
+      // Drain every sibling before retry/cleanup. Promise.all rejected while
+      // other FFmpeg processes were still encoding the same batch.
+      const settled = await Promise.allSettled(indices.map(index => render(index, false)));
+      throwIfCancelled(cancelToken);
+      const failures = [];
+      for (let i = 0; i < settled.length; i++) if (settled[i].status === "rejected") {
+        const error = await this.recordRenderFailure(settled[i].reason, { outputPath, stage, index: indices[i] });
+        failures.push({ index: indices[i], error });
+      }
+      const terminal = failures.find(({ error }) => !this.canRetryVideo(error));
+      if (terminal) throw this.renderFailureContext(terminal.error, stage, terminal.index, count);
+      for (const { index, error } of failures) {
+        throwIfCancelled(cancelToken);
+        onProgress({ level: "WARNING", stage, segmentIndex: index + 1, retry: 1, diagnosticPath: error.diagnosticPath,
+          message: `FFmpeg lỗi ở ${stage} ${index + 1}/${count}; đang thử lại riêng tác vụ này với ít luồng hơn. Log: ${error.diagnosticPath || error.message}` });
+        try { await render(index, true); }
+        catch (retryError) {
+          throwIfCancelled(cancelToken);
+          await this.recordRenderFailure(retryError, { outputPath, stage, index });
+          throw this.renderFailureContext(retryError, stage, index, count);
+        }
+      }
+    }
+  }
+
+  renderFailureContext(error, stage, index, count) {
+    error.message = `${stage} ${index + 1}/${count}: ${error.message}${error.diagnosticPath ? `\nLog FFmpeg đầy đủ: ${error.diagnosticPath}` : ""}`;
+    return error;
   }
 
   async probeVideo(filePath) {
@@ -90,6 +160,31 @@ class RecapRenderer {
     const retimedAudioDir = path.join(tempDir, "retimed_audio");
     await fs.mkdir(retimedAudioDir, { recursive: true });
 
+    const normalizedUnits = new Array(decisions.length);
+    const normalizeTasks = decisions
+      .map((dec, dIdx) => ({ dec, dIdx }))
+      .filter(({ dec }) => Boolean(dec.audio_path));
+
+    const normalizeSingle = async ({ dec, dIdx }) => {
+      throwIfCancelled(cancelToken);
+      const tempo = Number(dec.voice_tempo || 1.0);
+      if (!Number.isFinite(tempo) || tempo < 0.5 || tempo > 2) throw new Error(`Invalid narration tempo: ${tempo}`);
+      const unitAudioPath = path.join(retimedAudioDir, `speech_normalized_${dIdx}.wav`);
+      await this.runCommand(this.ffmpegPath, [
+        "-y", "-i", dec.audio_path,
+        "-filter:a", `${Math.abs(tempo - 1) > 0.0001 ? `atempo=${tempo.toFixed(4)},` : ""}aresample=44100`,
+        "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le", unitAudioPath
+      ], { cancelToken });
+      const effectiveDuration = (await this.probeVideo(unitAudioPath)).durationSec;
+      if (!(effectiveDuration > 0)) throw new Error(`Cannot measure normalized narration: ${dec.speech_unit_id}`);
+      normalizedUnits[dIdx] = { unitAudioPath, effectiveDuration };
+    };
+
+    for (let startIdx = 0; startIdx < normalizeTasks.length; startIdx += 4) {
+      throwIfCancelled(cancelToken);
+      await Promise.all(normalizeTasks.slice(startIdx, startIdx + 4).map(normalizeSingle));
+    }
+
     let currentAudioTimeline = 0.0;
     const concatEntries = [];
     let silenceIndex = 0;
@@ -98,6 +193,7 @@ class RecapRenderer {
       throwIfCancelled(cancelToken);
       const dec = decisions[dIdx];
       if (!dec.audio_path) continue;
+      const { unitAudioPath, effectiveDuration } = normalizedUnits[dIdx];
 
       // First clip in decision determines the speech unit's timeline start
       const firstClip = dec.clips && dec.clips.length > 0 ? dec.clips[0] : null;
@@ -121,23 +217,7 @@ class RecapRenderer {
         currentAudioTimeline = targetSpeechStart;
       }
 
-      // Concat demuxing requires identical PCM formats. Even tempo=1 must
-      // be converted: Edge/Kokoro audio is commonly 24 kHz mono, while
-      // generated silence is 44.1 kHz stereo.
-      const tempo = Number(dec.voice_tempo || 1.0);
-      if (!Number.isFinite(tempo) || tempo < 0.5 || tempo > 2) throw new Error(`Invalid narration tempo: ${tempo}`);
-      const unitAudioPath = path.join(retimedAudioDir, `speech_normalized_${dIdx}.wav`);
-      await this.runCommand(this.ffmpegPath, [
-        "-y", "-i", dec.audio_path,
-        "-filter:a", `${Math.abs(tempo - 1) > 0.0001 ? `atempo=${tempo.toFixed(4)},` : ""}aresample=44100`,
-        "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le", unitAudioPath
-      ], { cancelToken });
-
       concatEntries.push(`file '${unitAudioPath.replace(/\\/g, "/")}'`);
-
-      // Update current timeline position with retimed duration
-      const effectiveDuration = (await this.probeVideo(unitAudioPath)).durationSec;
-      if (!(effectiveDuration > 0)) throw new Error(`Cannot measure normalized narration: ${dec.speech_unit_id}`);
       currentAudioTimeline = Number((currentAudioTimeline + effectiveDuration).toFixed(3));
     }
 
@@ -244,6 +324,8 @@ class RecapRenderer {
         ? proxyVideoPath
         : sourceVideoPath;
       const hasSourceAudio = !muteSourceAudio && (await this.probeVideo(inputVideo)).hasAudio;
+      const sourceStat = await fs.stat(inputVideo);
+      const inputIdentity = { path: path.resolve(inputVideo), size: sourceStat.size, mtimeMs: sourceStat.mtimeMs };
 
       const encoder = await this.hardwareService.detectBestEncoder();
       const draftEncArgs = this.hardwareService.getFastDraftEncoderArgs(encoder);
@@ -265,15 +347,15 @@ class RecapRenderer {
         captionDirectory: captionDirectory || path.join(path.dirname(outputPath), "captions"),
         width: presentation.aspect === "9:16" ? 360 : 640, height: presentation.aspect === "9:16" ? 640 : 360, onProgress });
 
-      // Render individual draft segments
-      const segmentDir = path.join(tempDir, "segments");
-      await fs.mkdir(segmentDir, { recursive: true });
-      const concatEntries = [];
+      // Render individual draft segments with bounded concurrency
+      const concatEntries = new Array(allClips.length);
+      const isHwEncoder = /nvenc|qsv|amf/i.test(draftEncArgs.join(" "));
+      const concurrency = isHwEncoder ? 2 : 3;
+      let completedCount = 0;
 
-      for (let i = 0; i < allClips.length; i++) {
+      const renderDraftSegment = async (i, safe) => {
         throwIfCancelled(cancelToken);
         const clip = allClips[i];
-        const segPath = path.join(segmentDir, `seg_${String(i).padStart(4, "0")}.mp4`);
         const rawDur = clip.source_end - clip.source_start;
         const speed = clip.video_speed || 1.0;
         const timing = this.segmentTiming(allClips, i, 24, totalVideoDuration);
@@ -301,18 +383,22 @@ class RecapRenderer {
           const tempoFilter = Math.abs(speed - 1) > 0.01 ? `atempo=${speed.toFixed(4)},` : "";
           clipArgs.push("-af", `${tempoFilter}volume=0.20,aresample=44100,aformat=channel_layouts=stereo,${timing.initialGapSec > 0 ? `adelay=${Math.round(timing.initialGapSec * 1000)}:all=1,` : ""}apad,atrim=duration=${timing.durationSec}`, "-ac", "2", "-c:a", "aac", "-b:a", "128k");
         } else clipArgs.push("-an");
-        clipArgs.push(segPath);
+        const cached = await this.segmentCache.render({ directory: path.join(path.dirname(outputPath), ".recap-segments"),
+          inputIdentity, args: clipArgs, ffmpegPath: this.ffmpegPath, cancelToken,
+          render: file => this.runCommand(this.ffmpegPath, this.videoThreadArgs([...clipArgs, file], concurrency, safe), { cancelToken }) });
+        concatEntries[i] = `file '${cached.file.replace(/\\/g, "/")}'\nduration ${timing.durationSec}`;
 
-        await this.runCommand(this.ffmpegPath, clipArgs, { cancelToken });
-        concatEntries.push(`file '${segPath.replace(/\\/g, "/")}'\nduration ${timing.durationSec}`);
-
-        const progressPercent = 10 + Math.round(((i + 1) / allClips.length) * 65);
+        completedCount++;
+        const progressPercent = 10 + Math.round((completedCount / allClips.length) * 65);
         onProgress({
           percent: progressPercent,
           stage: "draft_segments",
-          message: `Rendering draft segment ${i + 1} of ${allClips.length}...`
+          message: `${cached.hit ? "Reusing" : "Rendering"} draft segment ${completedCount} of ${allClips.length}...`, cacheHit: cached.hit
         });
-      }
+      };
+
+      await this.renderVideoBatches({ count: allClips.length, concurrency, render: renderDraftSegment,
+        outputPath, stage: "draft_segments", onProgress, cancelToken });
 
       // Concat segments
       throwIfCancelled(cancelToken);
@@ -334,7 +420,7 @@ class RecapRenderer {
       onProgress({ percent: 85, stage: "draft_mux", message: "Finalizing draft reel..." });
       await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-      await this.runCommand(this.ffmpegPath, [
+      const draftMuxArgs = [
         "-y",
         "-i", assembledVideo,
         "-i", narrationTrack,
@@ -345,7 +431,9 @@ class RecapRenderer {
         "-c:a", "aac",
         "-b:a", "128k",
         outputPath
-      ], { cancelToken });
+      ];
+      await this.renderVideoBatches({ count: 1, concurrency: 1, outputPath, stage: "draft_mux", onProgress, cancelToken,
+        render: (_index, safe) => this.runCommand(this.ffmpegPath, this.videoThreadArgs(draftMuxArgs, 1, safe), { cancelToken }) });
 
       onProgress({ percent: 100, stage: "draft_complete", message: "Draft render completed." });
       return outputPath;
@@ -373,6 +461,8 @@ class RecapRenderer {
 
     try {
       const sourceMeta = await this.probeVideo(sourceVideoPath);
+      const sourceStat = await fs.stat(sourceVideoPath);
+      const inputIdentity = { path: path.resolve(sourceVideoPath), size: sourceStat.size, mtimeMs: sourceStat.mtimeMs };
       const hasSourceAudio = !muteSourceAudio && sourceMeta.hasAudio;
       const encoder = await this.hardwareService.detectBestEncoder();
       const allClips = decisions.flatMap((d) => d.clips || []);
@@ -394,15 +484,15 @@ class RecapRenderer {
         width: presentation.aspect === "9:16" ? 1080 : sourceMeta.width,
         height: presentation.aspect === "9:16" ? 1920 : sourceMeta.height, onProgress });
 
-      // Render pristine segments from original source
-      const segmentDir = path.join(tempDir, "segments");
-      await fs.mkdir(segmentDir, { recursive: true });
-      const concatEntries = [];
+      // Render pristine segments from original source with bounded concurrency
+      const concatEntries = new Array(allClips.length);
+      const isHwEncoder = /nvenc|qsv|amf/i.test((encoder.args || []).join(" "));
+      const concurrency = isHwEncoder ? 2 : 3;
+      let completedCount = 0;
 
-      for (let i = 0; i < allClips.length; i++) {
+      const renderFinalSegment = async (i, safe) => {
         throwIfCancelled(cancelToken);
         const clip = allClips[i];
-        const segPath = path.join(segmentDir, `final_seg_${String(i).padStart(4, "0")}.mp4`);
         const rawDur = clip.source_end - clip.source_start;
         const speed = clip.video_speed || 1.0;
         const timing = this.segmentTiming(allClips, i, 30, totalVideoDuration);
@@ -435,18 +525,24 @@ class RecapRenderer {
           clipArgs.push("-af", `${atempoStr}volume=0.20,aresample=44100,aformat=channel_layouts=stereo,${timing.initialGapSec > 0 ? `adelay=${Math.round(timing.initialGapSec * 1000)}:all=1,` : ""}apad,atrim=duration=${timing.durationSec}`, "-ac", "2", "-c:a", "aac", "-b:a", "192k");
         }
 
-        clipArgs.push("-t", String(timing.durationSec), segPath);
-        await this.runCommand(this.ffmpegPath, clipArgs, { cancelToken });
+        clipArgs.push("-t", String(timing.durationSec));
+        const cached = await this.segmentCache.render({ directory: path.join(path.dirname(outputPath), ".recap-segments"),
+          inputIdentity, args: clipArgs, ffmpegPath: this.ffmpegPath, cancelToken,
+          render: file => this.runCommand(this.ffmpegPath, this.videoThreadArgs([...clipArgs, file], concurrency, safe), { cancelToken }) });
         // AAC encoder padding must not accumulate as video timeline gaps.
-        concatEntries.push(`file '${segPath.replace(/\\/g, "/")}'\nduration ${timing.durationSec}`);
+        concatEntries[i] = `file '${cached.file.replace(/\\/g, "/")}'\nduration ${timing.durationSec}`;
 
-        const progressPercent = 5 + Math.round(((i + 1) / allClips.length) * 75);
+        completedCount++;
+        const progressPercent = 5 + Math.round((completedCount / allClips.length) * 75);
         onProgress({
           percent: progressPercent,
           stage: "final_segments",
-          message: `Rendering master cut ${i + 1} of ${allClips.length} (${encoder.label})...`
+          message: `${cached.hit ? "Reusing" : "Rendering"} master cut ${completedCount} of ${allClips.length} (${encoder.label})...`, cacheHit: cached.hit
         });
-      }
+      };
+
+      await this.renderVideoBatches({ count: allClips.length, concurrency, render: renderFinalSegment,
+        outputPath, stage: "final_segments", onProgress, cancelToken });
 
       // Concat segments
       throwIfCancelled(cancelToken);
@@ -482,7 +578,8 @@ class RecapRenderer {
         outputPath
       ];
 
-      await this.runCommand(this.ffmpegPath, finalMuxArgs, { cancelToken });
+      await this.renderVideoBatches({ count: 1, concurrency: 1, outputPath, stage: "final_mux", onProgress, cancelToken,
+        render: (_index, safe) => this.runCommand(this.ffmpegPath, this.videoThreadArgs(finalMuxArgs, 1, safe), { cancelToken }) });
 
       onProgress({ percent: 100, stage: "final_complete", message: "Final recap video rendered successfully." });
       return outputPath;

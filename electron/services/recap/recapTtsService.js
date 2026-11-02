@@ -226,13 +226,28 @@ class RecapTtsService {
     const fileId = `${String(speechUnit.id).replace(/[^a-zA-Z0-9_-]/g, "_")}-${cacheKey}`;
     const rawPath = path.join(outputDir, `${fileId}_raw.wav`);
     const trimmedPath = path.join(outputDir, `${fileId}_trimmed.wav`);
+    const metaPath = `${trimmedPath}.meta.json`;
 
     // Check if trimmed audio already exists and is valid
     try {
       const stat = await fs.stat(trimmedPath);
       if (stat.size > 512) {
+        try {
+          const meta = JSON.parse(await fs.readFile(metaPath, "utf8"));
+          if (meta && meta.size === stat.size && meta.duration > 0.1) {
+            return {
+              speech_unit_id: speechUnit.id,
+              audio_path: trimmedPath,
+              raw_path: rawPath,
+              duration: Number(meta.duration),
+              text: speechUnit.text,
+              isCached: true
+            };
+          }
+        } catch (_metaErr) {}
         const cachedDuration = await this.probeAudioDuration(trimmedPath);
         if (cachedDuration > 0.1) {
+          await fs.writeFile(metaPath, JSON.stringify({ duration: cachedDuration, size: stat.size }), "utf8").catch(() => {});
           return {
             speech_unit_id: speechUnit.id,
             audio_path: trimmedPath,
@@ -263,6 +278,11 @@ class RecapTtsService {
     signal?.throwIfAborted();
     const trimmedDuration = await this.probeAudioDuration(trimmedPath);
     const finalDuration = trimmedDuration > 0.05 ? trimmedDuration : rawDuration;
+
+    try {
+      const stat = await fs.stat(trimmedPath);
+      await fs.writeFile(metaPath, JSON.stringify({ duration: finalDuration, raw_duration: rawDuration, size: stat.size }), "utf8");
+    } catch (_metaWriteErr) {}
 
     // Record sample in voice profile service to learn actual duration
     if (workspaceRoot) {
@@ -298,13 +318,30 @@ class RecapTtsService {
   /**
    * Synthesize all SpeechUnits for a project in batch.
    */
-  async synthesizeAll({ speechUnits = [], outputDir, workspaceRoot, project, signal, onProgress }) {
+  async synthesizeAll({ speechUnits = [], outputDir, workspaceRoot, project, existingAudioTracks = {}, signal, onProgress }) {
     await fs.mkdir(outputDir, { recursive: true });
     const audioTracks = {};
     const total = speechUnits.length;
     for (let i = 0; i < total; i++) {
       if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
       const unit = speechUnits[i];
+      const existing = existingAudioTracks?.[unit.id];
+      if (existing && existing.text === unit.text && existing.durationSec > 0.1 && (existing.audioPath || existing.audio_path)) {
+        const existingPath = existing.audioPath || existing.audio_path;
+        try {
+          const stat = await fs.stat(existingPath);
+          if (stat.size > 512) {
+            audioTracks[unit.id] = {
+              ...existing,
+              audioPath: existingPath,
+              durationSec: existing.durationSec,
+              text: unit.text,
+              isCached: true
+            };
+            continue;
+          }
+        } catch (_err) {}
+      }
       onProgress?.({
         stage: "tts_synthesis",
         percent: Math.round(((i + 1) / Math.max(1, total)) * 100),

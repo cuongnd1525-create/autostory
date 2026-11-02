@@ -137,7 +137,13 @@ class RecapPipelineService {
     if (!project.sourceVideoPath) {
       throw new Error("No source video path specified for project.");
     }
-    await fs.access(project.sourceVideoPath);
+    try {
+      await fs.access(project.sourceVideoPath);
+    } catch (error) {
+      if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+      throw Object.assign(new Error(`Không tìm thấy video nguồn: ${project.sourceVideoPath}. File có thể đã bị đổi tên, di chuyển hoặc bị xóa sau khi tải/ghép. Hãy chọn lại file video hoàn chỉnh trước khi tiếp tục.`, { cause: error }),
+        { code: "SOURCE_VIDEO_NOT_FOUND" });
+    }
 
     let sourceMeta = state.sourceMeta;
     if (!sourceMeta) {
@@ -353,7 +359,7 @@ class RecapPipelineService {
       await this._saveState(statePath, state);
     }
     this._log("Stage 5", `Story synthesized: "${storyModel.title}" - ${storyModel.story_arcs?.length || 0} arcs.`);
-    return { project, paths: projectPaths, state, statePath, ai: aiService, tts: ttsService, renderer };
+    return { project, paths: projectPaths, state, statePath, ai: aiService, tts: ttsService, renderer, media: mediaService };
 
   }
 

@@ -5,17 +5,38 @@ const { fingerprint } = require("./recapEditorialService");
 const { buildTikTokKaraokeAssContent } = require("../karaokeSubtitleService");
 
 const tokenKey = (text) => text.normalize("NFD").replace(/\p{M}/gu, "").replace(/[^\p{L}\p{N}]/gu, "").toLowerCase();
+function tokensMatch(a, b) {
+  const ka = tokenKey(a), kb = tokenKey(b);
+  if (!ka || !kb) return false;
+  if (ka === kb) return true;
+  if (ka.length >= 5 && kb.length >= 5 && Math.abs(ka.length - kb.length) <= 1) {
+    let diffs = 0, ia = 0, ib = 0;
+    while (ia < ka.length && ib < kb.length) {
+      if (ka[ia] === kb[ib]) { ia++; ib++; }
+      else {
+        diffs++;
+        if (diffs > 1) return false;
+        if (ka.length > kb.length) ia++;
+        else if (kb.length > ka.length) ib++;
+        else { ia++; ib++; }
+      }
+    }
+    diffs += (ka.length - ia) + (kb.length - ib);
+    return diffs <= 1;
+  }
+  return false;
+}
 function alignWords(text, recognized, start, end) {
   const tokens = String(text).split(/\s+/).filter(Boolean);
   const rows = Array.from({ length: tokens.length + 1 }, () => new Uint16Array(recognized.length + 1));
   for (let i = 1; i <= tokens.length; i++) for (let j = 1; j <= recognized.length; j++) {
-    rows[i][j] = tokenKey(tokens[i - 1]) === tokenKey(recognized[j - 1].word)
+    rows[i][j] = tokensMatch(tokens[i - 1], recognized[j - 1].word)
       ? rows[i - 1][j - 1] + 1 : Math.max(rows[i - 1][j], rows[i][j - 1]);
   }
   const anchors = new Map();
   let i = tokens.length, j = recognized.length;
   while (i > 0 && j > 0) {
-    if (tokenKey(tokens[i - 1]) === tokenKey(recognized[j - 1].word)) { anchors.set(i - 1, recognized[j - 1]); i--; j--; }
+    if (tokensMatch(tokens[i - 1], recognized[j - 1].word)) { anchors.set(i - 1, recognized[j - 1]); i--; j--; }
     else if (rows[i - 1][j] >= rows[i][j - 1]) i--; else j--;
   }
   const words = tokens.map((word, index) => {
@@ -72,7 +93,8 @@ class RecapCaptionService {
         return alignWords(d.text, recognized.filter((word) => word.start >= start - 0.12 && word.start < end + 0.12), start, end);
       });
       aligned = { words: units.flatMap((unit) => unit.words), matchedRatio: units.reduce((sum, unit) => sum + unit.matchedRatio, 0) / Math.max(1, units.length) };
-      if (aligned.matchedRatio < 0.65) throw new Error("Không căn được phụ đề tin cậy với TTS. Hãy đổi model ASR hoặc tắt phụ đề và kiểm tra draft.");
+      if (aligned.matchedRatio < 0.45) throw new Error("Không căn được phụ đề tin cậy với TTS. Hãy đổi model ASR hoặc tắt phụ đề và kiểm tra draft.");
+      if (aligned.matchedRatio < 0.65) onProgress?.({ level: "WARNING", message: `Độ khớp phụ đề ASR đạt ${Math.round(aligned.matchedRatio * 100)}%; dùng nội suy cho các từ còn thiếu.` });
       await fs.writeFile(alignedPath, JSON.stringify(aligned), "utf8");
     }
     const events = phraseEvents(aligned.words);

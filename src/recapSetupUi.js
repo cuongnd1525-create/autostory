@@ -5,7 +5,7 @@
   const stages = { validate_inputs: "Kiểm tra video nguồn", proxy_generation: "Tạo video phân tích", scene_detection: "Tìm ranh giới cảnh",
     hierarchical_analysis: "AI phân tích nội dung video", story_synthesis: "Tổng hợp cốt truyện", story_angles: "Đề xuất góc kể",
     hook_generation: "Viết các hook mở đầu", hook_audition: "Dựng và đọc thử hook", edit_planning: "Lập kế hoạch dựng",
-    narration_generation: "Viết lời kể", tts_synthesis: "Tạo giọng đọc", clause_alignment: "Căn hình theo mệnh đề đang đọc", duration_repair: "Điều chỉnh thời lượng",
+    narration_generation: "Viết lời kể", narrative_preflight: "Kiểm tra kịch bản trước khi tạo giọng", tts_synthesis: "Tạo giọng đọc", clause_alignment: "Căn hình theo mệnh đề đang đọc", duration_repair: "Điều chỉnh thời lượng",
     draft_rendering: "Dựng video nháp", quality_review: "AI kiểm tra video nháp", quality_repair: "Sửa video nháp",
     anchor_audit: "Đối chiếu lại mốc cảnh nguồn", quality_blocked: "Video cần sửa trước khi xuất", final_render: "Xuất video cuối", completed: "Đã xuất video" };
   const duration = (ms) => { const seconds = Math.max(0, Math.floor(ms / 1000)); return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`; };
@@ -93,7 +93,7 @@
       if (!active) return;
       $("next-step").classList.remove("hidden"); $("start-ingest").classList.add("hidden");
       $("next-step").textContent = this.nextLabel(step);
-      $("next-step").disabled = Boolean(busy) || (step === 5 && !this.editorialAvailable()) || (step === 6 && !this.canExport() && this.result?.status === "quality_blocked" && this.isFresh());
+      $("next-step").disabled = Boolean(busy) || (step === 5 && !this.editorialAvailable());
       $("prev-step").disabled = Boolean(busy) || step === 1;
       this.status.textContent = "Lựa chọn được lưu tự động";
       if (busy) this.status.textContent = this.runtime?.title || "Đang xử lý";
@@ -159,7 +159,11 @@
       if (!$("project-title").value.trim() && step === 1) { this.error("Hãy đặt tên dự án."); return false; }
       if (!$("source-video-path").value.trim() && step === 1) { this.error("Hãy chọn video nguồn trước."); return false; }
       const duration = Number($("target-duration").value);
-      if (step === 2 && (!Number.isFinite(duration) || duration < 15 || duration > 600)) { this.error("Thời lượng cần nằm trong 15–600 giây."); return false; }
+      const maxDuration = Number($("target-duration").max) || Infinity;
+      if (step === 2 && (!Number.isFinite(duration) || duration < 15 || duration > maxDuration)) {
+        this.error(Number.isFinite(maxDuration) ? `Thời lượng cần nằm trong 15–${maxDuration} giây (độ dài video gốc).` : "Thời lượng cần tối thiểu 15 giây.");
+        return false;
+      }
       if (step === 3) {
         const p = this.callbacks.getPayload();
         if (p.recapNarrationLanguage === "vi" && p.voiceProvider === "kokoro") { this.error("Kokoro chưa hỗ trợ tiếng Việt. Hãy chọn Edge Neural hoặc giọng phù hợp khác."); return false; }
@@ -377,7 +381,7 @@
       if (!this.selectionFresh() && this.editorialAvailable()) return this.perform(() => this.buildDraftInternal());
       if (this.result?.status === "completed") return this.callbacks.openStudio(this.project);
       if (this.canExport()) return this.perform(() => this.exportInternal());
-      if (this.result?.status === "quality_blocked" && this.isFresh()) { this.error("Draft còn lỗi cần sửa. Bấm Sửa / kiểm tra lại draft trước khi xuất."); return; }
+      if (this.result?.status === "quality_blocked" && this.isFresh()) return this.perform(async () => { await this.run({ recapRecheck: true, recapWorkflow: "review" }); });
       return this.prepare();
     }
     renderEditorial() {
@@ -401,7 +405,11 @@
       if (!this.active) return;
       const recap = this.project?.recap || {}, fresh = this.isFresh() && this.selectionFresh(), status = this.result?.status;
       const message = !this.project ? "Chưa dựng draft." : !fresh ? "Thiết lập đã thay đổi. Hãy dựng lại trước khi xuất." : status === "quality_blocked" ? "Chưa đạt kiểm tra chất lượng; chưa xuất bản cuối." : status === "review_ready" ? "Draft đã đạt kiểm tra. Xem trước rồi duyệt xuất." : status === "completed" ? "Đã xuất bản cuối." : "Chọn hook rồi dựng draft để kiểm tra.";
-      $("recap-setup-quality").textContent = [message, recap.duration ? `Thời lượng: ${Number(recap.duration.actual).toFixed(1)} / ${recap.duration.target} giây.` : "", recap.qualityScore != null ? `Điểm review: ${Number(recap.qualityScore).toFixed(2)}/1.` : "", ...(recap.qualityIssues || []).map((issue) => `${issue.severity}: ${issue.description}`)].filter(Boolean).join(" ");
+      $("recap-setup-quality").textContent = [message,
+        recap.duration ? `Thực tế ${Number(recap.duration.actual).toFixed(1)}s · mục tiêu tham khảo ${recap.duration.target}s${recap.duration.soft ? ` (khoảng ${Math.round(recap.duration.min)}–${Math.round(recap.duration.max)}s)` : ""}.` : "",
+        recap.qualityScore != null ? `Điểm review: ${(Number(recap.qualityScore) * 10).toFixed(1)}/10 · cần ít nhất 8/10.` : "",
+        recap.durationAssessment?.reason ? `Nhận xét thời lượng: ${recap.durationAssessment.reason}` : "",
+        ...(recap.qualityIssues || []).map((issue) => `${issue.severity}: ${issue.description}`)].filter(Boolean).join(" ");
       const draft = recap.draftVideoPath || this.result?.draftVideoPath;
       $("recap-setup-draft").classList.toggle("hidden", !draft);
       if (draft && $("recap-setup-draft").dataset.path !== draft) { $("recap-setup-draft").src = this.callbacks.fileUrl(draft); $("recap-setup-draft").dataset.path = draft; }

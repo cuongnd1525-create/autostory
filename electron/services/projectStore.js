@@ -11,7 +11,18 @@ function slugify(input) {
 }
 
 async function ensureDir(dirPath) {
-  await fs.mkdir(dirPath, { recursive: true });
+  for (let i = 0; i < 3; i++) {
+    try {
+      await fs.mkdir(dirPath, { recursive: true });
+      return;
+    } catch (err) {
+      if (err.code === 'EPERM' && i < 2) {
+        await new Promise(r => setTimeout(r, 40 * (i + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
 }
 
 async function atomicWrite(filePath, contents) {

@@ -65,5 +65,26 @@ function frequency(buffer) {
       }
     }
     console.log("recapAudioRender: mute ON/OFF verified in draft and master; source removed, TTS preserved");
+    const Solver = require("../electron/services/recap/recapSyncSolver").RecapSyncSolver;
+    const aliasVoice = path.join(root, "alias-voice.wav");
+    command("ffmpeg", ["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=880:duration=2.1:sample_rate=24000", "-ac", "1", aliasVoice]);
+    const aliasEvents = [{ id: "wide", source_start: 0, source_end: 1, anchorMethod: "scene_frames" },
+      { id: "nested", source_start: .5, source_end: 1, anchorMethod: "scene_frames" },
+      { id: "next", source_start: 1, source_end: 2, anchorMethod: "scene_frames" }];
+    const aliasSolution = new Solver({ allowShotReuse: false }).solve({ speechUnits: [{ id: "alias", text: "She decides and leaves.",
+      visual_event_ids: aliasEvents.map(event => event.id) }], visualEvents: aliasEvents,
+      audioTracks: { alias: { durationSec: 2.1, audioPath: aliasVoice } }, sourceDurationSec: 2 });
+    assert.equal(aliasSolution.metrics.semanticTimingMismatchCount, 0);
+    assert.equal(aliasSolution.decisions[0].clips.length, 2);
+    for (const method of ["renderDraft", "renderFinal"]) {
+      const outputPath = path.join(root, `${method}-overlapping-ids.mp4`);
+      await renderer[method]({ sourceVideoPath: source, decisions: aliasSolution.decisions, muteSourceAudio: true, outputPath });
+      const probe = JSON.parse(command("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "json", outputPath]));
+      assert.ok(Math.abs(Number(probe.format.duration) - aliasSolution.metrics.totalTimelineDurationSec) < .05,
+        `${method}: an overlapping event ID cannot lose or add timeline time`);
+      const ending = command("ffmpeg", ["-v", "error", "-ss", "1.9", "-i", outputPath, "-t", "0.2", "-ac", "1", "-ar", "24000", "-f", "s16le", "pipe:1"]);
+      assert.ok(Math.abs(frequency(ending) - 880) < 6, `${method}: narration must survive the overlapping-ID cut without changing pitch`);
+    }
+    console.log("recapAudioRender: overlapping event IDs preserve actual draft/master duration and narration");
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 })().catch((error) => { console.error(error.stack); process.exitCode = 1; });

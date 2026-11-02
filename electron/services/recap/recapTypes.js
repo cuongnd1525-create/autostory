@@ -152,11 +152,14 @@ function validateSpeechUnit(unit, index = 0) {
     throw new Error(`SpeechUnit ${id} cannot have empty text.`);
   }
   const visual_event_ids = safeArray(unit.visual_event_ids || unit.eventIds);
-  const clauses = safeArray(unit.clauses).map((clause, cIdx) => ({
-    clause_id: safeText(clause.clause_id || `${id}_c${cIdx + 1}`),
-    text: safeText(clause.text || ""),
-    visual_event_ids: safeArray(clause.visual_event_ids || visual_event_ids)
-  }));
+  const clauses = safeArray(unit.clauses).map((clause, cIdx) => {
+    const rawEvents = safeArray(clause.visual_event_ids || clause.eventIds);
+    return {
+      clause_id: safeText(clause.clause_id || `${id}_c${cIdx + 1}`),
+      text: safeText(clause.text || ""),
+      visual_event_ids: rawEvents.length ? rawEvents : visual_event_ids
+    };
+  });
 
   return {
     id,

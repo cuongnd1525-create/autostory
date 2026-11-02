@@ -218,7 +218,7 @@ class EdgeTtsService {
 
     let lastError = null;
     const maxRetries = Math.max(1, Number(retries) || 1);
-    for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
+    outer: for (let attempt = 1; attempt <= maxRetries; attempt += 1) {
       for (const voice of voiceAttempts) {
         await fs.promises.rm(outputPath, { force: true }).catch(() => {});
         try {
@@ -242,11 +242,36 @@ class EdgeTtsService {
           };
         } catch (error) {
           lastError = error;
+          if (/\b403\b/i.test(String(error?.message || ""))) break outer;
         }
       }
       if (attempt < maxRetries) {
         await delay(700 * attempt);
       }
+    }
+
+    try {
+      const isVietnamese = language === "vi" || String(preferredVoice || "").startsWith("vi-")
+        || /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđ]/i.test(String(text || ""));
+      if (!isVietnamese) {
+        try {
+          const KokoroVoiceService = require("./kokoroVoiceService");
+          const kokoro = new KokoroVoiceService(this.settings || {});
+          const kokoroVoice = /guy|christopher|namminh|male/i.test(String(preferredVoice || "")) ? "am_adam" : "af_heart";
+          await kokoro.synthesizeSpeech({ text, voiceName: kokoroVoice, language: "en", outputPath });
+          if (fileSize(outputPath) >= 512) {
+            return { outputPath, voice: kokoroVoice, size: fileSize(outputPath), requestedVoice: preferredVoice, resolvedVoice: kokoroVoice, fallbackUsed: true, fallbackProvider: "kokoro" };
+          }
+        } catch (_kokoroErr) { /* Fall through to Windows SAPI */ }
+      }
+      const WindowsVoiceService = require("./windowsVoiceService");
+      const winVoice = new WindowsVoiceService();
+      await winVoice.synthesizeSpeech({ text, voiceName: "", outputPath, rate: 0 });
+      if (fileSize(outputPath) >= 512) {
+        return { outputPath, voice: "windows_local", size: fileSize(outputPath), requestedVoice: preferredVoice, resolvedVoice: "windows_local", fallbackUsed: true, fallbackProvider: "windows_local" };
+      }
+    } catch (_fallbackErr) {
+      // Preserve original Edge error below if local fallbacks also fail.
     }
 
     throw new Error(

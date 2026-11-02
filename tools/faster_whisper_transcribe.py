@@ -26,6 +26,7 @@ def timestamp(seconds):
 
 
 def write_srt(output_path, segments):
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     temp_path = f"{output_path}.tmp"
     with open(temp_path, "w", encoding="utf-8") as handle:
         for index, item in enumerate(segments, start=1):
@@ -37,6 +38,7 @@ def write_srt(output_path, segments):
 
 
 def write_words_json(output_path, segments):
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
     words_path = os.path.splitext(output_path)[0] + ".words.json"
     temp_path = f"{words_path}.tmp"
     with open(temp_path, "w", encoding="utf-8") as handle:
@@ -66,44 +68,24 @@ def save_cached_chunk(cache_path, segments):
     os.replace(temp_path, cache_path)
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--audio", required=True)
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--model", required=True)
-    parser.add_argument("--language", default="auto")
-    parser.add_argument("--device", default="cpu")
-    parser.add_argument("--compute-type", default="int8")
-    parser.add_argument("--batch-size", type=int, default=1)
-    parser.add_argument("--beam-size", type=int, default=1)
-    parser.add_argument("--chunk-sec", type=int, default=240)
-    parser.add_argument("--cache-dir", required=True)
-    args = parser.parse_args()
-
-    audio = decode_audio(args.audio, sampling_rate=SAMPLE_RATE)
+def transcribe_single_file(audio_path, output_path, cache_dir, args, model, batched_model):
+    audio = decode_audio(audio_path, sampling_rate=SAMPLE_RATE)
     chunk_samples = max(SAMPLE_RATE * 30, int(args.chunk_sec * SAMPLE_RATE))
     chunk_count = max(1, int(math.ceil(len(audio) / chunk_samples)))
-    model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
-    batched_model = None
-    if BatchedInferencePipeline is not None and args.batch_size > 1:
-        try:
-            batched_model = BatchedInferencePipeline(model=model)
-        except Exception:
-            batched_model = None
     all_segments = []
     detected_language = ""
 
-    os.makedirs(args.cache_dir, exist_ok=True)
+    os.makedirs(cache_dir, exist_ok=True)
     for chunk_index in range(chunk_count):
         start_sample = chunk_index * chunk_samples
         end_sample = min(len(audio), start_sample + chunk_samples)
         offset_sec = start_sample / SAMPLE_RATE
-        cache_path = os.path.join(args.cache_dir, f"chunk-{chunk_index:04d}.json")
+        cache_path = os.path.join(cache_dir, f"chunk-{chunk_index:04d}.json")
         cached = load_cached_chunk(cache_path)
         if cached is not None:
             all_segments.extend(cached)
-            write_srt(args.output, all_segments)
-            write_words_json(args.output, all_segments)
+            write_srt(output_path, all_segments)
+            write_words_json(output_path, all_segments)
             print(json.dumps({
                 "event": "chunk",
                 "index": chunk_index + 1,
@@ -168,8 +150,8 @@ def main():
             })
         save_cached_chunk(cache_path, chunk_segments)
         all_segments.extend(chunk_segments)
-        write_srt(args.output, all_segments)
-        write_words_json(args.output, all_segments)
+        write_srt(output_path, all_segments)
+        write_words_json(output_path, all_segments)
         print(json.dumps({
             "event": "chunk",
             "index": chunk_index + 1,
@@ -177,8 +159,9 @@ def main():
             "cached": False
         }), flush=True)
 
-    words_path = write_words_json(args.output, all_segments)
-    print(json.dumps({
+    write_srt(output_path, all_segments)
+    words_path = write_words_json(output_path, all_segments)
+    return {
         "event": "done",
         "provider": "faster_whisper",
         "model": args.model,
@@ -189,7 +172,69 @@ def main():
         "chunks": chunk_count,
         "wordTimestampsPath": words_path,
         "batchSize": args.batch_size if batched_model is not None else 1
-    }, ensure_ascii=False), flush=True)
+    }, batched_model
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--audio", required=False)
+    parser.add_argument("--output", required=False)
+    parser.add_argument("--batch-manifest", required=False)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--language", default="auto")
+    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--compute-type", default="int8")
+    parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--beam-size", type=int, default=1)
+    parser.add_argument("--chunk-sec", type=int, default=240)
+    parser.add_argument("--cache-dir", required=False)
+    args = parser.parse_args()
+
+    model = WhisperModel(args.model, device=args.device, compute_type=args.compute_type)
+    batched_model = None
+    if BatchedInferencePipeline is not None and args.batch_size > 1:
+        try:
+            batched_model = BatchedInferencePipeline(model=model)
+        except Exception:
+            batched_model = None
+
+    if args.batch_manifest:
+        with open(args.batch_manifest, "r", encoding="utf-8") as handle:
+            items = json.load(handle)
+        results = []
+        for item in items:
+            done_info, batched_model = transcribe_single_file(
+                item["audio"],
+                item["output"],
+                item["cacheDir"],
+                args,
+                model,
+                batched_model
+            )
+            results.append({
+                "audio": item["audio"],
+                "output": item["output"],
+                "wordTimestampsPath": done_info["wordTimestampsPath"]
+            })
+        print(json.dumps({
+            "event": "batch_done",
+            "provider": "faster_whisper",
+            "results": results
+        }, ensure_ascii=False), flush=True)
+        return
+
+    if not args.audio or not args.output or not args.cache_dir:
+        parser.error("--audio, --output, and --cache-dir are required unless --batch-manifest is provided")
+
+    done_info, _ = transcribe_single_file(
+        args.audio,
+        args.output,
+        args.cache_dir,
+        args,
+        model,
+        batched_model
+    )
+    print(json.dumps(done_info, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":

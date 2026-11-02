@@ -569,8 +569,8 @@
               <div class="field-card">
                 <label>Thời lượng video mong muốn (giây)</label>
                 <select id="recap-duration-preset"><option value="0">Tùy chỉnh</option><option value="75" selected>Recap ngắn — 75 giây</option><option value="120">Review — 120 giây</option><option value="240">Bản dài — 4 phút</option></select>
-                <input id="target-duration" type="number" min="15" max="600" step="1" value="75" />
-                <small>AI chọn nhịp kể theo mục tiêu; thời lượng được kiểm tra lại bằng audio thực tế.</small>
+                <input id="target-duration" type="number" min="15" step="1" value="75" />
+                <small>Mục tiêu tham khảo, thường ±20%. Ưu tiên bản kể hay, đầy đủ và đạt review từ 8/10; không kéo dài chỉ để đủ giây. Lệch quá 35% cần sửa nội dung hoặc chọn lại mục tiêu. <span id="target-duration-source-hint"></span></small>
               </div>
               <div class="field-card">
                 <label>Tốc độ giọng đọc</label>
@@ -1416,7 +1416,7 @@
               <h3>Biên tập recap / review</h3>
               <div class="two-column compact-grid">
                 <div><label>Loại nội dung</label><select id="recap-studio-preset"><option value="recap">Recap</option><option value="review">Review</option><option value="explain">Giải thích</option></select></div>
-                <div><label>Thời lượng (giây)</label><input id="recap-studio-duration" type="number" min="15" max="600" value="60" /></div>
+                <div><label>Thời lượng (giây)</label><input id="recap-studio-duration" type="number" min="15" value="60" /></div>
                 <div><label>Lời kể</label><select id="recap-studio-language"><option value="en">Tiếng Anh (US)</option><option value="vi">Tiếng Việt</option></select></div>
                 <div><label>Phong cách</label><select id="recap-studio-style"><option value="natural">Tự nhiên</option><option value="suspense">Hồi hộp</option><option value="humorous">Hài hước</option><option value="cinematic">Điện ảnh</option></select></div>
                 <div><label>Khung hình</label><select id="recap-studio-aspect"><option value="9:16">Dọc 9:16</option><option value="original">Khung gốc</option></select></div>

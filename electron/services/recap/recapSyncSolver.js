@@ -52,6 +52,15 @@ class RecapSyncSolver {
     const traceability = [];
     const rewriteRecommendations = [];
     const clauseBudgets = [];
+    const unitBudgets = [];
+
+    const unitEventIds = speechUnits.map((u) => {
+      const ids = new Set(safeArray(u?.visual_event_ids));
+      for (const c of safeArray(u?.clauses)) {
+        for (const id of safeArray(c?.visual_event_ids)) ids.add(id);
+      }
+      return ids;
+    });
 
     let currentTimelineSec = 0.0;
 
@@ -63,6 +72,13 @@ class RecapSyncSolver {
 
       // Resolve visual events linked to this unit or its clauses
       const assignedEvents = this._resolveEventsForUnit(unit, eventsMap);
+      const futureUsersForEvent = (eventId) => {
+        let count = 0;
+        for (let next = uIdx + 1; next < unitEventIds.length; next++) {
+          if (unitEventIds[next].has(eventId)) count++;
+        }
+        return count;
+      };
 
       // Solve clips for this speech unit
       const unitSolution = this._solveUnitClips({
@@ -74,9 +90,11 @@ class RecapSyncSolver {
         sourceDurationSec,
         currentTimelineSec,
         unitIndex: uIdx,
-        clauseSpans: audioInfo.clauseSpans
+        clauseSpans: audioInfo.clauseSpans,
+        futureUsersForEvent
       });
       clauseBudgets.push(...(unitSolution.clauseBudgets || []));
+      if (unitSolution.unitBudget) unitBudgets.push(unitSolution.unitBudget);
 
       // Update used intervals tracking
       for (const clip of unitSolution.clips) {
@@ -166,8 +184,24 @@ class RecapSyncSolver {
       traceability,
       metrics,
       clauseBudgets,
+      unitBudgets,
       rewriteRecommendations
     };
+  }
+
+  _freeWindows(start, end, occupied) {
+    let windows = [{ start, end }];
+    if (this.allowShotReuse) return windows;
+    for (const used of occupied) {
+      windows = windows.flatMap((window) => {
+        if (used.end <= window.start || used.start >= window.end) return [window];
+        return [
+          { start: window.start, end: Math.min(window.end, used.start) },
+          { start: Math.max(window.start, used.end), end: window.end }
+        ].filter((w) => w.end - w.start >= 0.1);
+      });
+    }
+    return windows.sort((a, b) => (b.end - b.start) - (a.end - a.start));
   }
 
   /**
@@ -182,10 +216,16 @@ class RecapSyncSolver {
     sourceDurationSec,
     currentTimelineSec,
     unitIndex,
-    clauseSpans
+    clauseSpans,
+    futureUsersForEvent
   }) {
     if (clauseSpans?.length > 1) return this._solveAlignedUnit({ unit, assignedEvents, rawAudioDuration, scenesList,
-      usedIntervals, currentTimelineSec, clauseSpans });
+      usedIntervals, currentTimelineSec, clauseSpans, futureUsersForEvent });
+    if (assignedEvents.length && assignedEvents.every(event => event.anchorMethod === "scene_frames" || event.anchorAudit)) {
+      return this._solveAlignedUnit({ unit, assignedEvents, rawAudioDuration, scenesList, usedIntervals, currentTimelineSec,
+        clauseSpans: [{ startSec: 0, endSec: rawAudioDuration, text: unit.text,
+          visual_event_ids: assignedEvents.map(event => event.id), clauseIds: (unit.clauses || []).map(clause => clause.clause_id) }], futureUsersForEvent });
+    }
     // Determine visual lead
     const leadSec = Math.min(this.maxVisualLeadSec, Math.max(this.minVisualLeadSec, this.targetVisualLeadSec));
     const leadMs = Math.round(leadSec * 1000);
@@ -232,7 +272,6 @@ class RecapSyncSolver {
       // Resolve footage boundaries considering reuse policy
       let sourceStart = ev.source_start;
       let sourceEnd = ev.source_end;
-      const rawClipDuration = sourceEnd - sourceStart;
 
       // Tier 2: Footage selection adjustment
       if (!this.allowShotReuse && this._isOverlapping(sourceStart, sourceEnd, usedIntervals)) {
@@ -240,11 +279,21 @@ class RecapSyncSolver {
         const shifted = this._findAlternativeInterval(sourceStart, sourceEnd, scenesList, usedIntervals, sourceDurationSec);
         sourceStart = shifted.start;
         sourceEnd = shifted.end;
+        if (this._isOverlapping(sourceStart, sourceEnd, usedIntervals)) {
+          const scene = scenesList.find(s => ev.source_start >= (s.startSec ?? s.start ?? 0) && ev.source_end <= (s.endSec ?? s.end ?? Infinity));
+          const rangeStart = scene ? (scene.startSec ?? scene.start ?? ev.source_start) : ev.source_start;
+          const rangeEnd = scene ? (scene.endSec ?? scene.end ?? ev.source_end) : ev.source_end;
+          const free = this._freeWindows(rangeStart, rangeEnd, usedIntervals)[0];
+          if (free && (free.end - free.start) >= 0.4) {
+            sourceStart = free.start;
+            sourceEnd = free.end;
+          }
+        }
       }
 
       if (targetClipDuration > (sourceEnd - sourceStart)) {
-        // Speech longer than visual: expand within scene
-        const expanded = this._expandWithinScene(sourceStart, sourceEnd, targetClipDuration, scenesList, sourceDurationSec);
+        // Speech longer than visual: expand within scene (and softly across adjacent bounds if scene is too short)
+        const expanded = this._expandWithinScene(sourceStart, sourceEnd, targetClipDuration, scenesList, sourceDurationSec, usedIntervals);
         sourceStart = expanded.start;
         sourceEnd = expanded.end;
         if (tierUsed < 2) tierUsed = 2;
@@ -254,6 +303,17 @@ class RecapSyncSolver {
         sourceEnd = Number((sourceStart + Math.max(this.minShotDurationSec, targetClipDuration)).toFixed(3));
         if (tierUsed < 2) tierUsed = 2;
         notes = "Footage trimmed to narration length";
+      }
+
+      const futureUsers = !this.allowShotReuse && futureUsersForEvent ? futureUsersForEvent(ev.id) : 0;
+      if (futureUsers > 0) {
+        const scene = scenesList.find(s => ev.source_start >= (s.startSec ?? s.start ?? 0) && ev.source_end <= (s.endSec ?? s.end ?? Infinity));
+        const maxRangeEnd = scene ? Math.max(sourceEnd, scene.endSec ?? scene.end ?? sourceEnd) : sourceEnd;
+        const availablePool = maxRangeEnd - sourceStart;
+        const reserveForLater = Math.min(availablePool * (futureUsers / (futureUsers + 1)), Math.max(1.2 * futureUsers, availablePool - targetClipDuration));
+        if (maxRangeEnd - sourceEnd < reserveForLater && (sourceEnd - sourceStart) > 1.6) {
+          sourceEnd = Number(Math.max(sourceStart + 1.0, maxRangeEnd - reserveForLater).toFixed(3));
+        }
       }
 
       // Tier 4: Video speed retiming calculation
@@ -306,6 +366,22 @@ class RecapSyncSolver {
       }
     }
 
+    const validEventIds = candidateEvents.map(e => e.id).filter(id => !String(id).startsWith("fallback_event_"));
+    const maxGroundedDuration = Number((totalRawEventDuration / this.minVideoSpeedNormal + 1.5).toFixed(3));
+    const unitBudget = validEventIds.length ? {
+      speechUnitId: unit.id,
+      clauseIds: Array.isArray(unit.clauses) && unit.clauses.length ? unit.clauses.map(c => c.clause_id) : [`${unit.id}_c1`],
+      text: unit.text,
+      visual_event_ids: validEventIds,
+      currentDuration: Number(targetVideoDuration.toFixed(3)),
+      targetDuration: Number(Math.min(maxGroundedDuration, Math.max(targetVideoDuration, totalRawEventDuration)).toFixed(3)),
+      maxGroundedDuration,
+      targetWordCount: Math.max(3, Math.floor(String(unit.text || "").split(/\s+/).filter(Boolean).length)),
+      holdSec: 0,
+      missingEventIds: [],
+      passed: !needsRewrite
+    } : null;
+
     return {
       clips: allocatedClips,
       voiceTempo: Number(voiceTempo.toFixed(3)),
@@ -315,22 +391,15 @@ class RecapSyncSolver {
       rewriteReason,
       deltaRatio: Number(deltaRatio.toFixed(3)),
       suggestedTargetDuration: Number(totalRawEventDuration.toFixed(2)),
+      unitBudget,
       notes
     };
   }
 
-  _solveAlignedUnit({ unit, assignedEvents, rawAudioDuration, scenesList, usedIntervals, currentTimelineSec, clauseSpans }) {
+  _solveAlignedUnit({ unit, assignedEvents, rawAudioDuration, scenesList, usedIntervals, currentTimelineSec, clauseSpans, futureUsersForEvent }) {
     const lead = Math.min(this.maxVisualLeadSec, Math.max(this.minVisualLeadSec, this.targetVisualLeadSec));
     const events = new Map(assignedEvents.map(event => [event.id, event])), occupied = [...usedIntervals], clips = [], budgets = [];
-    const freeWindows = (start, end) => {
-      let windows = [{ start, end }];
-      if (this.allowShotReuse) return windows;
-      for (const used of occupied) windows = windows.flatMap(window => {
-        if (used.end <= window.start || used.start >= window.end) return [window];
-        return [{ start: window.start, end: Math.min(window.end, used.start) }, { start: Math.max(window.start, used.end), end: window.end }].filter(window => window.end - window.start >= .1);
-      });
-      return windows.sort((a, b) => b.end - b.start - (a.end - a.start));
-    };
+    const freeWindows = (start, end) => this._freeWindows(start, end, occupied);
     for (let groupIndex = 0; groupIndex < clauseSpans.length; groupIndex++) {
       const group = clauseSpans[groupIndex];
       const start = groupIndex === 0 ? currentTimelineSec : currentTimelineSec + group.startSec;
@@ -338,13 +407,26 @@ class RecapSyncSolver {
       const candidates = group.visual_event_ids.map(id => events.get(id)).filter(Boolean);
       const weight = candidates.reduce((sum, event) => sum + event.source_end - event.source_start, 0);
       let cursor = start, availableDuration = 0, groundedCapacity = 0; const missingEventIds = [];
+      const groupClipStart = clips.length, coveredReferences = [];
       for (const event of candidates) {
         const wanted = (end - start) * (event.source_end - event.source_start) / Math.max(.01, weight);
-        const scene = scenesList.find(s => event.source_start >= (s.startSec ?? s.start ?? 0) && event.source_end <= (s.endSec ?? s.end ?? 0));
-        const from = scene ? Math.max(scene.startSec ?? scene.start, event.source_start - 1.5) : event.source_start;
-        const to = scene ? Math.min(scene.endSec ?? scene.end, event.source_end + 1.5) : event.source_end;
-        const window = freeWindows(from, to)[0];
-        if (!window) { missingEventIds.push(event.id); cursor += wanted; continue; }
+        const scene = scenesList.find(s => event.source_start >= (s.startSec ?? s.start ?? 0) && event.source_end <= (s.endSec ?? s.end ?? 0))
+          || scenesList.find(s => (s.endSec ?? s.end ?? 0) > event.source_start && (s.startSec ?? s.start ?? 0) < event.source_end);
+        const anchored = event.anchorMethod === "scene_frames" || event.anchorAudit;
+        // An observed action's bounds are evidence, not a request for nearby footage.
+        // Expanding backwards can show a different character before the reveal.
+        const from = !anchored && scene ? Math.max(scene.startSec ?? scene.start ?? 0, event.source_start - 1.5) : event.source_start;
+        const to = !anchored && scene ? Math.min(scene.endSec ?? scene.end ?? event.source_end, event.source_end + 1.5) : event.source_end;
+        let window = freeWindows(from, to)[0];
+        if (!window) {
+          // Overlapping analysis chunks can label the same source pixels twice.
+          // A nested reference is already visible if THIS clause group actually
+          // renders its entire interval. Earlier clauses/units cannot cover it.
+          const shown = clips.slice(groupClipStart).find(clip => clip.source_start <= event.source_start + .001
+            && clip.source_end >= event.source_end - .001);
+          if (shown) { coveredReferences.push({ eventId: event.id, coveredByEventId: shown.event_id }); continue; }
+          missingEventIds.push(event.id); cursor += wanted; continue;
+        }
         if (!this.allowShotReuse) {
           let reserve = 0;
           for (let next = groupIndex + 1; next < clauseSpans.length; next++) {
@@ -357,6 +439,10 @@ class RecapSyncSolver {
               const laterWanted = (laterEnd - later.startSec) * (item.source_end - item.source_start) / Math.max(.01, laterWeight);
               reserve += Math.max(.1, (laterWanted - 1.5 / laterEvents.length) * this.minVideoSpeedNormal);
             }
+          }
+          const futureUnits = futureUsersForEvent ? futureUsersForEvent(event.id) : 0;
+          if (futureUnits > 0 && (window.end - window.start) > 1.6) {
+            reserve = Math.max(reserve, Math.min((window.end - window.start) * (futureUnits / (futureUnits + 1)), 1.5 * futureUnits));
           }
           // Reserve a distinct source interval for later clauses referencing
           // this footage; consuming the entire window here creates false shortages.
@@ -376,12 +462,24 @@ class RecapSyncSolver {
           face_closeup: Boolean(event.face_closeup), lip_sync_risk: lipRisk, focus_x: event.focus_x ?? .5, focus_y: event.focus_y ?? .5 });
         occupied.push({ start: window.start, end: sourceEnd }); cursor += wanted;
       }
+      if (coveredReferences.length && !missingEventIds.length) {
+        // Do not reserve a second output slot for the same pixels. Repartition
+        // the group without adding source capacity or concealing the hold cost.
+        const groupClips = clips.slice(groupClipStart), total = groupClips.reduce((n, clip) => n + clip.output_end - clip.output_start, 0);
+        let output = start;
+        for (const [index, clip] of groupClips.entries()) {
+          const duration = (end - start) * (clip.output_end - clip.output_start) / total;
+          clip.output_start = Number(output.toFixed(3)); output += duration;
+          clip.output_end = Number((index === groupClips.length - 1 ? end : output).toFixed(3));
+        }
+      }
       const wanted = end - start, hold = Math.max(0, wanted - availableDuration);
       budgets.push({ speechUnitId: unit.id, clauseIds: group.clauseIds, text: group.text, visual_event_ids: group.visual_event_ids,
         currentDuration: Number(wanted.toFixed(3)), targetDuration: Number(Math.min(wanted, availableDuration + 1.5).toFixed(3)),
         maxGroundedDuration: Number((groundedCapacity + 1.5).toFixed(3)),
         targetWordCount: Math.max(3, Math.floor(group.text.split(/\s+/).filter(Boolean).length * Math.min(1, (availableDuration + 1.5) / wanted) * .94)),
-        holdSec: Number(hold.toFixed(3)), missingEventIds, passed: hold <= 1.5 && missingEventIds.length === 0 });
+        holdSec: Number(hold.toFixed(3)), missingEventIds, ...(coveredReferences.length ? { coveredReferences } : {}),
+        passed: hold <= 1.5 && missingEventIds.length === 0 });
     }
     const needsRewrite = budgets.some(budget => !budget.passed);
     return { clips, voiceTempo: 1, totalVideoDuration: rawAudioDuration + lead + .15,
@@ -392,25 +490,64 @@ class RecapSyncSolver {
   }
 
   /**
-   * Expands an interval backwards and forwards within scene boundaries up to desired duration.
+   * Expands an interval backwards and forwards within scene boundaries up to desired duration,
+   * and softly across adjacent scene boundaries (up to 8s) when the enclosing scene is too narrow.
    */
-  _expandWithinScene(start, end, targetDuration, scenesList, sourceDurationSec) {
+  _expandWithinScene(start, end, targetDuration, scenesList, sourceDurationSec, usedIntervals = null) {
     const currentDur = end - start;
     if (currentDur >= targetDuration) return { start, end };
 
     const deficit = targetDuration - currentDur;
-    // Find enclosing scene
-    const scene = scenesList.find(s => start >= (s.startSec || s.start || 0) && end <= (s.endSec || s.end || Infinity));
-    const sceneMin = scene ? (scene.startSec || scene.start || 0) : 0;
-    const sceneMax = scene ? (scene.endSec || scene.end || sourceDurationSec || end + 10) : (sourceDurationSec || end + 10);
+    // Find enclosing or overlapping scene
+    const scene = scenesList.find(s => start >= (s.startSec ?? s.start ?? 0) && end <= (s.endSec ?? s.end ?? Infinity))
+      || scenesList.find(s => (s.endSec ?? s.end ?? 0) > start && (s.startSec ?? s.start ?? 0) < end);
+    const sceneMin = scene ? (scene.startSec ?? scene.start ?? 0) : 0;
+    const sceneMax = scene ? (scene.endSec ?? scene.end ?? sourceDurationSec ?? end + 10) : (sourceDurationSec || end + 10);
 
-    // Expand symmetrically or as much as scene permits
-    const expandBack = Math.min(start - sceneMin, deficit / 2);
-    const newStart = Math.max(0, start - expandBack);
+    // Respect adjacent used intervals when shot reuse is disabled
+    const enforceNoReuse = !this.allowShotReuse && Array.isArray(usedIntervals) && usedIntervals.length > 0;
+    const hardMin = enforceNoReuse
+      ? usedIntervals.reduce((maxEnd, u) => (u.end <= start + 0.05 ? Math.max(maxEnd, u.end) : maxEnd), 0)
+      : 0;
+    const hardMax = enforceNoReuse
+      ? usedIntervals.reduce((minStart, u) => (u.start >= end - 0.05 ? Math.min(minStart, u.start) : minStart), sourceDurationSec || Infinity)
+      : (sourceDurationSec || Infinity);
 
-    const remainingDeficit = deficit - (start - newStart);
-    const expandForward = Math.min(sceneMax - end, remainingDeficit);
-    const newEnd = Math.min(sourceDurationSec || (end + expandForward), end + expandForward);
+    const boundedSceneMin = Math.max(hardMin, sceneMin);
+    const boundedSceneMax = Math.min(hardMax, sceneMax);
+
+    // 1. Expand symmetrically within scene first, then consume any remaining room inside the same scene
+    const expandBack = start > boundedSceneMin ? Math.min(start - boundedSceneMin, deficit / 2) : 0;
+    let newStart = Math.max(0, start - expandBack);
+
+    let remainingDeficit = targetDuration - (end - newStart);
+    const expandForward = end < boundedSceneMax ? Math.min(boundedSceneMax - end, Math.max(0, remainingDeficit)) : 0;
+    let newEnd = Math.min(sourceDurationSec || (end + expandForward), end + expandForward);
+
+    remainingDeficit = targetDuration - (newEnd - newStart);
+    if (remainingDeficit > 0.01 && newStart > boundedSceneMin) {
+      const extraBack = Math.min(newStart - boundedSceneMin, remainingDeficit);
+      newStart = Math.max(0, newStart - extraBack);
+    }
+
+    // 2. Soft cross-scene expansion (up to 8s) when enclosing scene is still shorter than targetDuration
+    remainingDeficit = targetDuration - (newEnd - newStart);
+    if (remainingDeficit > 0.05) {
+      const maxCrossScenePad = 8.0;
+      const softMin = Math.max(hardMin, 0, newStart - maxCrossScenePad);
+      const softMax = Math.min(hardMax, sourceDurationSec || (newEnd + maxCrossScenePad), newEnd + maxCrossScenePad);
+
+      // Prefer backward expansion into unused footage before this scene first so we don't encroach on future units
+      if (newStart > softMin) {
+        const crossBack = Math.min(newStart - softMin, remainingDeficit);
+        newStart -= crossBack;
+        remainingDeficit = targetDuration - (newEnd - newStart);
+      }
+      if (remainingDeficit > 0.01 && softMax > newEnd) {
+        const crossForward = Math.min(softMax - newEnd, remainingDeficit);
+        newEnd += crossForward;
+      }
+    }
 
     return {
       start: Number(newStart.toFixed(3)),

@@ -133,4 +133,39 @@ const audioTracks = {
   assert.ok(solution.rewriteRecommendations[0].deltaRatio > 0.35);
 }
 
+// 3. Test full-scene and soft cross-scene expansion to prevent end-of-unit freeze gaps
+{
+  const solver = new RecapSyncSolver({ allowShotReuse: false, minVoiceSpeed: 1, maxVoiceSpeed: 1 });
+  const narrowScenes = [
+    { startSec: 0.0, endSec: 5.0 },
+    { startSec: 16.6, endSec: 28.5 }
+  ];
+  const narrowEvents = [
+    { id: "ev_prev", source_start: 1.0, source_end: 4.5, duration: 3.5 },
+    { id: "ev_long", source_start: 24.7, source_end: 28.5, duration: 3.8 }
+  ];
+  const units = [
+    { id: "su_prev", text: "Short intro.", visual_event_ids: ["ev_prev"] },
+    { id: "su_long", text: "Long single-event narration that needs full scene plus soft expansion.", visual_event_ids: ["ev_long"] }
+  ];
+  const tracks = {
+    su_prev: { durationSec: 3.0 },
+    su_long: { durationSec: 13.5 }
+  };
+
+  const solution = solver.solve({
+    speechUnits: units,
+    visualEvents: narrowEvents,
+    audioTracks: tracks,
+    scenes: narrowScenes,
+    sourceDurationSec: 60.0
+  });
+
+  const prevClip = solution.decisions[0].clips[0];
+  const longClip = solution.decisions[1].clips[0];
+  // Must not overlap previous clip and must cover the full 13.5s narration without freeze gap
+  assert.ok(longClip.source_start >= prevClip.source_end, "Expanded clip must not overlap previous used interval");
+  assert.ok((longClip.output_end - longClip.output_start) >= 13.5, "Expanded clip output span must cover narration without freeze gap");
+}
+
 console.log("recapSyncSolver.test.js PASSED");

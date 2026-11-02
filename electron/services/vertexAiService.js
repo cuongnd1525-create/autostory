@@ -379,7 +379,7 @@ class VertexAiService {
       totalSpentUsd: Number(totalSpentUsd.toFixed(6)),
       dailySpentUsd: Number(dailySpentUsd.toFixed(6)),
       budgetUsd: Math.max(0, Number(this.settings.vertexBudgetUsd || 240)),
-      dailyLimitUsd: Math.max(0, Number(this.settings.vertexDailyLimitUsd || 5)),
+      dailyLimitUsd: Math.max(0, Number(this.settings.vertexDailyLimitUsd || 50)),
       requestCount: ledger.entries.length
     };
   }
@@ -480,6 +480,7 @@ class VertexAiService {
     videoFpsByPath = {},
     mediaResolution = null,
     modelOverride = "",
+    requestTimeoutMs = null,
     sourceContract = false,
     hookSchema = false,
     relaxedSchema = false,
@@ -515,7 +516,8 @@ class VertexAiService {
       : sourceContract && relaxedSchema && responseSchema
         ? require('./autoStorySchemaBoundary').schemaPrompt(prompt, responseSchema) : prompt });
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const effectiveTimeoutMs = Math.max(30000, Math.min(this.timeoutMs, Number(requestTimeoutMs) || this.timeoutMs));
+    const timeout = setTimeout(() => controller.abort(), effectiveTimeoutMs);
     let heartbeat = null;
     const abort = () => controller.abort(signal.reason);
     if (signal?.aborted) abort();
@@ -625,11 +627,10 @@ class VertexAiService {
       return parsed;
     } catch (error) {
       if (controller.signal.aborted && !signal?.aborted) {
-        throw new Error(
-          `Vertex AI model ${model} vượt quá thời gian chờ ${Math.round(this.timeoutMs / 60000)} phút. ` +
-          "Hãy tăng Vertex timeout trong Cài đặt hoặc giảm số lượng/độ dài media của một lượt phân tích.",
+        throw Object.assign(new Error(
+          `Vertex AI model ${model} vượt quá thời gian chờ ${(effectiveTimeoutMs / 60000).toFixed(1)} phút. Lượt gọi đã dừng; giữ checkpoint để thử model khác hoặc chạy tiếp.`,
           { cause: error }
-        );
+        ), { kind: "request_timeout" });
       }
       throw error;
     } finally {

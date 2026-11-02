@@ -6,6 +6,7 @@ const GeminiService = require("../geminiService");
 const AntigravityService = require("../manualAntigravityStage1Service");
 const ModelCatalog = require("../../../src/antigravityModelCatalog");
 const ModelDiscovery = require("../antigravityModelDiscovery");
+const { vertexTransport } = require("./recapSchemaBoundary");
 
 function validateResponse(value, schema, location = "response") {
   if (!schema) {
@@ -153,10 +154,31 @@ class RecapProviderService {
   async generateJsonResponse(options) {
     if (this.provider === "vertex_ai") {
       this.vertex ||= this.dependencies.vertex || new VertexAiService(this.settings);
-      const bounded = Number(this.settings.recapVertexMaxOutputTokens) > 0
-        ? { maxOutputTokens: Math.round(Number(this.settings.recapVertexMaxOutputTokens)),
-          ...(/gemini-2\.5-flash/.test(options.modelOverride || this.getModel()) ? { thinkingBudget: 0 } : {}) } : {};
-      return validateResponse(await this.vertex.generateJsonFromFiles({ ...bounded, ...options }), options.responseSchema);
+      const rawCap = this.settings.recapVertexMaxOutputTokens;
+      const maxTokens = rawCap === 0 ? 0 : Math.round(Number(rawCap) || 65535);
+      const activeModel = String(options.modelOverride || this.getModel());
+      const bounded = maxTokens > 0
+        ? {
+            maxOutputTokens: maxTokens,
+            thinkingBudget: /gemini-2\.5-flash/i.test(activeModel) ? 0 : 1024
+          }
+        : {};
+      const callVertex = () => this.vertex.generateJsonFromFiles({ ...bounded, ...options,
+        responseSchema: vertexTransport(options.responseSchema) });
+      let rawResponse;
+      try {
+        rawResponse = await callVertex();
+      } catch (err) {
+        if (!options.skipCapacityRetry && !this.dependencies.vertex && /\b429\b|Resource exhausted|RESOURCE_EXHAUSTED/i.test(String(err?.message || "")) && !options.signal?.aborted) {
+          options.onProgress?.({ level: "WARNING", message: `Vertex AI chạm giới hạn nhịp gọi (429) trên ${activeModel}; đợi 5s rồi thử lại...` });
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          options.signal?.throwIfAborted();
+          rawResponse = await callVertex();
+        } else {
+          throw err;
+        }
+      }
+      return validateResponse(rawResponse, options.responseSchema);
     }
     if (this.provider === "gemini") {
       const gemini = this.dependencies.gemini || new GeminiService(this.settings.geminiApiKey, options.modelOverride || this.getModel());
