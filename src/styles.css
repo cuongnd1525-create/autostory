@@ -8707,7 +8707,6 @@ body.is-dragging-splitter .timeline-grid {
   transition: grid-template-columns 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
 }
 
-.setup-layout.log-collapsed,
 @media (min-width: 1200px) {
   .setup-layout.log-collapsed:not(.recap-guided) {
     grid-template-columns: minmax(0, 1fr) 52px !important;
