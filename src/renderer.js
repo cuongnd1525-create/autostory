@@ -6815,9 +6815,9 @@ function renderSteps() {
   el.wizardSteps.innerHTML = labels.map((label, index) => {
     const step = index + 1;
     const className = step === state.currentStep ? "active" : step < state.currentStep ? "done" : "";
-    const tag = "button";
+    const tag = isRecapMode() ? "button" : "div";
     return `
-      <${tag} type="button" class="wizard-step ${className}" data-wizard-step="${step}" ${state.busy ? "disabled" : ""} ${step === state.currentStep ? 'aria-current="step"' : ""}>
+      <${tag} ${isRecapMode() ? 'type="button"' : ""} class="wizard-step ${className}" data-wizard-step="${step}" ${state.busy ? "disabled" : ""} ${step === state.currentStep ? 'aria-current="step"' : ""}>
         <span class="step-number">${step < state.currentStep ? "✓" : step}</span>
         <span class="step-label">${escapeHtml(label)}</span>
       </${tag}>
@@ -11278,12 +11278,8 @@ function bindEvents() {
   });
   el.wizardSteps.addEventListener("click", (event) => {
     const button = event.target.closest("[data-wizard-step]");
-    if (!button || state.busy) return;
-    const target = Number(button.dataset.wizardStep);
-    if (Number.isFinite(target) && target >= 1 && target <= 6) {
-      state.currentStep = target;
-      renderSteps();
-    }
+    if (!button || state.busy || !isRecapMode()) return;
+    state.currentStep = Number(button.dataset.wizardStep); renderSteps();
   });
   el.nextStep.addEventListener("click", async () => {
     if (isRecapMode()) return recapSetupUi.next(state.currentStep);
