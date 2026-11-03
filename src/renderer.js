@@ -562,6 +562,8 @@ function queryElements() {
     startIngest: $("start-ingest"),
     systemLog: $("system-log"),
     activityFeed: $("activity-feed"),
+    toggleSetupLog: $("toggle-setup-log"),
+    setupActivityPanel: $("setup-activity-panel"),
     toggleRawLog: $("toggle-raw-log"),
     copyLog: $("copy-log"),
     exportProgress: $("export-progress"),
@@ -690,6 +692,8 @@ function queryElements() {
     sourceSubtitleMaskSelection: $("source-subtitle-mask-selection"),
     previewControlPlay: $("preview-control-play"),
     previewTimecode: $("preview-timecode"),
+    toggleTiktokSafezone: $("toggle-tiktok-safezone"),
+    tiktokSafezoneOverlay: $("tiktok-safezone-overlay"),
     videoPlaceholder: $("video-placeholder"),
     tabBtnRightLog: $("tab-btn-right-log"),
     tabBtnRightInspector: $("tab-btn-right-inspector"),
@@ -2393,12 +2397,25 @@ function addActivity(message, level = "INFO") {
 function renderActivity() {
   const html = !state.activities.length
     ? `<div class="activity-empty">Hoạt động sẽ hiển thị ở đây khi bộ xử lý bắt đầu chạy.</div>`
-    : state.activities.slice(-40).reverse().map((item) => `
-    <div class="activity-item ${item.status}">
+    : state.activities.slice(-40).reverse().map((item) => {
+        const isCache = item.message.includes("[CACHE]");
+        const isStage = /^\d\/\d\s*·|\bstage\b|\bphase\b/i.test(item.message);
+        const extraClass = isCache ? "is-cache" : isStage ? "is-stage" : "";
+        const tagHtml = isCache
+          ? `<span class="activity-tag tag-cache">⚡ CACHE</span>`
+          : isStage
+          ? `<span class="activity-tag tag-stage">🚀 GIAI ĐOẠN</span>`
+          : "";
+        return `
+    <div class="activity-item ${item.status} ${extraClass}">
       <span class="activity-dot"></span>
-      <p>${escapeHtml(item.message)}</p>
+      <div class="activity-body">
+        ${tagHtml}
+        <p>${escapeHtml(item.message)}</p>
+      </div>
     </div>
-  `).join("");
+  `;
+      }).join("");
 
   if (el.activityFeed) el.activityFeed.innerHTML = html;
   if (el.studioActivityFeed) el.studioActivityFeed.innerHTML = html;
@@ -6802,7 +6819,7 @@ function renderSteps() {
     return `
       <${tag} ${isRecapMode() ? 'type="button"' : ""} class="wizard-step ${className}" data-wizard-step="${step}" ${state.busy ? "disabled" : ""} ${step === state.currentStep ? 'aria-current="step"' : ""}>
         <span class="step-number">${step < state.currentStep ? "✓" : step}</span>
-        <span>${escapeHtml(label)}</span>
+        <span class="step-label">${escapeHtml(label)}</span>
       </${tag}>
     `;
   }).join("");
@@ -12622,6 +12639,34 @@ function bindEvents() {
       addLog(error.message, "ERROR");
       showToast(error.message);
     }
+  });
+
+  el.toggleSetupLog?.addEventListener("click", () => {
+    state.setupLogCollapsed = !state.setupLogCollapsed;
+    el.setupActivityPanel?.classList.toggle("collapsed", state.setupLogCollapsed);
+    el.setupView?.classList.toggle("log-collapsed", state.setupLogCollapsed);
+    if (el.toggleSetupLog) {
+      el.toggleSetupLog.title = state.setupLogCollapsed ? "Mở rộng bảng hoạt động" : "Thu gọn bảng hoạt động";
+      el.toggleSetupLog.textContent = state.setupLogCollapsed ? "◨" : "◧";
+    }
+  });
+  el.setupActivityPanel?.addEventListener("click", (event) => {
+    if (state.setupLogCollapsed && !event.target.closest("button")) {
+      state.setupLogCollapsed = false;
+      el.setupActivityPanel?.classList.remove("collapsed");
+      el.setupView?.classList.remove("log-collapsed");
+      if (el.toggleSetupLog) {
+        el.toggleSetupLog.title = "Thu gọn bảng hoạt động";
+        el.toggleSetupLog.textContent = "◧";
+      }
+    }
+  });
+
+  el.toggleTiktokSafezone?.addEventListener("click", () => {
+    state.tiktokSafezoneVisible = !state.tiktokSafezoneVisible;
+    el.tiktokSafezoneOverlay?.classList.toggle("hidden", !state.tiktokSafezoneVisible);
+    el.toggleTiktokSafezone?.classList.toggle("active", state.tiktokSafezoneVisible);
+    showToast(state.tiktokSafezoneVisible ? "Đã bật lưới TikTok Safe-Zone (vùng an toàn)" : "Đã tắt lưới TikTok Safe-Zone");
   });
 
   el.copyLog?.addEventListener("click", () => {

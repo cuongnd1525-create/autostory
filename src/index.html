@@ -12,10 +12,10 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="brand">
-          <div class="brand-mark">R</div>
+          <div class="brand-mark">⚡</div>
           <div>
-            <strong>RecapTool Studio</strong>
-            <span>Chạy cục bộ bằng Electron - Gemini / Antigravity - timeline dựng video</span>
+            <strong>Cineviral Studio</strong>
+            <span>AI Video Director • TikTok / Shorts & Series</span>
           </div>
         </div>
         <div class="top-actions">
@@ -1358,6 +1358,7 @@
           <div class="log-title">
             <span>Hoạt động</span>
             <div class="log-actions">
+              <button id="toggle-setup-log" class="icon-button log-collapse-btn" title="Thu gọn / Mở rộng bảng hoạt động" type="button">◧</button>
               <button id="toggle-raw-log" class="ghost-button">Hiện log thô</button>
               <button id="copy-log" class="ghost-button">Sao chép</button>
             </div>
@@ -1984,6 +1985,21 @@
               </div>
               <div id="video-title-overlay" class="video-title-overlay hidden" title="Kéo để đổi vị trí tiêu đề"></div>
               <div id="video-part-label-overlay" class="video-part-label-overlay hidden" title="Kéo để đổi vị trí nhãn"></div>
+              <div id="tiktok-safezone-overlay" class="tiktok-safezone-overlay hidden" aria-label="TikTok Safe Zone Overlay">
+                <div class="safezone-top-bar"><span class="safezone-tag">TIKTOK HEADER (TABS / SEARCH)</span></div>
+                <div class="safezone-right-actions">
+                  <div class="sz-avatar" title="Avatar"></div>
+                  <div class="sz-action-icon sz-heart">♥<small>89K</small></div>
+                  <div class="sz-action-icon sz-comment">💬<small>1.2K</small></div>
+                  <div class="sz-action-icon sz-bookmark">★<small>15K</small></div>
+                  <div class="sz-action-icon sz-share">↗<small>4.5K</small></div>
+                </div>
+                <div class="safezone-bottom-bar">
+                  <div class="sz-caption-pill">@channel · Kịch bản TikTok Viral #crime #truestory...</div>
+                  <div class="sz-sound-pill">♫ Âm thanh gốc - Viral Audio</div>
+                </div>
+                <div class="safezone-box"><div class="safezone-box-label">⛶ VÙNG AN TOÀN TIKTOK (SAFE-ZONE)</div></div>
+              </div>
               <div class="subtitle-overlay">Phụ đề xem trước</div>
               <div id="video-placeholder">Video xem trước sẽ hiển thị sau khi nạp dữ liệu hoặc render.</div>
             </div>
@@ -1991,6 +2007,10 @@
               <button id="preview-control-play" class="preview-play-button" type="button">▶</button>
               <span>Xem trước</span>
               <strong id="preview-timecode">00:00.000</strong>
+              <div class="preview-control-right">
+                <button id="toggle-tiktok-safezone" class="btn-ghost-xs safezone-toggle-btn" type="button" title="Bật/Tắt Lưới TikTok Safe-Zone (Căn chỉnh phụ đề và tiêu đề)">⛶ TikTok Safe-Zone</button>
+                <span id="safezone-ratio-badge" class="badge-ratio">9:16</span>
+              </div>
             </div>
           </div>
         </section>

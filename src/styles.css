@@ -1244,34 +1244,44 @@ dt {
 .mode-category-tabs {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 4px;
-  padding: 4px;
-  border: 1px solid #202a3a;
-  border-radius: 8px;
-  background: #090d13;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  background: rgba(11, 15, 23, 0.55);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
 }
 
 .mode-category-tabs button {
   min-width: 0;
-  min-height: 42px;
-  border: 0;
-  border-radius: 6px;
+  min-height: 40px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: transparent;
   color: #8492a7;
-  padding: 9px 12px;
+  padding: 8px 16px;
   font-size: 12px;
   font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
   overflow-wrap: anywhere;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .mode-category-tabs button:hover {
-  color: #dbe7f5;
-  background: #111823;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 
 .mode-category-tabs button.active {
-  color: #041217;
-  background: var(--cyan);
+  color: #ffffff;
+  background: var(--gradient-primary);
+  border-color: rgba(0, 212, 255, 0.4);
+  box-shadow: 0 2px 14px rgba(0, 212, 255, 0.35);
 }
 
 .mode-workspace {
@@ -8521,7 +8531,7 @@ body.is-dragging-splitter .timeline-grid {
 .recap-guided > .recap-setup-summary { grid-column: 2; grid-row: 1; }
 .recap-guided > #setup-activity-panel { grid-column: 2; grid-row: 2; height: 100%; min-height: 0; }
 .recap-guided .mode-category-tabs { margin-top: 16px; flex-shrink: 0; }
-.recap-guided .mode-category-tabs button { font-size: 12px; padding: 8px; }
+.recap-guided .mode-category-tabs button { font-size: 12px; padding: 8px 16px; border-radius: 999px; }
 .recap-guided .wizard-steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; margin: 20px 0 18px; overflow: visible; }
 .recap-guided .wizard-step { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; font-size: 12px; font-weight: 600; }
 .recap-guided .wizard-step span:last-child { white-space: normal; overflow: visible; text-overflow: clip; }
@@ -8615,3 +8625,505 @@ body.is-dragging-splitter .timeline-grid {
   .recap-fields, .recap-preset-choices { grid-template-columns: minmax(0, 1fr); }
   #recap-setup-footer-status { display: none; }
 }
+
+/* ==========================================================================
+   CREATOR STUDIO 2.0 — MODERN UI/UX UPGRADE SYSTEM
+   ========================================================================== */
+
+/* 1. Global Elevation, Polish & Glassmorphism */
+:root {
+  --glow-cyan: 0 0 20px rgba(0, 212, 255, 0.35);
+  --glow-purple: 0 0 20px rgba(139, 92, 246, 0.35);
+  --gradient-primary: linear-gradient(135deg, #00d4ff 0%, #0072ff 100%);
+  --gradient-ai: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+  --surface-elevated: rgba(22, 29, 42, 0.82);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+}
+
+/* Modern Brand Header */
+.topbar {
+  background: rgba(11, 15, 23, 0.92) !important;
+  backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid var(--border-subtle) !important;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  background: var(--gradient-primary) !important;
+  color: #fff !important;
+  border-radius: 10px !important;
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.45) !important;
+  font-weight: 900;
+}
+
+.brand strong {
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: -0.2px;
+  background: linear-gradient(180deg, #ffffff 30%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.brand span {
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+
+.connection-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #34d399;
+}
+
+.connection-dot::before {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  animation: pulse-dot 2s infinite ease-in-out;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.85); }
+}
+
+/* 2. Setup Layout & Collapsible Activity Panel */
+.setup-layout {
+  transition: grid-template-columns 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+@media (min-width: 1200px) {
+  .setup-layout.log-collapsed:not(.recap-guided) {
+    grid-template-columns: minmax(0, 1fr) 52px !important;
+  }
+}
+
+.log-collapse-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+.log-collapse-btn:hover {
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+#setup-activity-panel {
+  transition: all 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  background: rgba(15, 21, 32, 0.85) !important;
+  backdrop-filter: blur(16px) !important;
+}
+
+#setup-activity-panel.collapsed {
+  width: 52px !important;
+  min-width: 52px !important;
+  max-width: 52px !important;
+  padding: 0 !important;
+  cursor: pointer;
+  overflow: hidden;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  background: rgba(14, 19, 28, 0.95) !important;
+}
+
+#setup-activity-panel.collapsed .log-title {
+  padding: 14px 0 !important;
+  border-bottom: none !important;
+  flex-direction: column !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  height: 100% !important;
+  gap: 16px !important;
+}
+
+#setup-activity-panel.collapsed .log-title > span {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  letter-spacing: 2.5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+#setup-activity-panel.collapsed .log-actions button:not(#toggle-setup-log) {
+  display: none !important;
+}
+
+#setup-activity-panel.collapsed .activity-feed,
+#setup-activity-panel.collapsed #system-log {
+  display: none !important;
+}
+
+/* 3. Modern Wizard Stepper */
+.wizard-steps {
+  background: rgba(11, 15, 23, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 999px;
+  padding: 6px 14px;
+  gap: 6px;
+}
+
+.wizard-step {
+  padding: 6px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.wizard-step:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.wizard-step.active {
+  background: rgba(0, 212, 255, 0.08);
+  border-color: rgba(0, 212, 255, 0.3);
+}
+
+.wizard-step.active .step-number {
+  background: var(--gradient-primary);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 0 12px rgba(0, 212, 255, 0.5);
+}
+
+.wizard-step.done .step-number {
+  background: #10b981;
+  color: #042416;
+  border-color: #10b981;
+  font-weight: 900;
+}
+
+.wizard-step .step-label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Mode Category Tabs - Pill-shaped aesthetic matching Wizard Stepper */
+.mode-category-tabs {
+  background: rgba(11, 15, 23, 0.45) !important;
+  border: 1px solid rgba(255, 255, 255, 0.05) !important;
+  border-radius: 999px !important;
+  padding: 5px 8px !important;
+  gap: 6px !important;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.mode-category-tabs button {
+  border-radius: 999px !important;
+  border: 1px solid transparent !important;
+  min-height: 38px !important;
+  padding: 8px 16px !important;
+  font-size: 12.5px !important;
+  font-weight: 700 !important;
+  cursor: pointer !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  text-align: center !important;
+}
+
+.mode-category-tabs button:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+.mode-category-tabs button.active {
+  background: var(--gradient-primary) !important;
+  color: #ffffff !important;
+  border-color: rgba(0, 212, 255, 0.4) !important;
+  box-shadow: 0 2px 14px rgba(0, 212, 255, 0.35) !important;
+}
+
+/* 4. Enhanced Activity Feed & Semantic Tags */
+.activity-item {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: rgba(18, 25, 38, 0.6) !important;
+  border-radius: 10px !important;
+  padding: 10px 13px !important;
+  transition: all 0.2s ease !important;
+}
+
+.activity-item:hover {
+  background: rgba(24, 34, 52, 0.8) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+.activity-item.is-cache {
+  border-left: 3px solid #8b5cf6 !important;
+  background: rgba(139, 92, 246, 0.04) !important;
+}
+
+.activity-item.is-stage {
+  border-left: 3px solid #00d4ff !important;
+  background: rgba(0, 212, 255, 0.04) !important;
+}
+
+.activity-item.processing {
+  border-left: 3px solid #f59e0b !important;
+}
+
+.activity-item.processing .activity-dot {
+  background: #f59e0b !important;
+  box-shadow: 0 0 10px #f59e0b !important;
+  animation: activityPulse 1.4s infinite ease-in-out;
+}
+
+@keyframes activityPulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.3); opacity: 0.5; }
+}
+
+.activity-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.activity-tag {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.tag-cache {
+  background: rgba(139, 92, 246, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+}
+
+.tag-stage {
+  background: rgba(0, 212, 255, 0.15);
+  color: #38bdf8;
+  border: 1px solid rgba(0, 212, 255, 0.35);
+}
+
+/* 5. Hero Action Buttons */
+.primary-button {
+  background: var(--gradient-primary) !important;
+  color: #ffffff !important;
+  border: none !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 14px rgba(0, 114, 255, 0.35) !important;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.primary-button:hover:not(:disabled) {
+  transform: translateY(-1.5px);
+  box-shadow: 0 6px 20px rgba(0, 114, 255, 0.55) !important;
+}
+
+.primary-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* 6. TikTok Safe-Zone Overlay & Hero Canvas */
+.video-frame {
+  border-radius: 14px !important;
+  overflow: hidden !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+}
+
+.tiktok-safezone-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 25;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.tiktok-safezone-overlay.hidden {
+  display: none !important;
+}
+
+.safezone-top-bar {
+  height: 12%;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.5) 0%, transparent 100%);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.safezone-tag {
+  background: rgba(0, 0, 0, 0.65);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  letter-spacing: 0.5px;
+}
+
+.safezone-right-actions {
+  position: absolute;
+  right: 8px;
+  bottom: 22%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  z-index: 26;
+}
+
+.sz-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1.5px solid #fff;
+  background: linear-gradient(135deg, #ff0050, #00f2fe);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+.sz-action-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+
+.sz-action-icon small {
+  font-size: 8px;
+  font-weight: 700;
+  margin-top: -2px;
+}
+
+.safezone-bottom-bar {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: linear-gradient(0deg, rgba(0, 0, 0, 0.65) 0%, transparent 100%);
+  max-width: 78%;
+}
+
+.sz-caption-pill {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.9);
+  line-height: 1.35;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+  font-weight: 600;
+}
+
+.sz-sound-pill {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.safezone-box {
+  position: absolute;
+  top: 13%;
+  bottom: 22%;
+  left: 6%;
+  right: 18%;
+  border: 1.5px dashed rgba(0, 229, 255, 0.7);
+  border-radius: 8px;
+  box-shadow: inset 0 0 18px rgba(0, 229, 255, 0.08);
+  pointer-events: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 6px;
+}
+
+.safezone-box-label {
+  background: rgba(0, 212, 255, 0.2);
+  color: #38bdf8;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.5px;
+}
+
+.preview-control-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.safezone-toggle-btn {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.safezone-toggle-btn:hover {
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+
+.safezone-toggle-btn.active {
+  background: rgba(0, 212, 255, 0.2);
+  color: #38bdf8;
+  border-color: var(--cyan);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.3);
+}
+
+.badge-ratio {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
