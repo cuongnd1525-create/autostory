@@ -197,8 +197,10 @@ class AutoStoryFastService {
         let queueMs;
         const result = await require('./productionResourcePool').withSlot('auto-story-ai', 2, signal, () => {
           queueMs = Date.now() - queuedAt;
+          // Vertex reports ONE request on its own 0-100 scale ("Vertex AI hoàn tất" = 100). Forwarded
+          // as the run's percent it pinned the bar at 100% after the first request: keep the message only.
           return this.vertex.generateJsonFromFiles({ ...args, strictRootJson: true, signal,
-            onProgress: p => onProgress?.({ ...p, stage: key }) });
+            onProgress: ({ percent: _requestPercent, ...p }) => onProgress?.({ ...p, stage: key }) });
         });
         await write(path.join(root, `${key}-request-metadata.json`), this.vertex.lastResponseMetadata || {});
         await write(path.join(root, `${key}-last-response.json`), result);

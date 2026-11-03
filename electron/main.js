@@ -25,7 +25,7 @@ const LocalTranslationService = require("./services/localTranslationService");
 const SubtitleService = require("./services/subtitleService");
 const OllamaService = require("./services/ollamaService");
 const RenderJobService = require("./services/renderJobService");
-const { createMonotonicProgressNormalizer } = require("./services/progressPolicy");
+const { createMonotonicProgressNormalizer, autoStoryRunPercent } = require("./services/progressPolicy");
 const { buildCliEnv } = require("./services/cliEnv");
 const { pythonArgs, runtimeFailureMessage } = require("./services/pythonRuntimeService");
 const { createCancelToken, clearCancelToken, cancelActiveOperation } = require("./services/cancelToken");
@@ -767,8 +767,10 @@ app.whenReady().then(async () => {
       if (existingProject.analysisWorkflow === "vertex_auto_story") {
         await service.vertex?.dispatcher?.close();
         const Runner = require("./services/autoStoryRunner");
+        // Only the runner's last event may reach 100% (see progressPolicy.autoStoryRunPercent).
+        const runnerProgress = (item) => onProgress({ ...item, percent: autoStoryRunPercent(item) });
         const runResult = await new Runner(settings, projectStore, dubbingService).run({ workspaceRoot: getWorkspaceRoot(), projectId,
-          scriptId, signal: controller.signal, onProgress });
+          scriptId, signal: controller.signal, onProgress: runnerProgress });
         // Bug-2 fix: flag a zero-script / failed generation so the UI STOPS and
         // never proceeds to draft rendering; preserve the original V3 failure.
         const outcome = require("./services/autoStoryRunOutcome");

@@ -24,7 +24,17 @@ function createMonotonicProgressNormalizer(initialPercent = 0) {
   };
 }
 
+/**
+ * Percent of one Auto Story run event. Only the runner's final event (final: true) may reach 100:
+ * the progress bar fades out at 100%, so a nested step reporting 100 (one AI request, one draft
+ * render) made the bar vanish and reappear on every later event.
+ */
+function autoStoryRunPercent(item = {}) {
+  return Math.min(item.final ? 100 : 99, Number(item.percent) || 0);
+}
+
 module.exports = {
   clampProgressPercent,
-  createMonotonicProgressNormalizer
+  createMonotonicProgressNormalizer,
+  autoStoryRunPercent
 };
