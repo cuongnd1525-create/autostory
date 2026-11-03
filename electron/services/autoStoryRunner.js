@@ -1,6 +1,7 @@
 const fs = require('fs/promises');
 const path = require('path');
 const Service = require('./autoStoryFastService');
+const RunProgress = require('./autoStoryRunProgress');
 
 // Isolated variant workers can render while the producer prepares other scripts.
 class AutoStoryRunner {
@@ -15,7 +16,28 @@ class AutoStoryRunner {
     this.producer = createService(this.settings, { dubbing, callBudget });
     this.consumer = createService(this.settings, { dubbing, callBudget });
   }
-  async run({ workspaceRoot, projectId, scriptId = null, signal, onProgress }) {
+  async sourceSeconds(project) {
+    try { return Number((await this.producer.ffmpeg?.probeVideo?.(project.sourceVideoPath))?.duration) || 0; }
+    catch (_) { return 0; }
+  }
+  async run(options) {
+    try { return await this.runBody(options); }
+    finally { clearInterval(this.progressTicker); this.progressTicker = null; }
+  }
+  async runBody({ workspaceRoot, projectId, scriptId = null, signal, onProgress: emitProgress }) {
+    // One percent for the whole run (autoStoryRunProgress): nested steps keep their messages, the
+    // percent comes from the weighted phase plan. A 2 s ticker keeps time-based phases moving.
+    let tracker = null;
+    let last = { stage: '', message: '' };
+    const onProgress = (event = {}) => {
+      if (!event.heartbeat && event.message) last = { stage: event.stage || event.step || '', message: event.message };
+      emitProgress?.({ ...event, percent: tracker ? tracker.event(event) : 0 });
+    };
+    const ticker = setInterval(() => {
+      if (tracker && last.message) emitProgress?.({ stage: last.stage, message: last.message, heartbeat: true, percent: tracker.percent() });
+    }, 2000);
+    ticker.unref?.();
+    this.progressTicker = ticker;
     const startedAt = Date.now(), jobs = {}, queued = new Set(), failures = [];
     let chain = Promise.resolve(), analysis, fatal;
     const pending = [];
@@ -23,6 +45,9 @@ class AutoStoryRunner {
     const stateFile = path.join(this.store.getProjectPaths(workspaceRoot, projectId).analysisDir, 'auto-story-fast', 'production-timing.json');
     const state = async (id, phase, error = '') => require('./autoStoryWorkQueue').serial(`production-state:${stateFile}`, async () => {
       jobs[id] = { ...jobs[id], phase, error, updatedAt: new Date().toISOString() };
+      if (phase === 'rendering') tracker?.renderStart(id);
+      else if (phase === 'reviewing') tracker?.reviewStart(id);
+      else if (['complete', 'failed', 'needs_attention'].includes(phase)) tracker?.scriptDone(id);
       const timing = { startedAt, elapsedMs: Date.now() - startedAt, jobs };
       await this.store.updateProject(workspaceRoot, projectId, { autoStoryProduction: structuredClone(timing) });
       await fs.mkdir(path.dirname(stateFile), { recursive: true });
@@ -40,7 +65,7 @@ class AutoStoryRunner {
             const audit = await require('./autoStoryVariantWorker').run({ settings: this.settings, store: this.store,
               workspaceRoot, projectId, scriptId: id, scriptPath, signal, callBudget: this.callBudget,
               createDubbing: this.createDubbing, createService: this.createService,
-              onProgress: p => { onProgress?.({ ...p, message: `Script ${id}: ${p.message || p.stage || ''}` }); } });
+              onProgress: p => { onProgress?.({ ...p, scriptId: id, message: `Script ${id}: ${p.message || p.stage || ''}` }); } });
             if (!audit?.complete) throw new Error(audit?.error || 'Chưa có review hoàn chỉnh.');
             const finalPhase = audit.finalCheck?.error ? 'failed' : audit.needsUserReview ? 'needs_attention' : 'complete';
             await state(id, finalPhase, audit.finalCheck?.error || '');
@@ -64,7 +89,7 @@ class AutoStoryRunner {
           if (!before.analysis?.highlightVariants?.some(v => Number(v.scriptId) === id)) {
             try {
               await this.store.updateProject(workspaceRoot, projectId, { storyScriptPaths: [scriptPath], storyScriptPath: scriptPath });
-              await this.dubbing.importHighlightCutProject({ workspaceRoot, projectId, settings: this.settings, onProgress });
+              await this.dubbing.importHighlightCutProject({ workspaceRoot, projectId, settings: this.settings, onProgress: p => onProgress({ ...p, scriptId: id }) });
               project = await this.consumer.mergePreservedVariants(workspaceRoot, projectId, before);
             } catch (error) {
               await this.store.updateProject(workspaceRoot, projectId, { analysis: before.analysis, artifacts: before.artifacts,
@@ -74,14 +99,14 @@ class AutoStoryRunner {
           }
           const variant = project.analysis.highlightVariants.find(v => Number(v.scriptId) === id);
           const reuse = await require('./dubbingService').canReuseAutoStoryDraft(project, variant, this.settings);
-          if (!reuse) await this.dubbing.renderHighlightFastDraft({ workspaceRoot, projectId, settings: this.settings, onProgress,
+          if (!reuse) await this.dubbing.renderHighlightFastDraft({ workspaceRoot, projectId, settings: this.settings, onProgress: p => onProgress({ ...p, scriptId: id }),
             project: { ...project, analysis: { ...project.analysis, activeVariantId: variant.id, segments: variant.segments } } });
           jobs[id] = { ...jobs[id], draftReadyMs: Date.now() - startedAt };
-          onProgress?.({ project: await this.store.getProject(workspaceRoot, projectId), autoStoryDraftReady: true,
+          onProgress?.({ project: await this.store.getProject(workspaceRoot, projectId), autoStoryDraftReady: true, scriptId: id,
             stage: 'draft_ready', message: `Script ${id}: draft đã sẵn sàng, các script khác tiếp tục xử lý` });
           await state(id, 'reviewing');
-          const result = await this.consumer.auditDrafts({ workspaceRoot, projectId, scriptId: id, signal, onProgress,
-            onDraft: project => onProgress?.({ project, autoStoryDraftReady: true, stage: 'review_ready', message: `Script ${id}: đã có bản sửa` }) });
+          const result = await this.consumer.auditDrafts({ workspaceRoot, projectId, scriptId: id, signal, onProgress: p => onProgress({ ...p, scriptId: id }),
+            onDraft: project => onProgress?.({ project, autoStoryDraftReady: true, scriptId: id, stage: 'review_ready', message: `Script ${id}: đã có bản sửa` }) });
           const a = result.audits.find(a => a.scriptId === id);
           if (!a?.complete && !a?.error) throw new Error('Chưa có kết quả review hoàn chỉnh cho script này; draft được giữ lại.');
           await state(id, a?.error || a?.finalCheck?.error ? 'failed' : a?.needsUserReview ? 'needs_attention' : 'complete', a?.error || a?.finalCheck?.error || '');
@@ -98,12 +123,18 @@ class AutoStoryRunner {
       await this.store.updateProject(workspaceRoot, projectId, { autoStoryProduction: { startedAt, elapsedMs: 0, jobs: {}, finished: false } });
       const project = await this.producer.recoverScriptIds(workspaceRoot, projectId);
       const variants = project.analysis?.highlightVariants || [];
-      const missing = variants.length < (project.autoStoryConfig?.outputCount || (project.autoStoryPipelineVersion ? 2 : 1));
-      for (const v of variants) if (!scriptId || Number(v.scriptId) === scriptId) enqueue({ scriptId: Number(v.scriptId), scriptPath: v.sourceJsonPath });
+      const requestedCount = project.autoStoryConfig?.outputCount || (project.autoStoryPipelineVersion ? 2 : 1);
+      const missing = variants.length < requestedCount;
       const generate = !variants.length || (scriptId ? !variants.some(v => Number(v.scriptId) === scriptId) : missing);
+      const existing = variants.filter(v => !scriptId || Number(v.scriptId) === scriptId).length;
+      const outputs = scriptId ? 1 : Math.max(requestedCount, existing);
+      tracker = new RunProgress({ engine: RunProgress.engineOf(project), outputs, scripts: generate ? Math.max(1, outputs - existing) : 0,
+        generate, sourceSec: generate ? await this.sourceSeconds(project) : 0, history: RunProgress.loadHistory(workspaceRoot) });
+      for (const v of variants) if (!scriptId || Number(v.scriptId) === scriptId) enqueue({ scriptId: Number(v.scriptId), scriptPath: v.sourceJsonPath });
       if (generate) analysis = await this.producer.run({ workspaceRoot, projectId, scriptId, signal, onProgress,
-        retryFailed: project.autoStoryPipelineVersion === 'editorial-v1', onScriptReady: enqueue });
+        retryFailed: project.autoStoryPipelineVersion === 'editorial-v1', onScriptReady: item => { tracker.scriptReady(); enqueue(item); } });
     } catch (error) { fatal = error; }
+    tracker?.generationDone();
     // Recover missing scripts independently using the producer's checkpoints.
     // One additional pass per failed script, sharing the same API call budget.
     const blocked = error => /401|403|429|budget|giới hạn|hard limit|access|truy cập|chưa đọc đủ/i.test(error || '');
@@ -130,6 +161,8 @@ class AutoStoryRunner {
       analysis = { ...analysis, failures: generationFailures };
       if (!generationFailures.length && pending.length && !signal?.aborted) fatal = null;
     }
+    tracker?.generationDone();
+    if (pending.length) tracker?.setProductionCount(pending.length);
     // Complete the shared planning/editing phase before starting any draft.
     if (!signal?.aborted) for (const item of pending) dispatch(item);
     try { await chain; } catch (error) { fatal ||= error; }
@@ -157,8 +190,10 @@ class AutoStoryRunner {
     await fs.mkdir(path.dirname(stateFile), { recursive: true });
     await fs.writeFile(stateFile, JSON.stringify(updated.autoStoryProduction, null, 2));
     for (const service of [this.producer, this.consumer]) await service.vertex?.dispatcher?.close();
+    clearInterval(ticker);
+    if (!signal?.aborted) tracker?.saveHistory(workspaceRoot);
     const hasErrors = Boolean(fatal || combined.length || variants.length < requested || Object.values(jobs).some(j => j.phase === 'failed'));
-    onProgress?.({ percent: 100, final: true, stage: hasErrors ? 'failed' : 'complete',
+    emitProgress?.({ percent: 100, final: true, stage: hasErrors ? 'failed' : 'complete',
       level: hasErrors ? 'WARNING' : 'INFO', project: updated,
       message: hasErrors ? `Lượt chạy đã kết thúc · Có ${variants.length}/${requested} kịch bản · Xem lỗi trong Thống kê & cảnh báo`
         : `Lượt chạy đã kết thúc · Có ${variants.length}/${requested} kịch bản${needsAttention ? ' · Cần xem kết quả kiểm tra' : ''}` });

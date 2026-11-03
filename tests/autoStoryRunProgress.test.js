@@ -43,7 +43,7 @@ const { createMonotonicProgressNormalizer, autoStoryRunPercent } = require('../e
 
     // 3. Wiring: the runner marks its last event final; main uses the run percent policy.
     const runner = fsSync.readFileSync(path.join(__dirname, '..', 'electron', 'services', 'autoStoryRunner.js'), 'utf8');
-    assert.match(runner, /onProgress\?\.\(\{ percent: 100, final: true, stage: hasErrors \? 'failed' : 'complete'/);
+    assert.match(runner, /emitProgress\?\.\(\{ percent: 100, final: true, stage: hasErrors \? 'failed' : 'complete'/);
     const main = fsSync.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
     assert.match(main, /const runnerProgress = \(item\) => onProgress\(\{ \.\.\.item, percent: autoStoryRunPercent\(item\) \}\);/);
     assert.match(main, /signal: controller\.signal, onProgress: runnerProgress \}\)/);

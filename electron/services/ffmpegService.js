@@ -1672,7 +1672,7 @@ class FfmpegService {
     ], { captureStdout: false });
   }
 
-  async createAnalysisProxyChunk({ videoPath, outputPath, startSec, durationSec, width, fps }) {
+  async createAnalysisProxyChunk({ videoPath, outputPath, startSec, durationSec, width, fps, onProgress = null }) {
     await this.run(this.ffmpegPath, [
       "-y",
       "-ss",
@@ -1701,7 +1701,7 @@ class FfmpegService {
       "-movflags",
       "+faststart",
       outputPath
-    ], { captureStdout: false });
+    ], { captureStdout: false, onProgress, totalDurationSec: Math.max(0.25, Number(durationSec) || 0.25) });
   }
 
   async burnSubtitlesFast({
