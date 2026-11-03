@@ -97,6 +97,52 @@ function attachWordWindow(quote, words = []) {
   return { ...quote, wordStartSec: within[0].start, wordEndSec: within[within.length - 1].end, wordCount: within.length };
 }
 
+// ---- timing audit (deterministic, no model call) ----------------------------
+// Gemini's timestamps can drift on long inputs. Quotes are verbatim speech, so the
+// source transcript tells us where they really are. Each quote is anchored by its
+// 5-word windows; an anchor counts only if the words occur at ONE place in the
+// transcript (rolling-caption repeats within a few seconds collapse to one).
+const TIMING_TOLERANCE_SEC = 5;
+const TIMING_MIN_ANCHORS = 3;
+const ANCHOR_CLUSTER_SEC = 6;
+const CONTRACTIONS = [[/\bgonna\b/g, 'going to'], [/\bwanna\b/g, 'want to'], [/\bgotta\b/g, 'got to'], [/\bok\b/g, 'okay'], [/\bcuz\b/g, 'because'], [/\bcause\b/g, 'because']];
+function speechTokens(text) {
+  let t = String(text || '').toLowerCase().replace(/\[[^\]]*\]/g, ' ').replace(/>>/g, ' ').replace(/[\u2019']/g, '');
+  for (const [re, to] of CONTRACTIONS) t = t.replace(re, to);
+  return t.replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+}
+function timingAudit(quotes = [], cues = [], duration = 0) {
+  const rows = (cues || []).filter(c => Number.isFinite(Number(c?.startSec)) && String(c?.text || '').trim())
+    .map(c => ({ t: Number(c.startSec), tokens: ` ${speechTokens(c.text).join(' ')} ` }));
+  if (!rows.length) return { checked: false, reason: 'no transcript cues' };
+  // Adjacent cues joined so a phrase split across two captions still matches.
+  // A phrase is credited to the cue it starts in; the next cue's text alone never counts.
+  const hay = rows.map((r, i) => ({ t: r.t, own: r.tokens, next: rows[i + 1] ? rows[i + 1].tokens : '', text: `${r.tokens}${rows[i + 1] ? rows[i + 1].tokens : ''}` }));
+  const anchors = [];
+  for (const q of quotes) {
+    const tok = speechTokens(q.text);
+    if (tok.length < 3) continue;
+    const grams = tok.length <= 5 ? [tok.join(' ')] : tok.slice(0, tok.length - 4).map((_, i) => tok.slice(i, i + 5).join(' '));
+    const times = [];
+    for (const g of grams) for (const h of hay) {
+      const k = ` ${g} `;
+      if (h.own.includes(k) || (h.text.includes(k) && !h.next.includes(k))) times.push(h.t);
+    }
+    if (!times.length) continue;
+    times.sort((a, b) => a - b);
+    const clusters = [];
+    for (const t of times) { const last = clusters[clusters.length - 1]; if (last && t - last[last.length - 1] <= ANCHOR_CLUSTER_SEC) last.push(t); else clusters.push([t]); }
+    if (clusters.length !== 1) continue; // ambiguous (said more than once): not an anchor
+    const trueSec = clusters[0][0];
+    anchors.push({ quoteId: q.id, text: String(q.text).slice(0, 80), modelSec: Number(q.startSec), transcriptSec: trueSec, offsetSec: Math.round((Number(q.startSec) - trueSec) * 100) / 100 });
+  }
+  const abs = anchors.map(a => Math.abs(a.offsetSec)).sort((a, b) => a - b);
+  const median = abs.length ? abs[Math.floor(abs.length / 2)] : null;
+  const reliable = anchors.length >= TIMING_MIN_ANCHORS ? median <= TIMING_TOLERANCE_SEC : null;
+  return { checked: true, anchors, anchorCount: anchors.length, medianAbsOffsetSec: median, maxAbsOffsetSec: abs.length ? abs[abs.length - 1] : null,
+    toleranceSec: TIMING_TOLERANCE_SEC, reliable, ...(reliable === null ? { reason: `fewer than ${TIMING_MIN_ANCHORS} unambiguous quote anchors` } : {}) };
+}
+
 function eventImportance(e) { return (Number(e.tension) || 0) + (Number(e.dialogueImpact) || 0) * 0.5 + (Number(e.novelty) || 0) * 0.3; }
 
 function normalize(raw = {}, ctx = {}) {
@@ -112,8 +158,16 @@ function normalize(raw = {}, ctx = {}) {
   }));
 
   // Events: keep the most editorially important, capped, then chronological.
+  const outOfBounds = [];
+  // A time beyond the source is impossible: drop it instead of clamping its end
+  // (clamping produced inverted ranges such as 711-549.7s).
+  const inSource = (x, kind) => {
+    const ok = !(duration > 0) || (Number(x.startSec) < duration && Number(x.startSec) >= 0);
+    if (!ok) outOfBounds.push({ kind, id: x.id || null, startSec: x.startSec, endSec: x.endSec });
+    return ok;
+  };
   let events = (raw.events || [])
-    .filter(e => Number.isFinite(e.startSec) && Number.isFinite(e.endSec) && e.endSec > e.startSec)
+    .filter(e => Number.isFinite(e.startSec) && Number.isFinite(e.endSec) && e.endSec > e.startSec && inSource(e, 'event'))
     .map(e => ({
       id: e.id,
       startSec: e.startSec,
@@ -139,7 +193,7 @@ function normalize(raw = {}, ctx = {}) {
 
   // Quotes: editorialValue-ranked, bounded per-event then global, chronological.
   let quotes = (raw.quotes || [])
-    .filter(q => Number.isFinite(q.startSec) && Number.isFinite(q.endSec))
+    .filter(q => Number.isFinite(q.startSec) && Number.isFinite(q.endSec) && inSource(q, 'quote'))
     .map((q, i) => ({
       id: q.id || `q${i + 1}`,
       eventId: q.eventId || null,
@@ -171,7 +225,8 @@ function normalize(raw = {}, ctx = {}) {
     sourceId: ctx.sourceId || raw.sourceId || null,
     durationSec: duration,
     people, events, quotes, audioEvents, tensionCurve,
-    visualQuality: events.map(e => ({ atSec: e.startSec, quality: e.visualQuality }))
+    visualQuality: events.map(e => ({ atSec: e.startSec, quality: e.visualQuality })),
+    timingAudit: { ...timingAudit(quotes, ctx.cues || [], duration), outOfBoundsDropped: outOfBounds }
   };
 }
 
@@ -225,12 +280,26 @@ function mergeSourceModels(models = []) {
 
 function modelPath(cacheDir) { return path.join(cacheDir, 'story-model.json'); }
 
-async function loadWithReason(cacheDir) {
+// A model whose times are past the source or disagree with the transcript is not a
+// cache hit: everything downstream (scope windows, reel, director) inherits it.
+function timingProblem(model, cues, duration) {
+  const d = Number(duration || model?.durationSec) || 0;
+  if (d > 0 && [...(model?.events || []), ...(model?.quotes || [])].some(x => Number(x.startSec) >= d)) return 'times beyond the source duration';
+  if (Array.isArray(cues) && cues.length) {
+    const audit = timingAudit(model?.quotes || [], cues, d);
+    if (audit.reliable === false) return `quote times disagree with the transcript (median offset ${audit.medianAbsOffsetSec}s over ${audit.anchorCount} anchors)`;
+  }
+  return null;
+}
+
+async function loadWithReason(cacheDir, { cues = null, duration = 0 } = {}) {
   let raw;
   try { raw = JSON.parse(await fs.readFile(modelPath(cacheDir), 'utf8')); }
   catch (_) { return { model: null, reason: 'no cached story-model.json' }; }
   if (raw?.modelVersion !== MODEL_VERSION) return { model: null, reason: `schema version ${raw?.modelVersion} != ${MODEL_VERSION}` };
   if (!Array.isArray(raw.events) || !raw.events.length) return { model: null, reason: 'cached model has no events' };
+  const problem = timingProblem(raw, cues, duration);
+  if (problem) return { model: null, reason: `timing_unreliable: ${problem}` };
   return { model: raw, reason: 'hit' };
 }
 async function load(cacheDir) { return (await loadWithReason(cacheDir)).model; }
@@ -239,7 +308,7 @@ async function load(cacheDir) { return (await loadWithReason(cacheDir)).model; }
 // proxy). Lets the pipeline resolve a HIT and skip whole-source media preparation
 // and the Vertex call entirely.
 async function loadCached(engine) {
-  const { model } = await loadWithReason(engine.cache);
+  const { model } = await loadWithReason(engine.cache, { cues: engine.cues, duration: engine.duration });
   return model || null;
 }
 
@@ -358,8 +427,8 @@ function requestBudgetPlan(engine) {
 // Duration- and history-aware strategy. Long sources (or a source that already
 // proved whole+compact overflow at this model version) go straight to chunk-first.
 function selectStrategy(duration, priorDiag) {
-  if (priorDiag && priorDiag.modelVersion === MODEL_VERSION && priorDiag.whole === 'MAX_TOKENS' && priorDiag.compact === 'MAX_TOKENS') {
-    return { mode: 'chunk-first', reason: 'prior-max-tokens' };
+  if (priorDiag && priorDiag.modelVersion === MODEL_VERSION && ((priorDiag.whole === 'MAX_TOKENS' && priorDiag.compact === 'MAX_TOKENS') || priorDiag.whole === 'TIMING_UNRELIABLE')) {
+    return { mode: 'chunk-first', reason: priorDiag.whole === 'TIMING_UNRELIABLE' ? 'prior-timing-unreliable' : 'prior-max-tokens' };
   }
   if (duration > LONG_SOURCE_THRESHOLD_SEC) return { mode: 'chunk-first', reason: 'long-source' };
   return { mode: 'staged', reason: 'short-source' };
@@ -557,7 +626,7 @@ async function chunkedExtract(engine, schema, instruction, ctx, audioEvents, emi
 async function build(engine, overview, { audioEvents = [], words = [], schema, compactSchema, chunkSchema, instruction, compactInstruction, chunkInstruction } = {}) {
   const emit = (m, level) => { try { engine.onProgress?.({ stage: 'understand', message: m, ...(level ? { level } : {}) }); } catch (_) {} };
   const cacheDir = engine.cache;
-  const ctx = { duration: engine.duration, audioEvents, words, sourceId: engine.sourceHash };
+  const ctx = { duration: engine.duration, audioEvents, words, sourceId: engine.sourceHash, cues: engine.cues || [] };
   const baseInput = { duration: engine.duration, transcript: engine.cues, audioEvents, epistemicValues: EPISTEMIC };
   const getOverview = typeof overview === 'function' ? overview : (() => overview);
 
@@ -566,7 +635,7 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
   emit(`[V3] Runtime build: sourceModelVersion=${fp.sourceModelVersion} recoveryVersion=${fp.recoveryVersion} MAX_EVENTS=${fp.maxEvents} MAX_QUOTES=${fp.maxQuotes} wholeMaxOutputTokens=${fp.wholeMaxOutputTokens} thinkingBudget=${fp.thinkingBudget} recoveryEnabled=${fp.recoveryEnabled}`);
 
   // Cache: same source hash + same schema version => reuse, no Vertex call.
-  const { model: cached, reason } = await loadWithReason(cacheDir);
+  const { model: cached, reason } = await loadWithReason(cacheDir, { cues: engine.cues, duration: engine.duration });
   if (cached) {
     emit('[V3] Source Story Model cache HIT');
     await engine.metric('v3-source-model', { cached: true }).catch(() => {});
@@ -584,14 +653,22 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
 
   // STAGED (short sources): whole -> compact, each recorded so a later retry can skip
   // known-overflowing strategies and resume chunk-first.
+  let timingFailed = false;
   if (strat.mode === 'staged') {
     if (!phase.exhausted()) {
       try {
         emit(`[V3] Source Model Vertex options: maxOutputTokens=${WHOLE_MAX_OUTPUT_TOKENS} thinkingBudget=${SOURCE_MODEL_THINKING_BUDGET} strategy=whole`);
         const raw = await askModel(engine, 'v3-source-model', baseInput, schema, instruction, await getOverview(), { maxOutputTokens: WHOLE_MAX_OUTPUT_TOKENS, thinkingBudget: SOURCE_MODEL_THINKING_BUDGET });
         const model = normalize(raw, ctx);
-        await persist(cacheDir, model);
-        return model;
+        if (model.timingAudit?.reliable !== false) {
+          await persist(cacheDir, model);
+          return model;
+        }
+        // Whole-source timestamps drifted away from the transcript: never persist them.
+        // The compact pass watches the same full-length media, so go to chunk-first.
+        timingFailed = true;
+        await recordStrategyDiag(cacheDir, { whole: 'TIMING_UNRELIABLE', wholeTimingAudit: { medianAbsOffsetSec: model.timingAudit.medianAbsOffsetSec, anchorCount: model.timingAudit.anchorCount } });
+        emit(`[V3] Source Story Model timestamps disagree with the transcript (median offset ${model.timingAudit.medianAbsOffsetSec}s over ${model.timingAudit.anchorCount} quotes); re-extracting chunk-first.`, 'WARNING');
       } catch (err) {
         if (!isRecoverable(err)) throw err;
         if (isMaxTokensError(err)) await recordStrategyDiag(cacheDir, { whole: 'MAX_TOKENS' });
@@ -600,7 +677,7 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
           : `[V3] Source Story Model incomplete output; switching to compact (${short(err)}).`, 'WARNING');
       }
     }
-    if (compactSchema && compactInstruction && !phase.exhausted()) {
+    if (compactSchema && compactInstruction && !timingFailed && !phase.exhausted()) {
       try {
         emit(`[V3] Source Model Vertex options: maxOutputTokens=${COMPACT_MAX_OUTPUT_TOKENS} thinkingBudget=${SOURCE_MODEL_THINKING_BUDGET} strategy=compact`);
         const raw = await askModel(engine, 'v3-source-model_compact', baseInput, compactSchema, compactInstruction, await getOverview(), { maxOutputTokens: COMPACT_MAX_OUTPUT_TOKENS, thinkingBudget: SOURCE_MODEL_THINKING_BUDGET });
@@ -630,7 +707,7 @@ async function build(engine, overview, { audioEvents = [], words = [], schema, c
 }
 
 module.exports = {
-  build, normalize, mergeSourceModels, load, loadWithReason, loadCached, persist,
+  build, normalize, mergeSourceModels, load, loadWithReason, loadCached, persist, timingAudit, timingProblem, speechTokens, TIMING_TOLERANCE_SEC,
   tensionForEvent, attachWordWindow, isMaxTokens, isMaxTokensError, isRecoverable, chunkedExtract, extractWindow,
   validateRaw, validateChunk, fingerprint, callLimit,
   selectStrategy, requestBudgetPlan, downstreamReserve, planChunkWindows, makePhase,

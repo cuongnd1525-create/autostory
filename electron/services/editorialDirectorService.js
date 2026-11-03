@@ -317,6 +317,19 @@ function coveredByReel(b, reelRanges) {
   return inside / (e - s);
 }
 
+// Ending material declared by the Story Scope. Normalized windows carry their
+// purposes in purposes[] / purposeRanges[] (primary 'purpose' may be 'core'), so a
+// window that is core AND ending_material must count as ending material.
+function endingMaterialRanges(scope) {
+  const out = [];
+  for (const w of scope?.scopeWindows || []) {
+    const ranges = (Array.isArray(w.purposeRanges) ? w.purposeRanges : []).filter(r => r?.purpose === 'ending_material');
+    if (ranges.length) ranges.forEach(r => out.push([num(r.startSec), num(r.endSec)]));
+    else if (w.purpose === 'ending_material' || (Array.isArray(w.purposes) && w.purposes.includes('ending_material'))) out.push([num(w.startSec), num(w.endSec)]);
+  }
+  return out;
+}
+
 function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null, requireDeliveryBlocks = false } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
@@ -393,7 +406,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   const last = beats[beats.length - 1];
   const endingRanges = [
     ...(scope?.candidateEndingEvents || []).map(e => [num(e.sourceStartSec), num(e.sourceEndSec)]),
-    ...(scope?.scopeWindows || []).filter(w => w.purpose === 'ending_material').map(w => [num(w.startSec), num(w.endSec)])
+    ...endingMaterialRanges(scope)
   ].filter(([s, e]) => e > s);
   const ls = num(last.sourceStartSec), le = num(last.sourceEndSec);
   if (endingRanges.length && !endingRanges.some(([s, e]) => Math.min(le, e) - Math.max(ls, s) > 0)) {
@@ -1015,7 +1028,79 @@ const ACCEPTANCE_CONTRACT = 'director-edl-acceptance-v1';
 const RENDER_DURATION_TOLERANCE_SEC = 1.0;
 const ACCEPTANCE = Object.freeze({ ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', NEEDS_EDITORIAL_REVIEW: 'NEEDS_EDITORIAL_REVIEW' });
 
-function acceptanceReport(spine, { config = {}, durationSec, scriptSegments = null, renderedDurationSec = null, critique = null } = {}) {
+// Deterministic boundary check on the final cut, from the source transcript the run
+// already has (no model call). Caption END times are unreliable (rolling captions end
+// when the next line appears), so a line counts as interrupted only when it started
+// before the cut and, even spoken fast (SPEECH_FAST_WPS), could not have finished by
+// the cut. That keeps the check conservative: it flags a speaker cut off mid-line,
+// not a cut that merely precedes the next caption.
+const SPEECH_FAST_WPS = 3.5;
+const SPEECH_NORMAL_WPS = 2.5;
+const BOUNDARY_SLACK_SEC = 0.5;
+function endingBoundary(beats, cues) {
+  const last = beats[beats.length - 1];
+  if (!last || !Array.isArray(cues) || !cues.length) return { checked: false };
+  const cut = num(last.sourceEndSec);
+  const words = t => String(t || '').replace(/\[[^\]]*\]|>>/g, ' ').split(/\s+/).filter(w => /[a-z0-9]/i.test(w)).length;
+  // Rolling captions often merge two sentences; a cut after the first complete
+  // sentence (spoken at a normal rate) is a clean boundary.
+  const firstSentenceWords = t => { const m = String(t || '').match(/^[^.?!]*[.?!]/); return m ? words(m[0]) : null; };
+  const interrupted = cues.find(c => {
+    const s = num(c.startSec), n = words(c.text);
+    if (!(n > 0 && s < cut - 0.15 && s + n / SPEECH_FAST_WPS > cut + BOUNDARY_SLACK_SEC)) return false;
+    const k = firstSentenceWords(c.text);
+    return !(k && k < n && s + k / SPEECH_NORMAL_WPS <= cut + BOUNDARY_SLACK_SEC);
+  });
+  return interrupted
+    ? { checked: true, complete: false, cutSec: cut, interruptedLine: String(interrupted.text).trim().slice(0, 160), lineStartSec: num(interrupted.startSec),
+      earliestLineEndSec: round2(num(interrupted.startSec) + words(interrupted.text) / SPEECH_FAST_WPS) }
+    : { checked: true, complete: true, cutSec: cut };
+}
+
+// Editorial readiness from the critic's own verdicts on the rendered MP4 plus the
+// deterministic ending-boundary check. Each finding is a reason the edit is not yet
+// ready even when the EDL is technically valid.
+function editorialReadiness(critique, beats, cues) {
+  const findings = [];
+  const boundary = endingBoundary(beats, cues);
+  if (boundary.checked && !boundary.complete) {
+    findings.push({ code: 'ENDING_MID_UTTERANCE', message: `The final cut at ${boundary.cutSec}s interrupts a line that started at ${boundary.lineStartSec}s and cannot finish before ~${boundary.earliestLineEndSec}s ("${boundary.interruptedLine}").` });
+  }
+  const c = critique || {};
+  const oc = c.openingCuriosity || {};
+  if (Number.isFinite(num(oc.strongerHookAtOutputSec)) && num(oc.strongerHookAtOutputSec) >= 0) {
+    findings.push({ code: 'STRONGER_HOOK_BURIED', message: `The critic saw a stronger verified hook at output ${num(oc.strongerHookAtOutputSec)}s than the opening${oc.strongerHookEvidence ? ` (${String(oc.strongerHookEvidence).slice(0, 160)})` : ''}.` });
+  }
+  if (c.finalSeconds && c.finalSeconds.endsAtCompleteBoundary === false) {
+    findings.push({ code: 'ENDING_INCOMPLETE', message: `The critic heard the ending cut before a line/action finished${c.finalSeconds.lastWordsHeard ? ` ("${String(c.finalSeconds.lastWordsHeard).slice(0, 120)}")` : ''}.` });
+  }
+  if (c.payoffFulfillsOpeningPromise === false) {
+    findings.push({ code: 'PAYOFF_UNSATISFYING', message: 'The critic judged that the ending does not pay off the promise made by the opening.' });
+  }
+  for (const it of c.issues || []) {
+    if (it.severity !== 'minor') continue; // blocking issues already fail the critic verdict
+    const touchesEnd = (it.beatIds || []).includes(beats[beats.length - 1]?.beatId);
+    const touchesStart = (it.beatIds || []).includes(beats[0]?.beatId);
+    if (it.type === 'low_value_stretch' && touchesEnd) findings.push({ code: 'PAYOFF_UNSATISFYING', message: `The final beat is a low-value stretch (${String(it.whyItFails || it.evidence || '').slice(0, 160)}).` });
+    if ((it.type === 'low_value_stretch' || it.type === 'opening_lacks_curiosity') && touchesStart) findings.push({ code: 'WEAK_OPENING', message: `The opening beat was flagged (${it.type}: ${String(it.whyItFails || it.evidence || '').slice(0, 160)}).` });
+  }
+  return { boundary, findings };
+}
+
+// Presentation readiness: external overlays the critic saw burned into the picture
+// (channel branding, someone else's subtitles, subscribe/promo graphics). Reported
+// separately: the EDL may be fine, but the output is not publish-ready as is.
+function presentationReadiness(critique) {
+  const o = critique?.externalOverlays;
+  if (!o || typeof o !== 'object') return { checked: false, findings: [] };
+  const findings = [];
+  if (o.promoGraphicVisible) findings.push({ code: 'PROMO_GRAPHIC_VISIBLE', message: `A subscribe/promo graphic from the source is visible${o.evidence ? ` (${String(o.evidence).slice(0, 160)})` : ''}.` });
+  if (o.brandingVisible) findings.push({ code: 'SOURCE_BRANDING_VISIBLE', message: 'Source channel branding/watermark is visible in the output.' });
+  if (o.burnedInSubtitlesVisible) findings.push({ code: 'SOURCE_SUBTITLES_VISIBLE', message: 'Subtitles burned into the source are visible (they will duplicate the app subtitles).' });
+  return { checked: true, findings };
+}
+
+function acceptanceReport(spine, { config = {}, durationSec, scriptSegments = null, renderedDurationSec = null, critique = null, transcriptCues = null } = {}) {
   const scope = spine?.storyScope || null;
   const reel = spine?.scopeReel || null;
   const beats = Array.isArray(spine?.beats) ? spine.beats : [];
@@ -1080,10 +1165,17 @@ function acceptanceReport(spine, { config = {}, durationSec, scriptSegments = nu
       finalFootageUsable: critique.finalFootageUsable ?? null,
       blockingIssues: blocking
     };
+  // Technical validity is not editorial readiness: a critic PASS with any readiness
+  // finding (buried hook, mid-sentence ending, unsatisfying payoff, ...) or a visible
+  // external overlay is surfaced for review instead of being ACCEPTED.
+  const readiness = editorialReadiness(critique, beats, transcriptCues);
+  const presentation = presentationReadiness(critique);
+  if (editorial.verdict === 'PASS' && readiness.findings.length) editorial.verdict = 'NEEDS_REVIEW';
+  editorial.readiness = readiness;
   const status = technical.verdict === 'FAIL' ? ACCEPTANCE.REJECTED
     : renderViolations.length ? ACCEPTANCE.NEEDS_EDITORIAL_REVIEW
-      : editorial.verdict === 'PASS' ? ACCEPTANCE.ACCEPTED : ACCEPTANCE.NEEDS_EDITORIAL_REVIEW;
-  return { contract: ACCEPTANCE_CONTRACT, status, technical, editorial };
+      : editorial.verdict === 'PASS' && !presentation.findings.length ? ACCEPTANCE.ACCEPTED : ACCEPTANCE.NEEDS_EDITORIAL_REVIEW;
+  return { contract: ACCEPTANCE_CONTRACT, status, technical, editorial, presentation };
 }
 
 // Integrity check used by buildScript: downstream stages must hand the compiler
@@ -1109,6 +1201,6 @@ module.exports = {
   directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
-  acceptanceReport, ACCEPTANCE, ACCEPTANCE_CONTRACT, RENDER_DURATION_TOLERANCE_SEC,
+  acceptanceReport, ACCEPTANCE, ACCEPTANCE_CONTRACT, RENDER_DURATION_TOLERANCE_SEC, endingMaterialRanges, endingBoundary, editorialReadiness, presentationReadiness,
   deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };

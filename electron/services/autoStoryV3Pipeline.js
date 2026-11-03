@@ -885,13 +885,37 @@ function directorAcceptance(engine, spine, script, renderedDurationSec, critique
   return Director.acceptanceReport(spine, {
     config: engine.config || {}, durationSec: engine.duration,
     scriptSegments: Array.isArray(script?.segments) ? script.segments : null,
-    renderedDurationSec, critique
+    renderedDurationSec, critique,
+    // Source transcript the run already loaded: used only for the deterministic
+    // "does the last cut interrupt a line?" check.
+    transcriptCues: Array.isArray(engine.cues) ? engine.cues : null
   });
 }
 const DURATION_ONLY_REJECTION = a => a.status === Director.ACCEPTANCE.REJECTED
   && a.technical.violations.length > 0 && a.technical.violations.every(v => v.code === 'TOTAL_DURATION_OVER_MAX' || v.code === 'TOTAL_DURATION_UNDER_MIN');
+// Only presentation problems (source watermark / burned-in subtitles): the EDL is fine
+// and no Director repair can remove them, so they are recorded for review.
+const PRESENTATION_ONLY = a => a.status === Director.ACCEPTANCE.NEEDS_EDITORIAL_REVIEW && a.editorial.verdict === 'PASS'
+  && (a.presentation?.findings || []).length > 0 && !a.technical.renderViolations.length;
 // Outcomes a Director repair cannot change: stop and record them instead of spending calls.
-const UNREPAIRABLE = a => (a.status === Director.ACCEPTANCE.REJECTED && !DURATION_ONLY_REJECTION(a)) || a.technical.renderViolations.length > 0;
+const UNREPAIRABLE = a => (a.status === Director.ACCEPTANCE.REJECTED && !DURATION_ONLY_REJECTION(a)) || a.technical.renderViolations.length > 0 || PRESENTATION_ONLY(a);
+// Deterministic readiness findings the critic did not localize become repair regions,
+// so the bounded Director repair works on them (no extra model call).
+function withReadinessRegions(critique, acceptance) {
+  const tl = critique?.outputTimeline || [];
+  const first = tl[0], last = tl[tl.length - 1];
+  const have = new Set((critique?.weakRegions || []).map(r => r.type));
+  const extra = [];
+  for (const f of acceptance?.editorial?.readiness?.findings || []) {
+    const atEnd = f.code === 'ENDING_MID_UTTERANCE' || f.code === 'ENDING_INCOMPLETE' || f.code === 'PAYOFF_UNSATISFYING';
+    const type = f.code === 'ENDING_MID_UTTERANCE' || f.code === 'ENDING_INCOMPLETE' ? 'ending_cuts_mid_line' : f.code === 'PAYOFF_UNSATISFYING' ? 'payoff_unsatisfying' : f.code === 'STRONGER_HOOK_BURIED' ? 'stronger_hook_buried' : 'opening_lacks_curiosity';
+    const row = atEnd ? last : first;
+    if (!row || have.has(type)) continue;
+    have.add(type);
+    extra.push({ type, outputStartSec: row.outputStartSec, outputEndSec: row.outputEndSec, beatIds: [row.beatId], reason: f.message, evidence: f.code });
+  }
+  return extra.length ? { ...critique, isCompliant: false, weakRegions: [...(critique.weakRegions || []), ...extra], weakWindows: [...(critique.weakRegions || []), ...extra] } : critique;
+}
 
 // Review loop for director-owned EDLs: render -> scope critic -> director repair (<=2).
 async function auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine, script, ai }) {
@@ -923,9 +947,9 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   let acceptance = directorAcceptance(engine, spine, script, duration, critique);
   await fs.writeFile(path.join(root, `initial-acceptance-${id}.json`), JSON.stringify(acceptance, null, 2));
   const rejectedAudit = async (acc, repairPasses) => {
-    const kind = acc.status === Director.ACCEPTANCE.REJECTED ? 'DIRECTOR_EDL_REJECTED' : 'RENDER_DURATION_MISMATCH';
+    const kind = acc.status === Director.ACCEPTANCE.REJECTED ? 'DIRECTOR_EDL_REJECTED' : acc.technical.renderViolations.length ? 'RENDER_DURATION_MISMATCH' : 'PRESENTATION_REVIEW';
     const audit = directorAudit(id, { needsUserReview: true, status: kind, failureType: kind }, {
-      repairPasses, finalCheck: { complete: true, verdict: 'FAIL', issues: [...acc.technical.violations, ...acc.technical.renderViolations].map(v => ({ reason: `${v.code}: ${v.message}` })) },
+      repairPasses, finalCheck: { complete: true, verdict: 'FAIL', issues: [...acc.technical.violations, ...acc.technical.renderViolations, ...(acc.presentation?.findings || [])].map(v => ({ reason: `${v.code}: ${v.message}` })) },
       metrics: summarize(critique), acceptance: acc });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
@@ -939,6 +963,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   // Duration-only rejections and editorial failures go to the bounded repair loop,
   // where runDirector returns duration violations to Gemini for targeted repair.
   if (UNREPAIRABLE(acceptance)) return rejectedAudit(acceptance, 0);
+  critique = withReadinessRegions(critique, acceptance);
 
   let current = spine;
   const passFailure = async (pass, err) => {
@@ -994,6 +1019,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     acceptance = directorAcceptance(engine, current, renderedScript, duration, critique);
     await fs.writeFile(path.join(root, `repair-${pass}-acceptance-${id}.json`), JSON.stringify(acceptance, null, 2));
     if (UNREPAIRABLE(acceptance)) return rejectedAudit(acceptance, pass);
+    critique = withReadinessRegions(critique, acceptance);
     if (acceptance.status === Director.ACCEPTANCE.ACCEPTED) {
       try { await persistAcceptedSpine(root, id, { ...current, acceptance: { contract: acceptance.contract, status: acceptance.status, timelineSec: acceptance.technical.timelineSec, repairPass: pass } }); }
       catch (err) {
