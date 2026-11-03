@@ -1,0 +1,123 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 4,
+  "suggestedTitle": "BEING RUDE IS NOT ILLEGAL SAYS SUSPECT",
+  "title": "BEING RUDE IS NOT ILLEGAL SAYS SUSPECT",
+  "partBadge": "PART 3",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 118,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "verified_visual_audio",
+    "inspectedInputs": [
+      "source-m6ow9dqxqcg.mp4",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json"
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "narrativeBeats": [
+    "hook",
+    "context",
+    "escalation",
+    "climax",
+    "evidence",
+    "payoff"
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_04_01",
+      "sceneId": "scene_0037",
+      "sourceStartSec": 451,
+      "sourceEndSec": 464.5,
+      "narrativeRole": "hook",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0020",
+      "actionSequenceId": "act_rude_not_illegal"
+    },
+    {
+      "segmentId": "seg_04_02",
+      "sceneId": "scene_0032",
+      "sourceStartSec": 381,
+      "sourceEndSec": 395,
+      "narrativeRole": "context",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "After surviving a combative pat-down on the roadside, the suspect is transferred to the transport cage where she immediately demands a supervisor to overturn her arrest.",
+      "actionCandidateId": "action_0018",
+      "actionSequenceId": "act_transport_cage"
+    },
+    {
+      "segmentId": "seg_04_03",
+      "sceneId": "scene_0036",
+      "sourceStartSec": 433,
+      "sourceEndSec": 447,
+      "narrativeRole": "escalation",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0019",
+      "actionSequenceId": "act_supervisor_plea"
+    },
+    {
+      "segmentId": "seg_04_04",
+      "sceneId": "scene_0038",
+      "sourceStartSec": 464.8,
+      "sourceEndSec": 470.5,
+      "narrativeRole": "climax",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0020",
+      "actionSequenceId": "act_call_replay"
+    },
+    {
+      "segmentId": "seg_04_05",
+      "sceneId": "scene_0041",
+      "sourceStartSec": 478.8,
+      "sourceEndSec": 482.2,
+      "narrativeRole": "evidence",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0020",
+      "actionSequenceId": "act_what_emergency"
+    },
+    {
+      "segmentId": "seg_04_06",
+      "sceneId": "scene_0042",
+      "sourceStartSec": 483,
+      "sourceEndSec": 501,
+      "narrativeRole": "evidence",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "The supervisor brutally dismantles her logic, explaining that true emergencies involve violent crime or life-threatening danger, not locating a towed car after ignoring first responders.",
+      "actionCandidateId": "action_0020",
+      "actionSequenceId": "act_supervisor_lesson"
+    },
+    {
+      "segmentId": "seg_04_07",
+      "sceneId": "scene_0042",
+      "sourceStartSec": 502,
+      "sourceEndSec": 521,
+      "narrativeRole": "payoff",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0020",
+      "actionSequenceId": "act_van_conclusion"
+    },
+    {
+      "segmentId": "seg_04_08",
+      "sceneId": "scene_0044",
+      "sourceStartSec": 530.2,
+      "sourceEndSec": 535.2,
+      "narrativeRole": "payoff",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Booked into jail on a misdemeanor charge of misusing nine-one-one, her bond was set at five thousand dollars before prosecutors ultimately dismissed the charge.",
+      "actionCandidateId": "action_0020",
+      "actionSequenceId": "act_final_verdict"
+    }
+  ]
+}

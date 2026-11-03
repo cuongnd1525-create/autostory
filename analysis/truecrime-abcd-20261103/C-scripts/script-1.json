@@ -1,0 +1,125 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 1,
+  "suggestedTitle": "DRIVER CALLS 911 ON COP HELPING HER",
+  "title": "DRIVER CALLS 911 ON COP HELPING HER",
+  "partBadge": "PART 1",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "verified_visual_audio",
+    "inspectedInputs": [
+      "source-m6ow9dqxqcg.mp4",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json"
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "narrativeBeats": [
+    "hook",
+    "context",
+    "escalation",
+    "discovery",
+    "confrontation",
+    "contrast",
+    "evidence",
+    "cliffhanger"
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_01_01",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 39,
+      "sourceEndSec": 53,
+      "narrativeRole": "hook",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0003",
+      "actionSequenceId": "act_hook_confrontation"
+    },
+    {
+      "segmentId": "seg_01_02",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 24.5,
+      "sourceEndSec": 38.5,
+      "narrativeRole": "context",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "In broad daylight, a deputy spots a disabled vehicle stalled directly in heavy traffic, unaware the driver will treat standard assistance as a hostile threat.",
+      "actionCandidateId": "action_0002",
+      "actionSequenceId": "act_arrival_setup"
+    },
+    {
+      "segmentId": "seg_01_03",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 56.5,
+      "sourceEndSec": 68.5,
+      "narrativeRole": "escalation",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0004",
+      "actionSequenceId": "act_road_threat"
+    },
+    {
+      "segmentId": "seg_01_04",
+      "sceneId": "scene_0012",
+      "sourceStartSec": 128.5,
+      "sourceEndSec": 142,
+      "narrativeRole": "discovery",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Instead of clearing the lane, the woman storms off into a nearby commercial center, leaving deputies completely baffled while traffic backs up dangerously behind her car.",
+      "actionCandidateId": "action_0005",
+      "actionSequenceId": "act_abandonment"
+    },
+    {
+      "segmentId": "seg_01_05",
+      "sceneId": "scene_0008",
+      "sourceStartSec": 121.5,
+      "sourceEndSec": 136.5,
+      "narrativeRole": "confrontation",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0004",
+      "actionSequenceId": "act_dispatch_audio"
+    },
+    {
+      "segmentId": "seg_01_06",
+      "sceneId": "scene_0016",
+      "sourceStartSec": 147.5,
+      "sourceEndSec": 162.5,
+      "narrativeRole": "contrast",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "While officers manually shove her stalled sedan off the roadway, the driver is actively tying up emergency dispatch operators demanding to know where police took her vehicle.",
+      "actionCandidateId": "action_0006",
+      "actionSequenceId": "act_car_push"
+    },
+    {
+      "segmentId": "seg_01_07",
+      "sceneId": "scene_0018",
+      "sourceStartSec": 171.5,
+      "sourceEndSec": 181.5,
+      "narrativeRole": "evidence",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0007",
+      "actionSequenceId": "act_stalking_driver"
+    },
+    {
+      "segmentId": "seg_01_08",
+      "sceneId": "scene_0020",
+      "sourceStartSec": 192.5,
+      "sourceEndSec": 203.5,
+      "narrativeRole": "cliffhanger",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "With the driver stubbornly refusing all lawful contact, deputies coordinate their squad cars to box her in before she escalates this traffic stop into a criminal arrest.",
+      "actionCandidateId": "action_0009",
+      "actionSequenceId": "act_surround_cliffhanger"
+    }
+  ]
+}

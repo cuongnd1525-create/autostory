@@ -1,0 +1,34 @@
+{
+  "finishReason": "STOP",
+  "usage": {
+    "promptTokenCount": 63316,
+    "candidatesTokenCount": 3452,
+    "totalTokenCount": 66768,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "AUDIO",
+        "tokenCount": 8025
+      },
+      {
+        "modality": "TEXT",
+        "tokenCount": 12919
+      },
+      {
+        "modality": "VIDEO",
+        "tokenCount": 42372
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 3452
+      }
+    ]
+  },
+  "model": "gemini-3.8-flash",
+  "requestedMaxOutputTokens": 16000,
+  "requestedThinkingBudget": 0,
+  "prepareMs": 7188,
+  "modelMs": 32316
+}

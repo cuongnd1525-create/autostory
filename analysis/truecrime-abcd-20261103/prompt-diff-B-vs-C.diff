@@ -1,0 +1,38 @@
+﻿diff --git a/analysis/truecrime-abcd-20261103/baseline-B/01-gemini-highlight-scripts-prompt.txt b/analysis/truecrime-abcd-20261103/prompt_C.txt
+index 5c1e0ce..f79e442 100644
+--- a/analysis/truecrime-abcd-20261103/baseline-B/01-gemini-highlight-scripts-prompt.txt
++++ b/analysis/truecrime-abcd-20261103/prompt_C.txt
+@@ -11,33 +11,6 @@ JSON CODE-BLOCK CONTRACT - HIGHEST PRIORITY
+ 
+ DIRECT HIGHLIGHT CONTENT RULES:
+ 
+-================================================================================
+-SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)
+-================================================================================
+-Script 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.
+-
+-PART 1 (Script 1) cold-open hook anchor: "Officer repeatedly struggles with barricaded door" (Physical Friction / Barricade Suspense)
+-   - Source Time Range: 62.000s - 82.000s (~20.0s)
+-   - Editorial Trimming Tolerance: start up to 2.0s earlier, end up to 3.0s later.
+-   - Mandate: Script 1 Beat 1 MUST open with this anchor.
+-
+-PART 2 (Script 3) opener anchor: "Officer repeatedly struggles with barricaded door" (Physical Friction / Barricade Suspense)
+-   - Source Time Range: 278.000s - 294.000s (~16.0s)
+-   - Editorial Trimming Tolerance: start up to 2.0s earlier, end up to 3.0s later.
+-   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.
+-
+-PART 3 (Script 4) opener anchor: "Officer repeatedly struggles with barricaded door" (Physical Friction / Barricade Suspense)
+-   - Source Time Range: 322.000s - 340.000s (~18.0s)
+-   - Editorial Trimming Tolerance: start up to 2.0s earlier, end up to 3.0s later.
+-   - Use it as Part 3 Beat 1 only if it belongs to Part 3's scope.
+-
+-SERIES RULES:
+-- PART 1 = The Confrontation, PART 2 = The Interrogation, PART 3 = The Verdict & Arrest, in source chronology.
+-- Each Part opens on its own strongest verified moment inside its own scope. Never reuse PART 1's hook footage as another Part's opener (a recap of at most 3s is allowed).
+-- Spoiler boundary: PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Only PART 3 delivers the payoff.
+-- PART 1 and PART 2 end on verified unresolved cliffhangers that lead into the next Part.
+-- When a locked series-plan.json is supplied, it is binding for scope, scene allocation and cliffhangers.
+-================================================================================
+ 
+ 
+ - Watch the complete video input described by the VIDEO INPUT CONTRACT below and cross-check scene-manifest.json plus source-transcript.srt when present.

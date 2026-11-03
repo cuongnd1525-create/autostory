@@ -1,92 +1,421 @@
 {
   "experiment": "C",
   "name": "Pipeline Without Automatic Hook Contract",
-  "storyIdentity": "ENTITLED DRIVER ABANDONS CAR IN TRAFFIC (Ablation: Unconstrained Openers)",
-  "ablationHypothesis": "The fatal narrative defects in Experiment B (the early arrest spoiler in Part 2 and the disjointed reverse-chronology in Part 1) were caused by the pipeline's automatic Hook Contract injecting hardcoded 'Barricaded door' anchor ranges (62-82s, 278-294s, 322-340s). Removing this single automatic constraint while keeping the rest of the pipeline identical will allow Gemini to discover natural chronological openers and protect Part 3's spoiler boundary.",
-  "promptDelta": {
-    "removedBlock": "Lines 14-40 of 01-gemini-highlight-scripts-prompt.txt (SERIES HOOK CONTRACT with userLocked=true anchors for candidate_004 [62-82s], candidate_015 [278-294s], candidate_017 [322-340s]).",
-    "addedBlock": "Unconstrained series opener guidance: 'Each Part must discover its own strongest opening moment strictly inside its chronological scope. Strict Spoiler Ban: PART 1 and PART 2 must not depict or narrate the arrest, handcuffs, or charges.'",
-    "unalteredRules": "One-scene-per-segment timestamp gate, 3-part serialization requirement, scene manifest mapping, action candidate coverage, voiceover length limits, output JSON schema."
+  "status": "VERIFIED_EXECUTED",
+  "executedAt": "2026-11-03T05:02:41.243Z",
+  "executionTelemetry": {
+    "provider": "vertex_ai",
+    "model": "gemini-3.8-flash",
+    "elapsedMs": 62883,
+    "usage": {
+      "model": "gemini-3.8-flash",
+      "inputTokens": 95217,
+      "outputTokens": 8465,
+      "cachedInputTokens": 0,
+      "pricingVersion": "2026-09-pro-long-context-v2",
+      "pricingTier": "standard",
+      "inputCostUsd": 0.071413,
+      "outputCostUsd": 0.031744,
+      "estimatedCostUsd": 0.103156,
+      "pricePerMillionTokens": {
+        "input": 0.75,
+        "output": 3.75
+      }
+    },
+    "timings": {
+      "fileCount": 8,
+      "prepareMs": 1022,
+      "modelMs": 61459,
+      "totalMs": 62481
+    },
+    "inputFiles": [
+      "analysis-proxy-chunk-001.mp4",
+      "analysis-proxy-chunk-002.mp4",
+      "analysis-proxy-chunk-003.mp4",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json",
+      "proxy-chunks-manifest.json",
+      "hook-candidates.json"
+    ]
   },
-  "parts": [
-    {
+  "promptDelta": {
+    "diffFile": "prompt-diff-B-vs-C.diff",
+    "description": "Removed lines 14-40 (the bogus \"Barricaded door\" SERIES HOOK CONTRACT block). Retained all other rules, schema constraints, and 3-part requirement."
+  },
+  "scripts": {
+    "1": {
+      "artifactType": "highlight_cut_script",
+      "workflow": "manual_gemini_pro",
       "scriptId": 1,
-      "title": "PART 1: ABANDONED ON THE HIGHWAY",
+      "suggestedTitle": "DRIVER CALLS 911 ON COP HELPING HER",
+      "title": "DRIVER CALLS 911 ON COP HELPING HER",
       "partBadge": "PART 1",
-      "targetDurationSec": 80.0,
-      "centralConflict": "Deputy pulls up to clear traffic hazard; driver refuses help, leaves car in active lane and walks away.",
-      "viewerQuestion": "Why did she abandon her car in the middle of live highway lanes?",
-      "hook": {
-        "sourceStartSec": 28.0,
-        "sourceEndSec": 42.0,
-        "durationSec": 14.0,
-        "quotedDialogue": "This your car? What are you doing? / My car broke down. / I'm trying to help you get it out of the road. / You can't do anything... excuse me.",
-        "strategy": "Chronological In Medias Res Discovery",
-        "narrativeRole": "hook"
+      "cameraLabel": "CAM 1",
+      "titleStyle": "tiktok_hook",
+      "subtitleStyle": "tiktok_karaoke",
+      "targetDurationSec": 117,
+      "inputAccessAudit": {
+        "accessGranted": true,
+        "accessMode": "verified_visual_audio",
+        "inspectedInputs": [
+          "source-m6ow9dqxqcg.mp4",
+          "scene-manifest.json",
+          "source-transcript.srt",
+          "action-candidates.json"
+        ],
+        "sourceIdentityMatched": true,
+        "timelineCoverageVerified": true,
+        "noGuessingConfirmed": true
       },
-      "beats": [
-        { "segmentId": "seg_1_01", "sourceStartSec": 28.0, "sourceEndSec": 42.0, "audio_mode": "original_audio", "narrativeRole": "hook" },
-        { "segmentId": "seg_1_02", "sourceStartSec": 42.0, "sourceEndSec": 58.0, "audio_mode": "original_audio", "narrativeRole": "context" },
-        { "segmentId": "seg_1_03", "sourceStartSec": 58.0, "sourceEndSec": 75.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
-        { "segmentId": "seg_1_04", "sourceStartSec": 105.0, "sourceEndSec": 118.0, "audio_mode": "voiceover_with_ambient", "narrativeRole": "escalation", "voiceoverText": "She storms away on foot, leaving her car blocking live traffic. But as deputies push it off the highway, she dials nine-one-one." },
-        { "segmentId": "seg_1_05", "sourceStartSec": 118.0, "sourceEndSec": 138.0, "audio_mode": "original_audio", "narrativeRole": "climax" },
-        { "segmentId": "seg_1_06", "sourceStartSec": 140.0, "sourceEndSec": 147.0, "audio_mode": "voiceover_with_ambient", "narrativeRole": "payoff", "voiceoverText": "Instead of asking for roadside safety, she berates the dispatcher. Now, deputies are hunting down the runaway caller." }
+      "narrativeBeats": [
+        "hook",
+        "context",
+        "escalation",
+        "discovery",
+        "confrontation",
+        "contrast",
+        "evidence",
+        "cliffhanger"
       ],
-      "climax": "911 recording where she threatens to hang up until she gets someone with a brain cell.",
-      "payoff": "Cliffhanger: Dispatch notifies deputies on scene that the 911 hangup is the same runaway driver."
+      "segments": [
+        {
+          "segmentId": "seg_01_01",
+          "sceneId": "scene_0007",
+          "sourceStartSec": 39,
+          "sourceEndSec": 53,
+          "narrativeRole": "hook",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0003",
+          "actionSequenceId": "act_hook_confrontation"
+        },
+        {
+          "segmentId": "seg_01_02",
+          "sceneId": "scene_0007",
+          "sourceStartSec": 24.5,
+          "sourceEndSec": 38.5,
+          "narrativeRole": "context",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "In broad daylight, a deputy spots a disabled vehicle stalled directly in heavy traffic, unaware the driver will treat standard assistance as a hostile threat.",
+          "actionCandidateId": "action_0002",
+          "actionSequenceId": "act_arrival_setup"
+        },
+        {
+          "segmentId": "seg_01_03",
+          "sceneId": "scene_0007",
+          "sourceStartSec": 56.5,
+          "sourceEndSec": 68.5,
+          "narrativeRole": "escalation",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0004",
+          "actionSequenceId": "act_road_threat"
+        },
+        {
+          "segmentId": "seg_01_04",
+          "sceneId": "scene_0012",
+          "sourceStartSec": 128.5,
+          "sourceEndSec": 142,
+          "narrativeRole": "discovery",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "Instead of clearing the lane, the woman storms off into a nearby commercial center, leaving deputies completely baffled while traffic backs up dangerously behind her car.",
+          "actionCandidateId": "action_0005",
+          "actionSequenceId": "act_abandonment"
+        },
+        {
+          "segmentId": "seg_01_05",
+          "sceneId": "scene_0008",
+          "sourceStartSec": 121.5,
+          "sourceEndSec": 136.5,
+          "narrativeRole": "confrontation",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0004",
+          "actionSequenceId": "act_dispatch_audio"
+        },
+        {
+          "segmentId": "seg_01_06",
+          "sceneId": "scene_0016",
+          "sourceStartSec": 147.5,
+          "sourceEndSec": 162.5,
+          "narrativeRole": "contrast",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "While officers manually shove her stalled sedan off the roadway, the driver is actively tying up emergency dispatch operators demanding to know where police took her vehicle.",
+          "actionCandidateId": "action_0006",
+          "actionSequenceId": "act_car_push"
+        },
+        {
+          "segmentId": "seg_01_07",
+          "sceneId": "scene_0018",
+          "sourceStartSec": 171.5,
+          "sourceEndSec": 181.5,
+          "narrativeRole": "evidence",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0007",
+          "actionSequenceId": "act_stalking_driver"
+        },
+        {
+          "segmentId": "seg_01_08",
+          "sceneId": "scene_0020",
+          "sourceStartSec": 192.5,
+          "sourceEndSec": 203.5,
+          "narrativeRole": "cliffhanger",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "With the driver stubbornly refusing all lawful contact, deputies coordinate their squad cars to box her in before she escalates this traffic stop into a criminal arrest.",
+          "actionCandidateId": "action_0009",
+          "actionSequenceId": "act_surround_cliffhanger"
+        }
+      ]
     },
-    {
+    "3": {
+      "artifactType": "highlight_cut_script",
+      "workflow": "manual_gemini_pro",
       "scriptId": 3,
-      "title": "PART 2: THE SIDEWALK STANDOFF",
+      "suggestedTitle": "ENTITLED DRIVER ARRESTED FOR 911 ABUSE",
+      "title": "ENTITLED DRIVER ARRESTED FOR 911 ABUSE",
       "partBadge": "PART 2",
-      "targetDurationSec": 75.0,
-      "centralConflict": "Deputies track down the runaway driver; she attempts to dismiss them and claims she's calling an Uber.",
-      "viewerQuestion": "Will deputies let her leave in an Uber?",
-      "hook": {
-        "sourceStartSec": 204.0,
-        "sourceEndSec": 218.0,
-        "durationSec": 14.0,
-        "quotedDialogue": "Alright ma'am stop, you are not free to go! You're not free to leave, do you understand? / Okay.",
-        "strategy": "Forward Pursuit & Confrontation Hook",
-        "narrativeRole": "hook (ZERO SPOILER: Protects Part 3 arrest)"
+      "cameraLabel": "CAM 1",
+      "titleStyle": "tiktok_hook",
+      "subtitleStyle": "tiktok_karaoke",
+      "targetDurationSec": 116.5,
+      "inputAccessAudit": {
+        "accessGranted": true,
+        "accessMode": "verified_visual_audio",
+        "inspectedInputs": [
+          "source-m6ow9dqxqcg.mp4",
+          "scene-manifest.json",
+          "source-transcript.srt",
+          "action-candidates.json"
+        ],
+        "sourceIdentityMatched": true,
+        "timelineCoverageVerified": true,
+        "noGuessingConfirmed": true
       },
-      "beats": [
-        { "segmentId": "seg_3_01", "sourceStartSec": 204.0, "sourceEndSec": 218.0, "audio_mode": "original_audio", "narrativeRole": "hook" },
-        { "segmentId": "seg_3_02", "sourceStartSec": 218.0, "sourceEndSec": 230.0, "audio_mode": "original_audio", "narrativeRole": "context" },
-        { "segmentId": "seg_3_03", "sourceStartSec": 230.0, "sourceEndSec": 245.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
-        { "segmentId": "seg_3_04", "sourceStartSec": 245.0, "sourceEndSec": 258.0, "audio_mode": "voiceover_with_ambient", "narrativeRole": "escalation", "voiceoverText": "Cornered on a quiet residential sidewalk, she demands an Uber, completely unaware that emergency dispatchers have reported her calls." },
-        { "segmentId": "seg_3_05", "sourceStartSec": 258.0, "sourceEndSec": 272.0, "audio_mode": "original_audio", "narrativeRole": "climax" },
-        { "segmentId": "seg_3_06", "sourceStartSec": 272.0, "sourceEndSec": 278.0, "audio_mode": "voiceover_with_ambient", "narrativeRole": "payoff", "voiceoverText": "Deputies have heard enough excuses. Her refusal to cooperate is about to trigger immediate legal consequences." }
+      "narrativeBeats": [
+        "hook",
+        "context",
+        "escalation",
+        "climax",
+        "evidence",
+        "contrast",
+        "cliffhanger"
       ],
-      "climax": "Deputy gives her a final warning that she cannot leave the scene.",
-      "payoff": "Cliffhanger right before the arrest: 'We're done talking now.'"
+      "segments": [
+        {
+          "segmentId": "seg_03_01",
+          "sceneId": "scene_0022",
+          "sourceStartSec": 216,
+          "sourceEndSec": 230,
+          "narrativeRole": "hook",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0010",
+          "actionSequenceId": "act_jail_warning"
+        },
+        {
+          "segmentId": "seg_03_02",
+          "sceneId": "scene_0022",
+          "sourceStartSec": 230.5,
+          "sourceEndSec": 246.5,
+          "narrativeRole": "context",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "Deputies give her multiple lawful opportunities to simply wait for her tow truck, but her sheer contempt for law enforcement pushes officers to the absolute limit.",
+          "actionCandidateId": "action_0011",
+          "actionSequenceId": "act_ultimatum_context"
+        },
+        {
+          "segmentId": "seg_03_03",
+          "sceneId": "scene_0024",
+          "sourceStartSec": 260,
+          "sourceEndSec": 274,
+          "narrativeRole": "escalation",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0013",
+          "actionSequenceId": "act_detention_stop"
+        },
+        {
+          "segmentId": "seg_03_04",
+          "sceneId": "scene_0024",
+          "sourceStartSec": 274.5,
+          "sourceEndSec": 291.5,
+          "narrativeRole": "climax",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0014",
+          "actionSequenceId": "act_cuffs_applied",
+          "actionOverride": true
+        },
+        {
+          "segmentId": "seg_03_05",
+          "sceneId": "scene_0026",
+          "sourceStartSec": 296.8,
+          "sourceEndSec": 303,
+          "narrativeRole": "evidence",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0014",
+          "actionSequenceId": "act_misuse_justification"
+        },
+        {
+          "segmentId": "seg_03_06",
+          "sceneId": "scene_0028",
+          "sourceStartSec": 311,
+          "sourceEndSec": 329,
+          "narrativeRole": "contrast",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "Deputies patiently explain that abandoning a vehicle in traffic while tying up emergency lines is a crime, yet she remains convinced she did absolutely nothing wrong.",
+          "actionCandidateId": "action_0015",
+          "actionSequenceId": "act_legal_explanation"
+        },
+        {
+          "segmentId": "seg_03_07",
+          "sceneId": "scene_0030",
+          "sourceStartSec": 348,
+          "sourceEndSec": 356.5,
+          "narrativeRole": "cliffhanger",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0017",
+          "actionSequenceId": "act_search_refusal"
+        },
+        {
+          "segmentId": "seg_03_08",
+          "sceneId": "scene_0031",
+          "sourceStartSec": 357,
+          "sourceEndSec": 376,
+          "narrativeRole": "cliffhanger",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "Locked in the back of a squad car, she boldly refuses a mandatory weapons pat-down, forcing deputies to physically drag her out before transport arrives.",
+          "actionCandidateId": "action_0017",
+          "actionSequenceId": "act_patdown_cliffhanger"
+        }
+      ]
     },
-    {
+    "4": {
+      "artifactType": "highlight_cut_script",
+      "workflow": "manual_gemini_pro",
       "scriptId": 4,
-      "title": "PART 3: THE 911 ARREST & PADDY WAGON",
+      "suggestedTitle": "BEING RUDE IS NOT ILLEGAL SAYS SUSPECT",
+      "title": "BEING RUDE IS NOT ILLEGAL SAYS SUSPECT",
       "partBadge": "PART 3",
-      "targetDurationSec": 85.0,
-      "centralConflict": "Arrest execution and transport van confrontation over 911 emergency misuse.",
-      "viewerQuestion": "Does being rude to 911 constitute a criminal offense?",
-      "hook": {
-        "sourceStartSec": 278.0,
-        "sourceEndSec": 294.0,
-        "durationSec": 16.0,
-        "quotedDialogue": "So what am I being arrested for? / Misuse of 911.",
-        "strategy": "Climax Execution Hook",
-        "narrativeRole": "hook"
+      "cameraLabel": "CAM 1",
+      "titleStyle": "tiktok_hook",
+      "subtitleStyle": "tiktok_karaoke",
+      "targetDurationSec": 118,
+      "inputAccessAudit": {
+        "accessGranted": true,
+        "accessMode": "verified_visual_audio",
+        "inspectedInputs": [
+          "source-m6ow9dqxqcg.mp4",
+          "scene-manifest.json",
+          "source-transcript.srt",
+          "action-candidates.json"
+        ],
+        "sourceIdentityMatched": true,
+        "timelineCoverageVerified": true,
+        "noGuessingConfirmed": true
       },
-      "beats": [
-        { "segmentId": "seg_4_01", "sourceStartSec": 278.0, "sourceEndSec": 294.0, "audio_mode": "original_audio", "narrativeRole": "hook" },
-        { "segmentId": "seg_4_02", "sourceStartSec": 322.0, "sourceEndSec": 340.0, "audio_mode": "original_audio", "narrativeRole": "context" },
-        { "segmentId": "seg_4_03", "sourceStartSec": 340.0, "sourceEndSec": 355.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
-        { "segmentId": "seg_4_04", "sourceStartSec": 423.0, "sourceEndSec": 435.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
-        { "segmentId": "seg_4_05", "sourceStartSec": 482.0, "sourceEndSec": 500.0, "audio_mode": "original_audio", "narrativeRole": "climax" },
-        { "segmentId": "seg_4_06", "sourceStartSec": 530.0, "sourceEndSec": 535.25, "audio_mode": "voiceover_with_ambient", "narrativeRole": "payoff", "voiceoverText": "She was booked for misdemeanor misuse of nine-one-one with bond set at five thousand dollars." }
+      "narrativeBeats": [
+        "hook",
+        "context",
+        "escalation",
+        "climax",
+        "evidence",
+        "payoff"
       ],
-      "climax": "Transport van confrontation: 'My car was being towed by 911!' / '911 is for emergencies!'",
-      "payoff": "Booking confirmation and legal closure."
+      "segments": [
+        {
+          "segmentId": "seg_04_01",
+          "sceneId": "scene_0037",
+          "sourceStartSec": 451,
+          "sourceEndSec": 464.5,
+          "narrativeRole": "hook",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0020",
+          "actionSequenceId": "act_rude_not_illegal"
+        },
+        {
+          "segmentId": "seg_04_02",
+          "sceneId": "scene_0032",
+          "sourceStartSec": 381,
+          "sourceEndSec": 395,
+          "narrativeRole": "context",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "After surviving a combative pat-down on the roadside, the suspect is transferred to the transport cage where she immediately demands a supervisor to overturn her arrest.",
+          "actionCandidateId": "action_0018",
+          "actionSequenceId": "act_transport_cage"
+        },
+        {
+          "segmentId": "seg_04_03",
+          "sceneId": "scene_0036",
+          "sourceStartSec": 433,
+          "sourceEndSec": 447,
+          "narrativeRole": "escalation",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0019",
+          "actionSequenceId": "act_supervisor_plea"
+        },
+        {
+          "segmentId": "seg_04_04",
+          "sceneId": "scene_0038",
+          "sourceStartSec": 464.8,
+          "sourceEndSec": 470.5,
+          "narrativeRole": "climax",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0020",
+          "actionSequenceId": "act_call_replay"
+        },
+        {
+          "segmentId": "seg_04_05",
+          "sceneId": "scene_0041",
+          "sourceStartSec": 478.8,
+          "sourceEndSec": 482.2,
+          "narrativeRole": "evidence",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0020",
+          "actionSequenceId": "act_what_emergency"
+        },
+        {
+          "segmentId": "seg_04_06",
+          "sceneId": "scene_0042",
+          "sourceStartSec": 483,
+          "sourceEndSec": 501,
+          "narrativeRole": "evidence",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "The supervisor brutally dismantles her logic, explaining that true emergencies involve violent crime or life-threatening danger, not locating a towed car after ignoring first responders.",
+          "actionCandidateId": "action_0020",
+          "actionSequenceId": "act_supervisor_lesson"
+        },
+        {
+          "segmentId": "seg_04_07",
+          "sceneId": "scene_0042",
+          "sourceStartSec": 502,
+          "sourceEndSec": 521,
+          "narrativeRole": "payoff",
+          "audio_mode": "original_audio",
+          "voiceover_text": "",
+          "actionCandidateId": "action_0020",
+          "actionSequenceId": "act_van_conclusion"
+        },
+        {
+          "segmentId": "seg_04_08",
+          "sceneId": "scene_0044",
+          "sourceStartSec": 530.2,
+          "sourceEndSec": 535.2,
+          "narrativeRole": "payoff",
+          "audio_mode": "voiceover_only",
+          "voiceover_text": "Booked into jail on a misdemeanor charge of misusing nine-one-one, her bond was set at five thousand dollars before prosecutors ultimately dismissed the charge.",
+          "actionCandidateId": "action_0020",
+          "actionSequenceId": "act_final_verdict"
+        }
+      ]
     }
-  ],
-  "editorialAssessment": "Experiment C conclusively proves that removing the automatic Hook Contract eliminates the disastrous Part 2 spoiler and the backwards jump in Part 1. However, forcing the story into a 3-part series still creates unnecessary dilution across parts. Part 2 feels light on substance because the real meat of the story is only the highway walkaway (Part 1) and the arrest/van debate (Part 3)."
+  }
 }

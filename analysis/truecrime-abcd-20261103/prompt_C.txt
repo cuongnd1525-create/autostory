@@ -1,0 +1,665 @@
+JSON CODE-BLOCK CONTRACT - HIGHEST PRIORITY
+- Return exactly 3 independent Markdown JSON code blocks and nothing else.
+- Required order: Script 1, then Script 3, then Script 4.
+- Block 1 must be one complete root object with scriptId=1 and is saved as "script-1.json".
+- Block 2 must be one complete root object with scriptId=3 and is saved as "script-3.json".
+- Block 3 must be one complete root object with scriptId=4 and is saved as "script-4.json".
+- Treat each code block as one separate downloadable file. Never put multiple scripts in one code block.
+- Every block must begin with ```json, end with ```, and parse independently with JSON.parse.
+- Do not combine the scripts into an array or wrap them in data, result, output, scripts, review, or any shared outer object.
+- Do not output prose, headings, filename labels, explanations, tables, or text before, between, or after the JSON blocks.
+
+DIRECT HIGHLIGHT CONTENT RULES:
+
+
+
+- Watch the complete video input described by the VIDEO INPUT CONTRACT below and cross-check scene-manifest.json plus source-transcript.srt when present.
+- Each code block root must be one complete Highlight Cut script object with a non-empty segments array.
+- For every independent story_spine_edit_script, run a final role audit against the actual narrativeBeats array: hook, context, escalation, climax, and payoff must all be present as distinct beats. Never emit a second payoff as a substitute for missing context.
+- sourceStartSec/sourceEndSec refer only to the original source video. The local tool derives the complete output timeline (startSec/endSec/outputStartSec/outputEndSec, durations and totals). Do not return output timeline fields.
+- Do not create scene-evidence.json or story-blueprint.json. Reason internally, then write the final edit scripts directly from the video.
+- For independent scripts, complete the Semantic Hook Tournament and Viral Moment Inventory required by the editorial prompt before choosing Narrative Beats. Local action-candidate order is never a Hook ranking.
+- VIRAL EDITORIAL RULES (JCS / EWU STYLE):
+  * HOOK: Must hit within the first second with one of 5 Archetypes: Physical Friction & Barricade Suspense, Absurd Contradiction, In Medias Res, Instant Karma, or Unbelievable Stakes. Distinguish routine approach/casual door opening (BANNED) from violent door rattling/barricade pounding/standoff (TIER-S HOOK). SPOILER BAN: Hook the tension/friction, never spoil the aftermath/resolution at second 0.
+  * VOICEOVER: Sentence limit <= 25 words. Fast-paced, high-energy present tense. Sensational TikTok true-crime tone. Ruthlessly contrast suspect lies with camera facts to trigger outrage. Ban academic language.
+  * PACING: Enter late, exit early. Eliminate dead-air/silence > 1.5s between dialogue exchanges.
+  * OUTRO: End video within 2-3s of the final verified payoff/aftermath. Zero lingering paperwork or idle outro footage.
+
+ONE-SCENE-PER-SEGMENT TIMESTAMP GATE - HIGHEST PRIORITY:
+- Every segment belongs to exactly one sceneId and must satisfy scene.startSec <= sourceStartSec < sourceEndSec <= scene.endSec.
+- Never let one JSON segment cross a scene boundary. If one logical beat spans consecutive scenes, return one segment per scene, preserve source order, and keep the same macroBlockId/sourceRunId/actionSequenceId when applicable.
+- Divide voiceover into non-duplicated complete phrases that fit the individual scene segments. Never copy the same voiceover_text into every split segment.
+- Do not calculate startSec/endSec/outputStartSec/outputEndSec or output duration math. The local compiler will automatically calculate all timeline math and playback speeds. Before responding, validate every segment against scene-manifest.json; any cross-scene segment makes the JSON invalid.
+
+AUTHORITATIVE SOURCE SUMMARY:
+- Source video: source-m6ow9dqxqcg.mp4
+- Source duration: 549.741 seconds
+- Scene count: 47
+
+CHUNKED VIDEO INPUT CONTRACT - HIGHEST PRIORITY:
+- The long analysis proxy was intentionally split into 3 shorter files because Gemini may reject one long upload.
+- Read proxy-chunks-manifest.json, then watch EVERY analysis-proxy-chunk-XXX.mp4 in chunkId order before selecting evidence or writing scripts.
+- Every chunk keeps normal playback speed and original proxy audio.
+- The SOURCE timestamps burned into each frame are absolute timestamps from the original video and are authoritative.
+- The local player time inside a chunk starts near 00:00 and is NOT a source timestamp. Never use local chunk time as sourceStartSec/sourceEndSec.
+- Never add the chunk offset to a timestamp already burned on screen.
+- Treat adjacent chunk boundaries as one continuous source timeline; do not omit a story event merely because it crosses two chunk files.
+
+DIRECT-SCRIPT ACTION COVERAGE GATE:
+- Inspect every candidate with mustReview=true in the proxy. Local scores are radar, not semantic truth.
+- VISUAL ACTION OVERRIDE: Identify major physical events such as escape, vehicle theft, pursuit, struggle, crash, weapon draw, forced entry, takedown, panic, or an immediate physical reaction. These events outrank transcript density and ordinary dialogue.
+- Every event that is central to the case or materially raises retention MUST appear in every script whose story covers that event.
+- Add actionCandidateId and actionSequenceId to every linked segment. Use actionOverride=true for an unbroken high-adrenaline sequence.
+- ACTION SEQUENCE EXCEPTION: Do not interrupt an unbroken important action merely to satisfy audio alternation. Keep original_audio through the complete action and immediate reaction. There is no fixed maximum; cut only at a natural lull, repetition, or loss of story value.
+
+LOCAL ACTION CANDIDATES:
+{
+  "artifactType": "action_candidates",
+  "schemaVersion": 1,
+  "sourceVideo": "source-m6ow9dqxqcg.mp4",
+  "videoDurationSec": 549.741,
+  "generatedBy": "local_ffmpeg_motion_audio_v1",
+  "signalDescription": "Candidates are local motion/audio radar. Gemini must visually classify every mustReview item; scores do not prove narrative importance.",
+  "candidates": [
+    {
+      "actionCandidateId": "action_0001",
+      "rank": 11,
+      "sourceStartSec": 2,
+      "sourceEndSec": 10,
+      "durationSec": 8,
+      "motionScore": 9.13,
+      "audioEnergyScore": 9.19,
+      "actionPriorityScore": 8.23,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0002",
+          "sourceStartSec": 2,
+          "sourceEndSec": 9.75
+        },
+        {
+          "sceneId": "scene_0003",
+          "sourceStartSec": 9.75,
+          "sourceEndSec": 10
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0002",
+      "rank": 13,
+      "sourceStartSec": 18,
+      "sourceEndSec": 38,
+      "durationSec": 20,
+      "motionScore": 9.16,
+      "audioEnergyScore": 6.66,
+      "actionPriorityScore": 8.15,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0005",
+          "sourceStartSec": 18,
+          "sourceEndSec": 21.75
+        },
+        {
+          "sceneId": "scene_0006",
+          "sourceStartSec": 21.75,
+          "sourceEndSec": 23.875
+        },
+        {
+          "sceneId": "scene_0007",
+          "sourceStartSec": 23.875,
+          "sourceEndSec": 38
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0003",
+      "rank": 6,
+      "sourceStartSec": 38,
+      "sourceEndSec": 46,
+      "durationSec": 8,
+      "motionScore": 9.83,
+      "audioEnergyScore": 8.3,
+      "actionPriorityScore": 8.46,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0007",
+          "sourceStartSec": 38,
+          "sourceEndSec": 46
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0004",
+      "rank": 1,
+      "sourceStartSec": 62,
+      "sourceEndSec": 82,
+      "durationSec": 20,
+      "motionScore": 10,
+      "audioEnergyScore": 8.9,
+      "actionPriorityScore": 9,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0007",
+          "sourceStartSec": 62,
+          "sourceEndSec": 68.875
+        },
+        {
+          "sceneId": "scene_0008",
+          "sourceStartSec": 68.875,
+          "sourceEndSec": 82
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0005",
+      "rank": 17,
+      "sourceStartSec": 146,
+      "sourceEndSec": 154,
+      "durationSec": 8,
+      "motionScore": 7.05,
+      "audioEnergyScore": 10,
+      "actionPriorityScore": 7.08,
+      "mustReview": false,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0015",
+          "sourceStartSec": 146,
+          "sourceEndSec": 147.125
+        },
+        {
+          "sceneId": "scene_0016",
+          "sourceStartSec": 147.125,
+          "sourceEndSec": 154
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0006",
+      "rank": 7,
+      "sourceStartSec": 154,
+      "sourceEndSec": 166,
+      "durationSec": 12,
+      "motionScore": 9.94,
+      "audioEnergyScore": 9.4,
+      "actionPriorityScore": 8.41,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0016",
+          "sourceStartSec": 154,
+          "sourceEndSec": 163.125
+        },
+        {
+          "sceneId": "scene_0017",
+          "sourceStartSec": 163.125,
+          "sourceEndSec": 166
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0007",
+      "rank": 19,
+      "sourceStartSec": 170,
+      "sourceEndSec": 182,
+      "durationSec": 12,
+      "motionScore": 7.77,
+      "audioEnergyScore": 10,
+      "actionPriorityScore": 6.92,
+      "mustReview": false,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0017",
+          "sourceStartSec": 170,
+          "sourceEndSec": 171
+        },
+        {
+          "sceneId": "scene_0018",
+          "sourceStartSec": 171,
+          "sourceEndSec": 182
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0008",
+      "rank": 16,
+      "sourceStartSec": 186,
+      "sourceEndSec": 194,
+      "durationSec": 8,
+      "motionScore": 7.41,
+      "audioEnergyScore": 9.14,
+      "actionPriorityScore": 7.1,
+      "mustReview": false,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0018",
+          "sourceStartSec": 186,
+          "sourceEndSec": 186.625
+        },
+        {
+          "sceneId": "scene_0019",
+          "sourceStartSec": 186.625,
+          "sourceEndSec": 192.25
+        },
+        {
+          "sceneId": "scene_0020",
+          "sourceStartSec": 192.25,
+          "sourceEndSec": 194
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0009",
+      "rank": 14,
+      "sourceStartSec": 202,
+      "sourceEndSec": 210,
+      "durationSec": 8,
+      "motionScore": 9.37,
+      "audioEnergyScore": 6.23,
+      "actionPriorityScore": 7.65,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0020",
+          "sourceStartSec": 202,
+          "sourceEndSec": 203.75
+        },
+        {
+          "sceneId": "scene_0021",
+          "sourceStartSec": 203.75,
+          "sourceEndSec": 210
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0010",
+      "rank": 3,
+      "sourceStartSec": 214,
+      "sourceEndSec": 222,
+      "durationSec": 8,
+      "motionScore": 9.78,
+      "audioEnergyScore": 10,
+      "actionPriorityScore": 8.85,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0021",
+          "sourceStartSec": 214,
+          "sourceEndSec": 215.875
+        },
+        {
+          "sceneId": "scene_0022",
+          "sourceStartSec": 215.875,
+          "sourceEndSec": 222
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0011",
+      "rank": 8,
+      "sourceStartSec": 222,
+      "sourceEndSec": 238,
+      "durationSec": 16,
+      "motionScore": 9.09,
+      "audioEnergyScore": 10,
+      "actionPriorityScore": 8.41,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0022",
+          "sourceStartSec": 222,
+          "sourceEndSec": 238
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0012",
+      "rank": 15,
+      "sourceStartSec": 238,
+      "sourceEndSec": 246,
+      "durationSec": 8,
+      "motionScore": 7.99,
+      "audioEnergyScore": 9.47,
+      "actionPriorityScore": 7.56,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0022",
+          "sourceStartSec": 238,
+          "sourceEndSec": 246
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0013",
+      "rank": 10,
+      "sourceStartSec": 262,
+      "sourceEndSec": 278,
+      "durationSec": 16,
+      "motionScore": 9.56,
+      "audioEnergyScore": 10,
+      "actionPriorityScore": 8.29,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0024",
+          "sourceStartSec": 262,
+          "sourceEndSec": 278
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0014",
+      "rank": 5,
+      "sourceStartSec": 278,
+      "sourceEndSec": 294,
+      "durationSec": 16,
+      "motionScore": 10,
+      "audioEnergyScore": 8.71,
+      "actionPriorityScore": 8.48,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0024",
+          "sourceStartSec": 278,
+          "sourceEndSec": 291.75
+        },
+        {
+          "sceneId": "scene_0025",
+          "sourceStartSec": 291.75,
+          "sourceEndSec": 294
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0015",
+      "rank": 4,
+      "sourceStartSec": 314,
+      "sourceEndSec": 322,
+      "durationSec": 8,
+      "motionScore": 9.84,
+      "audioEnergyScore": 9.74,
+      "actionPriorityScore": 8.83,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0028",
+          "sourceStartSec": 314,
+          "sourceEndSec": 322
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0016",
+      "rank": 12,
+      "sourceStartSec": 322,
+      "sourceEndSec": 346,
+      "durationSec": 24,
+      "motionScore": 10,
+      "audioEnergyScore": 6.81,
+      "actionPriorityScore": 8.17,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0028",
+          "sourceStartSec": 322,
+          "sourceEndSec": 341.375
+        },
+        {
+          "sceneId": "scene_0029",
+          "sourceStartSec": 341.375,
+          "sourceEndSec": 346
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0017",
+      "rank": 2,
+      "sourceStartSec": 346,
+      "sourceEndSec": 362,
+      "durationSec": 16,
+      "motionScore": 10,
+      "audioEnergyScore": 9.95,
+      "actionPriorityScore": 8.99,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0029",
+          "sourceStartSec": 346,
+          "sourceEndSec": 347
+        },
+        {
+          "sceneId": "scene_0030",
+          "sourceStartSec": 347,
+          "sourceEndSec": 356.75
+        },
+        {
+          "sceneId": "scene_0031",
+          "sourceStartSec": 356.75,
+          "sourceEndSec": 362
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0018",
+      "rank": 9,
+      "sourceStartSec": 406,
+      "sourceEndSec": 422,
+      "durationSec": 16,
+      "motionScore": 10,
+      "audioEnergyScore": 6.26,
+      "actionPriorityScore": 8.4,
+      "mustReview": true,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0032",
+          "sourceStartSec": 406,
+          "sourceEndSec": 410.5
+        },
+        {
+          "sceneId": "scene_0033",
+          "sourceStartSec": 410.5,
+          "sourceEndSec": 417.5
+        },
+        {
+          "sceneId": "scene_0034",
+          "sourceStartSec": 417.5,
+          "sourceEndSec": 422
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0019",
+      "rank": 20,
+      "sourceStartSec": 430,
+      "sourceEndSec": 438,
+      "durationSec": 8,
+      "motionScore": 6.82,
+      "audioEnergyScore": 7.92,
+      "actionPriorityScore": 6.75,
+      "mustReview": false,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0035",
+          "sourceStartSec": 430,
+          "sourceEndSec": 432.25
+        },
+        {
+          "sceneId": "scene_0036",
+          "sourceStartSec": 432.25,
+          "sourceEndSec": 438
+        }
+      ]
+    },
+    {
+      "actionCandidateId": "action_0020",
+      "rank": 18,
+      "sourceStartSec": 446,
+      "sourceEndSec": 454,
+      "durationSec": 8,
+      "motionScore": 6.87,
+      "audioEnergyScore": 8.86,
+      "actionPriorityScore": 7.01,
+      "mustReview": false,
+      "localActionType": "high_motion_or_audio_event",
+      "sceneSlices": [
+        {
+          "sceneId": "scene_0036",
+          "sourceStartSec": 446,
+          "sourceEndSec": 449.875
+        },
+        {
+          "sceneId": "scene_0037",
+          "sourceStartSec": 449.875,
+          "sourceEndSec": 454
+        }
+      ]
+    }
+  ]
+}
+
+STEP 0 - VERIFIED INPUT ACCESS GATE (SUPREME; RUN FIRST)
+- Inventory and actually open every uploaded video, proxy chunk, scene-manifest.json, transcript, action-candidates.json, evidence, blueprint, or review-context file required by this prompt.
+- A visible filename, thumbnail, citation, truncated preview, prior chat, URL title, or action score is not proof that the content was read.
+- Verify that source identity, duration, timestamps, IDs, transcript coverage, and proxy coverage match. Proxy chunks are valid only when their combined source ranges cover the claimed timeline.
+- Never infer missing dialogue, visuals, actions, people, chronology, evidence, or outcomes.
+- If anything required is missing, unreadable, truncated, mismatched, or has an unexplained coverage gap, STOP and return one JSON code block only:
+{"artifactType":"gemini_input_access_failure","schemaVersion":1,"stage":"highlight_prompt","accessGranted":false,"missingInputs":[],"unreadableInputs":[],"coverageGaps":[],"mismatchDetails":"","recommendedAction":""}
+- On success, every root output JSON must include inputAccessAudit with accessGranted=true, truthful accessMode, inspectedInputs, sourceIdentityMatched=true, timelineCoverageVerified=true, and noGuessingConfirmed=true.
+
+USER TASK INSTRUCTION - BUILD TIKTOK VIRAL BODYCAM (PART 1 - 8-BEAT ALTERNATING SANDWICH)
+
+You are an elite short-form true-crime video editor specializing in viral TikTok/Reels/Shorts bodycam recap videos that consistently hit 5M+ views. You master the "Alternating Sandwich" rhythm: alternating raw, high-adrenaline on-scene video with punchy, suspenseful narration.
+
+Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, and action-candidates.json thoroughly before selecting footage.
+
+### SELECTED PROMPT PROFILE
+- prompt_profile: viral_tiktok_crime_part1
+- Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
+- Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
+- Every script must follow the exact 8-beat formula and use 9:16 vertical framing.
+- TOP HOOK CAPTION: suggestedTitle/title must be a concise 4-8 word cold-viewer hook, ideally <= 42 characters, grounded in the actual conflict/action. Create curiosity without generic clickbait, hashtags, "PART 1/2/3", or spoiling the final payoff.
+- titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
+- Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
+- The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
+  * Script 1 / PART 1 - The Confrontation: hook, dispatch/arrival, scene entry, escalation, first confrontation. Ends on a verified unresolved cliffhanger.
+  * Script 3 / PART 2 - The Interrogation: questioning, explanations, lies, contradictions and evidence. Ends on the strongest verified pre-arrest cliffhanger.
+  * Script 4 / PART 3 - The Verdict & Arrest: decision, arrest/charges and the verified consequence (payoff).
+  * PART 1 and PART 2 must not show or narrate the arrest, charges, verdict or final consequence. Never reuse the same footage across Parts except a recap of at most 3 seconds.
+  * When a locked series-plan.json is supplied, its scope, scene allocation and cliffhangers are binding.
+
+### THE 8-BEAT VIRAL TIMELINE FORMULA (MANDATORY FOR SCRIPT 1)
+Script 1 must strictly follow this exact 8-beat sandwich structure (4 Raw Audio beats + 4 Narration beats):
+
+1. BEAT 1 (Target: ~12-15s source duration) - COLD OPEN HOOK
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: The single most shocking, loud, or chaotic raw moment from the entire source footage (e.g. screaming at the door, physical struggle, forced breach, frantic yelling).
+   - Rule: Grips the viewer in the first 0-3 seconds with zero narration. Pure authentic raw audio.
+
+2. BEAT 2 (Target: ~16-20s source duration) - INCIDENT SETUP & DISPATCH
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Grounding narration over footage of police arrival / driving. State the date, location, the 911 dispatch premise, what officers were responding to, and the high stakes.
+   - Pacing: Active, present-tense, documentary tension.
+
+3. BEAT 3 (Target: ~10-14s source duration) - SCENE ENTRY & RAW REALITY
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: Officer steps inside the house/scene, encounters the first suspect or family member at the door/stairs, capturing natural ambient dialogue and escalating tension.
+
+4. BEAT 4 (Target: ~15-18s source duration) - ESCALATION & DISCOVERY
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Narration builds intense suspense as officer rushes upstairs/inward and discovers the core crisis (e.g. suspect physically pinning the victim).
+   - Visual matching: Narration directs viewer attention directly to what is about to be seen.
+
+5. BEAT 5 (Target: ~12-15s source duration) - CLIMACTIC TAKEDOWN / CONFRONTATION
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: Peak physical and vocal confrontation! Commands shouted by police ("Get off her! Let go of her! Stand up!"), restraint applied, separating suspect from victim. 100% authentic raw audio.
+
+6. BEAT 6 (Target: ~17-20s source duration) - CONFLICT BREAKDOWN & MORAL CONTRAST
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Identifies key suspects and victims by name. Contrasts the suspect's absurd excuse or fake medical claim ("she was having a mental episode") against the victim's clear explanation ("I just wanted to leave").
+
+7. BEAT 7 (Target: ~7-10s source duration) - RAW DIALOGUE EVIDENCE
+   - audio_mode: "original_audio", voiceover_text: ""
+   - Content: Suspect stammers an incriminating excuse or victim gives emotional response to the officer.
+
+8. BEAT 8 (Target: ~14-17s source duration) - CLIFFHANGER & PART 2 OPEN LOOP
+   - audio_mode: "voiceover_only", English voiceover_text
+   - Content: Questioning begins; suspect eagerly starts trying to justify their actions, unaware they are digging their own grave. Narration delivers a compelling hook urging the audience to watch Part 2 for the full interrogation and arrest.
+
+### REQUIRED ROOT METADATA
+Every generated JSON script must include:
+```json
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 1,
+  "suggestedTitle": "<UPPERCASE VIRAL TITLE GROUNDED IN THIS SOURCE>",
+  "title": "<UPPERCASE VIRAL TITLE GROUNDED IN THIS SOURCE>",
+  "partBadge": "PART 1",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "segments": [ ...8 segments... ]
+}
+```
+For Script 3, set partBadge to "PART 2". For Script 4, set partBadge to "PART 3".
+
+### NON-NEGOTIABLE EDITORIAL RULES
+1. ZERO THIRD-PARTY SOURCE NARRATORS: Completely mute or eliminate any YouTube host, television reporter, or narrator from original_audio. Only involved officers, suspects, victims, 911 dispatchers, or raw ambient sounds may be heard.
+2. STRICT EVIDENCE GROUNDING: Every claim in narration must be strictly supported by what is visible in the video frames or audible in the source transcript. Do not hallucinate charges, deaths, convictions, or motives.
+3. MATHEMATICAL TIMELINE DELEGATION: Do NOT calculate or output startSec, endSec, outputStartSec, outputEndSec, duration, or playbackSpeed math. Only output sourceStartSec and sourceEndSec (or sceneId). The local compiler will automatically calculate all timeline math and playback speeds.
+4. Total source duration of the 8 segments should aim to be between 110.0 and 125.0 seconds.
+
+VOICE CALIBRATION PARAMETERS PROVIDED BY USER:
+- voiceProvider: kokoro
+- voiceId: am_adam
+- cloneSourceVoice: false
+- measuredWordsPerSecond: 2.834
+- medianMeasuredWordsPerSecond: 3.087
+- measuredSampleCount: 597
+- targetNarrationCoverageMin: 0.9
+- targetNarrationCoverageMax: 0.98
+- Formula for each voiceover_only segment:
+  minWords = floor((endSec - startSec) * measuredWordsPerSecond * targetNarrationCoverageMin)
+  maxWords = ceil((endSec - startSec) * measuredWordsPerSecond * targetNarrationCoverageMax)
+- Example measured word budgets:
+- 5s segment: minWords=13, maxWords=13
+- 8s segment: minWords=20, maxWords=22
+- 10s segment: minWords=25, maxWords=27
+- 12s segment: minWords=29, maxWords=33
+- 15s segment: minWords=37, maxWords=41
+- 20s segment: minWords=49, maxWords=55
+- 30s segment: minWords=73, maxWords=83
+
+JSON CODE-BLOCK CONTRACT - HIGHEST PRIORITY
+- Return exactly 3 independent Markdown JSON code blocks and nothing else.
+- Required order: Script 1, then Script 3, then Script 4.
+- Block 1 is one complete root object with scriptId=1 and is saved as "script-1.json".
+- Block 2 is one complete root object with scriptId=3 and is saved as "script-3.json".
+- Block 3 is one complete root object with scriptId=4 and is saved as "script-4.json".
+- Treat each code block as one separate downloadable file. Never put multiple scripts in one code block.
+- Every block must begin with ```json, end with ```, and parse independently with JSON.parse.
+- Never combine the scripts into an array or wrap them in data, result, output, scripts, review, or a shared outer object.
+- Do not output prose, headings, filename labels, explanations, tables, or text before, between, or after the JSON blocks.

@@ -1,0 +1,256 @@
+{
+  "accessGranted": false,
+  "candidates": [
+    {
+      "storyScopeId": "scope_traffic_to_arrest",
+      "centralConflict": "An aggressive driver abandons her stalled car in active traffic, abuses 911 dispatch to demand assistance, and refuses to stop when deputies track her down on foot.",
+      "centralViewerQuestion": "Will the driver's hostile refusal to cooperate and repeated abuse of 911 result in her immediate arrest?",
+      "scopeStartState": "The driver refuses to cooperate with a female deputy at a stalled vehicle blocking traffic.",
+      "scopeEndTarget": "payoff",
+      "whyThisIsOneStory": "It traces a direct, unbroken escalation from initial roadside defiance to abusive 911 calls, fleeing on foot, and handcuffing for misuse of 911.",
+      "primaryEntities": [
+        "female_driver",
+        "deputy_female",
+        "deputy_male_1",
+        "deputy_male_2"
+      ],
+      "causalSpine": [
+        {
+          "eventId": "evt_initial_encounter",
+          "sourceStartSec": 33,
+          "sourceEndSec": 72,
+          "role": "inciting_incident",
+          "whyInScope": "Establishes the driver's belligerent attitude and abandonment of her stalled car."
+        },
+        {
+          "eventId": "evt_911_call_audio",
+          "sourceStartSec": 117,
+          "sourceEndSec": 201,
+          "role": "escalation",
+          "whyInScope": "Captures the criminal act of berating 911 dispatch over a non-emergency towing issue."
+        },
+        {
+          "eventId": "evt_tracking_driver",
+          "sourceStartSec": 256,
+          "sourceEndSec": 320,
+          "role": "confrontation",
+          "whyInScope": "Shows deputies pursuing and ordering the pedestrian suspect to stop as she ignores commands."
+        },
+        {
+          "eventId": "evt_detention_arrest",
+          "sourceStartSec": 336,
+          "sourceEndSec": 454,
+          "role": "climax_payoff",
+          "whyInScope": "Delivers the decisive legal payoff where deputies physically detain and cuff her for misuse of 911."
+        }
+      ],
+      "scopeWindows": [
+        {
+          "startSec": 33,
+          "endSec": 72,
+          "purposes": [
+            "core"
+          ],
+          "why": "Initial confrontation and warning about towing the vehicle.",
+          "windowId": "win_encounter"
+        },
+        {
+          "startSec": 117,
+          "endSec": 201,
+          "purposes": [
+            "core"
+          ],
+          "why": "Abusive emergency dispatch call establishing the offense.",
+          "windowId": "win_dispatch"
+        },
+        {
+          "startSec": 256,
+          "endSec": 320,
+          "purposes": [
+            "core"
+          ],
+          "why": "Deputies track suspect walking through commercial district.",
+          "windowId": "win_pursuit"
+        },
+        {
+          "startSec": 336,
+          "endSec": 454,
+          "purposes": [
+            "core",
+            "hook_material",
+            "ending_material"
+          ],
+          "why": "Verbal showdown and physical arrest.",
+          "windowId": "win_arrest"
+        }
+      ],
+      "mustResolve": [
+        "Whether deputies arrest the driver for misusing 911",
+        "How deputies handle the driver walking away from the scene"
+      ],
+      "mustWithhold": [
+        "The exact moment handcuffs are applied until the climax"
+      ],
+      "allowedSupportingContext": [
+        {
+          "description": "Deputies clearing stalled vehicle from live traffic lane",
+          "sourceStartSec": 223,
+          "sourceEndSec": 234,
+          "treatment": "narration_only"
+        }
+      ],
+      "explicitScopeBoundary": {
+        "startSec": 33,
+        "endSec": 454,
+        "rationale": "Begins at the initial traffic stop confrontation and concludes once suspect is cuffed and secured in custody."
+      },
+      "outOfScopeBranches": [
+        {
+          "description": "Post-arrest vehicle search and station pat down discussion",
+          "sourceStartSec": 554,
+          "sourceEndSec": 549.741,
+          "whyExcluded": "Administrative post-arrest handling that diffuses narrative momentum."
+        },
+        {
+          "description": "Supervisor explanation inside transport van",
+          "sourceStartSec": 711,
+          "sourceEndSec": 549.741,
+          "whyExcluded": "Post-incident procedural debrief repeating claims already resolved during arrest."
+        }
+      ],
+      "targetDurationSec": 110,
+      "candidateEndingEvents": [
+        {
+          "sourceStartSec": 435,
+          "sourceEndSec": 454,
+          "endingType": "payoff",
+          "eventId": "evt_detention_arrest",
+          "whyItIsAConsequence": "Deputies explicitly inform her she is under arrest and dismiss her excuse to wait for a tow truck."
+        }
+      ],
+      "footageAvailability": "Complete bodycam coverage and 911 call audio available across in-scope timestamps.",
+      "hookCandidates": [
+        {
+          "windowId": "win_arrest",
+          "sourceStartSec": 337,
+          "sourceEndSec": 341.5,
+          "why": "Immediate high-stakes warning that walking away leads directly to jail for misuse of 911."
+        }
+      ]
+    },
+    {
+      "storyScopeId": "scope_dispatch_to_takedown",
+      "centralConflict": "A frustrated pedestrian believes she can tie up emergency dispatch lines without consequence while evading approaching deputies.",
+      "centralViewerQuestion": "Can the suspect walk away before officers intercept her for dispatch abuse?",
+      "scopeStartState": "The driver calls 911 to complain about towing, insulting the dispatcher.",
+      "scopeEndTarget": "payoff",
+      "whyThisIsOneStory": "Focuses strictly on the 911 call offense and the immediate physical pursuit leading to her detention.",
+      "primaryEntities": [
+        "female_driver",
+        "deputy_male_1",
+        "deputy_male_2"
+      ],
+      "causalSpine": [
+        {
+          "eventId": "evt_911_call_audio",
+          "sourceStartSec": 117,
+          "sourceEndSec": 201,
+          "role": "inciting_incident",
+          "whyInScope": "Sets up the dispatch dispute and offensive insults."
+        },
+        {
+          "eventId": "evt_tracking_driver",
+          "sourceStartSec": 256,
+          "sourceEndSec": 320,
+          "role": "escalation",
+          "whyInScope": "Officers locate suspect fleeing on foot."
+        },
+        {
+          "eventId": "evt_detention_arrest",
+          "sourceStartSec": 336,
+          "sourceEndSec": 454,
+          "role": "payoff",
+          "whyInScope": "Officers confront and arrest the caller on the sidewalk."
+        }
+      ],
+      "scopeWindows": [
+        {
+          "startSec": 117,
+          "endSec": 201,
+          "purposes": [
+            "core"
+          ],
+          "why": "The recorded emergency call.",
+          "windowId": "win_call"
+        },
+        {
+          "startSec": 256,
+          "endSec": 320,
+          "purposes": [
+            "core"
+          ],
+          "why": "Locating suspect on foot.",
+          "windowId": "win_track"
+        },
+        {
+          "startSec": 336,
+          "endSec": 454,
+          "purposes": [
+            "core",
+            "ending_material"
+          ],
+          "why": "Arrest resolution.",
+          "windowId": "win_cuff"
+        }
+      ],
+      "mustResolve": [
+        "Whether dispatch abuse leads to immediate custody"
+      ],
+      "mustWithhold": [
+        "The officer's final warning about misuse of 911"
+      ],
+      "allowedSupportingContext": [
+        {
+          "description": "Prior verbal dispute at stalled vehicle",
+          "sourceStartSec": 33,
+          "sourceEndSec": 72,
+          "treatment": "narration_only"
+        }
+      ],
+      "explicitScopeBoundary": {
+        "startSec": 117,
+        "endSec": 454,
+        "rationale": "Begins at emergency call and terminates after arrest."
+      },
+      "outOfScopeBranches": [
+        {
+          "description": "Initial traffic stop encounter",
+          "sourceStartSec": 33,
+          "sourceEndSec": 72,
+          "whyExcluded": "Preceding encounter handled strictly through narration to accelerate pacing."
+        }
+      ],
+      "targetDurationSec": 85,
+      "candidateEndingEvents": [
+        {
+          "sourceStartSec": 443,
+          "sourceEndSec": 454,
+          "endingType": "payoff",
+          "eventId": "evt_detention_arrest",
+          "whyItIsAConsequence": "Suspect is informed she is past waiting for a tow truck and is detained."
+        }
+      ],
+      "footageAvailability": "Audio dispatch and bodycam present for pursuit and arrest segments.",
+      "hookCandidates": [
+        {
+          "windowId": "win_call",
+          "sourceStartSec": 156,
+          "sourceEndSec": 160,
+          "why": "Ironic, provocative quote mocking the dispatcher's intelligence."
+        }
+      ]
+    }
+  ],
+  "chosenStoryScopeId": "scope_traffic_to_arrest",
+  "selectionRationale": "Candidate 'scope_traffic_to_arrest' incorporates the full, uncompromised causal chain: roadside defiance, abusive dispatch conduct, pedestrian evasion, and the culminating arrest. It provides maximum dialogue contrast and directly supports the target duration without requiring procedural padding."
+}

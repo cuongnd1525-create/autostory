@@ -1,0 +1,27 @@
+{
+  "finishReason": "STOP",
+  "usage": {
+    "promptTokenCount": 4190,
+    "candidatesTokenCount": 2472,
+    "totalTokenCount": 8743,
+    "trafficType": "ON_DEMAND",
+    "promptTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 4190
+      }
+    ],
+    "candidatesTokensDetails": [
+      {
+        "modality": "TEXT",
+        "tokenCount": 2472
+      }
+    ],
+    "thoughtsTokenCount": 2081
+  },
+  "model": "gemini-3.8-flash",
+  "requestedMaxOutputTokens": null,
+  "requestedThinkingBudget": null,
+  "prepareMs": 0,
+  "modelMs": 37620
+}

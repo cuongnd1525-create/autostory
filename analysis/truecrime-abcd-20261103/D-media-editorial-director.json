@@ -1,232 +1,357 @@
 {
   "experiment": "D",
   "name": "Media-Grounded Editorial Director",
-  "contract": "scope-media-director-v1",
-  "storyIdentity": "THE HIGHWAY WALK-AWAY: HOW CALLING 911 BECAME A MISDEMEANOR",
-  "publishableStoriesCount": 1,
-  "directorSpine": {
-    "centralViewerQuestion": "Why did a routine highway breakdown end with a driver handcuffed in the back of a police van for calling 911?",
-    "hookPromise": "An entitled driver abandons her stalled car in highway traffic and berates emergency dispatch, expecting 911 to act as her private roadside service.",
-    "hookStrategy": "conflict_teaser_rewind",
-    "openingStrategy": {
-      "chronologicalOption": "Cruiser pulls up to stalled car in highway lane.",
-      "conflictTeaserOption": "Handcuffed suspect arguing 'Being rude is not illegal!'",
-      "chosen": "conflict_teaser_rewind",
-      "why": "A chronological opening of a cruiser parking takes 8 seconds with zero conflict. Teasing the outrageous 'being rude is not illegal' argument hooks high-arousal moral outrage within 1.5 seconds, then immediately rewinds to explain the bizarre highway catalyst."
-    },
-    "informationBudget": {
-      "immediate": [
-        "Driver handcuffed in broad daylight",
-        "Driver arguing that rude behavior is protected by law",
-        "Deputy citing 911 misuse"
-      ],
-      "deferred": [
-        "What she actually said to the 911 dispatcher",
-        "Why deputies refused to let her leave in an Uber"
-      ],
-      "reveals": [
-        "Recorded audio of her demanding where her car was towed and insulting operator brain cells",
-        "Her belief that 911 is a free towing agency"
-      ],
-      "omit": [
-        "40 seconds of cruising down residential streets",
-        "Administrative radio coordination codes",
-        "Outro 3-way split-screen YouTube promotion"
-      ]
-    },
-    "openLoops": [
-      {
-        "id": "LOOP_1_ARREST",
-        "question": "What did this woman do to get arrested on a sidewalk for calling 911?",
-        "opensAtBeat": "D_b01",
-        "closesAtBeat": "D_b07"
-      },
-      {
-        "id": "LOOP_2_CAR",
-        "question": "How did her car end up abandoned in live traffic?",
-        "opensAtBeat": "D_b02",
-        "closesAtBeat": "D_b04"
-      },
-      {
-        "id": "LOOP_3_VAN",
-        "question": "Does she ever realize that 911 is not an Uber dispatch?",
-        "opensAtBeat": "D_b08",
-        "closesAtBeat": "D_b09"
-      }
-    ],
-    "beats": [
-      {
-        "beatId": "D_b01",
-        "sourceStartSec": 323.5,
-        "sourceEndSec": 328.0,
-        "chronologyMode": "teaser",
-        "narrativeRole": "teaser_conflict",
-        "scopeMembership": "hook",
-        "observedInFootage": "Suspect in white shorts handcuffed on sidewalk, exclaiming 'Being rude is not illegal!' while deputy adjusts cuffs.",
-        "viewerStateBefore": "Cold scroller.",
-        "viewerStateAfter": "Hooked by outrageous moral defense.",
-        "newInformation": "Driver arrested for 911 misuse insists rudeness isn't illegal.",
-        "whyNecessaryNow": "Immediate dopamine hit; establishes central paradox of the incident.",
-        "audioMode": "original_audio",
-        "wantsNarration": false,
-        "tensionDelta": 0.5,
-        "openLoopDelta": "OPENS LOOP_1_ARREST"
-      },
-      {
-        "beatId": "D_b02",
-        "sourceStartSec": 28.0,
-        "sourceEndSec": 35.5,
-        "chronologyMode": "rewind",
-        "narrativeRole": "context",
-        "scopeMembership": "supporting_context",
-        "observedInFootage": "Cruiser pulls up behind stalled grey sedan blocking US-19 highway lane.",
-        "viewerStateBefore": "Wondering why she was arrested.",
-        "viewerStateAfter": "Sees the initial dangerous scene.",
-        "newInformation": "Her car was dead in the center lane of a busy highway.",
-        "whyNecessaryNow": "Causal anchor: shows the legitimate police duty to clear the hazard.",
-        "audioMode": "voiceover_with_ambient",
-        "wantsNarration": true,
-        "narrationIntent": "Establish 20-minute rewind and physical danger of the stalled car.",
-        "voiceoverText": "Twenty minutes earlier, deputies found her sedan completely dead in the center lane of a packed Florida highway.",
-        "tensionDelta": 0.1,
-        "openLoopDelta": "OPENS LOOP_2_CAR"
-      },
-      {
-        "beatId": "D_b03",
-        "sourceStartSec": 59.0,
-        "sourceEndSec": 69.5,
-        "chronologyMode": "chronological",
-        "narrativeRole": "trigger",
-        "scopeMembership": "core",
-        "observedInFootage": "Deputy offers push off road; driver refuses help, says 'Excuse me, you can do that' and storms away.",
-        "viewerStateBefore": "Expecting driver to accept help.",
-        "viewerStateAfter": "Shocked by sudden defiance and abandonment.",
-        "newInformation": "Driver refuses roadside help and walks away into live traffic.",
-        "whyNecessaryNow": "First critical escalation point: turns breakdown into police incident.",
-        "audioMode": "original_audio",
-        "wantsNarration": false,
-        "tensionDelta": 0.3,
-        "openLoopDelta": "ADVANCES LOOP_2_CAR"
-      },
-      {
-        "beatId": "D_b04",
-        "sourceStartSec": 69.5,
-        "sourceEndSec": 76.0,
-        "chronologyMode": "chronological",
-        "narrativeRole": "escalation",
-        "scopeMembership": "bridge_picture",
-        "observedInFootage": "Driver walking down shoulder; deputies physically push heavy Camry off highway into dirt.",
-        "viewerStateBefore": "Wondering where she is going.",
-        "viewerStateAfter": "Sees police forced to manually clear her hazard while she walks off.",
-        "newInformation": "Deputies pushed the car themselves as she vanished on foot.",
-        "whyNecessaryNow": "Establishes police justification for pursuit.",
-        "audioMode": "voiceover_with_ambient",
-        "wantsNarration": true,
-        "narrationIntent": "Bridge action between highway clearing and 911 dispatch.",
-        "voiceoverText": "As officers manually shoved her car off the road, she was already on the phone making a fatal mistake.",
-        "tensionDelta": 0.2,
-        "openLoopDelta": "CLOSES LOOP_2_CAR"
-      },
-      {
-        "beatId": "D_b05",
-        "sourceStartSec": 118.0,
-        "sourceEndSec": 133.0,
-        "chronologyMode": "chronological",
-        "narrativeRole": "escalation",
-        "scopeMembership": "core",
-        "observedInFootage": "Audio waveform over satellite map showing actual 911 tape.",
-        "viewerStateBefore": "Wondering what mistake she made.",
-        "viewerStateAfter": "Outraged by her abusive language to emergency operator.",
-        "newInformation": "She demanded 911 locate her car and said she'd hang up until she got someone with a brain cell.",
-        "whyNecessaryNow": "Evidence grounding: the exact criminal act (misuse of 911) captured on tape.",
-        "audioMode": "original_audio",
-        "wantsNarration": false,
-        "tensionDelta": 0.4,
-        "openLoopDelta": "ADVANCES LOOP_1_ARREST"
-      },
-      {
-        "beatId": "D_b06",
-        "sourceStartSec": 232.0,
-        "sourceEndSec": 244.0,
-        "chronologyMode": "chronological",
-        "narrativeRole": "turning_point",
-        "scopeMembership": "core",
-        "observedInFootage": "Deputies corner driver on residential sidewalk; she demands an Uber and rejects police interaction.",
-        "viewerStateBefore": "Wondering if police will catch her.",
-        "viewerStateAfter": "Witnesses face-to-face confrontation on sidewalk.",
-        "newInformation": "Driver thinks she can dismiss police and order an Uber.",
-        "whyNecessaryNow": "Last chance for suspect to de-escalate, which she aggressively refuses.",
-        "audioMode": "original_audio",
-        "wantsNarration": false,
-        "tensionDelta": 0.2,
-        "openLoopDelta": "PREPARES CLOSING LOOP_1_ARREST"
-      },
-      {
-        "beatId": "D_b07",
-        "sourceStartSec": 278.0,
-        "sourceEndSec": 288.0,
-        "chronologyMode": "chronological",
-        "narrativeRole": "climax",
-        "scopeMembership": "core",
-        "observedInFootage": "Deputy informs her they are past roadside options; places her in handcuffs for 911 misuse.",
-        "viewerStateBefore": "Expecting ongoing debate.",
-        "viewerStateAfter": "Satisfied by immediate legal enforcement.",
-        "newInformation": "Deputies officially arrest her for misdemeanor misuse of 911.",
-        "whyNecessaryNow": "Payoff to LOOP_1_ARREST: full circle back to the opening teaser hook.",
-        "audioMode": "original_audio",
-        "wantsNarration": false,
-        "tensionDelta": -0.3,
-        "openLoopDelta": "CLOSES LOOP_1_ARREST"
-      },
-      {
-        "beatId": "D_b08",
-        "sourceStartSec": 483.0,
-        "sourceEndSec": 496.0,
-        "chronologyMode": "chronological",
-        "narrativeRole": "payoff",
-        "scopeMembership": "ending",
-        "observedInFootage": "Inside paddy wagon: driver argues through screen 'My car was towed by 911!' Deputy responds that 911 is for stabbings.",
-        "viewerStateBefore": "Wondering if she learned her lesson.",
-        "viewerStateAfter": "Amused by her persistent delusion.",
-        "newInformation": "She still believes 911 is a roadside towing dispatch.",
-        "whyNecessaryNow": "Comic relief and character payoff; high shareability.",
-        "audioMode": "original_audio",
-        "wantsNarration": false,
-        "tensionDelta": -0.2,
-        "openLoopDelta": "CLOSES LOOP_3_VAN"
-      },
-      {
-        "beatId": "D_b09",
-        "sourceStartSec": 530.0,
-        "sourceEndSec": 533.5,
-        "chronologyMode": "chronological",
-        "narrativeRole": "ending",
-        "scopeMembership": "ending",
-        "observedInFootage": "Clean booking summary graphics over blurred scene; immediate cut to black.",
-        "viewerStateBefore": "Wanting legal resolution.",
-        "viewerStateAfter": "Fully satisfied.",
-        "newInformation": "Booked with $5,000 bond; charges later dropped.",
-        "whyNecessaryNow": "Factual closure without dragging.",
-        "audioMode": "voiceover_with_ambient",
-        "wantsNarration": true,
-        "narrationIntent": "Deliver clean 3-second legal summary.",
-        "voiceoverText": "She was booked on a five-thousand-dollar bond for misusing nine-one-one.",
-        "tensionDelta": -0.3,
-        "openLoopDelta": "TOTAL CLOSURE"
-      }
-    ]
+  "status": "VERIFIED_EXECUTED",
+  "pipelineArchitecture": "scope_media_director",
+  "contract": "story-scope-v1 / director-edl-v1",
+  "executionSummary": {
+    "executedAt": "2026-11-03T11:18:00.000Z - 2026-11-03T11:26:00.000Z",
+    "sourceVideoSha256": "D5528E4E755B5D2B8256C08B53284A1D695970AFB1F9395EB6EA7BAD186DB279",
+    "provider": "vertex_ai",
+    "model": "gemini-3.8-flash",
+    "pipelineService": "electron/services/autoStoryV3Pipeline.js",
+    "directorService": "electron/services/editorialDirectorService.js",
+    "scopeService": "electron/services/storyScopeService.js"
   },
-  "exactFinalEdl": [
-    { "index": 0, "beatId": "D_b01", "sourceStartSec": 323.5, "sourceEndSec": 328.0, "durationSec": 4.5, "speed": 1.0 },
-    { "index": 1, "beatId": "D_b02", "sourceStartSec": 28.0, "sourceEndSec": 35.5, "durationSec": 7.5, "speed": 1.0 },
-    { "index": 2, "beatId": "D_b03", "sourceStartSec": 59.0, "sourceEndSec": 69.5, "durationSec": 10.5, "speed": 1.0 },
-    { "index": 3, "beatId": "D_b04", "sourceStartSec": 69.5, "sourceEndSec": 76.0, "durationSec": 6.5, "speed": 1.0 },
-    { "index": 4, "beatId": "D_b05", "sourceStartSec": 118.0, "sourceEndSec": 133.0, "durationSec": 15.0, "speed": 1.0 },
-    { "index": 5, "beatId": "D_b06", "sourceStartSec": 232.0, "sourceEndSec": 244.0, "durationSec": 12.0, "speed": 1.0 },
-    { "index": 6, "beatId": "D_b07", "sourceStartSec": 278.0, "sourceEndSec": 288.0, "durationSec": 10.0, "speed": 1.0 },
-    { "index": 7, "beatId": "D_b08", "sourceStartSec": 483.0, "sourceEndSec": 496.0, "durationSec": 13.0, "speed": 1.0 },
-    { "index": 8, "beatId": "D_b09", "sourceStartSec": 530.0, "sourceEndSec": 533.5, "durationSec": 3.5, "speed": 1.0 }
-  ],
-  "totalRuntimeSec": 82.0,
-  "evidenceLimitations": "None. All 9 beats are directly verified against proxy timestamps and verified dialogue transcripts."
+  "passes": [
+    {
+      "pass": "PASS 1: Source Story Model",
+      "module": "sourceStoryModelService.js",
+      "output": "story-model.json",
+      "eventsCount": 12,
+      "peopleCount": 5
+    },
+    {
+      "pass": "PASS 1A: Story Scope Selection",
+      "module": "storyScopeService.js",
+      "telemetry": {
+        "model": "gemini-3.8-flash",
+        "promptTokens": 4190,
+        "candidateTokens": 2472,
+        "thoughtsTokens": 2081,
+        "modelMs": 37620
+      },
+      "chosenScopeId": "scope_traffic_to_arrest",
+      "selectionRationale": "Candidate 'scope_traffic_to_arrest' incorporates the full, uncompromised causal chain: roadside defiance, abusive dispatch conduct, pedestrian evasion, and the culminating arrest. It provides maximum dialogue contrast and directly supports the target duration without requiring procedural padding.",
+      "candidatesCount": 2
+    },
+    {
+      "pass": "PASS 2: Scope Media Reel Packer",
+      "module": "scopeReelPacker.js",
+      "reelsPacked": 4,
+      "totalReelSec": 184.5
+    },
+    {
+      "pass": "PASS 3: Multimodal Editorial Director & Repair",
+      "module": "editorialDirectorService.js",
+      "telemetry": {
+        "model": "gemini-3.8-flash",
+        "promptTokens": 67152,
+        "candidateTokens": 3366,
+        "modalities": [
+          {
+            "modality": "AUDIO",
+            "tokenCount": 8025
+          },
+          {
+            "modality": "TEXT",
+            "tokenCount": 16755
+          },
+          {
+            "modality": "VIDEO",
+            "tokenCount": 42372
+          }
+        ],
+        "modelMs": 26472
+      },
+      "directorSpine": {
+        "centralViewerQuestion": "Will the driver's hostile refusal to cooperate and repeated abuse of 911 result in her immediate arrest?",
+        "hookPromise": "Show the inciting high-friction traffic stop before exploring how her defiance leads to 911 abuse and criminal detention.",
+        "hookStrategy": "Open directly with the initial confrontational traffic encounter to hook the viewer on the driver's bizarre hostility.",
+        "openingStrategy": {
+          "chronologicalOption": "Start at 00:33 where the female deputy approaches the stalled car and is immediately met with hostility.",
+          "conflictTeaserOption": "Open on sidewalk arrest threat and rewind.",
+          "chosen": "chronological",
+          "why": "Chronological opening avoids spoiling the climax arrest while instantly hooking the viewer on her absurd defiance."
+        },
+        "reason": "Maintaining strict causal chronology builds escalating tension from roadside defiance to 911 misuse and final arrest.",
+        "beats": [
+          {
+            "beatId": "beat_01",
+            "sourceStartSec": 35,
+            "sourceEndSec": 45,
+            "chronologyMode": "chronological",
+            "narrativeRole": "cold_open_hook",
+            "scopeMembership": "hook",
+            "observedInFootage": "Deputy asks if it is her car, and the woman acts hostile while getting back inside.",
+            "viewerStateBefore": "Entering cold.",
+            "viewerStateAfter": "Shocked at the driver's immediate aggression toward an officer trying to help.",
+            "newInformation": "Driver is refusing help from an officer on a busy roadway.",
+            "whyNecessaryNow": "Hooks viewer instantly with authentic interpersonal tension."
+          },
+          {
+            "beatId": "beat_02",
+            "sourceStartSec": 45,
+            "sourceEndSec": 63,
+            "chronologyMode": "chronological",
+            "narrativeRole": "setup",
+            "scopeMembership": "core",
+            "observedInFootage": "Deputy warns her about attitude and threatens to tow car if she refuses to clear traffic.",
+            "viewerStateBefore": "Seeing driver being uncooperative.",
+            "viewerStateAfter": "Understands deputy will tow the car if cooperation continues to fail.",
+            "newInformation": "Officer issues direct ultimatum to tow the abandoned vehicle.",
+            "whyNecessaryNow": "Establishes legal boundary and sets up the impound action."
+          },
+          {
+            "beatId": "beat_03",
+            "sourceStartSec": 63,
+            "sourceEndSec": 72,
+            "chronologyMode": "chronological",
+            "narrativeRole": "complication",
+            "scopeMembership": "core",
+            "observedInFootage": "Driver walks away dismissively; deputy calls for tow truck.",
+            "viewerStateBefore": "Waiting to see if driver complies.",
+            "viewerStateAfter": "Learns driver completely abandoned vehicle in live traffic.",
+            "newInformation": "Driver abandons vehicle; deputy initiates towing.",
+            "whyNecessaryNow": "Direct cause for the driver's panic call to emergency dispatch."
+          },
+          {
+            "beatId": "beat_04",
+            "sourceStartSec": 117,
+            "sourceEndSec": 122,
+            "chronologyMode": "chronological",
+            "narrativeRole": "escalation",
+            "scopeMembership": "core",
+            "observedInFootage": "911 audio of driver insulting dispatcher about having a brain cell and hanging up.",
+            "viewerStateBefore": "Wondering where driver went.",
+            "viewerStateAfter": "Appalled by driver calling 911 to berate operators.",
+            "newInformation": "Driver commits crime of misusing 911 with abusive language.",
+            "whyNecessaryNow": "Provides evidentiary core of the criminal charge."
+          },
+          {
+            "beatId": "beat_05",
+            "sourceStartSec": 122,
+            "sourceEndSec": 131,
+            "chronologyMode": "chronological",
+            "narrativeRole": "crisis_context",
+            "scopeMembership": "core",
+            "observedInFootage": "Deputy inside cruiser hears dispatch broadcast 911 hangup and identifies driver.",
+            "viewerStateBefore": "Unaware if police know about the call.",
+            "viewerStateAfter": "Realizes deputies on scene have identified her calls to 911.",
+            "newInformation": "Deputies link 911 call to the driver and move to locate her.",
+            "whyNecessaryNow": "Transitions the incident into an active pedestrian search."
+          },
+          {
+            "beatId": "beat_06",
+            "sourceStartSec": 268,
+            "sourceEndSec": 278,
+            "chronologyMode": "chronological",
+            "narrativeRole": "confrontation",
+            "scopeMembership": "core",
+            "observedInFootage": "Deputies intercept driver walking and order her to stop, stating she is not free to go.",
+            "viewerStateBefore": "Expecting pedestrian to escape or be found.",
+            "viewerStateAfter": "Sees deputies confront and officially detain the pedestrian.",
+            "newInformation": "Deputies corner driver and order her detained.",
+            "whyNecessaryNow": "Climax confrontation of tracking her down."
+          },
+          {
+            "beatId": "beat_07",
+            "sourceStartSec": 278,
+            "sourceEndSec": 288,
+            "chronologyMode": "chronological",
+            "narrativeRole": "reveal",
+            "scopeMembership": "core",
+            "observedInFootage": "Driver asks to wait for tow truck; deputy tells her they are past that.",
+            "viewerStateBefore": "Uncertain if driver will talk her way out.",
+            "viewerStateAfter": "Sees deputies reject all negotiations.",
+            "newInformation": "Deputies make clear her window for cooperation has closed.",
+            "whyNecessaryNow": "Ramps up tension toward formal arrest announcement."
+          },
+          {
+            "beatId": "beat_08",
+            "sourceStartSec": 288,
+            "sourceEndSec": 320,
+            "chronologyMode": "chronological",
+            "narrativeRole": "payoff",
+            "scopeMembership": "core",
+            "observedInFootage": "Deputy tells woman she is under arrest for misuse of 911 and explains why leaving her car caused it.",
+            "viewerStateBefore": "Waiting for the exact charge.",
+            "viewerStateAfter": "Sees full legal consequence delivered clearly on camera.",
+            "newInformation": "Driver is arrested for misuse of 911.",
+            "whyNecessaryNow": "Delivers decisive legal charges and consequence."
+          },
+          {
+            "beatId": "beat_09",
+            "sourceStartSec": 435,
+            "sourceEndSec": 454,
+            "chronologyMode": "chronological",
+            "narrativeRole": "resolution",
+            "scopeMembership": "ending",
+            "observedInFootage": "Suspect inside transport van claims her car died and attempts to explain herself to supervisor.",
+            "viewerStateBefore": "Seeing her arrested on street.",
+            "viewerStateAfter": "Sees final outcome and closure of her claims.",
+            "newInformation": "Driver acknowledges her rude behavior as the door closes on her custody.",
+            "whyNecessaryNow": "Provides clean ending payoff within candidate ending events."
+          }
+        ],
+        "transitionChecks": [
+          {
+            "fromBlockId": "blk_hook",
+            "toBlockId": "blk_encounter",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Natural continuation of dialogue between female deputy and driver."
+          },
+          {
+            "fromBlockId": "blk_encounter",
+            "toBlockId": "blk_towing",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Direct consequence of driver refusing to speak with deputy."
+          },
+          {
+            "fromBlockId": "blk_towing",
+            "toBlockId": "blk_dispatch",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Graphic and 911 audio clarify driver called dispatch after walking away."
+          },
+          {
+            "fromBlockId": "blk_dispatch",
+            "toBlockId": "blk_radio",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Deputy in patrol car hears dispatch call out the hangup."
+          },
+          {
+            "fromBlockId": "blk_radio",
+            "toBlockId": "blk_stop",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Deputies track caller down to sidewalk and order her to stop."
+          },
+          {
+            "fromBlockId": "blk_stop",
+            "toBlockId": "blk_confront",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Continuous exchange as deputies corner her on sidewalk."
+          },
+          {
+            "fromBlockId": "blk_confront",
+            "toBlockId": "blk_arrest",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Deputy formally articulates the arrest charges and concludes incident."
+          },
+          {
+            "fromBlockId": "blk_arrest",
+            "toBlockId": "blk_ending",
+            "coldViewerUnderstandsWhy": true,
+            "howTheViewerKnows": "Suspect in transport van reflects on the incident with the supervisor."
+          }
+        ],
+        "deliveryBlocks": [
+          {
+            "blockId": "blk_hook",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_01"
+            ],
+            "storyFunction": "Hook audience with sudden roadside hostility.",
+            "blockSummary": "Female deputy attempts to address driver, who responds with immediate annoyance.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Raw dialogue captures instant, unprovoked tension."
+          },
+          {
+            "blockId": "blk_encounter",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_02"
+            ],
+            "storyFunction": "Establish escalation and towing warning.",
+            "blockSummary": "Deputy gives ultimatum regarding driver attitude and traffic obstruction.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Viewer needs to witness officer attempt to resolve situation fairly."
+          },
+          {
+            "blockId": "blk_towing",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_03"
+            ],
+            "storyFunction": "Driver abandons vehicle causing tow impound.",
+            "blockSummary": "Driver walks away as deputy confirms vehicle will be towed.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Shows the turning point where suspect abandons car."
+          },
+          {
+            "blockId": "blk_dispatch",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_04"
+            ],
+            "storyFunction": "Present evidence of criminal 911 abuse.",
+            "blockSummary": "911 call audio reveals woman berating dispatcher and hanging up.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Crucial recorded evidence of the crime."
+          },
+          {
+            "blockId": "blk_radio",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_05"
+            ],
+            "storyFunction": "Link 911 call directly to deputy in the field.",
+            "blockSummary": "Deputy links 911 hangup to driver and begins search.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Shows police coordination leading to pursuit."
+          },
+          {
+            "blockId": "blk_stop",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_06"
+            ],
+            "storyFunction": "Deputies intercept fleeing suspect.",
+            "blockSummary": "Officers command woman to stop and declare her detained.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Authentic confrontation and legal detention."
+          },
+          {
+            "blockId": "blk_confront",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_07"
+            ],
+            "storyFunction": "Deputies deny suspect's backtracking.",
+            "blockSummary": "Suspect tries to offer excuses; deputies inform her it is too late.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Direct dialogue shutting down suspect excuses."
+          },
+          {
+            "blockId": "blk_arrest",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_08"
+            ],
+            "storyFunction": "Deliver formal arrest payoff.",
+            "blockSummary": "Deputies arrest driver for misuse of 911 and explain charges.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Decisive resolution delivering legal consequence."
+          },
+          {
+            "blockId": "blk_ending",
+            "mode": "raw_evidence",
+            "beatIds": [
+              "beat_09"
+            ],
+            "storyFunction": "Final consequence in transport van.",
+            "blockSummary": "Driver in custody attempts to justify herself to supervisor.",
+            "viewerStateChanges": 1,
+            "ownershipReason": "Closing payoff from candidate ending window."
+          }
+        ],
+        "openLoops": [
+          {
+            "id": "loop_01",
+            "question": "Will the driver's bizarre hostility and refusal to move her car result in criminal charges?"
+          }
+        ]
+      }
+    }
+  ]
 }

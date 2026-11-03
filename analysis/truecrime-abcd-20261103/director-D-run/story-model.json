@@ -1,0 +1,403 @@
+{
+  "artifactType": "auto_story_source_model",
+  "modelVersion": 6,
+  "sourceId": "d5528e4e755b5d2b8256c08b53284a1d695970afb1f9395eb6ea7bad186db279",
+  "durationSec": 549.741,
+  "people": [
+    {
+      "id": "female_driver",
+      "label": "Female Driver",
+      "role": "Driver / Suspect",
+      "firstSeenSec": 1.5
+    },
+    {
+      "id": "deputy_female",
+      "label": "Female Deputy",
+      "role": "Initial responding officer",
+      "firstSeenSec": 23
+    },
+    {
+      "id": "deputy_male_1",
+      "label": "Male Deputy 1",
+      "role": "Responding officer / Bodycam wearer",
+      "firstSeenSec": 19.5
+    },
+    {
+      "id": "deputy_male_2",
+      "label": "Male Deputy 2",
+      "role": "Assisting officer",
+      "firstSeenSec": 211
+    },
+    {
+      "id": "supervisor",
+      "label": "Sergeant / Supervisor",
+      "role": "Supervising officer",
+      "firstSeenSec": 709
+    }
+  ],
+  "events": [
+    {
+      "id": "evt_initial_encounter",
+      "startSec": 33,
+      "endSec": 72,
+      "type": "verbal_confrontation",
+      "location": "Busy Roadway",
+      "summary": "Deputy confronts driver ignoring her by stalled car in traffic.",
+      "peopleIds": [
+        "female_driver",
+        "deputy_female"
+      ],
+      "tension": 0.5,
+      "visualQuality": 0.8,
+      "novelty": 0.6,
+      "dialogueImpact": 0.7,
+      "causalParents": [],
+      "isReveal": false,
+      "spoilsEventId": null,
+      "audioType": "participant_speech",
+      "audioConfidence": 0.95
+    },
+    {
+      "id": "evt_911_call_audio",
+      "startSec": 117,
+      "endSec": 201,
+      "type": "emergency_call",
+      "location": "Phone Dispatch",
+      "summary": "Driver calls 911 dispatch demanding location of towed vehicle.",
+      "peopleIds": [
+        "female_driver"
+      ],
+      "tension": 0.5,
+      "visualQuality": 0.5,
+      "novelty": 0.7,
+      "dialogueImpact": 0.85,
+      "causalParents": [],
+      "isReveal": true,
+      "spoilsEventId": null,
+      "audioType": "participant_speech",
+      "audioConfidence": 0.9
+    },
+    {
+      "id": "evt_push_car",
+      "startSec": 223,
+      "endSec": 234,
+      "type": "clearing_roadway",
+      "location": "Roadway / Shoulder",
+      "summary": "Deputies manually push stalled Camry off active roadway into dirt.",
+      "peopleIds": [
+        "deputy_male_1",
+        "deputy_male_2"
+      ],
+      "tension": 0.4,
+      "visualQuality": 0.75,
+      "novelty": 0.3,
+      "dialogueImpact": 0.2,
+      "causalParents": [],
+      "isReveal": false,
+      "spoilsEventId": null,
+      "audioType": "scene_sound",
+      "audioConfidence": 0.85
+    },
+    {
+      "id": "evt_tracking_driver",
+      "startSec": 256,
+      "endSec": 320,
+      "type": "police_pursuit_stop",
+      "location": "Office Park Sidewalk",
+      "summary": "Deputies locate driver on foot as she ignores verbal inquiries.",
+      "peopleIds": [
+        "female_driver",
+        "deputy_male_1",
+        "deputy_male_2"
+      ],
+      "tension": 0.55,
+      "visualQuality": 0.75,
+      "novelty": 0.6,
+      "dialogueImpact": 0.5,
+      "causalParents": [],
+      "isReveal": false,
+      "spoilsEventId": null,
+      "audioType": "officer_speech",
+      "audioConfidence": 0.9
+    },
+    {
+      "id": "evt_detention_arrest",
+      "startSec": 336,
+      "endSec": 454,
+      "type": "arrest",
+      "location": "Neighborhood Street",
+      "summary": "Deputies detain and arrest woman for misuse of 911.",
+      "peopleIds": [
+        "female_driver",
+        "deputy_male_1",
+        "deputy_male_2"
+      ],
+      "tension": 0.75,
+      "visualQuality": 0.85,
+      "novelty": 0.7,
+      "dialogueImpact": 0.8,
+      "causalParents": [],
+      "isReveal": true,
+      "spoilsEventId": null,
+      "audioType": "participant_speech",
+      "audioConfidence": 0.95
+    },
+    {
+      "id": "evt_search_vehicle",
+      "startSec": 554,
+      "endSec": 549.741,
+      "type": "search",
+      "location": "Police Vehicle",
+      "summary": "Deputies order woman out of cruiser for mandatory pat down.",
+      "peopleIds": [
+        "female_driver",
+        "deputy_female",
+        "deputy_male_2"
+      ],
+      "tension": 0.6,
+      "visualQuality": 0.85,
+      "novelty": 0.5,
+      "dialogueImpact": 0.7,
+      "causalParents": [],
+      "isReveal": false,
+      "spoilsEventId": null,
+      "audioType": "participant_speech",
+      "audioConfidence": 0.95
+    },
+    {
+      "id": "evt_supervisor_explanation",
+      "startSec": 711,
+      "endSec": 549.741,
+      "type": "interrogation_explanation",
+      "location": "Transport Van",
+      "summary": "Woman explains 911 rationale to supervisor inside transport van.",
+      "peopleIds": [
+        "female_driver",
+        "supervisor"
+      ],
+      "tension": 0.5,
+      "visualQuality": 0.85,
+      "novelty": 0.65,
+      "dialogueImpact": 0.9,
+      "causalParents": [],
+      "isReveal": true,
+      "spoilsEventId": null,
+      "audioType": "participant_speech",
+      "audioConfidence": 0.95
+    }
+  ],
+  "quotes": [
+    {
+      "id": "q1",
+      "eventId": "evt_initial_encounter",
+      "speaker": "female_driver",
+      "text": "No, you can't do anything.",
+      "startSec": 54,
+      "endSec": 56.5,
+      "epistemic": "suspect_statement",
+      "editorialValue": 0.75
+    },
+    {
+      "id": "q2",
+      "eventId": "evt_initial_encounter",
+      "speaker": "deputy_female",
+      "text": "Continue with the attitude and I'll tow your car myself right now.",
+      "startSec": 59,
+      "endSec": 62.5,
+      "epistemic": "officer_claim",
+      "editorialValue": 0.8
+    },
+    {
+      "id": "q3",
+      "eventId": "evt_911_call_audio",
+      "speaker": "female_driver",
+      "text": "I'm going to hang up until I get somebody that has a brain cell left.",
+      "startSec": 156,
+      "endSec": 160,
+      "epistemic": "suspect_statement",
+      "editorialValue": 0.95
+    },
+    {
+      "id": "q4",
+      "eventId": "evt_detention_arrest",
+      "speaker": "deputy_male_2",
+      "text": "If you don't stop, you're gonna go to jail for misuse of 911.",
+      "startSec": 337,
+      "endSec": 341.5,
+      "epistemic": "officer_claim",
+      "editorialValue": 0.85
+    },
+    {
+      "id": "q5",
+      "eventId": "evt_detention_arrest",
+      "speaker": "female_driver",
+      "text": "So I can wait for the tow truck.",
+      "startSec": 443,
+      "endSec": 444.5,
+      "epistemic": "suspect_statement",
+      "editorialValue": 0.7
+    },
+    {
+      "id": "q6",
+      "eventId": "evt_detention_arrest",
+      "speaker": "deputy_male_2",
+      "text": "No, that's ok, we're past that now.",
+      "startSec": 444.8,
+      "endSec": 446.5,
+      "epistemic": "officer_claim",
+      "editorialValue": 0.9
+    },
+    {
+      "id": "q7",
+      "eventId": "evt_search_vehicle",
+      "speaker": "female_driver",
+      "text": "You can pat me down at the station.",
+      "startSec": 602.5,
+      "endSec": 604.5,
+      "epistemic": "suspect_statement",
+      "editorialValue": 0.75
+    },
+    {
+      "id": "q8",
+      "eventId": "evt_supervisor_explanation",
+      "speaker": "female_driver",
+      "text": "Being rude is not illegal.",
+      "startSec": 737.5,
+      "endSec": 739.5,
+      "epistemic": "suspect_statement",
+      "editorialValue": 0.95
+    },
+    {
+      "id": "q9",
+      "eventId": "evt_supervisor_explanation",
+      "speaker": "supervisor",
+      "text": "Ok, well that's not an emergency.",
+      "startSec": 804.5,
+      "endSec": 807,
+      "epistemic": "officer_claim",
+      "editorialValue": 0.85
+    }
+  ],
+  "audioEvents": [
+    {
+      "type": "sudden_silence",
+      "startSec": 178.038,
+      "endSec": 179.517,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 179.812,
+      "endSec": 181.611,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 198.65,
+      "endSec": 199.733,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 228.909,
+      "endSec": 229.717,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 256.8,
+      "endSec": 258.613,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 271.566,
+      "endSec": 273.244,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 276.809,
+      "endSec": 278.032,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 324.397,
+      "endSec": 325.461,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 344.937,
+      "endSec": 345.888,
+      "peak": 0.5
+    },
+    {
+      "type": "sudden_silence",
+      "startSec": 466.401,
+      "endSec": 467.26,
+      "peak": 0.5
+    }
+  ],
+  "tensionCurve": [
+    {
+      "atSec": 33,
+      "tension": 0.5
+    },
+    {
+      "atSec": 117,
+      "tension": 0.5
+    },
+    {
+      "atSec": 223,
+      "tension": 0.4
+    },
+    {
+      "atSec": 256,
+      "tension": 0.55
+    },
+    {
+      "atSec": 336,
+      "tension": 0.75
+    },
+    {
+      "atSec": 554,
+      "tension": 0.6
+    },
+    {
+      "atSec": 711,
+      "tension": 0.5
+    }
+  ],
+  "visualQuality": [
+    {
+      "atSec": 33,
+      "quality": 0.8
+    },
+    {
+      "atSec": 117,
+      "quality": 0.5
+    },
+    {
+      "atSec": 223,
+      "quality": 0.75
+    },
+    {
+      "atSec": 256,
+      "quality": 0.75
+    },
+    {
+      "atSec": 336,
+      "quality": 0.85
+    },
+    {
+      "atSec": 554,
+      "quality": 0.85
+    },
+    {
+      "atSec": 711,
+      "quality": 0.85
+    }
+  ]
+}

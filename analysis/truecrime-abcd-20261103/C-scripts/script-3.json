@@ -1,0 +1,125 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 3,
+  "suggestedTitle": "ENTITLED DRIVER ARRESTED FOR 911 ABUSE",
+  "title": "ENTITLED DRIVER ARRESTED FOR 911 ABUSE",
+  "partBadge": "PART 2",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 116.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "verified_visual_audio",
+    "inspectedInputs": [
+      "source-m6ow9dqxqcg.mp4",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json"
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "narrativeBeats": [
+    "hook",
+    "context",
+    "escalation",
+    "climax",
+    "evidence",
+    "contrast",
+    "cliffhanger"
+  ],
+  "segments": [
+    {
+      "segmentId": "seg_03_01",
+      "sceneId": "scene_0022",
+      "sourceStartSec": 216,
+      "sourceEndSec": 230,
+      "narrativeRole": "hook",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0010",
+      "actionSequenceId": "act_jail_warning"
+    },
+    {
+      "segmentId": "seg_03_02",
+      "sceneId": "scene_0022",
+      "sourceStartSec": 230.5,
+      "sourceEndSec": 246.5,
+      "narrativeRole": "context",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Deputies give her multiple lawful opportunities to simply wait for her tow truck, but her sheer contempt for law enforcement pushes officers to the absolute limit.",
+      "actionCandidateId": "action_0011",
+      "actionSequenceId": "act_ultimatum_context"
+    },
+    {
+      "segmentId": "seg_03_03",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 260,
+      "sourceEndSec": 274,
+      "narrativeRole": "escalation",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0013",
+      "actionSequenceId": "act_detention_stop"
+    },
+    {
+      "segmentId": "seg_03_04",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 274.5,
+      "sourceEndSec": 291.5,
+      "narrativeRole": "climax",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0014",
+      "actionSequenceId": "act_cuffs_applied",
+      "actionOverride": true
+    },
+    {
+      "segmentId": "seg_03_05",
+      "sceneId": "scene_0026",
+      "sourceStartSec": 296.8,
+      "sourceEndSec": 303,
+      "narrativeRole": "evidence",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0014",
+      "actionSequenceId": "act_misuse_justification"
+    },
+    {
+      "segmentId": "seg_03_06",
+      "sceneId": "scene_0028",
+      "sourceStartSec": 311,
+      "sourceEndSec": 329,
+      "narrativeRole": "contrast",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Deputies patiently explain that abandoning a vehicle in traffic while tying up emergency lines is a crime, yet she remains convinced she did absolutely nothing wrong.",
+      "actionCandidateId": "action_0015",
+      "actionSequenceId": "act_legal_explanation"
+    },
+    {
+      "segmentId": "seg_03_07",
+      "sceneId": "scene_0030",
+      "sourceStartSec": 348,
+      "sourceEndSec": 356.5,
+      "narrativeRole": "cliffhanger",
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0017",
+      "actionSequenceId": "act_search_refusal"
+    },
+    {
+      "segmentId": "seg_03_08",
+      "sceneId": "scene_0031",
+      "sourceStartSec": 357,
+      "sourceEndSec": 376,
+      "narrativeRole": "cliffhanger",
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Locked in the back of a squad car, she boldly refuses a mandatory weapons pat-down, forcing deputies to physically drag her out before transport arrives.",
+      "actionCandidateId": "action_0017",
+      "actionSequenceId": "act_patdown_cliffhanger"
+    }
+  ]
+}

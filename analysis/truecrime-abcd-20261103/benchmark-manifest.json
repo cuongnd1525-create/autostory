@@ -1,8 +1,8 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "benchmarkId": "truecrime-abcd-20261103",
-  "title": "AutoStory True Crime Editorial A/B/C/D Benchmark",
-  "generatedAt": "2026-11-03T10:45:00.000Z",
+  "title": "AutoStory True Crime Editorial A/B/C/D Benchmark (Verified Live Executions)",
+  "auditCompletedAt": "2026-11-03T12:10:00.000Z",
   "environment": {
     "gitCommitSha": "55767077af5d27c5b804d6301aea10486e4784dc",
     "gitBranch": "ui-ux-creator-studio-2.0",
@@ -22,20 +22,34 @@
   "experiments": {
     "A": {
       "name": "Free Editorial Gemini",
+      "status": "VERIFIED_EXECUTED",
       "role": "Unconstrained Elite Editor & Story Director",
-      "model": "gemini-3.8-flash / Antigravity Multimodal",
-      "provider": "antigravity_direct",
-      "description": "Direct multimodal examination with full autonomy over story count, hook selection, central question, and narrative structure. No forced 3-part serialization, no preselected hook anchors, no mandatory flashbacks.",
+      "model": "gemini-3.8-flash / Antigravity Multimodal (Fresh Independent Session)",
+      "provider": "antigravity_subagent",
+      "conversationId": "409d34a5-c383-4f65-92d8-6a41bb130ab4",
+      "description": "Independent session directly examining source-m6ow9dqxqcg.mp4, scene manifest, and transcript without exposure to prior criticisms, archetypes, or forced serialization. Concluded the 9-minute footage supports exactly 1 high-velocity standalone story (74.0s) and created an 11-beat verified EDL.",
       "outputFile": "A-free-editorial.json",
       "proposedStoriesCount": 1,
-      "format": "Single 64.5s Standalone Viral Short"
+      "format": "Single 74.0s Standalone Viral Short",
+      "hook": {
+        "sceneId": "scene_0037",
+        "range": "455.500s - 461.500s (6.0s)",
+        "quote": "I was just like maybe a little bit rude to her, but being rude is not illegal!"
+      },
+      "edlVerification": {
+        "beatCount": 11,
+        "totalCalculatedDurationSec": 74.0,
+        "boundsCheck": "PASS (all 11 segments match scene boundaries exactly)"
+      }
     },
     "B": {
       "name": "Existing Pipeline (Baseline)",
+      "status": "VERIFIED_EXECUTED",
       "role": "AutoStory manual_gemini_draft_review (frozen)",
       "model": "gemini-3.8-flash",
       "provider": "vertex_ai",
-      "description": "Current production pipeline using 01-gemini-highlight-scripts-prompt.txt with locked SERIES HOOK CONTRACT forcing 3-part serialization and regex-generated 'Barricaded door' anchors at 62-82s, 278-294s, 322-340s.",
+      "executedAt": "2026-11-02T10:28:15.112Z",
+      "description": "Historical production run using 01-gemini-highlight-scripts-prompt.txt with locked SERIES HOOK CONTRACT forcing 3-part serialization and regex-generated 'Barricaded door' anchors at 62-82s, 278-294s, 322-340s. Caused awkward reverse chronology in Part 1 and spoiled Part 3's arrest at second 0 of Part 2.",
       "outputFile": "B-current-pipeline.json",
       "proposedStoriesCount": 3,
       "format": "3-Part Serialized Highlight Cuts (82.7s, 83.2s, 87.7s)",
@@ -52,24 +66,62 @@
       }
     },
     "C": {
-      "name": "Pipeline Without Automatic Hook Contract",
-      "role": "Controlled ablation test of Hook Contract constraint",
+      "name": "Pipeline Without Automatic Hook Contract (Ablation)",
+      "status": "VERIFIED_EXECUTED",
+      "role": "Controlled live ablation of Hook Contract constraint",
       "model": "gemini-3.8-flash",
-      "provider": "vertex_ai / isolated prompt",
-      "description": "Exact same base prompt, input pack, scene manifest, action candidates, and 3-part requirement as B, but removing the automatic bogus 'Barricaded door' SERIES HOOK CONTRACT block. Tests whether Gemini can choose appropriate openers and avoid the Part 2 spoiler when freed from anchor constraints.",
+      "provider": "vertex_ai",
+      "executedAt": "2026-11-03T12:02:41.000Z",
+      "description": "Exact same base prompt, input pack (8 files, hook-contract.json omitted), scene manifest, action candidates, and 3-part requirement as B. Removed lines 14-40 (the SERIES HOOK CONTRACT block). Verified that Gemini naturally chose authentic opening hooks (Part 1: 39-53s, Part 2: 216-230s, Part 3: 451-464.5s) and avoided spoiling the arrest in Part 2.",
       "outputFile": "C-no-auto-hook-contract.json",
+      "diffFile": "prompt-diff-B-vs-C.diff",
       "proposedStoriesCount": 3,
-      "format": "3-Part Serialized Highlight Cuts with Unconstrained Openers"
+      "format": "3-Part Serialized Highlight Cuts with Unconstrained Openers",
+      "scripts": [
+        "C-scripts/script-1.json (8 beats)",
+        "C-scripts/script-3.json (7 beats)",
+        "C-scripts/script-4.json (6 beats)"
+      ],
+      "tokenUsage": {
+        "inputTokens": 95217,
+        "outputTokens": 8465,
+        "totalCostUsd": 0.103156,
+        "elapsedTimeMs": 62481
+      }
     },
     "D": {
       "name": "Media-Grounded Editorial Director",
+      "status": "VERIFIED_EXECUTED",
       "role": "Architectural scope-media-director-v1 pattern",
       "model": "gemini-3.8-flash",
-      "provider": "editorialDirectorService",
-      "description": "Media-grounded story scope architecture: Gemini selects scope [28s - 345s], formulates a central viewer question, selects opening strategy (conflict_teaser_rewind), assigns open loops, allocates information budget, and builds an exact causal EDL that downstream code cannot mutate.",
+      "provider": "vertex_ai / autoStoryV3Pipeline",
+      "executedAt": "2026-11-03T11:18:00.000Z - 2026-11-03T11:26:00.000Z",
+      "description": "Full execution of AutoStory V4 production path: Story Scope selected the highway walk-away conflict, packed 4 scope reels (184.5s media), and the multimodal Editorial Director watched video chunks directly to generate a 9-beat director spine with repair pass.",
       "outputFile": "D-media-editorial-director.json",
+      "runDirectory": "director-D-run/",
       "proposedStoriesCount": 1,
-      "format": "Single 68.0s Media-Grounded Director Spine with Causal Beat Graph"
+      "format": "Single 68.0s Media-Grounded Director Spine with Causal Beat Graph",
+      "tokenUsage": {
+        "storyScopePass": {
+          "promptTokens": 4190,
+          "candidateTokens": 2472,
+          "thoughtsTokens": 2081,
+          "modelMs": 37620
+        },
+        "editorialDirectorPass": {
+          "promptTokens": 63316,
+          "videoTokens": 42372,
+          "audioTokens": 8025,
+          "textTokens": 12919,
+          "candidateTokens": 3452,
+          "modelMs": 32316
+        },
+        "technicalRepairPass": {
+          "promptTokens": 60820,
+          "candidateTokens": 3248,
+          "modelMs": 29840
+        }
+      }
     }
   }
 }

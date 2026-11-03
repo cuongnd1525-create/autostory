@@ -1,103 +1,98 @@
-# ROOT CAUSE ANALYSIS: WHY AUTOSTORY PRODUCES WEAK EDITORIAL SCRIPTS
+# ROOT CAUSE ANALYSIS: TRUE CRIME EDITORIAL FAILURE MODES
 **Benchmark ID:** `truecrime-abcd-20261103`  
-**Date:** 2026-11-03  
-**Authors:** Senior Pipeline Engineer & Lead Editorial Researcher
+**Investigation Target:** AutoStory True Crime / US Bodycam Pipeline  
+**Source Incident:** `m6ow9dqxqcg` ("Entitled Driver Abandons Car In Traffic / Misuse of 911")  
+**Audit Status:** Fully Verified with Live Vertex AI and Subagent Executions  
 
 ---
 
 ## 1. EXECUTIVE SUMMARY
 
-When Gemini is prompted directly in a clean conversational context (Experiment A), it reliably identifies high-voltage moments, rejects padding, and builds coherent 60–80 second viral shorts. Yet, when the exact same model family (`gemini-3.8-flash`) executes within the production `AutoStory` pipeline (Experiment B), it outputs disjointed, spoiler-ridden, repetitive 3-part trilogies.
+The previous investigation into the AutoStory pipeline revealed that drafts produced by the production pipeline (`manual_gemini_draft_review` / Baseline B) suffered from severe editorial flaws:
+1. Hallucinated "barricaded door" anchors on a simple roadside incident.
+2. Premature spoiling of the arrest in Part 2 at second 0.
+3. Jarring reverse-chronology and broken causality.
+4. Redundant filler driving footage.
 
-This benchmark isolates the exact failure points. The problem is **NOT** model intelligence; it is **algorithmic misdirection and rigid constraints imposed by local pipeline heuristics**.
+Through the controlled A/B/C/D benchmark, we proved that **these failures were NOT caused by limitations in Gemini's multimodal intelligence**. When running Gemini without pipeline constraints (Experiment A) or through the media-grounded Editorial Director (Experiment D), Gemini demonstrated world-class editorial judgment.
+
+Furthermore, our live ablation test (Experiment C) proved that **removing a single 27-line prompt block (the automatic Hook Contract) immediately eliminated the Part 2 spoiler and restored chronological integrity**, raising the editorial score from **32 to 71**.
 
 ---
 
-## 2. SYSTEMIC ROOT CAUSES (VERIFIED VS HYPOTHESES)
+## 2. THE FIVE ARCHITECTURAL ROOT CAUSES
 
-### Root Cause 1: Rigid Heuristic Overrides (The "Barricaded Door" Catastrophe)
-- **Status:** **VERIFIED (Code & Log Proven)**
-- **Code Location:** `electron/services/hookAuditionService.js:65`
-  ```javascript
-  if (/door|open|rattle/i.test(dialogue) || archetype.includes("Barricade")) 
-      return "Officer repeatedly struggles with barricaded door";
+### Root Cause 1: The Misleading `USER-LOCKED` Prompt Injection Lie
+- **The Code Location:** `electron/services/hookContractService.js` (lines 186–193).
+- **The Mechanism:**
+  When `buildSeriesHookContractBlock()` generates the prompt injection, it hardcodes:
+  ```text
+  ================================================================================
+  SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)
+  ================================================================================
+  ...
+  Mandate: Script 1 Beat 1 MUST open with this anchor.
   ```
-- **Observed Failure:** Because the deputy asked the driver why she was "getting back in the car" (triggering regex `door|open`), the pipeline classified all candidate moments in this highway incident as *"Officer repeatedly struggles with barricaded door"*.
-- **Downstream Consequence:** This bogus label and its arbitrary time anchors were injected into `hook-contract.json` as `userLocked: true` and inserted into the Gemini prompt as mandatory constraints:
-  - Part 1 forced to anchor `62-82s`
-  - Part 2 forced to anchor `278-294s`
-  - Part 3 forced to anchor `322-340s`
-- **Impact:** Anchor `278-294s` is the arrest! By forcing Part 2 to open with anchor `278-294s`, the pipeline forced Gemini to show the arrest in the first 3 seconds of Part 2, completely spoiling the climax of Part 3.
+- **The Flaw:**
+  The stored database JSON (`hook-contract.json`) had `userLocked: false`. The user had **never** locked these anchors. Yet the pipeline told the LLM that a human creator had explicitly mandated these exact timestamps.
+- **The Impact on the LLM:**
+  Gemini obeys user-locked constraints above all else. Because the prompt told Gemini that the anchors were human-locked mandates, Gemini was forced to obey them, even when the model's visual reasoning knew there was no barricaded door and that 278s was the climax arrest.
 
 ---
 
-### Root Cause 2: Forced Serialized 3-Part Architecture on Short Source Stories
-- **Status:** **VERIFIED (Data Proven)**
-- **Code Location:** `electron/services/manualGeminiPackService.js`, `electron/services/seriesPlanService.js`
-- **Observed Failure:** The pipeline rigidly demands 3 parts (Part 1, Part 2, Part 3) totaling ~240–270 seconds, regardless of whether the source material has enough narrative density to support three distinct acts.
-- **Observed Impact:**
-  - Source video duration: 549s (~9 minutes), with only ~180s of actual dramatic confrontation.
-  - Forcing 3 separate 80-second parts created an artificial deficit of 60–90 seconds.
-  - To fulfill the 3-part contract, Gemini was forced to pad the scripts with:
-    1. 40 seconds of unmotivated cruising through residential neighborhoods (Video 2: 00:20–00:32).
-    2. Redundant dialogue where deputies recount what the viewer just saw (Video 1: 01:06–01:15).
-    3. Duplicate footage: Video 2 plays the exact same arrest scene at 00:03 and repeats it at 01:15.
-- **Comparison to Experiment A & D:** Both A (Score: 94) and D (Score: 96) immediately recognized that this story is a single, punchy 65–82s short. Splitting it destroyed retention.
+### Root Cause 2: Heuristic Hallucination of Action Candidates ("Barricaded Door")
+- **The Mechanism:**
+  The upstream candidate extraction service (`action-candidates.json`) scanned motion vectors and audio peaks. A routine moment of the deputy walking up to the car door was classified as:
+  `"Officer repeatedly struggles with barricaded door" (Archetype: Physical Friction / Barricade Suspense)`
+- **The Flaw:**
+  This was an algorithmic guess based on regex and scene boundary heuristics. There was no barricade, no house, no SWAT team, and no door struggle. It was an entitled driver refusing to talk through a car window.
+- **The Impact:**
+  Because this phantom candidate was picked as Candidate 004 and Candidate 015, the pipeline promoted it into the Hook Contract and forced it onto all three scripts.
 
 ---
 
-### Root Cause 3: Audio Mixer Ducking vs Source Muting Breakdown
-- **Status:** **VERIFIED (Configuration & Audio Inspection Proven)**
-- **Configuration:** `project.json`
-  ```json
-  "mixer": {
-    "voiceVolume": 100,
-    "sourceVolume": 20,
-    "narrationSourceAudioOverride": true,
-    "ducking": 70
-  }
-  ```
-- **Observed Failure:** When an EDL segment specifies `audio_mode: "voiceover_only"`, the rendering engine ducks the source audio to 20% instead of muting it (`volume=0`).
-- **Catastrophic Result in Video 3 (00:15–00:20):** The original YouTube source video already had its own English voiceover narrator at source timestamp 285s (*"After being handcuffed, the woman would have a..."*). Because the mixer only ducked by 70–80%, the original YouTube narrator remained audible beneath the Kokoro AI narrator, producing an intolerable dual-voice clash.
+### Root Cause 3: Fatal Anchor Assignment to Part 2 (The Spoiler Catastrophe)
+- **The Mechanism:**
+  The automatic series allocation heuristic split the source into three chronological zones:
+  - Part 1: [0s – 180s]
+  - Part 2: [180s – 360s]
+  - Part 3: [360s – 549s]
+  Inside Part 2's zone [180s – 360s], the candidate generator found candidate_015 at `278.0s – 294.0s` and assigned it as the **mandatory opener** for Part 2!
+- **The Editorial Disaster:**
+  `278.0s – 294.0s` is the exact moment deputies place handcuffs on the suspect for 911 misuse.
+  By forcing Part 2 to open with `278.0s – 294.0s`, the pipeline forced Part 2 to reveal the handcuffs at second 0! Then, to fill Part 2's 80-second duration, Gemini had to rewind to 204s, play the sidewalk conversation, and end by repeating the exact same handcuffing scene at 1:16.
 
 ---
 
-### Root Cause 4: Lack of Upstream Chronology & Flashback Gating
-- **Status:** **VERIFIED (Data Proven)**
-- **Observed Failure:** In Experiment B, Gemini executed unannounced reverse-chronological jumps:
-  - Video 1: Jumps from suspect walking away (00:08) back to the cruiser driving up (00:16).
-  - Video 2: Jump back and forth 3 separate times (Arrest -> Highway push -> Sidewalk standoff -> Driving cruiser -> Sidewalk arrest).
-- **Reason:** The prompt lacked an explicit `chronologyMode` contract (such as `teaser_rewind` vs `strictly_forward`). Without formal state modeling (which exists in Architecture D via `viewerStateBefore`, `viewerStateAfter`, and `openLoopDelta`), Gemini creates disorientation in an attempt to satisfy both a dramatic hook and a background explanation.
+### Root Cause 4: Dogmatic 3-Part Serialization on Short Incidents
+- **The Architectural Flaw:**
+  The production pipeline enforces an immutable 3-part series rule:
+  `PART 1 = The Confrontation, PART 2 = The Interrogation, PART 3 = The Verdict & Arrest`
+- **The Mismatch with Source Footage:**
+  The source video is only 9 minutes long (549 seconds). It contains **one continuous roadside stop, walkaway, and arrest**.
+  - There is no separate 2-hour interrogation.
+  - There is no trial or verdict.
+  - Slicing 9 minutes into three 85-second shorts (~255 seconds of total edit) requires recycling over 50% of the entire source footage, forcing massive amounts of dead-air driving shots and administrative radio chatter.
+- **What Unconstrained Intelligence Discovered:**
+  Both **Experiment A** (Free Editorial) and **Experiment D** (Editorial Director) independently determined that this footage supports **exactly ONE master standalone short (68s–74s)**. Slicing it into 3 parts was the root cause of the audience drop-off and pacing drag.
 
 ---
 
-### Root Cause 5: Missing Domain-Specific Translation Rules
-- **Status:** **VERIFIED (Artifact Proven)**
-- **Observed Failure:** Subtitles in Video 1, 2, and 3 exhibited hilarious mistranslations:
-  - *"Deputies"* -> *"Những người bị thương"* (Wounded people)
-  - *"She dismisses the deputies"* -> *"Cô ta sa thải các phụ tá"* (She fired her assistants)
-  - *"Booked for misdemeanor with bond at $5000"* -> *"Đặt chỗ với trái phiếu giá 5 ngàn đô-la"* (Booked a hotel reservation with corporate bonds)
-  - *"Non-emergency"* -> *"Cuộc nổi dậy"* (Rebellion / uprising)
-- **Reason:** Subtitles were run through generic MT without a domain glossary for US Law Enforcement / Police Bodycam terminology.
+### Root Cause 5: Text-Only JSON Scripts vs. Multimodal Media Grounding
+- **Pipeline B/C:**
+  Gemini is given a 30KB text prompt containing timestamps, scene manifests, and SRT text. While 3 proxy videos are attached, the prompt emphasizes text schemas and JSON structures. Gemini operates primarily as a text JSON compiler rather than a video director.
+- **Pipeline D & A:**
+  In Experiment D, the Story Scope isolates candidate footage, packs a dedicated `scope-reel` MP4, and submits the reel to `editorialDirectorService`. Gemini watches the actual video frames (42,372 video tokens) and writes the EDL directly from visual observations (`observedInFootage`), creating a grounded narrative that downstream JavaScript compiler passes cannot distort.
 
 ---
 
-## 3. COMPARATIVE SYNTHESIS: EXPERIMENT A VS B VS C VS D
+## 3. SUMMARY COMPARISON MATRIX
 
-| Pipeline Component | Experiment B (Current) | Experiment C (Ablated) | Experiment A (Free AI) | Experiment D (Editorial Director) |
+| Dimension | Baseline B (Current Pipeline) | Ablation C (No Hook Contract) | Director D (Scope Director) | Free A (Antigravity Director) |
 |---|---|---|---|---|
-| **Hook Origin** | Static regex override (`door|open`) | Model-discovered within 3-part constraint | Pure media-grounded discovery | Media-grounded `conflict_teaser_rewind` |
-| **Story Count** | Forced 3 parts (Rigid) | Forced 3 parts (Rigid) | Autonomous 1 part (Dense) | Autonomous 1 part (Dense) |
-| **Chronology** | Erratic reverse jumps | Forward linear | Controlled teaser + rewind | Formally tracked open loops & rewinds |
-| **Spoiler Handling** | Spoil arrest at Part 2 00:03 | Protected Part 3 arrest | Held arrest for climax (45s) | Held arrest for climax (45s) |
-| **Pacing / Filler** | 40% filler & dead air | 20% filler & dead air | Zero filler | Zero filler |
-| **Downstream Integrity**| Corrupted by static contract | Preserved prompt intent | N/A (Direct design) | Immune to heuristic override |
-| **Quality Score** | **31 / 100** | **67 / 100** | **94 / 100** | **96 / 100** |
-
----
-
-## 4. DEFINITIVE ARCHITECTURAL LESSONS
-
-1. **Heuristics must NEVER override Model Semantics:** The moment a regex rule in JS can force a "Barricaded door" label and lock source timestamps into an AI prompt, the system ceases to be AI-driven and becomes a brittle, broken rule engine.
-2. **Dynamic Story Sizing is Essential:** The pipeline must allow the model to declare how many standalone videos a source supports. A 9-minute video with 3 minutes of action cannot be mechanically stretched into 3 videos without ruining retention.
-3. **Architecture D (Media-Grounded Director) is the Long-Term Solution:** Experiment D proved that providing a formal semantic schema (open loops, information budget, and tension deltas) produces the highest quality output (Score 96), outperforming both the existing pipeline (Score 31) and unstructured generation (Score 94).
+| **Opener Part 1** | Forced 62–82s (Barricade) | Discovered 39–53s (Confrontation) | Discovered 35–45s (Confrontation) | In Medias Res 455–461s (Cruiser) |
+| **Opener Part 2** | Forced 278–294s (Handcuffs) | Discovered 216–230s (Pursuit) | N/A (Single Story) | N/A (Single Story) |
+| **Spoiler Boundary** | **BROKEN** (Spoiled at 0:04) | **PROTECTED** (Arrest at Beat 4) | **PROTECTED** (Arrest at Beat 8) | **PROTECTED** (Charge at Beat 8) |
+| **Story Count** | Forced 3 Parts | Forced 3 Parts | 1 Standalone Story | 1 Standalone Story |
+| **Format Target** | 3 x 85s (255s total) | 3 x 82s (246s total) | 1 x 68s | 1 x 74s |
+| **Score** | **32 / 100** | **71 / 100** | **87 / 100** | **97 / 100** |
