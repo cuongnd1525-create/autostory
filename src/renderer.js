@@ -2482,6 +2482,7 @@ function writeSetupDraft() {
     autoStoryNarrationStyle: el.autoStoryNarrationStyle?.value || "investigative",
     autoStoryAudioBalance: el.autoStoryAudioBalance?.value || "balanced",
     autoStoryEngineVersion: el.autoStoryEngineVersion?.value || "2",
+    autoStoryV4OutputDefaulted: Boolean(state.autoStoryV4OutputDefaulted),
     sourceVideoPath: el.sourceVideoPath?.value || "",
     sourceDownloadUrl: el.sourceDownloadUrl?.value || "",
     sourceKind: el.sourceVideoPath?.dataset.sourceKind || "",
@@ -2597,6 +2598,7 @@ function applySetupDraft(draft = readSetupDraft()) {
   if (el.autoStoryNarrationStyle) el.autoStoryNarrationStyle.value = draft.autoStoryNarrationStyle || "investigative";
   if (el.autoStoryAudioBalance) el.autoStoryAudioBalance.value = draft.autoStoryAudioBalance || "balanced";
   if (el.autoStoryEngineVersion) { el.autoStoryEngineVersion.value = draft.autoStoryEngineVersion || "2"; updateAutoStoryEngineHint(); }
+  state.autoStoryV4OutputDefaulted = Boolean(draft.autoStoryV4OutputDefaulted);
   if (draft.sourceVideoPath && el.sourceVideoPath) el.sourceVideoPath.value = draft.sourceVideoPath;
   if (draft.sourceDownloadUrl && el.sourceDownloadUrl) el.sourceDownloadUrl.value = draft.sourceDownloadUrl;
   if (el.sourceVideoPath) {
@@ -7119,7 +7121,7 @@ function updateReview() {
   if (el.reviewAutoStory) {
     const min = Math.max(65, Number(el.autoStoryTargetMin?.value || 65));
     const max = Math.max(min, Number(el.autoStoryTargetMax?.value || 90));
-    const engineLabel = Number(el.autoStoryEngineVersion?.value) === 3 ? "V3 Story Model" : "V2 Legacy";
+    const engineLabel = window.AutoStoryEngine.engine(el.autoStoryEngineVersion?.value).shortLabel;
     el.reviewAutoStory.textContent = `${engineLabel} · ${Number(el.autoStoryOutputCount?.value || 2)} video · ${min}-${max}s · ${el.autoStoryNarrationStyle?.options[el.autoStoryNarrationStyle.selectedIndex]?.textContent || "Điều tra"}`;
   }
   if (isRecap) {
@@ -7425,14 +7427,13 @@ function renderProjectPicker() {
 
 function updateAutoStoryEngineHint() {
   if (!el.autoStoryEngineHint) return;
-  const v3 = Number(el.autoStoryEngineVersion?.value) === 3;
-  el.autoStoryEngineHint.textContent = v3
-    ? "V3: hiểu toàn bộ nguồn một lần (Source Story Model), thiết kế story beats, kiểm tra narrator (grounding/spoiler) và duck âm gốc thay vì tắt. Nên đặt số kịch bản = 1 khi test lần đầu."
-    : "V2: pipeline production hiện tại (ổn định). Chọn V3 để dùng story-model mới.";
+  el.autoStoryEngineHint.textContent = window.AutoStoryEngine.engine(el.autoStoryEngineVersion?.value).hint;
 }
 
 function readProjectPayload() {
   const setupMode = state.selectedMode;
+  // V2 / V3 / V4 project fields (src/autoStoryEngine.js).
+  const autoStoryEngineFields = window.AutoStoryEngine.projectFields(el.autoStoryEngineVersion?.value);
   const selectedMode = setupMode === "script_rewrite"
     ? "dubbing"
     : isAutoStoryMode(setupMode)
@@ -7489,12 +7490,14 @@ function readProjectPayload() {
           || state.finalVoiceCalibration?.profile?.conservativeWordsPerSecond
           || state.finalVoiceCalibration?.profile?.wordsPerSecond
           || 0
-        )
+        ),
+        // V4 only: { editorialArchitecture: "scope_media_director" }. V2/V3 add nothing.
+        ...autoStoryEngineFields.autoStoryConfigPatch
       }
       : null,
     // AutoStory engine version at PROJECT ROOT (the live service checks project.autoStoryContractVersion).
-    // Only set for an explicit V3 selection; V2/legacy leaves it undefined → existing behavior preserved.
-    autoStoryContractVersion: isAutoStoryMode(setupMode) && Number(el.autoStoryEngineVersion?.value) === 3 ? 3 : undefined,
+    // V2/legacy leaves it undefined → existing behavior preserved; V3 → 3; V4 → 4.
+    autoStoryContractVersion: isAutoStoryMode(setupMode) ? autoStoryEngineFields.autoStoryContractVersion : undefined,
     manualGeminiPackPath: isManualGeminiWorkflowMode(setupMode) ? (el.manualGeminiPackPath?.value || "") : "",
     manualGeminiPromptOptions: isManualGeminiProMode(setupMode)
       ? readManualGeminiPromptOptions()
@@ -8711,8 +8714,9 @@ function renderAutoStoryStatus() {
     const open = panel.dataset.projectId !== project.id || !panel.querySelector(".auto-story-script-list") || panel.querySelector(".auto-story-script-list").open;
     const diagnosticsOpen = panel.dataset.projectId === project.id && panel.querySelector(".auto-story-diagnostics")?.open;
     panel.dataset.projectId = project.id;
-    const isV3 = project.autoStoryContractVersion === 3 || project.autoStoryPipelineVersion === "source-story-v3";
-    const engineBadge = { label: isV3 ? "AutoStory V3" : "AutoStory V2", cls: isV3 ? "" : "v2" };
+    // A V4 run is stored as contract 3 + autoStoryEditorialArchitecture: read the architecture.
+    const engineOfProject = window.AutoStoryEngine.engineOfProject(project);
+    const engineBadge = { label: engineOfProject.badge, cls: engineOfProject.badgeClass };
     panel.innerHTML = `<div class="auto-story-heading"><strong>${escapeHtml(lines[0])}</strong><span class="auto-story-engine-badge ${engineBadge.cls}">${escapeHtml(engineBadge.label)}</span><span>${escapeHtml(lines[2])}</span></div>
       <details class="auto-story-script-list" ${open ? "open" : ""}><summary>${escapeHtml(lines[1])}</summary><div class="auto-story-rows"></div></details>
       <details class="auto-story-diagnostics" ${diagnosticsOpen ? "open" : ""}><summary>Chi phí và chi tiết</summary><div>${lines.slice(3).map(line => `<p>${escapeHtml(line)}</p>`).join("") || "Chưa có thông tin bổ sung."}</div></details>
@@ -10906,6 +10910,8 @@ async function createAndIngestProject() {
       && ["failed", "cancelled"].includes(state.currentProject?.autoStoryState?.phase)
       && state.currentProject.sourceVideoPath === payload.sourceVideoPath
       && JSON.stringify(state.currentProject.autoStoryConfig) === JSON.stringify(payload.autoStoryConfig)
+      // Never resume a failed run of another engine (V2/V3 configs are identical otherwise).
+      && window.AutoStoryEngine.engineOfProject(state.currentProject).value === window.AutoStoryEngine.engineOfProject(payload).value
       && state.currentProject.voiceProvider === payload.voiceProvider
       && state.currentProject.voiceId === payload.voiceId
       ? state.currentProject : null;
@@ -11602,9 +11608,12 @@ function bindEvents() {
     });
   });
   el.autoStoryEngineVersion?.addEventListener("change", () => {
-    // Convenience for the first V3 test: prefer a single output unless the user changed it.
-    if (Number(el.autoStoryEngineVersion.value) === 3 && el.autoStoryOutputCount && el.autoStoryOutputCount.value === "2") {
-      el.autoStoryOutputCount.value = "1";
+    // V3: prefer a single output unless the user changed it. V4: 1 output the first time it is
+    // chosen; afterwards the user's count is kept.
+    if (el.autoStoryOutputCount) {
+      const next = window.AutoStoryEngine.outputCountOnSelect(el.autoStoryEngineVersion.value, el.autoStoryOutputCount.value, state.autoStoryV4OutputDefaulted);
+      el.autoStoryOutputCount.value = next.count;
+      state.autoStoryV4OutputDefaulted = next.v4Defaulted;
     }
     updateAutoStoryEngineHint();
     updateReview();

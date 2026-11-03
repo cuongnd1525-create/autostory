@@ -700,6 +700,12 @@ dt {
   color: var(--muted);
 }
 
+.auto-story-engine-badge.v4 {
+  border-color: var(--amber);
+  color: var(--amber);
+  font-weight: 800;
+}
+
 .auto-story-open-folder {
   margin-top: 8px;
 }
