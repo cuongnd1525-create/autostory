@@ -176,6 +176,9 @@ function buildFocusedCropExpression(subjectX, subjectY, width, height) {
   };
 }
 
+// Shortest clip ffmpeg's single-pass loudnorm can measure reliably (its window is 3 s).
+const LOUDNORM_MIN_SEC = 3.5;
+
 class FfmpegService {
   constructor(settings) {
     this.autoStoryResourceManaged = settings.autoStoryResourceManaged === true;
@@ -828,8 +831,15 @@ class FfmpegService {
     }
 
     if (normalize) {
+      // loudnorm measures over a 3 s window; on a shorter clip its single pass
+      // attenuates by ~35 dB (a 2.9 s narrated block came out at -35 dBFS peak).
+      // Pad to a measurable length, normalize, then trim back to the fitted length.
+      const fittedSec = fitStrategy === "overflow_keep_full" ? rawDuration : safeTargetDuration;
+      const shortClip = fittedSec < LOUDNORM_MIN_SEC;
+      if (shortClip) filters.push(`apad=whole_dur=${formatSeconds(LOUDNORM_MIN_SEC + 0.5)}`);
       filters.push("loudnorm=I=-16:TP=-2:LRA=11");
       filters.push("alimiter=limit=0.95");
+      if (shortClip) filters.push(`atrim=0:${formatSeconds(fittedSec)}`);
     }
     filters.push("asetpts=N/SR/TB");
 
