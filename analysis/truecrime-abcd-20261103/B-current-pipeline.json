@@ -1,0 +1,125 @@
+{
+  "experiment": "B",
+  "name": "Existing Pipeline (Baseline)",
+  "storyIdentity": "ENTITLED DRIVER ABANDONS CAR IN TRAFFIC (3-Part Serialized)",
+  "publishableStoriesCount": 3,
+  "pipelineArtifacts": {
+    "promptPath": "baseline-B/01-gemini-highlight-scripts-prompt.txt",
+    "hookContractPath": "baseline-B/hook-contract.json",
+    "scripts": ["script-1.json", "script-3.json", "script-4.json"],
+    "model": "gemini-3.8-flash (Vertex AI)",
+    "runTimeMs": 57515,
+    "inputTokens": 97057,
+    "outputTokens": 5714,
+    "costUsd": 0.09422
+  },
+  "injectedConstraints": {
+    "hookContractVersion": 2,
+    "isUserLocked": true,
+    "forcedArchetype": "Physical Friction / Barricade Suspense",
+    "forcedDummyTitle": "Officer repeatedly struggles with barricaded door",
+    "forcedAnchors": {
+      "part_1": { "startSec": 62, "endSec": 82 },
+      "part_2": { "startSec": 278, "endSec": 294 },
+      "part_3": { "startSec": 322, "endSec": 340 }
+    }
+  },
+  "parts": [
+    {
+      "scriptId": 1,
+      "title": "ENTITLED DRIVER ABANDONS CAR IN TRAFFIC",
+      "partBadge": "PART 1",
+      "targetDurationSec": 117.5,
+      "resolvedDurationSec": 82.7,
+      "centralConflict": "Officer attempts to clear disabled vehicle; driver refuses help and walks away.",
+      "viewerQuestion": "Why did this driver abandon her vehicle in the middle of active highway traffic?",
+      "hook": {
+        "sourceStartSec": 59.0,
+        "sourceEndSec": 75.0,
+        "quotedDialogue": "Continue with the attitude and I'll tow your car myself right now. / Okay, excuse me, you can do that.",
+        "narrativeRole": "hook"
+      },
+      "beats": [
+        { "segmentId": "seg_1_01", "sourceStartSec": 59.0, "sourceEndSec": 68.875, "audio_mode": "original_audio", "narrativeRole": "hook" },
+        { "segmentId": "seg_1_02", "sourceStartSec": 68.875, "sourceEndSec": 75.0, "audio_mode": "original_audio", "narrativeRole": "hook" },
+        { "segmentId": "seg_1_03", "sourceStartSec": 28.0, "sourceEndSec": 35.0, "audio_mode": "voiceover_only", "narrativeRole": "context", "voiceoverText": "On a scorching Sunday afternoon in Florida, a deputy spots a disabled sedan completely stalled in the middle lane." },
+        { "segmentId": "seg_1_04", "sourceStartSec": 35.0, "sourceEndSec": 42.0, "audio_mode": "original_audio", "narrativeRole": "context" },
+        { "segmentId": "seg_1_05", "sourceStartSec": 42.0, "sourceEndSec": 58.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
+        { "segmentId": "seg_1_06", "sourceStartSec": 105.0, "sourceEndSec": 113.875, "audio_mode": "voiceover_only", "narrativeRole": "escalation", "voiceoverText": "Rather than accepting help, the driver storms away into traffic, immediately dials nine-one-one, and makes a bizarre report." },
+        { "segmentId": "seg_1_07", "sourceStartSec": 118.0, "sourceEndSec": 140.0, "audio_mode": "original_audio", "narrativeRole": "climax" },
+        { "segmentId": "seg_1_08", "sourceStartSec": 128.0, "sourceEndSec": 142.125, "audio_mode": "voiceover_only", "narrativeRole": "payoff", "voiceoverText": "With the car blocking lanes, officers clear the roadway, but this driver is about to discover her actions have consequences." }
+      ],
+      "climax": "911 recording where driver insults operator ('hang up until I get someone with a brain cell left').",
+      "payoff": "Unresolved cliffhanger with car blocking road and deputy calling on radio.",
+      "criticalDefects": [
+        "Unlabeled reverse chronology: Jump from woman walking away (0:08) back to officer sitting in cruiser driving up (0:16).",
+        "Abrupt cutoff ending with zero narrative resolution."
+      ]
+    },
+    {
+      "scriptId": 3,
+      "title": "OFFICERS TRACK DOWN CONFRONTATIONAL WOMAN",
+      "partBadge": "PART 2",
+      "targetDurationSec": 118.0,
+      "resolvedDurationSec": 83.25,
+      "centralConflict": "Deputies search neighborhood for runaway driver and confront her on sidewalk.",
+      "viewerQuestion": "Will deputies let her walk away and call an Uber?",
+      "hook": {
+        "sourceStartSec": 278.0,
+        "sourceEndSec": 291.75,
+        "quotedDialogue": "So what am I being arrested for? / Misuse of 911.",
+        "narrativeRole": "hook (FATAL SPOILER: Spoils Part 3 arrest at 00:03)"
+      },
+      "beats": [
+        { "segmentId": "seg_3_01", "sourceStartSec": 278.0, "sourceEndSec": 291.75, "audio_mode": "original_audio", "narrativeRole": "hook" },
+        { "segmentId": "seg_3_02", "sourceStartSec": 147.125, "sourceEndSec": 160.0, "audio_mode": "voiceover_only", "narrativeRole": "context", "voiceoverText": "Deputies push the stalled Toyota off the highway and immediately spread out to locate the runaway driver." },
+        { "segmentId": "seg_3_03", "sourceStartSec": 254.0, "sourceEndSec": 268.0, "audio_mode": "original_audio", "narrativeRole": "context" },
+        { "segmentId": "seg_3_04", "sourceStartSec": 204.0, "sourceEndSec": 215.875, "audio_mode": "voiceover_only", "narrativeRole": "escalation", "voiceoverText": "She continues walking away down an empty street, repeatedly pretending she cannot hear officers giving her direct orders." },
+        { "segmentId": "seg_3_05", "sourceStartSec": 230.0, "sourceEndSec": 245.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
+        { "segmentId": "seg_3_06", "sourceStartSec": 245.0, "sourceEndSec": 258.25, "audio_mode": "voiceover_only", "narrativeRole": "climax", "voiceoverText": "Instead of cooperating, she dismisses the deputies and announces she is calling an Uber, prompting them to surround her." },
+        { "segmentId": "seg_3_07", "sourceStartSec": 265.0, "sourceEndSec": 278.0, "audio_mode": "original_audio", "narrativeRole": "climax" },
+        { "segmentId": "seg_3_08", "sourceStartSec": 280.0, "sourceEndSec": 291.75, "audio_mode": "voiceover_only", "narrativeRole": "payoff", "voiceoverText": "Cornered on the sidewalk, deputies inform her that she is officially detained, setting up an explosive confrontation in Part Three." }
+      ],
+      "climax": "Officer tells her she is not free to leave.",
+      "payoff": "Re-plays the exact handcuffing scene from the hook at 0:03.",
+      "criticalDefects": [
+        "Injected anchor 278-294s forced the climax arrest into the opening 3 seconds, spoiling Part 3.",
+        "Opens with throat-clearing audio noise.",
+        "Reverse chronological flip-flop at 01:03: Deputy stops car after conversation already finished.",
+        "Exact circular repetition of arrest footage at start and end."
+      ]
+    },
+    {
+      "scriptId": 4,
+      "title": "ARRESTED FOR MISUSE OF EMERGENCY 911",
+      "partBadge": "PART 3",
+      "targetDurationSec": 119.0,
+      "resolvedDurationSec": 87.72,
+      "centralConflict": "Arrest execution and transport van argument over legality of being rude.",
+      "viewerQuestion": "Is being rude actually illegal?",
+      "hook": {
+        "sourceStartSec": 322.0,
+        "sourceEndSec": 340.0,
+        "quotedDialogue": "We'll help you any way we can... I don't need your help... continuously call 911... we're done talking now.",
+        "narrativeRole": "hook"
+      },
+      "beats": [
+        { "segmentId": "seg_4_01", "sourceStartSec": 322.0, "sourceEndSec": 340.0, "audio_mode": "original_audio", "narrativeRole": "hook" },
+        { "segmentId": "seg_4_02", "sourceStartSec": 285.0, "sourceEndSec": 291.75, "audio_mode": "voiceover_only", "narrativeRole": "context", "voiceoverText": "Realizing she cannot simply walk away, the driver tries to backpedal, but the deputies have already made their decision." },
+        { "segmentId": "seg_4_03", "sourceStartSec": 291.75, "sourceEndSec": 296.75, "audio_mode": "original_audio", "narrativeRole": "context" },
+        { "segmentId": "seg_4_04", "sourceStartSec": 310.5, "sourceEndSec": 322.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
+        { "segmentId": "seg_4_05", "sourceStartSec": 356.75, "sourceEndSec": 372.0, "audio_mode": "original_audio", "narrativeRole": "escalation" },
+        { "segmentId": "seg_4_06", "sourceStartSec": 423.75, "sourceEndSec": 432.25, "audio_mode": "voiceover_only", "narrativeRole": "climax", "voiceoverText": "Placed into a transport van, she demands to speak with a supervisor, insisting her rude behavior was completely legal." },
+        { "segmentId": "seg_4_07", "sourceStartSec": 482.375, "sourceEndSec": 500.0, "audio_mode": "original_audio", "narrativeRole": "climax" },
+        { "segmentId": "seg_4_08", "sourceStartSec": 530.0, "sourceEndSec": 535.25, "audio_mode": "voiceover_only", "narrativeRole": "payoff", "voiceoverText": "She was booked for misdemeanor misuse of nine-one-one with bond set at five thousand dollars, though charges were later dropped." }
+      ],
+      "climax": "Transport van argument over emergency vs towing concierge.",
+      "payoff": "Booking information and charges dropped.",
+      "criticalDefects": [
+        "Catastrophic audio clash at 00:15-00:20: Kokoro AI voiceover overlaps YouTube source narrator talking simultaneously.",
+        "Banner titled 'ENTITLED DRIVER ABANDONS CAR IN TRAFFIC - CAM 1' instead of Part 3.",
+        "Contains original YouTube 3-camera split screen outro at 01:21."
+      ]
+    }
+  ]
+}

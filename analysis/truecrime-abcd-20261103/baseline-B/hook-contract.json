@@ -1,0 +1,122 @@
+{
+  "contractVersion": 2,
+  "isUserLocked": true,
+  "isMultiVariant": true,
+  "hasDuplicates": false,
+  "variants": {
+    "variant_01": {
+      "scriptId": 1,
+      "variantName": "Variant 01",
+      "storyAngle": "part_1_confrontation",
+      "hookId": "candidate_004",
+      "title": "Officer repeatedly struggles with barricaded door",
+      "archetype": "Physical Friction / Barricade Suspense",
+      "anchorRange": {
+        "startSec": 62,
+        "endSec": 82,
+        "durationSec": 20
+      },
+      "trimmingTolerance": {
+        "startOffsetMaxSec": 2,
+        "endOffsetMaxSec": 3
+      },
+      "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+      "keyDialogue": "",
+      "scores": {
+        "overall": 70,
+        "visual_immediacy": 100,
+        "conflict": 67,
+        "curiosity_gap": 65,
+        "dialogue_strength": 40,
+        "spoiler_risk": 15,
+        "payoff_potential": 85
+      }
+    },
+    "variant_02": {
+      "scriptId": 3,
+      "variantName": "Variant 02",
+      "storyAngle": "part_2_interrogation",
+      "hookId": "candidate_015",
+      "title": "Officer repeatedly struggles with barricaded door",
+      "archetype": "Physical Friction / Barricade Suspense",
+      "anchorRange": {
+        "startSec": 278,
+        "endSec": 294,
+        "durationSec": 16
+      },
+      "trimmingTolerance": {
+        "startOffsetMaxSec": 2,
+        "endOffsetMaxSec": 3
+      },
+      "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+      "keyDialogue": "",
+      "scores": {
+        "overall": 70,
+        "visual_immediacy": 100,
+        "conflict": 67,
+        "curiosity_gap": 65,
+        "dialogue_strength": 40,
+        "spoiler_risk": 15,
+        "payoff_potential": 85
+      }
+    },
+    "variant_03": {
+      "scriptId": 4,
+      "variantName": "Variant 03",
+      "storyAngle": "part_3_verdict_arrest",
+      "hookId": "candidate_017",
+      "title": "Officer repeatedly struggles with barricaded door",
+      "archetype": "Physical Friction / Barricade Suspense",
+      "anchorRange": {
+        "startSec": 322,
+        "endSec": 340,
+        "durationSec": 18
+      },
+      "trimmingTolerance": {
+        "startOffsetMaxSec": 2,
+        "endOffsetMaxSec": 3
+      },
+      "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+      "keyDialogue": "",
+      "scores": {
+        "overall": 70,
+        "visual_immediacy": 100,
+        "conflict": 67,
+        "curiosity_gap": 65,
+        "dialogue_strength": 40,
+        "spoiler_risk": 15,
+        "payoff_potential": 85
+      }
+    }
+  },
+  "hookId": "candidate_004",
+  "title": "Officer repeatedly struggles with barricaded door",
+  "archetype": "Physical Friction / Barricade Suspense",
+  "anchorRange": {
+    "startSec": 62,
+    "endSec": 82,
+    "durationSec": 20
+  },
+  "trimmingTolerance": {
+    "startOffsetMaxSec": 2,
+    "endOffsetMaxSec": 3
+  },
+  "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+  "keyDialogue": "",
+  "scores": {
+    "overall": 70,
+    "visual_immediacy": 100,
+    "conflict": 67,
+    "curiosity_gap": 65,
+    "dialogue_strength": 40,
+    "spoiler_risk": 15,
+    "payoff_potential": 85
+  },
+  "storyDirectives": {
+    "format": "non_linear_rewind",
+    "hookRole": "Must be the opening beat (Beat 1). Hook the friction or question, never spoil the outcome.",
+    "rewindRole": "Beat 2 rewinds to origin of incident ('Fifteen minutes earlier...') to establish peaceful context before escalation.",
+    "progressionRole": "Beats 3-4 build tension progressively back towards the Hook event.",
+    "payoffRole": "Beat 5 resolves the confrontation and ends with verified aftermath/charges."
+  }
+}

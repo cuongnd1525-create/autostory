@@ -1,0 +1,105 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 3,
+  "suggestedTitle": "OFFICERS TRACK DOWN CONFRONTATIONAL WOMAN",
+  "title": "OFFICERS TRACK DOWN CONFRONTATIONAL WOMAN",
+  "partBadge": "PART 2",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 118,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "full_proxy_and_manifest_verified",
+    "inspectedInputs": [
+      "source-m6ow9dqxqcg.mp4",
+      "proxy_chunk_001",
+      "proxy_chunk_002",
+      "proxy_chunk_003",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json"
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "segments": [
+    {
+      "segmentId": "seg_3_01",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 278,
+      "sourceEndSec": 291.75,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0014",
+      "narrativeRole": "hook"
+    },
+    {
+      "segmentId": "seg_3_02",
+      "sceneId": "scene_0016",
+      "sourceStartSec": 147.125,
+      "sourceEndSec": 160,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Deputies push the stalled Toyota off the highway and immediately spread out to locate the runaway driver.",
+      "narrativeRole": "context"
+    },
+    {
+      "segmentId": "seg_3_03",
+      "sceneId": "scene_0018",
+      "sourceStartSec": 254,
+      "sourceEndSec": 268,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "narrativeRole": "context"
+    },
+    {
+      "segmentId": "seg_3_04",
+      "sceneId": "scene_0021",
+      "sourceStartSec": 204,
+      "sourceEndSec": 215.875,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "She continues walking away down an empty street, repeatedly pretending she cannot hear officers giving her direct orders.",
+      "narrativeRole": "escalation"
+    },
+    {
+      "segmentId": "seg_3_05",
+      "sceneId": "scene_0022",
+      "sourceStartSec": 230,
+      "sourceEndSec": 245,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0011",
+      "narrativeRole": "escalation"
+    },
+    {
+      "segmentId": "seg_3_06",
+      "sceneId": "scene_0022",
+      "sourceStartSec": 245,
+      "sourceEndSec": 258.25,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Instead of cooperating, she dismisses the deputies and announces she is calling an Uber, prompting them to surround her.",
+      "narrativeRole": "climax"
+    },
+    {
+      "segmentId": "seg_3_07",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 265,
+      "sourceEndSec": 278,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0013",
+      "narrativeRole": "climax"
+    },
+    {
+      "segmentId": "seg_3_08",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 280,
+      "sourceEndSec": 291.75,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Cornered on the sidewalk, deputies inform her that she is officially detained, setting up an explosive confrontation in Part Three.",
+      "narrativeRole": "payoff"
+    }
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 1,
+  "suggestedTitle": "ENTITLED DRIVER ABANDONS CAR IN TRAFFIC",
+  "title": "ENTITLED DRIVER ABANDONS CAR IN TRAFFIC",
+  "partBadge": "PART 1",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 117.5,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "full_proxy_and_manifest_verified",
+    "inspectedInputs": [
+      "source-m6ow9dqxqcg.mp4",
+      "proxy_chunk_001",
+      "proxy_chunk_002",
+      "proxy_chunk_003",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json"
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "segments": [
+    {
+      "segmentId": "seg_1_01",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 59,
+      "sourceEndSec": 68.875,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0004",
+      "narrativeRole": "hook"
+    },
+    {
+      "segmentId": "seg_1_02",
+      "sceneId": "scene_0008",
+      "sourceStartSec": 68.875,
+      "sourceEndSec": 75,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0004",
+      "narrativeRole": "hook"
+    },
+    {
+      "segmentId": "seg_1_03",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 28,
+      "sourceEndSec": 35,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "On a scorching Sunday afternoon in Florida, a deputy spots a disabled sedan completely stalled in the middle lane.",
+      "narrativeRole": "context"
+    },
+    {
+      "segmentId": "seg_1_04",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 35,
+      "sourceEndSec": 42,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0003",
+      "narrativeRole": "context"
+    },
+    {
+      "segmentId": "seg_1_05",
+      "sceneId": "scene_0007",
+      "sourceStartSec": 42,
+      "sourceEndSec": 58,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "narrativeRole": "escalation"
+    },
+    {
+      "segmentId": "seg_1_06",
+      "sceneId": "scene_0008",
+      "sourceStartSec": 105,
+      "sourceEndSec": 113.875,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Rather than accepting help, the driver storms away into traffic, immediately dials nine-one-one, and makes a bizarre report.",
+      "narrativeRole": "escalation"
+    },
+    {
+      "segmentId": "seg_1_07",
+      "sceneId": "scene_0008",
+      "sourceStartSec": 118,
+      "sourceEndSec": 140,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "narrativeRole": "climax"
+    },
+    {
+      "segmentId": "seg_1_08",
+      "sceneId": "scene_0012",
+      "sourceStartSec": 128,
+      "sourceEndSec": 142.125,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "With the car blocking lanes, officers clear the roadway, but this driver is about to discover her actions have consequences.",
+      "narrativeRole": "payoff"
+    }
+  ]
+}

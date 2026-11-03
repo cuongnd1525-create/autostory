@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "benchmarkId": "truecrime-abcd-20261103",
+  "title": "AutoStory True Crime Editorial A/B/C/D Benchmark",
+  "generatedAt": "2026-11-03T10:45:00.000Z",
+  "environment": {
+    "gitCommitSha": "55767077af5d27c5b804d6301aea10486e4784dc",
+    "gitBranch": "ui-ux-creator-studio-2.0",
+    "nodeVersion": "v24.14.1",
+    "platform": "win32"
+  },
+  "sourceVideo": {
+    "path": "C:\\Users\\Admin\\Documents\\MovieRecapToolWorkspace\\sources\\youtube-m6ow9dqxqcg\\source-m6ow9dqxqcg.mp4",
+    "sha256": "D5528E4E755B5D2B8256C08B53284A1D695970AFB1F9395EB6EA7BAD186DB279",
+    "durationSec": 549.741,
+    "resolution": "1920x1080",
+    "codec": "av1 / opus",
+    "fps": 29.97,
+    "originChannel": "Police Ride-Alongs",
+    "caseTitle": "Entitled Driver Abandons Car In Traffic / Misuse of 911"
+  },
+  "experiments": {
+    "A": {
+      "name": "Free Editorial Gemini",
+      "role": "Unconstrained Elite Editor & Story Director",
+      "model": "gemini-3.8-flash / Antigravity Multimodal",
+      "provider": "antigravity_direct",
+      "description": "Direct multimodal examination with full autonomy over story count, hook selection, central question, and narrative structure. No forced 3-part serialization, no preselected hook anchors, no mandatory flashbacks.",
+      "outputFile": "A-free-editorial.json",
+      "proposedStoriesCount": 1,
+      "format": "Single 64.5s Standalone Viral Short"
+    },
+    "B": {
+      "name": "Existing Pipeline (Baseline)",
+      "role": "AutoStory manual_gemini_draft_review (frozen)",
+      "model": "gemini-3.8-flash",
+      "provider": "vertex_ai",
+      "description": "Current production pipeline using 01-gemini-highlight-scripts-prompt.txt with locked SERIES HOOK CONTRACT forcing 3-part serialization and regex-generated 'Barricaded door' anchors at 62-82s, 278-294s, 322-340s.",
+      "outputFile": "B-current-pipeline.json",
+      "proposedStoriesCount": 3,
+      "format": "3-Part Serialized Highlight Cuts (82.7s, 83.2s, 87.7s)",
+      "historicalDraftFiles": [
+        "script-1.json",
+        "script-3.json",
+        "script-4.json"
+      ],
+      "tokenUsage": {
+        "inputTokens": 97057,
+        "outputTokens": 5714,
+        "totalCostUsd": 0.09422,
+        "elapsedTimeMs": 57515
+      }
+    },
+    "C": {
+      "name": "Pipeline Without Automatic Hook Contract",
+      "role": "Controlled ablation test of Hook Contract constraint",
+      "model": "gemini-3.8-flash",
+      "provider": "vertex_ai / isolated prompt",
+      "description": "Exact same base prompt, input pack, scene manifest, action candidates, and 3-part requirement as B, but removing the automatic bogus 'Barricaded door' SERIES HOOK CONTRACT block. Tests whether Gemini can choose appropriate openers and avoid the Part 2 spoiler when freed from anchor constraints.",
+      "outputFile": "C-no-auto-hook-contract.json",
+      "proposedStoriesCount": 3,
+      "format": "3-Part Serialized Highlight Cuts with Unconstrained Openers"
+    },
+    "D": {
+      "name": "Media-Grounded Editorial Director",
+      "role": "Architectural scope-media-director-v1 pattern",
+      "model": "gemini-3.8-flash",
+      "provider": "editorialDirectorService",
+      "description": "Media-grounded story scope architecture: Gemini selects scope [28s - 345s], formulates a central viewer question, selects opening strategy (conflict_teaser_rewind), assigns open loops, allocates information budget, and builds an exact causal EDL that downstream code cannot mutate.",
+      "outputFile": "D-media-editorial-director.json",
+      "proposedStoriesCount": 1,
+      "format": "Single 68.0s Media-Grounded Director Spine with Causal Beat Graph"
+    }
+  }
+}

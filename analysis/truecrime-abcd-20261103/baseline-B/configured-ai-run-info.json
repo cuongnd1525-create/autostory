@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-02T10:28:15.112Z",
+  "provider": "vertex_ai",
+  "label": "Vertex AI",
+  "model": "gemini-3.8-flash",
+  "qualityModel": "gemini-3.8-flash",
+  "packageDir": "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack",
+  "promptPath": "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\01-gemini-highlight-scripts-prompt.txt",
+  "inputFiles": [
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\analysis-proxy-chunk-001.mp4",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\analysis-proxy-chunk-002.mp4",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\analysis-proxy-chunk-003.mp4",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\action-candidates.json",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\proxy-chunks-manifest.json",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\hook-candidates.json",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\hook-contract.json"
+  ],
+  "validFiles": [
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-CONFIGURED-AI-RESULT\\script-1.json",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-CONFIGURED-AI-RESULT\\script-3.json",
+    "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-CONFIGURED-AI-RESULT\\script-4.json"
+  ],
+  "warnings": [],
+  "usage": {
+    "model": "gemini-3.8-flash",
+    "inputTokens": 97057,
+    "outputTokens": 5714,
+    "cachedInputTokens": 0,
+    "pricingVersion": "2026-09-pro-long-context-v2",
+    "pricingTier": "standard",
+    "inputCostUsd": 0.072793,
+    "outputCostUsd": 0.021427,
+    "estimatedCostUsd": 0.09422,
+    "pricePerMillionTokens": {
+      "input": 0.75,
+      "output": 3.75
+    }
+  },
+  "timings": {
+    "fileCount": 9,
+    "prepareMs": 8259,
+    "modelMs": 49256,
+    "totalMs": 57515
+  },
+  "budget": {
+    "totalSpentUsd": 87.606643,
+    "dailySpentUsd": 0.094727,
+    "budgetUsd": 240,
+    "dailyLimitUsd": 25,
+    "requestCount": 631
+  }
+}

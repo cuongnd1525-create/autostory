@@ -1,0 +1,105 @@
+{
+  "artifactType": "highlight_cut_script",
+  "workflow": "manual_gemini_pro",
+  "scriptId": 4,
+  "suggestedTitle": "ARRESTED FOR MISUSE OF EMERGENCY 911",
+  "title": "ARRESTED FOR MISUSE OF EMERGENCY 911",
+  "partBadge": "PART 3",
+  "cameraLabel": "CAM 1",
+  "titleStyle": "tiktok_hook",
+  "subtitleStyle": "tiktok_karaoke",
+  "targetDurationSec": 119,
+  "inputAccessAudit": {
+    "accessGranted": true,
+    "accessMode": "full_proxy_and_manifest_verified",
+    "inspectedInputs": [
+      "source-m6ow9dqxqcg.mp4",
+      "proxy_chunk_001",
+      "proxy_chunk_002",
+      "proxy_chunk_003",
+      "scene-manifest.json",
+      "source-transcript.srt",
+      "action-candidates.json"
+    ],
+    "sourceIdentityMatched": true,
+    "timelineCoverageVerified": true,
+    "noGuessingConfirmed": true
+  },
+  "segments": [
+    {
+      "segmentId": "seg_4_01",
+      "sceneId": "scene_0028",
+      "sourceStartSec": 322,
+      "sourceEndSec": 340,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0016",
+      "narrativeRole": "hook"
+    },
+    {
+      "segmentId": "seg_4_02",
+      "sceneId": "scene_0024",
+      "sourceStartSec": 285,
+      "sourceEndSec": 291.75,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Realizing she cannot simply walk away, the driver tries to backpedal, but the deputies have already made their decision.",
+      "narrativeRole": "context"
+    },
+    {
+      "segmentId": "seg_4_03",
+      "sceneId": "scene_0025",
+      "sourceStartSec": 291.75,
+      "sourceEndSec": 296.75,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "narrativeRole": "context"
+    },
+    {
+      "segmentId": "seg_4_04",
+      "sceneId": "scene_0028",
+      "sourceStartSec": 310.5,
+      "sourceEndSec": 322,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0015",
+      "narrativeRole": "escalation"
+    },
+    {
+      "segmentId": "seg_4_05",
+      "sceneId": "scene_0031",
+      "sourceStartSec": 356.75,
+      "sourceEndSec": 372,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "actionCandidateId": "action_0017",
+      "narrativeRole": "escalation"
+    },
+    {
+      "segmentId": "seg_4_06",
+      "sceneId": "scene_0035",
+      "sourceStartSec": 423.75,
+      "sourceEndSec": 432.25,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "Placed into a transport van, she demands to speak with a supervisor, insisting her rude behavior was completely legal.",
+      "narrativeRole": "climax"
+    },
+    {
+      "segmentId": "seg_4_07",
+      "sceneId": "scene_0042",
+      "sourceStartSec": 482.375,
+      "sourceEndSec": 500,
+      "audio_mode": "original_audio",
+      "voiceover_text": "",
+      "narrativeRole": "climax"
+    },
+    {
+      "segmentId": "seg_4_08",
+      "sceneId": "scene_0044",
+      "sourceStartSec": 530,
+      "sourceEndSec": 535.25,
+      "audio_mode": "voiceover_only",
+      "voiceover_text": "She was booked for misdemeanor misuse of nine-one-one with bond set at five thousand dollars, though charges were later dropped.",
+      "narrativeRole": "payoff"
+    }
+  ]
+}
