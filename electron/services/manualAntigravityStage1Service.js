@@ -1003,12 +1003,21 @@ async function readAntigravityTokenExpiry({ startedAtMs = 0, logDir = path.join(
   return null;
 }
 
-function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
+// A hook-contract.json is a mandate only when a person locked it (isUserLocked
+// === true). Automatic radar candidates are passed as optional hints.
+function readHookContractLock(contractPath = "") {
+  if (!contractPath) return false;
+  try { return JSON.parse(fsSync.readFileSync(contractPath, "utf8"))?.isUserLocked === true; } catch (_error) { return false; }
+}
+
+function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "", hookContractUserLocked = false, transcriptPath = "", sceneManifestPath = "", videoDurationSec = 0 }) {
   return [
     "You are executing Phase B1 (Series Plan) of RecapTool Studio's manual Gemini draft-review workflow.",
     "Work in READ-ONLY mode. Do NOT call view_file on any .mp4 file: the source video was already watched 100% in Phase A and its verified content is in SOURCE_UNDERSTANDING.",
     `SOURCE_UNDERSTANDING (read it first with view_file): ${understandingPath}`,
-    ...(hookContractPath ? [`HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`] : []),
+    ...(hookContractPath ? [hookContractUserLocked
+      ? `HOOK_CONTRACT (user-locked hook anchors): ${hookContractPath}`
+      : `HOOK_CONTRACT (automatic radar candidates, NOT user-locked, advisory only; their titles are unverified hints): ${hookContractPath}`] : []),
     ...(sceneManifestPath ? [`SCENE_MANIFEST (legal source boundaries): ${sceneManifestPath}`] : []),
     ...(transcriptPath ? [`SOURCE_TRANSCRIPT (exact spoken lines): ${transcriptPath}`] : []),
     "",
@@ -1020,7 +1029,9 @@ function buildSeriesPlanPrompt({ series, understandingPath, hookContractPath = "
     "- sceneAllocation: give each Part its own chronological SOURCE ranges. A range may appear in two Parts only if listed in sharedRanges with a reason (e.g. a 'previously on' recap of at most 8s). No other duplicates.",
     "- Spoiler boundaries: Part 1 and Part 2 must not include or narrate the arrest, charges, verdict or final consequence. Put those ranges in Part 3 payoffRanges.",
     "- Part 1 and Part 2 cliffhangers must be verified unresolved moments from the source. Part 3 payoff must be verified.",
-    "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed).",
+    ...(hookContractPath ? [hookContractUserLocked
+      ? "- When HOOK_CONTRACT exists, the Part 1 hook must be its variant_01 anchor (trimming tolerance allowed)."
+      : "- HOOK_CONTRACT anchors are optional radar hints. Choose the Part 1 hook from verified SOURCE_UNDERSTANDING; use an anchor only if the verified content supports it."] : []),
     "- Use only facts present in SOURCE_UNDERSTANDING or the transcript. Do not write scripts or narration yet.",
     `- All ranges must lie within 0-${Number(videoDurationSec || 0).toFixed(3)}s.`,
     "",
@@ -3042,6 +3053,7 @@ class ManualAntigravityStage1Service {
       series,
       understandingPath,
       hookContractPath: inputPaths.hookContractPath,
+      hookContractUserLocked: readHookContractLock(inputPaths.hookContractPath),
       transcriptPath: inputPaths.transcriptPath,
       sceneManifestPath: inputPaths.sceneManifestPath,
       videoDurationSec

@@ -1,0 +1,92 @@
+{
+  "before": {
+    "topCandidates": [
+      {
+        "start": 62,
+        "end": 82,
+        "title": "Officer repeatedly struggles with barricaded door",
+        "archetype": "Physical Friction / Barricade Suspense",
+        "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+        "rationale": "Mạnh về thị giác (chuyển động lớn, giằng co gay gắt). Giữ kín kết cục, không bị spoil"
+      },
+      {
+        "start": 278,
+        "end": 294,
+        "title": "Officer repeatedly struggles with barricaded door",
+        "archetype": "Physical Friction / Barricade Suspense",
+        "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+        "rationale": "Mạnh về thị giác (chuyển động lớn, giằng co gay gắt). Giữ kín kết cục, không bị spoil"
+      },
+      {
+        "start": 322,
+        "end": 340,
+        "title": "Officer repeatedly struggles with barricaded door",
+        "archetype": "Physical Friction / Barricade Suspense",
+        "coreEventDescription": "Physical friction / barricade struggle / high kinetic movement",
+        "rationale": "Mạnh về thị giác (chuyển động lớn, giằng co gay gắt). Giữ kín kết cục, không bị spoil"
+      },
+      {
+        "start": 134.98,
+        "end": 141.53,
+        "title": "\"car?\" And she completely ignored me. And then sh...\"",
+        "archetype": "Dialogue Conflict",
+        "coreEventDescription": "Defiant vocal struggle",
+        "rationale": "Thoại đối đầu đắt giá, rõ ràng. Giữ kín kết cục, không bị spoil"
+      }
+    ],
+    "contractIsUserLocked": false,
+    "storyDirectives": {
+      "format": "non_linear_rewind",
+      "hookRole": "Must be the opening beat (Beat 1). Hook the friction or question, never spoil the outcome.",
+      "rewindRole": "Beat 2 rewinds to origin of incident ('Fifteen minutes earlier...') to establish peaceful context before escalation.",
+      "progressionRole": "Beats 3-4 build tension progressively back towards the Hook event.",
+      "payoffRole": "Beat 5 resolves the confrontation and ends with verified aftermath/charges."
+    },
+    "seriesPromptBlock": "================================================================================\nSERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)\n================================================================================\nScript 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.\n\nPART 1 (Script 1) cold-open hook anchor: \"Officer repeatedly struggles with barricaded door\" (Physical Friction / Barricade Suspense)\n   - Source Time Range: 62.000s - 82.000s (~20.0s)\n   - Editorial Trimming Tolerance: start up to 2.0s earlier, end up to 3.0s later.\n   - Mandate: Script 1 Beat 1 MUST open with this anchor."
+  },
+  "after": {
+    "topCandidates": [
+      {
+        "start": 62,
+        "end": 82,
+        "title": "Motion/audio spike at 01:02",
+        "archetype": "Unverified Motion/Audio Spike",
+        "coreEventDescription": "Motion/audio radar spike (motion 10, audio 7); content not verified",
+        "rationale": "Radar chuyển động/âm lượng cao (chưa xác minh nội dung). Không nằm ở đoạn cuối video (rủi ro spoil thấp theo radar)"
+      },
+      {
+        "start": 278,
+        "end": 294,
+        "title": "Motion/audio spike at 04:38",
+        "archetype": "Unverified Motion/Audio Spike",
+        "coreEventDescription": "Motion/audio radar spike (motion 10, audio 7); content not verified",
+        "rationale": "Radar chuyển động/âm lượng cao (chưa xác minh nội dung). Không nằm ở đoạn cuối video (rủi ro spoil thấp theo radar)"
+      },
+      {
+        "start": 322,
+        "end": 340,
+        "title": "Motion/audio spike at 05:22",
+        "archetype": "Unverified Motion/Audio Spike",
+        "coreEventDescription": "Motion/audio radar spike (motion 10, audio 7); content not verified",
+        "rationale": "Radar chuyển động/âm lượng cao (chưa xác minh nội dung). Không nằm ở đoạn cuối video (rủi ro spoil thấp theo radar)"
+      },
+      {
+        "start": 134.98,
+        "end": 141.53,
+        "title": "Transcript: \"car?\" And she completely ignored me. And then she was lik...\"",
+        "archetype": "Dialogue Conflict",
+        "coreEventDescription": "Transcript: defiant line",
+        "rationale": "Transcript khớp mẫu thoại xung đột. Không nằm ở đoạn cuối video (rủi ro spoil thấp theo radar)"
+      }
+    ],
+    "contractIsUserLocked": false,
+    "storyDirectives": {
+      "format": "editor_choice",
+      "authority": "advisory",
+      "hookRole": "Advisory radar candidate only. Watch the footage; open on it only if what is seen and heard supports it. Any verified opening is allowed.",
+      "structureRole": "No fixed beat count or teaser structure is required. Chronological and teaser-then-rewind openings are both valid.",
+      "payoffRole": "A later moment may be teased only if it raises a real unanswered question without giving away the payoff."
+    },
+    "seriesPromptBlock": "================================================================================\nSERIES HOOK CONTRACT (AUTOMATIC RADAR CANDIDATES - ADVISORY, NOT USER-LOCKED)\n================================================================================\nScript 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.\n\nThese anchors were proposed automatically by a deterministic transcript/motion radar. Nobody has confirmed them.\nTheir titles and categories are search hints, NOT verified descriptions of the footage. Do not repeat them as facts.\nWatch the footage yourself. Use a candidate only if what is seen and heard there supports it; otherwise ignore it.\nNo candidate has to be Beat 1. Open on the strongest verified moment: a chronological opening and a teaser-then-rewind are both valid.\nA later moment may be teased only if it raises a real unanswered question without giving away the payoff.\n\nPART 1 (Script 1) radar candidate: \"Motion/audio spike at 01:02\" (Unverified Motion/Audio Spike)\n   - Source Time Range: 62.000s - 82.000s (~20.0s)\n   - Editorial Trimming Tolerance: start up to 2.0s earlier, end up to 3.0s later.\n   - Status: automatic radar candidate (advisory, not a mandate)."
+  }
+}

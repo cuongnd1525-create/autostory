@@ -1006,6 +1006,86 @@ async function repairTechnical(engine, { model, spine, violations, root = null, 
   return { spine: stampSpine(out.spine, scope, reel, { reelObservations: out.reelObservations, attempts: out.attempts, downstreamRepair: true }), evidence, reel, report: out.report };
 }
 
+// ---------------------------------------------------------------- acceptance
+// Explicit acceptance decision for a rendered director EDL. Pure: it re-derives
+// every number from the artifacts and never edits the EDL (no padding, trimming or
+// reordering). A technical PASS is necessary but NOT sufficient: only a technical
+// PASS plus an editorial PASS from the media critic is ACCEPTED.
+const ACCEPTANCE_CONTRACT = 'director-edl-acceptance-v1';
+const RENDER_DURATION_TOLERANCE_SEC = 1.0;
+const ACCEPTANCE = Object.freeze({ ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', NEEDS_EDITORIAL_REVIEW: 'NEEDS_EDITORIAL_REVIEW' });
+
+function acceptanceReport(spine, { config = {}, durationSec, scriptSegments = null, renderedDurationSec = null, critique = null } = {}) {
+  const scope = spine?.storyScope || null;
+  const reel = spine?.scopeReel || null;
+  const beats = Array.isArray(spine?.beats) ? spine.beats : [];
+  const targets = durationTargets(scope, config);
+  const violations = [];
+  if (!scope || !reel) {
+    violations.push({ code: 'ACCEPTANCE_INPUT_MISSING', message: 'The spine carries no storyScope/scopeReel; viewed-media grounding cannot be checked.' });
+  }
+  const validation = scope && reel ? validateDirectorEdl(spine, scope, {
+    durationSec, targetDurationMinSec: targets.hardMinSec, targetDurationMaxSec: targets.hardMaxSec, reel,
+    narrationEnabled: config.narration?.enabled !== false, preferredDurationSec: targets.targetDurationSec,
+    targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec,
+    requireDeliveryBlocks: spine?.deliveryBlocks !== undefined
+  }) : { valid: false, violations: [], metrics: { totalSec: round2(timelineSec(beats)), beatCount: beats.length } };
+  violations.push(...validation.violations.map(v => ({ code: v.code, message: v.message, ...(v.beatId ? { beatId: v.beatId } : {}) })));
+
+  // Downstream must keep the director's ranges and order (script-N.json segments).
+  let orderPreserved = null;
+  if (Array.isArray(scriptSegments)) {
+    try {
+      assertEdlIntact(beats, scriptSegments.map(x => ({ beatId: x.beat_id ?? x.beatId, sourceStartSec: num(x.sourceStartSec), sourceEndSec: num(x.sourceEndSec) })), Number.isFinite(durationSec) ? durationSec : Infinity);
+      orderPreserved = true;
+    } catch (err) {
+      orderPreserved = false;
+      violations.push({ code: 'EDL_MUTATED', message: err.message });
+    }
+  }
+  // The render must play the EDL as written: no silent padding or truncation.
+  const expectedOutputSec = Array.isArray(scriptSegments)
+    ? round2(scriptSegments.reduce((n, x) => n + Math.max(0, num(x.sourceEndSec) - num(x.sourceStartSec)) / (num(x.playbackSpeed) > 0 ? num(x.playbackSpeed) : 1), 0))
+    : round2(timelineSec(beats));
+  // A mismatch is never auto-fixed and never accepted: it is surfaced for review
+  // (the EDL itself may be fine; the Director cannot repair a renderer problem).
+  const rendered = Number.isFinite(num(renderedDurationSec)) && num(renderedDurationSec) > 0 ? round2(num(renderedDurationSec)) : null;
+  const renderDeltaSec = rendered === null ? null : round2(rendered - expectedOutputSec);
+  const renderViolations = [];
+  if (renderDeltaSec !== null && Math.abs(renderDeltaSec) > RENDER_DURATION_TOLERANCE_SEC) {
+    renderViolations.push({ code: 'RENDER_DURATION_MISMATCH', message: `Rendered draft is ${rendered}s but the EDL plays ${expectedOutputSec}s (delta ${renderDeltaSec}s > ${RENDER_DURATION_TOLERANCE_SEC}s): something padded or truncated the edit.` });
+  }
+  const total = round2(timelineSec(beats));
+  const technical = {
+    verdict: violations.length ? 'FAIL' : 'PASS',
+    hardMinSec: targets.hardMinSec, hardMaxSec: targets.hardMaxSec,
+    targetDurationSec: targets.targetDurationSec, targetBandMinSec: targets.targetBandMinSec, targetBandMaxSec: targets.targetBandMaxSec,
+    timelineSec: total, expectedOutputSec, renderedDurationSec: rendered, renderDeltaSec,
+    // The band is the generation objective, not an acceptance limit: report, never reject.
+    insidePreferredBand: total >= targets.targetBandMinSec - 1e-6 && total <= targets.targetBandMaxSec + 1e-6,
+    beatCount: beats.length, orderPreserved, renderViolations,
+    timeline: beats.map(b => ({ beatId: b.beatId, sourceStartSec: num(b.sourceStartSec), sourceEndSec: num(b.sourceEndSec), durationSec: round2(beatLen(b)), narrativeRole: b.narrativeRole || null })),
+    violations
+  };
+  const blocking = (critique?.issues || []).filter(x => x.severity === 'blocking').length;
+  const continuityBroken = critique && (critique.scopeSurvived === false || critique.centralQuestionActiveThroughout === false || critique.endingIsConsequence === false || critique.finalFootageUsable === false);
+  const editorial = !critique || critique.status === 'MEDIA_CRITIC_INVALID'
+    ? { verdict: 'NOT_RUN', source: 'scope_media_critic' }
+    : {
+      verdict: critique.isCompliant && !continuityBroken && !blocking ? 'PASS' : 'FAIL',
+      source: 'scope_media_critic',
+      scopeSurvived: critique.scopeSurvived ?? null,
+      centralQuestionActiveThroughout: critique.centralQuestionActiveThroughout ?? null,
+      endingIsConsequence: critique.endingIsConsequence ?? null,
+      finalFootageUsable: critique.finalFootageUsable ?? null,
+      blockingIssues: blocking
+    };
+  const status = technical.verdict === 'FAIL' ? ACCEPTANCE.REJECTED
+    : renderViolations.length ? ACCEPTANCE.NEEDS_EDITORIAL_REVIEW
+      : editorial.verdict === 'PASS' ? ACCEPTANCE.ACCEPTED : ACCEPTANCE.NEEDS_EDITORIAL_REVIEW;
+  return { contract: ACCEPTANCE_CONTRACT, status, technical, editorial };
+}
+
 // Integrity check used by buildScript: downstream stages must hand the compiler
 // exactly the director's ranges, in the director's order.
 function assertEdlIntact(directorBeats, finalBeats, durationSec = Infinity) {
@@ -1029,5 +1109,6 @@ module.exports = {
   directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
   durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
+  acceptanceReport, ACCEPTANCE, ACCEPTANCE_CONTRACT, RENDER_DURATION_TOLERANCE_SEC,
   deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
 };

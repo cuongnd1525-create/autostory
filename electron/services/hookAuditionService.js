@@ -39,11 +39,13 @@ function formatCandidateForAudit(candidate, rank = 1) {
     rank,
     hookId: candidate.candidateId || `hook_${String(rank).padStart(2, "0")}`,
     title: candidate.title || generateHookTitle(candidate),
-    archetype: candidate.archetype || "High Stakes Altercation",
+    archetype: candidate.archetype || "Unclassified Radar Candidate",
+    provenance: candidate.provenance || "deterministic_radar",
+    semanticStatus: candidate.semanticStatus || "unverified",
     sourceStartSec: Number(candidate.sourceStartSec || 0),
     sourceEndSec: Number(candidate.sourceEndSec || 0),
     durationSec: Number((candidate.sourceEndSec - candidate.sourceStartSec).toFixed(2)),
-    coreEventDescription: candidate.coreEventDescription || "High friction altercation",
+    coreEventDescription: candidate.coreEventDescription || "",
     keyDialogue: candidate.keyDialogue || "",
     scores: {
       overall,
@@ -58,25 +60,22 @@ function formatCandidateForAudit(candidate, rank = 1) {
   };
 }
 
+// Titles state only the evidence the radar actually has: the transcript words it
+// matched, or the time of a motion/audio spike. They never describe an event
+// (who does what to what) that nobody has watched.
 function generateHookTitle(candidate) {
-  const dialogue = String(candidate.keyDialogue || "").trim();
-  const archetype = String(candidate.archetype || "");
-  if (/trunk|child/i.test(dialogue)) return 'Suspect: "That\'s not my child"';
-  if (/door|open|rattle/i.test(dialogue) || archetype.includes("Barricade")) return "Officer repeatedly struggles with barricaded door";
-  if (/gun|knife|drop/i.test(dialogue)) return "Officer draws weapon at point blank";
-  if (/not\s+mine/i.test(dialogue)) return "Suspect boldly denies obvious evidence";
-  if (candidate.triggerType === "physical_friction") return "High-friction barricade confrontation";
-  if (candidate.keyDialogue) return `"${candidate.keyDialogue.slice(0, 48)}..."`;
-  return `Confrontation at ${formatTime(candidate.sourceStartSec)}`;
+  const dialogue = String(candidate.keyDialogue || "").replace(/\s+/g, " ").trim();
+  if (dialogue) return `Transcript: "${dialogue.length > 60 ? `${dialogue.slice(0, 57)}...` : dialogue}"`;
+  return `Motion/audio spike at ${formatTime(candidate.sourceStartSec)}`;
 }
 
 function generateHookRationale(candidate, overallScore) {
   const reasons = [];
-  if (candidate.scores?.visual_immediacy >= 80) reasons.push("Mạnh về thị giác (chuyển động lớn, giằng co gay gắt)");
-  if (candidate.scores?.dialogue_strength >= 80) reasons.push("Thoại đối đầu đắt giá, rõ ràng");
+  if (candidate.scores?.visual_immediacy >= 80) reasons.push("Radar chuyển động/âm lượng cao (chưa xác minh nội dung)");
+  if (candidate.scores?.dialogue_strength >= 80) reasons.push("Transcript khớp mẫu thoại xung đột");
   if (candidate.scores?.curiosity_gap >= 85) reasons.push("Tạo khoảng trống tò mò lớn khiến khán giả nán lại xem giải thích");
-  if (candidate.scores?.spoiler_risk <= 20) reasons.push("Giữ kín kết cục, không bị spoil");
-  return reasons.join(". ") || `Điểm tiềm năng giữ chân TikTok: ${overallScore}/100`;
+  if (candidate.scores?.spoiler_risk <= 20) reasons.push("Không nằm ở đoạn cuối video (rủi ro spoil thấp theo radar)");
+  return reasons.join(". ") || `Điểm radar: ${overallScore}/100 (ứng viên tự động, cần xem footage)`;
 }
 
 function formatTime(sec) {

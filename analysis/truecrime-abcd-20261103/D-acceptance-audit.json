@@ -1,0 +1,677 @@
+{
+  "auditVersion": 1,
+  "generatedBy": "analysis/truecrime-abcd-20261103/tools/audit-d-acceptance.js",
+  "project": {
+    "id": "1011-01-c50a1488",
+    "sourceDurationSec": 549.741,
+    "autoStoryConfig": {
+      "targetDurationMinSec": 65,
+      "targetDurationMaxSec": 150,
+      "outputCount": 1,
+      "narrationStyle": "investigative",
+      "audioBalance": "original_first",
+      "voiceProvider": "kokoro",
+      "voiceId": "am_adam",
+      "measuredWordsPerSecond": 0,
+      "editorialArchitecture": "scope_media_director"
+    },
+    "editorialArchitecture": "scope_media_director"
+  },
+  "constraintsActuallySupplied": {
+    "hardRangeSec": [
+      65,
+      150
+    ],
+    "hardRangeSource": "project.json autoStoryConfig (UI setting)",
+    "storyScopeTargetDurationSec": 110,
+    "directorTargets": {
+      "hardMinSec": 65,
+      "hardMaxSec": 150,
+      "targetDurationSec": 110,
+      "targetBandMinSec": 107,
+      "targetBandMaxSec": 113,
+      "targetSource": "storyScope.targetDurationSec"
+    }
+  },
+  "scopeReel": {
+    "storyScopeId": "scope_traffic_to_arrest",
+    "files": [
+      {
+        "reelId": "reel_01",
+        "durationSec": 43,
+        "segmentCount": 1
+      },
+      {
+        "reelId": "reel_02",
+        "durationSec": 88,
+        "segmentCount": 1
+      },
+      {
+        "reelId": "reel_03",
+        "durationSec": 68,
+        "segmentCount": 1
+      },
+      {
+        "reelId": "reel_04",
+        "durationSec": 122,
+        "segmentCount": 1
+      }
+    ],
+    "totalReelSec": 321,
+    "cuttableRanges": [
+      {
+        "reelFile": "reel_01",
+        "windowStartSec": 33,
+        "windowEndSec": 72,
+        "scopeWindowId": "win_encounter"
+      },
+      {
+        "reelFile": "reel_02",
+        "windowStartSec": 117,
+        "windowEndSec": 201,
+        "scopeWindowId": "win_dispatch"
+      },
+      {
+        "reelFile": "reel_03",
+        "windowStartSec": 256,
+        "windowEndSec": 320,
+        "scopeWindowId": "win_pursuit"
+      },
+      {
+        "reelFile": "reel_04",
+        "windowStartSec": 336,
+        "windowEndSec": 454,
+        "scopeWindowId": "win_arrest"
+      }
+    ]
+  },
+  "edls": {
+    "initialDirector": {
+      "artifact": "initial-story-spine-1.json",
+      "responseArtifact": "director-D-run/v5-editorial-director-1-last-response.json",
+      "responseMatchesSpine": true,
+      "totalSec": 86.5,
+      "openingStrategy": "conflict_teaser_rewind",
+      "timeline": [
+        {
+          "beatId": "beat_01",
+          "sourceStartSec": 337,
+          "sourceEndSec": 341.5,
+          "durationSec": 4.5,
+          "narrativeRole": "cold_open_hook",
+          "chronologyMode": "teaser",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_02",
+          "sourceStartSec": 44,
+          "sourceEndSec": 63,
+          "durationSec": 19,
+          "narrativeRole": "setup",
+          "chronologyMode": "rewind",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_03",
+          "sourceStartSec": 63,
+          "sourceEndSec": 72,
+          "durationSec": 9,
+          "narrativeRole": "complication",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_04",
+          "sourceStartSec": 117,
+          "sourceEndSec": 122,
+          "durationSec": 5,
+          "narrativeRole": "escalation",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_05",
+          "sourceStartSec": 122,
+          "sourceEndSec": 130,
+          "durationSec": 8,
+          "narrativeRole": "crisis_context",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_06",
+          "sourceStartSec": 268,
+          "sourceEndSec": 278,
+          "durationSec": 10,
+          "narrativeRole": "confrontation",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_07",
+          "sourceStartSec": 284,
+          "sourceEndSec": 296,
+          "durationSec": 12,
+          "narrativeRole": "reveal",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_08",
+          "sourceStartSec": 435,
+          "sourceEndSec": 454,
+          "durationSec": 19,
+          "narrativeRole": "payoff",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        }
+      ],
+      "validation": [
+        {
+          "config": "65-150s",
+          "durationTargets": {
+            "hardMinSec": 65,
+            "hardMaxSec": 150,
+            "targetDurationSec": 110,
+            "targetBandMinSec": 107,
+            "targetBandMaxSec": 113,
+            "targetSource": "storyScope.targetDurationSec"
+          },
+          "valid": true,
+          "violationCodes": [],
+          "violations": [],
+          "metrics": {
+            "totalSec": 86.5,
+            "beatCount": 8
+          },
+          "insidePreferredBand": false
+        },
+        {
+          "config": "65-90s",
+          "durationTargets": {
+            "hardMinSec": 65,
+            "hardMaxSec": 90,
+            "targetDurationSec": 85,
+            "targetBandMinSec": 82,
+            "targetBandMaxSec": 88,
+            "targetSource": "storyScope.targetDurationSec"
+          },
+          "valid": true,
+          "violationCodes": [],
+          "violations": [],
+          "metrics": {
+            "totalSec": 86.5,
+            "beatCount": 8
+          },
+          "insidePreferredBand": true
+        }
+      ],
+      "mediaCritic": {
+        "isCompliant": false,
+        "scopeSurvived": false,
+        "summary": "The edit premature spoils the arrest in a hook that cuts off mid-sentence, undermining the central narrative tension before extending past the resolution into post-arrest van dialogue.",
+        "weakRegions": [
+          {
+            "type": "hook_spends_payoff",
+            "beatIds": [
+              "beat_01"
+            ],
+            "reason": "Revealing the handcuffing and arrest at the very start prematurely spends the climax and nullifies the central tension of whether her behavior will get her arrested."
+          },
+          {
+            "type": "weak_narrator_to_raw_handoff",
+            "beatIds": [
+              "beat_01",
+              "beat_02"
+            ],
+            "reason": "The narration is prematurely truncated mid-sentence, creating an unfinished and amateurish transition into the raw scene."
+          },
+          {
+            "type": "opening_lacks_curiosity",
+            "beatIds": [
+              "beat_01"
+            ],
+            "reason": "Critic verdict: the first seconds do not create immediate curiosity for a cold viewer."
+          },
+          {
+            "type": "comprehension_gap",
+            "beatIds": [
+              "beat_01",
+              "beat_02",
+              "beat_03",
+              "beat_04",
+              "beat_05",
+              "beat_06",
+              "beat_07",
+              "beat_08"
+            ],
+            "reason": "Critic verdict: the central viewer question does not stay active through the edit."
+          }
+        ]
+      },
+      "draft": {
+        "file": "…20261103042358.mp4",
+        "probedDurationSec": 86.534
+      },
+      "status": "REJECTED_BY_MEDIA_CRITIC"
+    },
+    "criticRepairPass1": {
+      "artifact": "repair-1-story-spine-1.json",
+      "responseArtifact": "director-D-run/v5-editorial-director-repair-1-1_fix1-last-response.json",
+      "responseMatchesSpine": true,
+      "directorAttempts": [
+        {
+          "attempt": 0,
+          "mode": "multimodal",
+          "valid": false,
+          "violationCodes": [
+            "OUTSIDE_SCOPE_REEL",
+            "ENDING_NOT_IN_SCOPE"
+          ]
+        },
+        {
+          "attempt": 1,
+          "mode": "multimodal_technical",
+          "valid": true,
+          "violationCodes": []
+        }
+      ],
+      "totalSec": 122,
+      "openingStrategy": "chronological",
+      "timeline": [
+        {
+          "beatId": "beat_01",
+          "sourceStartSec": 35,
+          "sourceEndSec": 45,
+          "durationSec": 10,
+          "narrativeRole": "cold_open_hook",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_02",
+          "sourceStartSec": 45,
+          "sourceEndSec": 63,
+          "durationSec": 18,
+          "narrativeRole": "setup",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_03",
+          "sourceStartSec": 63,
+          "sourceEndSec": 72,
+          "durationSec": 9,
+          "narrativeRole": "complication",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_04",
+          "sourceStartSec": 117,
+          "sourceEndSec": 122,
+          "durationSec": 5,
+          "narrativeRole": "escalation",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_05",
+          "sourceStartSec": 122,
+          "sourceEndSec": 131,
+          "durationSec": 9,
+          "narrativeRole": "crisis_context",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_06",
+          "sourceStartSec": 268,
+          "sourceEndSec": 278,
+          "durationSec": 10,
+          "narrativeRole": "confrontation",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_07",
+          "sourceStartSec": 278,
+          "sourceEndSec": 288,
+          "durationSec": 10,
+          "narrativeRole": "reveal",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_08",
+          "sourceStartSec": 288,
+          "sourceEndSec": 320,
+          "durationSec": 32,
+          "narrativeRole": "payoff",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        },
+        {
+          "beatId": "beat_09",
+          "sourceStartSec": 435,
+          "sourceEndSec": 454,
+          "durationSec": 19,
+          "narrativeRole": "resolution",
+          "chronologyMode": "chronological",
+          "reelCoverage": 1
+        }
+      ],
+      "validation": [
+        {
+          "config": "65-150s",
+          "durationTargets": {
+            "hardMinSec": 65,
+            "hardMaxSec": 150,
+            "targetDurationSec": 110,
+            "targetBandMinSec": 107,
+            "targetBandMaxSec": 113,
+            "targetSource": "storyScope.targetDurationSec"
+          },
+          "valid": true,
+          "violationCodes": [],
+          "violations": [],
+          "metrics": {
+            "totalSec": 122,
+            "beatCount": 9
+          },
+          "insidePreferredBand": false
+        },
+        {
+          "config": "65-90s",
+          "durationTargets": {
+            "hardMinSec": 65,
+            "hardMaxSec": 90,
+            "targetDurationSec": 85,
+            "targetBandMinSec": 82,
+            "targetBandMaxSec": 88,
+            "targetSource": "storyScope.targetDurationSec"
+          },
+          "valid": false,
+          "violationCodes": [
+            "TOTAL_DURATION_OVER_MAX"
+          ],
+          "violations": [
+            {
+              "code": "TOTAL_DURATION_OVER_MAX",
+              "message": "The timeline is 122s: 32s above the hard maximum (90s) and 37s above the preferred target (85s). Remove at least 32s, preferably about 37s (34-40s for the 82-88s band)."
+            }
+          ],
+          "metrics": {
+            "totalSec": 122,
+            "beatCount": 9
+          },
+          "insidePreferredBand": false
+        }
+      ],
+      "mediaCritic": {
+        "isCompliant": true,
+        "scopeSurvived": true,
+        "centralQuestionActiveThroughout": true,
+        "endingIsConsequence": true,
+        "summary": "A coherent short-form narrative that logically tracks from roadside noncompliance to arrest for 911 abuse, concluding on a slightly prolonged post-arrest explanation."
+      }
+    },
+    "finalPersisted": {
+      "artifact": "story-spine.json",
+      "totalSec": 122,
+      "identicalToRepairPass1": true,
+      "assertEdlIntact": true
+    },
+    "script": {
+      "artifact": "script-1.json",
+      "segmentCount": 9,
+      "totalSec": 122,
+      "sameRangesAndOrderAsFinalSpine": true
+    },
+    "finalDraft": {
+      "file": "…20261103042926.mp4",
+      "probedDurationSec": 122.034
+    },
+    "benchmarkReported": {
+      "file": "D-media-editorial-director.json",
+      "totalSec": 122,
+      "identicalToFinalPersisted": true
+    }
+  },
+  "acceptanceGate": {
+    "note": "Director.acceptanceReport (added in this fix) re-run on the persisted final EDL with the critic verdict that accepted it.",
+    "asConfigured65to150": {
+      "contract": "director-edl-acceptance-v1",
+      "status": "ACCEPTED",
+      "technical": {
+        "verdict": "PASS",
+        "hardMinSec": 65,
+        "hardMaxSec": 150,
+        "targetDurationSec": 110,
+        "targetBandMinSec": 107,
+        "targetBandMaxSec": 113,
+        "timelineSec": 122,
+        "expectedOutputSec": 122,
+        "renderedDurationSec": 122.03,
+        "renderDeltaSec": 0.03,
+        "insidePreferredBand": false,
+        "beatCount": 9,
+        "orderPreserved": true,
+        "renderViolations": [],
+        "timeline": [
+          {
+            "beatId": "beat_01",
+            "sourceStartSec": 35,
+            "sourceEndSec": 45,
+            "durationSec": 10,
+            "narrativeRole": "cold_open_hook"
+          },
+          {
+            "beatId": "beat_02",
+            "sourceStartSec": 45,
+            "sourceEndSec": 63,
+            "durationSec": 18,
+            "narrativeRole": "setup"
+          },
+          {
+            "beatId": "beat_03",
+            "sourceStartSec": 63,
+            "sourceEndSec": 72,
+            "durationSec": 9,
+            "narrativeRole": "complication"
+          },
+          {
+            "beatId": "beat_04",
+            "sourceStartSec": 117,
+            "sourceEndSec": 122,
+            "durationSec": 5,
+            "narrativeRole": "escalation"
+          },
+          {
+            "beatId": "beat_05",
+            "sourceStartSec": 122,
+            "sourceEndSec": 131,
+            "durationSec": 9,
+            "narrativeRole": "crisis_context"
+          },
+          {
+            "beatId": "beat_06",
+            "sourceStartSec": 268,
+            "sourceEndSec": 278,
+            "durationSec": 10,
+            "narrativeRole": "confrontation"
+          },
+          {
+            "beatId": "beat_07",
+            "sourceStartSec": 278,
+            "sourceEndSec": 288,
+            "durationSec": 10,
+            "narrativeRole": "reveal"
+          },
+          {
+            "beatId": "beat_08",
+            "sourceStartSec": 288,
+            "sourceEndSec": 320,
+            "durationSec": 32,
+            "narrativeRole": "payoff"
+          },
+          {
+            "beatId": "beat_09",
+            "sourceStartSec": 435,
+            "sourceEndSec": 454,
+            "durationSec": 19,
+            "narrativeRole": "resolution"
+          }
+        ],
+        "violations": []
+      },
+      "editorial": {
+        "verdict": "PASS",
+        "source": "scope_media_critic",
+        "scopeSurvived": true,
+        "centralQuestionActiveThroughout": true,
+        "endingIsConsequence": true,
+        "finalFootageUsable": true,
+        "blockingIssues": 0
+      }
+    },
+    "hypothetical65to90": {
+      "contract": "director-edl-acceptance-v1",
+      "status": "REJECTED",
+      "technical": {
+        "verdict": "FAIL",
+        "hardMinSec": 65,
+        "hardMaxSec": 90,
+        "targetDurationSec": 85,
+        "targetBandMinSec": 82,
+        "targetBandMaxSec": 88,
+        "timelineSec": 122,
+        "expectedOutputSec": 122,
+        "renderedDurationSec": 122.03,
+        "renderDeltaSec": 0.03,
+        "insidePreferredBand": false,
+        "beatCount": 9,
+        "orderPreserved": true,
+        "renderViolations": [],
+        "timeline": [
+          {
+            "beatId": "beat_01",
+            "sourceStartSec": 35,
+            "sourceEndSec": 45,
+            "durationSec": 10,
+            "narrativeRole": "cold_open_hook"
+          },
+          {
+            "beatId": "beat_02",
+            "sourceStartSec": 45,
+            "sourceEndSec": 63,
+            "durationSec": 18,
+            "narrativeRole": "setup"
+          },
+          {
+            "beatId": "beat_03",
+            "sourceStartSec": 63,
+            "sourceEndSec": 72,
+            "durationSec": 9,
+            "narrativeRole": "complication"
+          },
+          {
+            "beatId": "beat_04",
+            "sourceStartSec": 117,
+            "sourceEndSec": 122,
+            "durationSec": 5,
+            "narrativeRole": "escalation"
+          },
+          {
+            "beatId": "beat_05",
+            "sourceStartSec": 122,
+            "sourceEndSec": 131,
+            "durationSec": 9,
+            "narrativeRole": "crisis_context"
+          },
+          {
+            "beatId": "beat_06",
+            "sourceStartSec": 268,
+            "sourceEndSec": 278,
+            "durationSec": 10,
+            "narrativeRole": "confrontation"
+          },
+          {
+            "beatId": "beat_07",
+            "sourceStartSec": 278,
+            "sourceEndSec": 288,
+            "durationSec": 10,
+            "narrativeRole": "reveal"
+          },
+          {
+            "beatId": "beat_08",
+            "sourceStartSec": 288,
+            "sourceEndSec": 320,
+            "durationSec": 32,
+            "narrativeRole": "payoff"
+          },
+          {
+            "beatId": "beat_09",
+            "sourceStartSec": 435,
+            "sourceEndSec": 454,
+            "durationSec": 19,
+            "narrativeRole": "resolution"
+          }
+        ],
+        "violations": [
+          {
+            "code": "TOTAL_DURATION_OVER_MAX",
+            "message": "The timeline is 122s: 32s above the hard maximum (90s) and 37s above the preferred target (85s). Remove at least 32s, preferably about 37s (34-40s for the 82-88s band)."
+          }
+        ]
+      },
+      "editorial": {
+        "verdict": "PASS",
+        "source": "scope_media_critic",
+        "scopeSurvived": true,
+        "centralQuestionActiveThroughout": true,
+        "endingIsConsequence": true,
+        "finalFootageUsable": true,
+        "blockingIssues": 0
+      }
+    }
+  },
+  "reviewState": {
+    "scriptId": 1,
+    "complete": true,
+    "contractVersion": 4,
+    "editorialContract": "scope-media-director-v1",
+    "pending": false,
+    "needsUserReview": false,
+    "repairPasses": 1,
+    "finalCheck": {
+      "complete": true,
+      "verdict": "PASS",
+      "issues": []
+    },
+    "metrics": {
+      "scopeSurvived": true,
+      "centralQuestionActiveThroughout": true,
+      "endingIsConsequence": true,
+      "finalFootageUsable": true,
+      "blockingIssues": 0,
+      "mp4Duration": 122.033333
+    }
+  },
+  "answers": {
+    "is122sIntermediateDraft": false,
+    "is122sFailedRepair": false,
+    "is122sAcceptedEdl": true,
+    "validateDirectorEdlRejectedDuration": "No. The run used hard range 65-150s (UI setting), so 122s is valid. Under 65-90s the same EDL produces TOTAL_DURATION_OVER_MAX (see validation[1]).",
+    "finalSpinePersisted": true,
+    "downstreamChangedDurationOrOrder": false,
+    "whyBenchmarkMarksSuccess": "review-state-1.json: media critic compliant after repair pass 1, finalCheck PASS, needsUserReview false.",
+    "benchmarkDiscrepancies": [
+      "'68.0s target' does not exist in any run artifact. The value equals reel_03 durationSec (68s); Story Scope target was 110s, hard range 65-150s.",
+      "blind-evaluation '122.0s Reel' mislabels the EDL total; reel_04 is also 122s, total reel media is 321s.",
+      "D-media-editorial-director.json 'totalReelSec: 184.5' does not match the packed reel (321s).",
+      "D telemetry reports only the repair call (67,152 prompt tokens); the run made Source Model + Scope + Director + Repair + 2 critic calls.",
+      "The 122s EDL is above the Director preferred band (107-113s around target 110s) but inside the hard range; no artifact records that deviation."
+    ]
+  }
+}

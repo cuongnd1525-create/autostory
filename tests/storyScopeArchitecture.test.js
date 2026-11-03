@@ -789,8 +789,11 @@ function fakeEngine(asks) {
         const cur = await p.store.getProject(p.dir, p.projectId);
         return { ...cur, analysis: { highlightVariants: [{ id: 'v1', scriptId: 1, segments: JSON.parse(await fs.readFile(jsonPath, 'utf8')).segments, artifacts: {} }] } };
       },
-      renderHighlightFastDraft: async () => { const f = path.join(p.dir, `draft-${renderedFiles.length + 2}.mp4`); await fs.writeFile(f, 'mp4'); renderedFiles.push(f); return { outputPath: f }; }
+      renderHighlightFastDraft: async () => { const f = path.join(p.dir, `draft-${renderedFiles.length + 2}.mp4`); await fs.writeFile(f, 'mp4'); renderedFiles.push(f); ff.durations.set(f, 78); return { outputPath: f }; }
     };
+    // The probe reports the length each draft really has (initial EDL 76s, repaired 78s):
+    // acceptance checks the render against the EDL it was built from.
+    const ff = makeFfmpeg();
     const blocking = { scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true, finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'x',
       openingCuriosity: { firstSecondsDescription: 'the denial at the window', createsCuriosity: true }, transitions: [], finalSeconds: { visualDescription: 'driver in cuffs, clearly lit', subjectClearlyVisible: true },
       issues: [{ type: 'low_value_stretch', severity: 'blocking', outputStartSec: 30, outputEndSec: 40, evidence: 'the same exchange repeats', whyItFails: 'adds nothing to the question' }], summary: 'one weak stretch' };
@@ -800,9 +803,9 @@ function fakeEngine(asks) {
     const service = makeService(p.store, vertex, makeFfmpeg(), dubbing);
     const run = await Pipeline.run(service, { workspaceRoot: p.dir, projectId: p.projectId, onProgress: () => {} });
     assert.deepStrictEqual(run.failures, []);
-    const first = path.join(p.dir, 'draft-1.mp4'); await fs.writeFile(first, 'mp4');
+    const first = path.join(p.dir, 'draft-1.mp4'); await fs.writeFile(first, 'mp4'); ff.durations.set(first, 76);
     await p.store.updateProject(p.dir, p.projectId, { analysis: { highlightVariants: [{ id: 'v1', scriptId: 1, artifacts: { fastDraftVideoPath: first } }] } });
-    const res = await Pipeline.auditDrafts(makeService(p.store, vertex, makeFfmpeg(), dubbing), { workspaceRoot: p.dir, projectId: p.projectId, scriptId: 1, onProgress: () => {} });
+    const res = await Pipeline.auditDrafts(makeService(p.store, vertex, ff, dubbing), { workspaceRoot: p.dir, projectId: p.projectId, scriptId: 1, onProgress: () => {} });
     const audit = res.audits[0];
     assert.strictEqual(audit.finalCheck.verdict, 'PASS', JSON.stringify(audit));
     assert.strictEqual(audit.repairPasses, 1);

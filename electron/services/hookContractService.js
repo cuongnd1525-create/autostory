@@ -9,7 +9,8 @@ function buildVariantHookEntry(variantData = {}, fallbackCandidate = {}) {
     storyAngle: String(variantData?.storyAngle || ""),
     hookId: c.hookId || c.candidateId || "hook_01",
     title: c.title || c.coreEventDescription || "Selected Hook Event",
-    archetype: c.archetype || "Physical Friction / Barricade Suspense",
+    archetype: c.archetype || "Unclassified",
+    provenance: c.provenance || "",
     anchorRange: {
       startSec: Number(startSec.toFixed(3)),
       endSec: Number(endSec.toFixed(3)),
@@ -25,12 +26,36 @@ function buildVariantHookEntry(variantData = {}, fallbackCandidate = {}) {
   };
 }
 
+// Story directives are binding only for a hook the user locked. An automatic
+// (radar) candidate gets advisory directives: no forced Beat 1, no fixed structure.
+function storyDirectivesFor(storyFormat, isUserLocked) {
+  if (!isUserLocked) {
+    return {
+      format: "editor_choice",
+      authority: "advisory",
+      hookRole: "Advisory radar candidate only. Watch the footage; open on it only if what is seen and heard supports it. Any verified opening is allowed.",
+      structureRole: "No fixed beat count or teaser structure is required. Chronological and teaser-then-rewind openings are both valid.",
+      payoffRole: "A later moment may be teased only if it raises a real unanswered question without giving away the payoff."
+    };
+  }
+  return {
+    format: storyFormat,
+    authority: "user_locked",
+    hookRole: "Must be the opening beat (Beat 1). Hook the friction or question, never spoil the outcome.",
+    rewindRole: "Beat 2 rewinds to origin of incident ('Fifteen minutes earlier...') to establish peaceful context before escalation.",
+    progressionRole: "Beats 3-4 build tension progressively back towards the Hook event.",
+    payoffRole: "Beat 5 resolves the confrontation and ends with verified aftermath/charges."
+  };
+}
+
+// isUserLocked must be passed explicitly: only a hook a person chose and confirmed
+// is a mandate. Everything else (the default) is an advisory radar candidate.
 function buildHookContract({
   candidate = {},
   userAnchorRange = null,
   trimmingTolerance = { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 },
   storyFormat = "non_linear_rewind",
-  isUserLocked = true,
+  isUserLocked = false,
   isMultiVariant = false,
   hasDuplicates = false,
   variants = null
@@ -70,13 +95,7 @@ function buildHookContract({
       coreEventDescription: v1.coreEventDescription,
       keyDialogue: v1.keyDialogue,
       scores: v1.scores,
-      storyDirectives: {
-        format: storyFormat,
-        hookRole: "Must be the opening beat (Beat 1). Hook the friction or question, never spoil the outcome.",
-        rewindRole: "Beat 2 rewinds to origin of incident ('Fifteen minutes earlier...') to establish peaceful context before escalation.",
-        progressionRole: "Beats 3-4 build tension progressively back towards the Hook event.",
-        payoffRole: "Beat 5 resolves the confrontation and ends with verified aftermath/charges."
-      }
+      storyDirectives: storyDirectivesFor(storyFormat, Boolean(isUserLocked))
     };
   }
 
@@ -91,7 +110,8 @@ function buildHookContract({
     hasDuplicates: false,
     hookId: candidate.hookId || candidate.candidateId || "hook_01",
     title: candidate.title || "Selected Hook Event",
-    archetype: candidate.archetype || "Physical Friction / Barricade Suspense",
+    archetype: candidate.archetype || "Unclassified",
+    provenance: candidate.provenance || "",
     anchorRange: {
       startSec: Number(startSec.toFixed(3)),
       endSec: Number(endSec.toFixed(3)),
@@ -101,16 +121,10 @@ function buildHookContract({
       startOffsetMaxSec: Math.max(0, Math.min(5, Number(trimmingTolerance?.startOffsetMaxSec) || 2.0)),
       endOffsetMaxSec: Math.max(0, Math.min(6, Number(trimmingTolerance?.endOffsetMaxSec) || 3.0))
     },
-    coreEventDescription: candidate.coreEventDescription || "High stakes confrontation",
+    coreEventDescription: candidate.coreEventDescription || "",
     keyDialogue: candidate.keyDialogue || "",
     scores: candidate.scores || {},
-    storyDirectives: {
-      format: storyFormat,
-      hookRole: "Must be the opening beat (Beat 1). Hook the friction or question, never spoil the outcome.",
-      rewindRole: "Beat 2 rewinds to origin of incident ('Fifteen minutes earlier...') to establish peaceful context before escalation.",
-      progressionRole: "Beats 3-4 build tension progressively back towards the Hook event.",
-      payoffRole: "Beat 5 resolves the confrontation and ends with verified aftermath/charges."
-    }
+    storyDirectives: storyDirectivesFor(storyFormat, Boolean(isUserLocked))
   };
 }
 
@@ -177,26 +191,45 @@ function describeAnchor(entry = {}, label = "") {
 // Series profiles (Part 1/2/3 of ONE story) must never receive the legacy
 // "3 different stories" differentiation matrix: that matrix makes the Parts
 // diverge into three unrelated edits.
+function isUserLockedContract(contract = {}) {
+  return contract?.isUserLocked === true;
+}
+
+const ADVISORY_RADAR_NOTICE = [
+  "These anchors were proposed automatically by a deterministic transcript/motion radar. Nobody has confirmed them.",
+  "Their titles and categories are search hints, NOT verified descriptions of the footage. Do not repeat them as facts.",
+  "Watch the footage yourself. Use a candidate only if what is seen and heard there supports it; otherwise ignore it.",
+  "No candidate has to be Beat 1. Open on the strongest verified moment: a chronological opening and a teaser-then-rewind are both valid.",
+  "A later moment may be teased only if it raises a real unanswered question without giving away the payoff."
+];
+
 function buildSeriesHookContractBlock(contract = {}) {
+  const locked = isUserLockedContract(contract);
   const isMulti = Boolean(contract?.isMultiVariant && contract?.variants);
   const v1 = isMulti ? contract.variants.variant_01 : contract;
   const v2 = isMulti ? contract.variants.variant_02 : null;
   const v3 = isMulti ? contract.variants.variant_03 : null;
   const sameStart = (a, b) => a && b && Math.abs(Number(a.anchorRange?.startSec) - Number(b.anchorRange?.startSec)) < 0.5;
+  const advisoryLine = "   - Status: automatic radar candidate (advisory, not a mandate).";
   const lines = [
     "================================================================================",
-    "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)",
+    locked
+      ? "SERIES HOOK CONTRACT (USER-LOCKED ANCHORS FOR ONE 3-PART STORY)"
+      : "SERIES HOOK CONTRACT (AUTOMATIC RADAR CANDIDATES - ADVISORY, NOT USER-LOCKED)",
     "================================================================================",
     "Script 1, Script 3 and Script 4 are PART 1, PART 2 and PART 3 of ONE continuous story with ONE central viewer question. They are chapters, not alternative edits. Never invent three different angles of the same events.",
+    ...(locked ? [] : ["", ...ADVISORY_RADAR_NOTICE]),
     "",
-    describeAnchor(v1 || {}, "PART 1 (Script 1) cold-open hook anchor"),
-    "   - Mandate: Script 1 Beat 1 MUST open with this anchor."
+    describeAnchor(v1 || {}, locked ? "PART 1 (Script 1) cold-open hook anchor" : "PART 1 (Script 1) radar candidate"),
+    locked ? "   - Mandate: Script 1 Beat 1 MUST open with this anchor." : advisoryLine
   ];
   if (v2 && !sameStart(v2, v1)) {
-    lines.push("", describeAnchor(v2, "PART 2 (Script 3) opener anchor"), "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3.");
+    lines.push("", describeAnchor(v2, locked ? "PART 2 (Script 3) opener anchor" : "PART 2 (Script 3) radar candidate"),
+      locked ? "   - Use it as Part 2 Beat 1 only if it belongs to Part 2's scope and spoils nothing owned by Part 3." : advisoryLine);
   }
   if (v3 && !sameStart(v3, v1) && !sameStart(v3, v2)) {
-    lines.push("", describeAnchor(v3, "PART 3 (Script 4) opener anchor"), "   - Use it as Part 3 Beat 1 only if it belongs to Part 3's scope.");
+    lines.push("", describeAnchor(v3, locked ? "PART 3 (Script 4) opener anchor" : "PART 3 (Script 4) radar candidate"),
+      locked ? "   - Use it as Part 3 Beat 1 only if it belongs to Part 3's scope." : advisoryLine);
   }
   lines.push(
     "",
@@ -236,13 +269,13 @@ Each of the 3 scripts (Script 1, Script 3, Script 4) MUST pursue a distinct vira
   * Outro: Culminates directly in the crash and tactical takedown. Target duration: 60-75s.
 
 - SCRIPT 3 (VARIANT 2) — NON-LINEAR IN MEDIAS RES (DECEPTION TO CATASTROPHE):
-  * Beat 1 (Hook): The peak physical hazard or visual shock (e.g., bare rim grinding sparks at 96 mph, near rollover).
+  * Beat 1 (Hook): The peak physical hazard or visual shock (the most dangerous moment that is actually visible).
   * Beat 2 (Context/Rewind): Rewind to the routine origin ("Ten minutes earlier...") showing the deception or routine encounter.
   * Beats 3-4 (Escalation): Sudden revelation of warrants / betrayal, accelerating into high-speed chaos.
   * Beat 5 (Payoff): Resolves back at the crash scene and apprehension. Target duration: 80-95s.
 
 - SCRIPT 4 (VARIANT 3) — TACTICAL STAND-OFF & RESCUE (INTENSE CLIMAX FIRST):
-  * Beat 1 (Hook): High-friction tactical confrontation at the wreckage (baton shattering glass, commands, struggle over endangered passenger/pet).
+  * Beat 1 (Hook): High-friction tactical confrontation at the wreckage (commands, physical resistance, the decisive standoff).
   * Body: Immediate high-stakes physical standoff, overcoming resistance, securing the scene.
   * STRICT RETENTION RULE: Hard cut within 3 seconds of suspect being cuffed and scene secured.
     STRICT PROHIBITION: NEVER pad the ending with civilian chit-chat, vehicle towing logistics, or post-incident administrative dialogue. Zero dead-air aftermath! Target duration: 60-70s.
@@ -251,7 +284,31 @@ Each of the 3 scripts (Script 1, Script 3, Script 4) MUST pursue a distinct vira
 
   let contractBlock = "";
 
-  if (isMulti) {
+  if (!isUserLockedContract(contract) && (isMulti || range)) {
+    const entries = isMulti
+      ? [["SCRIPT 1 (VARIANT 01)", contract.variants.variant_01], ["SCRIPT 3 (VARIANT 02)", contract.variants.variant_02], ["SCRIPT 4 (VARIANT 03)", contract.variants.variant_03]]
+      : [["SCRIPT 1", contract]];
+    const seen = [];
+    const blocks = [];
+    for (const [label, entry] of entries) {
+      if (!entry?.anchorRange) continue;
+      const start = Number(entry.anchorRange.startSec);
+      if (seen.some((s) => Math.abs(s - start) < 0.5)) continue;
+      seen.push(start);
+      blocks.push(describeAnchor(entry, `${label} radar candidate`), "   - Status: automatic radar candidate (advisory, not a mandate).");
+    }
+    contractBlock = [
+      "================================================================================",
+      "HOOK CONTRACT (AUTOMATIC RADAR CANDIDATES - ADVISORY, NOT USER-LOCKED)",
+      "================================================================================",
+      ...ADVISORY_RADAR_NOTICE,
+      "",
+      ...blocks,
+      "================================================================================",
+      "",
+      differentiationMatrix
+    ].join("\n");
+  } else if (isMulti) {
     const v1 = contract.variants.variant_01;
     const v2 = contract.variants.variant_02;
     const v3 = contract.variants.variant_03;

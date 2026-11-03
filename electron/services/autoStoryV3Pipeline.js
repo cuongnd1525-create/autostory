@@ -874,8 +874,24 @@ async function critiqueDirectorRender(ai, spine, mp4, probe, script) {
 }
 
 function directorAudit(id, verdict, extra = {}) {
-  return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, ...verdict, ...extra };
+  const acceptanceStatus = extra.acceptance?.status || verdict.acceptanceStatus || null;
+  return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, ...verdict, ...(acceptanceStatus ? { acceptanceStatus } : {}), ...extra };
 }
+
+// Deterministic acceptance of the EDL that was actually rendered (see
+// Director.acceptanceReport): hard duration limits on the real beat sum, viewed-media
+// grounding, duplicates, downstream order/ranges, rendered length, critic verdict.
+function directorAcceptance(engine, spine, script, renderedDurationSec, critique) {
+  return Director.acceptanceReport(spine, {
+    config: engine.config || {}, durationSec: engine.duration,
+    scriptSegments: Array.isArray(script?.segments) ? script.segments : null,
+    renderedDurationSec, critique
+  });
+}
+const DURATION_ONLY_REJECTION = a => a.status === Director.ACCEPTANCE.REJECTED
+  && a.technical.violations.length > 0 && a.technical.violations.every(v => v.code === 'TOTAL_DURATION_OVER_MAX' || v.code === 'TOTAL_DURATION_UNDER_MIN');
+// Outcomes a Director repair cannot change: stop and record them instead of spending calls.
+const UNREPAIRABLE = a => (a.status === Director.ACCEPTANCE.REJECTED && !DURATION_ONLY_REJECTION(a)) || a.technical.renderViolations.length > 0;
 
 // Review loop for director-owned EDLs: render -> scope critic -> director repair (<=2).
 async function auditDirectorDraft({ service, opts, engine, model, root, id, record, currentMp4, spine, script, ai }) {
@@ -883,10 +899,10 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   const probe = f => service.ffmpeg.probeVideo(f);
   const summarize = c => ({ scopeSurvived: c.scopeSurvived, centralQuestionActiveThroughout: c.centralQuestionActiveThroughout,
     endingIsConsequence: c.endingIsConsequence, finalFootageUsable: c.finalFootageUsable, blockingIssues: (c.issues || []).filter(x => x.severity === 'blocking').length, mp4Duration: c.mp4Duration });
-  const criticFailed = async (critique, duration, repairPasses) => {
+  const criticFailed = async (critique, duration, repairPasses, spineNow = spine, scriptNow = script) => {
     const audit = directorAudit(id, { needsUserReview: true, status: 'MEDIA_CRITIC_FAILED', failureType: 'MEDIA_CRITIC_FAILED' }, {
       repairPasses, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
-      metrics: { mp4Duration: duration }, auditResult: critique });
+      metrics: { mp4Duration: duration }, auditResult: critique, acceptance: directorAcceptance(engine, spineNow, scriptNow, duration, null) });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     const err = new Error(`MEDIA_CRITIC_FAILED: Scope critic failed after retry (${critique.summary})`);
     err.code = 'MEDIA_CRITIC_FAILED'; err.audit = audit; throw err;
@@ -904,11 +920,25 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
   await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
   if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
-  if (critique.isCompliant) {
-    const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
+  let acceptance = directorAcceptance(engine, spine, script, duration, critique);
+  await fs.writeFile(path.join(root, `initial-acceptance-${id}.json`), JSON.stringify(acceptance, null, 2));
+  const rejectedAudit = async (acc, repairPasses) => {
+    const kind = acc.status === Director.ACCEPTANCE.REJECTED ? 'DIRECTOR_EDL_REJECTED' : 'RENDER_DURATION_MISMATCH';
+    const audit = directorAudit(id, { needsUserReview: true, status: kind, failureType: kind }, {
+      repairPasses, finalCheck: { complete: true, verdict: 'FAIL', issues: [...acc.technical.violations, ...acc.technical.renderViolations].map(v => ({ reason: `${v.code}: ${v.message}` })) },
+      metrics: summarize(critique), acceptance: acc });
+    await fs.writeFile(record, JSON.stringify(audit, null, 2));
+    return audit;
+  };
+  if (acceptance.status === Director.ACCEPTANCE.ACCEPTED) {
+    const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique), acceptance });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
   }
+  // A technical rejection the Director cannot fix (render/order/grounding) stops here.
+  // Duration-only rejections and editorial failures go to the bounded repair loop,
+  // where runDirector returns duration violations to Gemini for targeted repair.
+  if (UNREPAIRABLE(acceptance)) return rejectedAudit(acceptance, 0);
 
   let current = spine;
   const passFailure = async (pass, err) => {
@@ -916,11 +946,13 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     // outcome for this script, not a crash that drops the other scripts' audits.
     const budget = /yêu cầu AI|call limit|budget/i.test(err.message || '');
     if (!budget && !err.kind) throw err;
-    const audit = directorAudit(id, { needsUserReview: true, status: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind, failureType: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind }, {
+    const audit = directorAudit(id, { needsUserReview: true, status: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind, failureType: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind,
+      acceptanceStatus: budget ? Director.ACCEPTANCE.NEEDS_EDITORIAL_REVIEW : Director.ACCEPTANCE.REJECTED }, {
       repairPasses: pass - 1, finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: `Repair pass ${pass} could not complete: ${err.message}` }] }, metrics: summarize(critique) });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
   };
+  let renderedScript = script;
   for (let pass = 1; pass <= 2; pass++) {
     signal?.throwIfAborted();
     try {
@@ -941,6 +973,7 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     const rebuilt = outcome.built;
     const scriptPath = path.join(root, `script-${id}.json`);
     const highlight = highlightV3(rebuilt.script, outcome.story, rebuilt.evidence);
+    renderedScript = highlight;
     await fs.writeFile(scriptPath, JSON.stringify(highlight, null, 2));
     const importedProject = await service.dubbing.importReviewedScriptProject({ workspaceRoot, projectId, settings: service.settings, jsonPath: scriptPath });
     const variant = importedProject.analysis?.highlightVariants?.find(v => Number(v.scriptId) === id) || importedProject.analysis?.highlightVariants?.[0];
@@ -957,23 +990,28 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
       return passFailure(pass, err);
     }
     await fs.writeFile(path.join(root, `repair-${pass}-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
-    if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass);
-    if (critique.isCompliant) {
-      try { await persistAcceptedSpine(root, id, current); }
+    if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass, current, renderedScript);
+    acceptance = directorAcceptance(engine, current, renderedScript, duration, critique);
+    await fs.writeFile(path.join(root, `repair-${pass}-acceptance-${id}.json`), JSON.stringify(acceptance, null, 2));
+    if (UNREPAIRABLE(acceptance)) return rejectedAudit(acceptance, pass);
+    if (acceptance.status === Director.ACCEPTANCE.ACCEPTED) {
+      try { await persistAcceptedSpine(root, id, { ...current, acceptance: { contract: acceptance.contract, status: acceptance.status, timelineSec: acceptance.technical.timelineSec, repairPass: pass } }); }
       catch (err) {
-        const audit = directorAudit(id, { needsUserReview: true, status: 'PERSIST_ACCEPTED_EDL_FAILED', failureType: 'PERSIST_ACCEPTED_EDL_FAILED' }, {
+        const audit = directorAudit(id, { needsUserReview: true, status: 'PERSIST_ACCEPTED_EDL_FAILED', failureType: 'PERSIST_ACCEPTED_EDL_FAILED', acceptanceStatus: Director.ACCEPTANCE.REJECTED }, {
           repairPasses: pass, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `PERSIST_ACCEPTED_EDL_FAILED: ${err.message}` }] }, metrics: summarize(critique) });
         await fs.writeFile(record, JSON.stringify(audit, null, 2)).catch(() => {});
         const e = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`); e.code = 'PERSIST_ACCEPTED_EDL_FAILED'; e.audit = audit; throw e;
       }
-      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique) });
+      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique), acceptance });
       await fs.writeFile(record, JSON.stringify(audit, null, 2));
       return audit;
     }
   }
   const audit = directorAudit(id, { needsUserReview: true }, { repairPasses: 2,
-    finalCheck: { complete: true, verdict: 'FAIL', issues: (critique.weakRegions || []).map(r => ({ reason: `${r.type}: ${r.reason}`, outputStartSec: r.outputStartSec, outputEndSec: r.outputEndSec, beatIds: r.beatIds })) },
-    metrics: summarize(critique) });
+    finalCheck: { complete: true, verdict: 'FAIL', issues: [
+      ...(critique.weakRegions || []).map(r => ({ reason: `${r.type}: ${r.reason}`, outputStartSec: r.outputStartSec, outputEndSec: r.outputEndSec, beatIds: r.beatIds })),
+      ...acceptance.technical.violations.map(v => ({ reason: `${v.code}: ${v.message}` }))] },
+    metrics: summarize(critique), acceptance });
   await fs.writeFile(record, JSON.stringify(audit, null, 2));
   return audit;
 }

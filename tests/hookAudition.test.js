@@ -107,7 +107,8 @@ Suspect: That's not my child!
   const contract = buildHookContract({
     candidate: top1,
     userAnchorRange: { startSec: 74.0, endSec: 84.0 },
-    trimmingTolerance: { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 }
+    trimmingTolerance: { startOffsetMaxSec: 2.0, endOffsetMaxSec: 3.0 },
+    isUserLocked: true // the Hook Picker lock path (lockHookContract) always passes this explicitly
   });
 
   assert.strictEqual(contract.anchorRange.startSec, 74.0);

@@ -3,28 +3,28 @@ const path = require("path");
 
 const CONFLICT_KEYWORDS = [
   // Refusal & Barricade
-  { pattern: /\b(?:not|won'?t|refuse|never)\s+opening\b/i, weight: 1.0, type: "physical_friction", desc: "Refusal to open or comply" },
-  { pattern: /\b(?:open|kick|break|smash)\s+(?:the|this|that)\s+door\b/i, weight: 0.95, type: "physical_friction", desc: "Door breach / barricade confrontation" },
-  { pattern: /\b(?:step|get)\s+out\s+of\s+the\s+(?:car|vehicle|house)\b/i, weight: 0.9, type: "in_medias_res", desc: "High-stakes command to exit" },
-  { pattern: /\b(?:drop|put\s+down)\s+(?:the\s+)?(?:weapon|gun|knife)\b/i, weight: 1.0, type: "in_medias_res", desc: "Lethal threat / weapon drawn" },
-  { pattern: /\b(?:hands\s+up|show\s+me\s+your\s+hands|don'?t\s+move|freeze)\b/i, weight: 0.9, type: "in_medias_res", desc: "Direct standoff command" },
+  { pattern: /\b(?:not|won'?t|refuse|never)\s+opening\b/i, weight: 1.0, type: "physical_friction", desc: "Transcript: spoken refusal to open or comply" },
+  { pattern: /\b(?:open|kick|break|smash)\s+(?:the|this|that)\s+door\b/i, weight: 0.95, type: "physical_friction", desc: "Transcript: spoken command about a door" },
+  { pattern: /\b(?:step|get)\s+out\s+of\s+the\s+(?:car|vehicle|house)\b/i, weight: 0.9, type: "in_medias_res", desc: "Transcript: spoken command to exit" },
+  { pattern: /\b(?:drop|put\s+down)\s+(?:the\s+)?(?:weapon|gun|knife)\b/i, weight: 1.0, type: "in_medias_res", desc: "Transcript: spoken command to drop a weapon" },
+  { pattern: /\b(?:hands\s+up|show\s+me\s+your\s+hands|don'?t\s+move|freeze)\b/i, weight: 0.9, type: "in_medias_res", desc: "Transcript: spoken hands/freeze command" },
   
   // Shocking Discovery & Questions
-  { pattern: /\bwhy\s+is\s+there\s+(?:a\s+)?(?:child|baby|body|gun|corpse|knife|blood|drugs?|cash|money)\b/i, weight: 1.0, type: "shocking_discovery", desc: "Shocking discovery question" },
-  { pattern: /\bin\s+the\s+trunk\b/i, weight: 0.95, type: "shocking_discovery", desc: "Trunk / hidden compartment discovery" },
-  { pattern: /\bwhose\s+(?:is\s+this|are\s+these|gun|knife|car|bag)\b/i, weight: 0.85, type: "shocking_discovery", desc: "Incriminating evidence inquiry" },
-  { pattern: /\bis\s+that\s+(?:a\s+)?(?:gun|knife|blood|bomb|body)\b/i, weight: 0.95, type: "shocking_discovery", desc: "Alarming observation" },
+  { pattern: /\bwhy\s+is\s+there\s+(?:a\s+)?(?:child|baby|body|gun|corpse|knife|blood|drugs?|cash|money)\b/i, weight: 1.0, type: "shocking_discovery", desc: "Transcript: question about a found object" },
+  { pattern: /\bin\s+the\s+trunk\b/i, weight: 0.95, type: "shocking_discovery", desc: "Transcript: mentions the trunk" },
+  { pattern: /\bwhose\s+(?:is\s+this|are\s+these|gun|knife|car|bag)\b/i, weight: 0.85, type: "shocking_discovery", desc: "Transcript: ownership question" },
+  { pattern: /\bis\s+that\s+(?:a\s+)?(?:gun|knife|blood|bomb|body)\b/i, weight: 0.95, type: "shocking_discovery", desc: "Transcript: question naming a weapon/blood/body" },
 
   // Absurd Contradictions & Excuses
-  { pattern: /\bthat'?s\s+not\s+(?:mine|my\s+child|my\s+car|my\s+gun|my\s+bag)\b/i, weight: 0.95, type: "absurd_contradiction", desc: "Blatant or absurd denial" },
-  { pattern: /\bi\s+(?:didn'?t|never)\s+(?:do|touch|have|see|shoot|steal)\b/i, weight: 0.8, type: "absurd_contradiction", desc: "Immediate defensive denial" },
-  { pattern: /\bi\s+am\s+(?:the\s+)?(?:sheriff|police|judge|attorney|mayor|owner)\b/i, weight: 0.9, type: "absurd_contradiction", desc: "Audacious entitlement claim" },
-  { pattern: /\bdo\s+you\s+know\s+who\s+i\s+am\b/i, weight: 0.95, type: "absurd_contradiction", desc: "Entitlement / arrogant challenge" },
+  { pattern: /\bthat'?s\s+not\s+(?:mine|my\s+child|my\s+car|my\s+gun|my\s+bag)\b/i, weight: 0.95, type: "absurd_contradiction", desc: "Transcript: ownership denial" },
+  { pattern: /\bi\s+(?:didn'?t|never)\s+(?:do|touch|have|see|shoot|steal)\b/i, weight: 0.8, type: "absurd_contradiction", desc: "Transcript: spoken denial" },
+  { pattern: /\bi\s+am\s+(?:the\s+)?(?:sheriff|police|judge|attorney|mayor|owner)\b/i, weight: 0.9, type: "absurd_contradiction", desc: "Transcript: claimed title or status" },
+  { pattern: /\bdo\s+you\s+know\s+who\s+i\s+am\b/i, weight: 0.95, type: "absurd_contradiction", desc: "Transcript: status challenge" },
 
   // Vocal Escalation & Tension
-  { pattern: /\b(?:taser|tase\s+him|shots?\s+fired|code\s+3)\b/i, weight: 0.95, type: "in_medias_res", desc: "Police tactical escalation" },
-  { pattern: /\b(?:get\s+away\s+from\s+me|don'?t\s+touch\s+me|leave\s+me\s+alone)\b/i, weight: 0.85, type: "dialogue_conflict", desc: "Defiant vocal struggle" },
-  { pattern: /\b(?:shut\s+up|shut\s+the\s+fuck\s+up|fuck\s+you|get\s+lost)\b/i, weight: 0.8, type: "dialogue_conflict", desc: "Heated verbal profanity / hostility" }
+  { pattern: /\b(?:taser|tase\s+him|shots?\s+fired|code\s+3)\b/i, weight: 0.95, type: "in_medias_res", desc: "Transcript: tactical keyword" },
+  { pattern: /\b(?:get\s+away\s+from\s+me|don'?t\s+touch\s+me|leave\s+me\s+alone)\b/i, weight: 0.85, type: "dialogue_conflict", desc: "Transcript: defiant line" },
+  { pattern: /\b(?:shut\s+up|shut\s+the\s+fuck\s+up|fuck\s+you|get\s+lost)\b/i, weight: 0.8, type: "dialogue_conflict", desc: "Transcript: profanity / hostile line" }
 ];
 
 function parseSrtTimestamp(value = "") {
@@ -159,16 +159,15 @@ function mineHookCandidateRegions({
   const actionHits = (actionCandidates || []).map((ac, idx) => {
     const motion = Number(ac.motionScore || 0);
     const audio = Number(ac.audioEnergyScore || 0);
-    const isBarricadeOrStandOff = motion >= 6.5 || (motion >= 5.0 && audio >= 5.0);
+    // Motion/audio energy is discovery radar only: it says WHERE something loud or
+    // fast happens, never WHAT happens (a car door, a crowd, a camera run all spike).
     return {
       candidateId: `action_hook_${String(idx + 1).padStart(3, "0")}`,
       sourceStartSec: Number(ac.sourceStartSec || 0),
       sourceEndSec: Number(ac.sourceEndSec || 0),
       durationSec: Number((ac.sourceEndSec - ac.sourceStartSec).toFixed(3)),
-      triggerType: isBarricadeOrStandOff ? "physical_friction" : "in_medias_res",
-      description: isBarricadeOrStandOff
-        ? "Physical friction / barricade struggle / high kinetic movement"
-        : "Action radar alert with high audio / motion intensity",
+      triggerType: "action_radar",
+      description: `Motion/audio radar spike (motion ${motion}, audio ${audio}); content not verified`,
       motionScore: motion,
       audioEnergyScore: audio,
       actionPriority: Number(ac.actionPriorityScore || 0),
@@ -246,6 +245,9 @@ function mineHookCandidateRegions({
       durationSec: dur,
       archetype: mapTriggerToArchetype(item.triggerType, item.keyDialogue),
       triggerType: item.triggerType,
+      // Deterministic candidates are radar hits, not verified story events.
+      provenance: "deterministic_radar",
+      semanticStatus: "unverified",
       coreEventDescription: item.description,
       keyDialogue: item.keyDialogue || "",
       scores: {
@@ -266,10 +268,14 @@ function mineHookCandidateRegions({
     .slice(0, Math.max(5, maxCandidates));
 }
 
+// Radar category only. A keyword such as "door" does not prove a barricade (roadside
+// stops are full of car doors), so no archetype here claims one; the editor decides
+// what the footage shows.
 function mapTriggerToArchetype(triggerType = "", keyDialogue = "") {
   const dialogueLower = String(keyDialogue || "").toLowerCase();
-  if (triggerType === "physical_friction" || /door|barricade|rattle|force/i.test(dialogueLower)) {
-    return "Physical Friction / Barricade Suspense";
+  if (triggerType === "action_radar") return "Unverified Motion/Audio Spike";
+  if (triggerType === "physical_friction") {
+    return "Spoken Refusal / Command (radar)";
   }
   if (triggerType === "absurd_contradiction" || /not\s+mine|never\s+happened|sheriff|mayor|who\s+i\s+am/i.test(dialogueLower)) {
     return "The Absurd Contradiction";
