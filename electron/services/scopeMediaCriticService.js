@@ -145,7 +145,7 @@ Answer from what you actually SEE and HEAR:
 6. transitions: list EVERY major visual, time, place or perspective change you see in the rendered video (outputSec, change, whatViewerSeesAndHears) and for each judge coldViewerUnderstandsWhy — does the picture, dialogue or narration tell a first-time viewer why we are now seeing this? Inspect each transition as you watch; do not rely on the transcript flowing on. When a cold-open teaser rewinds backward in source time to an earlier scene, or when the edit jumps across locations/perspectives without narration or spoken orientation explaining the rewind/jump, set coldViewerUnderstandsWhy=false.
    coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? It cannot be true while a listed transition is not understood. coldViewerNotes: where that breaks, if anywhere.
    openingCuriosity: describe the first seconds (firstSecondsDescription) and judge whether they create immediate curiosity for a cold viewer (createsCuriosity).
-7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
+7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). When a 911 waveform/map screen or a prolonged van/roadside argument plays raw for over 16-20 seconds without a narrator stepping in to compress the repetition and deliver editorial commentary, report raw_explanation_overlong or narration_underused as blocking. Report only what you actually experience while watching, with its output-time region.
 8. EDITORIAL READINESS — a technically valid edit can still be weak. Judge from what you saw:
    - openingCuriosity.strongerHookAtOutputSec: if a LATER moment in THIS rendered edit would hook a cold viewer clearly better than the opening (a sharper line, conflict or reveal you actually saw/heard), give its output second and describe it in strongerHookEvidence; otherwise -1. A routine exchange that only becomes interesting later is not a hook. If the opening beat prematurely gives away the final criminal charge or outcome that should be withheld, report hook_spends_payoff as blocking.
    - finalSeconds.lastWordsHeard: the last words spoken before the video ends. finalSeconds.endsAtCompleteBoundary: false if the cut interrupts a sentence or an action mid-way.
@@ -156,7 +156,7 @@ Answer from what you actually SEE and HEAR:
 Return JSON only.`;
 }
 
-function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }) {
+function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, deliveryBlocks = null, narrationActive = false }) {
   const invalid = summary => ({ status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary, issues: [], weakWindows: [], weakRegions: [] });
   if (!raw || typeof raw !== 'object') return invalid('Critic returned no object.');
   for (const k of ['scopeSurvived', 'centralQuestionActiveThroughout', 'endingIsConsequenceOfCentralConflict', 'finalFootageUsable']) {
@@ -222,6 +222,27 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     if (it.type === 'hook_spends_payoff' && it.severity === 'minor' && it.outputStartSec <= firstRegion[1] + 0.5) {
       it.severity = 'blocking';
       it.derivedFromVerdict = 'hook_spends_payoff@opening';
+    }
+    if ((it.type === 'raw_explanation_overlong' || it.type === 'narration_underused') && it.severity === 'minor' && (it.outputEndSec - it.outputStartSec) >= 16) {
+      it.severity = 'blocking';
+      it.derivedFromVerdict = `${it.type}@overlong_stretch`;
+    }
+  }
+  if (Array.isArray(deliveryBlocks) && deliveryBlocks.length) {
+    const isNarrationActive = narrationActive || deliveryBlocks.some(d => d.mode === 'narrated_story');
+    if (isNarrationActive) {
+      const narratedBlocks = deliveryBlocks.filter(d => d.mode === 'narrated_story');
+      const overlongRaw = deliveryBlocks.filter(d => d.mode === 'raw_evidence' && (Number(d.outputEndSec) - Number(d.outputStartSec)) >= 22)
+        .sort((a, b) => (b.outputEndSec - b.outputStartSec) - (a.outputEndSec - a.outputStartSec))[0];
+      if (narratedBlocks.length <= 1 && overlongRaw && !issues.some(x => x.severity === 'blocking' && DELIVERY_ISSUES.has(x.type))) {
+        const s = Number(overlongRaw.outputStartSec), e = Number(overlongRaw.outputEndSec);
+        issues.push({
+          type: 'raw_explanation_overlong', severity: 'blocking', outputStartSec: s, outputEndSec: e,
+          evidence: `Raw block ${overlongRaw.blockId} runs uninterrupted for ${(e - s).toFixed(1)}s while the edit has only ${narratedBlocks.length} narrated block(s).`,
+          whyItFails: 'An overlong raw stretch plays without narrator compression or editorial commentary; split or compress part of this stretch into a narrated_story commentary block.',
+          beatIds: beatsInRegion(timeline, s, e), derivedFromVerdict: 'delivery.overlong_raw_stretch'
+        });
+      }
     }
   }
   const hookAt = Number(raw.openingCuriosity?.strongerHookAtOutputSec);
@@ -293,7 +314,8 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   } catch (error) {
     return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${error.message}`, issues: [], weakWindows: [], weakRegions: [] };
   }
-  const out = normalizeCritique(raw, { durationSec: actualMp4DurationSec, timeline, deliveryAware: Boolean(delivery) });
+  const narrationActive = Boolean(delivery?.some(d => d.mode === 'narrated_story') || script?.narration_enabled);
+  const out = normalizeCritique(raw, { durationSec: actualMp4DurationSec, timeline, deliveryAware: Boolean(delivery), deliveryBlocks: delivery, narrationActive });
   if (delivery && out.status === 'SCOPED_MEDIA_CRITIC_OK') {
     out.deliveryTimeline = delivery;
     out.weakRegions = out.weakRegions.map(r => ({ ...r, deliveryBlockIds: [...new Set(timeline.filter(t => (r.beatIds || []).includes(t.beatId)).map(t => t.deliveryBlockId).filter(Boolean))] }));

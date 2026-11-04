@@ -93,20 +93,42 @@ const openingStrategy = flexible({
   why: text
 });
 
-const directorSpine = flexible({
-  centralViewerQuestion: text,
-  hookPromise: text,
-  hookStrategy: text,
-  openingStrategy,
-  reason: text,
-  beats: list(directorBeat, 40),
-  transitionChecks: list(Delivery.transitionCheckSchema, 40)
-}, {
-  // Required by validateDirectorEdl (not by the transport schema) so a missing
-  // layer is reported with a precise, repairable message.
-  deliveryBlocks: list(Delivery.deliveryBlockSchema, 40),
-  openLoops: list(flexible({ id: text, question: text }), 12)
+const narrativePlanMoment = flexible({
+  targetBlockId: text,
+  role: text,
+  whyNarratorOwnsIt: text,
+  editorialCommentaryPoint: text,
+  handsOffToRawMoment: text
 });
+const narrativePlan = flexible({
+  storytellerAngle: text,
+  alternationPattern: text,
+  plannedNarratedMoments: list(narrativePlanMoment, 12)
+});
+
+const directorSpine = {
+  type: 'object',
+  required: ['centralViewerQuestion', 'hookPromise', 'hookStrategy', 'openingStrategy', 'reason', 'beats', 'transitionChecks'],
+  properties: {
+    centralViewerQuestion: text,
+    hookPromise: text,
+    hookStrategy: text,
+    openingStrategy,
+    // Required by validateDirectorEdl when commentaryOpportunities / narrativePlan is active
+    narrativePlan,
+    reason: text,
+    beats: list(directorBeat, 40),
+    deliveryBlocks: list(Delivery.deliveryBlockSchema, 40),
+    transitionChecks: list(Delivery.transitionCheckSchema, 40),
+    openLoops: list(flexible({ id: text, question: text }), 12)
+  },
+  additionalProperties: true
+};
+
+const directorSpineStoryteller = {
+  ...directorSpine,
+  required: ['centralViewerQuestion', 'hookPromise', 'hookStrategy', 'openingStrategy', 'narrativePlan', 'reason', 'beats', 'deliveryBlocks', 'transitionChecks']
+};
 
 const directorEdl = {
   type: 'object', required: ['accessGranted', 'reelObservations', 'spine'], additionalProperties: false,
@@ -114,6 +136,11 @@ const directorEdl = {
     // Under-minimum repair only: an honest "this scope cannot reach the minimum
     // without filler", grounded in the watched footage. Never assumed by JS.
     repairOutcome: flexible({ status: choice('repaired', 'scope_infeasible'), reason: text }) }
+};
+
+const directorEdlStoryteller = {
+  ...directorEdl,
+  properties: { ...directorEdl.properties, spine: directorSpineStoryteller }
 };
 
 const deliveryRepairResult = {
@@ -125,7 +152,7 @@ const deliveryRepairResult = {
   }
 };
 
-const schemas = { directorEdl, directorBeat, directorSpine, deliveryRepairResult };
+const schemas = { directorEdl, directorEdlStoryteller, directorBeat, directorSpine, deliveryRepairResult };
 
 // ---------------------------------------------------------------- instruction
 const instruction = `PASS 1B — MEDIA-GROUNDED EDITORIAL DIRECTOR. You own the exact EDL.
@@ -142,43 +169,46 @@ EVERY BEAT MUST BE BOTH NOVEL AND CAUSALLY COHERENT WITH THE SCOPE.
 - A continuous exchange in one place can be excellent when each exchange changes the conflict, exposes a contradiction, raises the stakes or moves toward the consequence. Do not cut away just to get visual variety.
 - Large jumps in source time are fine when the viewer understands why they are now seeing the later moment (a narrated block can bridge it). An unexplained jump from one interesting moment to another is not fine.
 
-DELIVERY: THE NARRATOR AND THE REAL MOMENT SHARE THE STORY.
-The NARRATOR owns comprehension, compression, orientation, causal connection, anticipation and momentum.
+DELIVERY: TRUE CRIME STORYTELLER & COMMENTARY EDITOR (NARRATOR <-> RAW EVIDENCE ALTERNATION).
+The NARRATOR owns comprehension, compression, orientation, causal connection, behavioral commentary (COMMENTARY / INTERPRETATION), contrast framing, anticipation (ANTICIPATION) and momentum.
 SOURCE AUDIO owns proof, confrontation, emotion, authenticity, the strongest quote, reaction, discovery and consequence.
-For each stretch of the EDL decide: does the viewer need to UNDERSTAND this section? A narrated_story block may own it. Does the viewer need to EXPERIENCE or BELIEVE this moment? A raw_evidence block should own it.
-Useful grammar when it fits: NARRATE TO THE MOMENT -> LET THE REAL MOMENT SPEAK -> NARRATE OUT OF IT.
-Narration may: set up or rewind context, identify people, compress procedural or repetitive explanation, bridge a meaningful time jump, establish whose account we are hearing, frame a contradiction, build anticipation, set up a reveal, open an unresolved question.
-When input.narrationEnabled is true and the edit rewinds after a cold open (chronologyMode 'rewind') or crosses a major time, location or perspective jump (e.g. from dispatch/setup to physical confrontation, or from street detention to post-detention transport/supervisor review), use a concise narrated_story block (CONTEXT / TIME_JUMP / BRIDGE) so a cold viewer immediately understands who is speaking, why the scene shifted and what is at stake, while letting raw_evidence own the sharpest confrontation quotes, denials, arrests and authoritative rebuttals.
-Narration must not: describe obvious movement, paraphrase a strong quote we are about to hear, talk over an important confrontation, invent information, or spoil input.storyScope.mustWithhold.
-A fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) can only enter as narration over in-scope footage that fits it.
+For each stretch of the EDL decide: does the viewer need to UNDERSTAND or INTERPRET this section? A narrated_story block may own it. Does the viewer need to EXPERIENCE or BELIEVE this moment? A raw_evidence block should own it.
+When input.narrationEnabled is true, act as an American True Crime Storyteller and Commentary Editor, not a passive clip compiler. Fill spine.narrativePlan FIRST (storytellerAngle, alternationPattern, plannedNarratedMoments with each targetBlockId) BEFORE writing spine.beats and spine.deliveryBlocks, and realize EVERY plannedNarratedMoment as a mode='narrated_story' block in spine.deliveryBlocks alternating with raw_evidence blocks:
+  RAW HOOK / FRICTION PROOF -> NARRATOR CONTEXT & ATTITUDE FRAMING (CONTEXT / COMMENTARY) -> RAW ESCALATION / ULTIMATUM PROOF -> NARRATOR CAUSAL BRIDGE & ANTICIPATION (CAUSAL_BRIDGE / ANTICIPATION) -> RAW 911 / CONFRONTATION PROOF -> NARRATOR INTERPRETATION & IRONY COMMENTARY (COMMENTARY / INTERPRETATION) -> RAW CLIMAX / RECKONING (-> OPTIONAL NARRATOR CLIFFHANGER / PAYOFF).
+- Post-Hook Context & Attitude Framing: Right after the opening hook (or on a rewind), use a narrated_story block over establishing/approach/B-roll beats (scopeMembership 'bridge_picture' or early scene beats, spanning ~6-10s so the narrator has a comfortable 2-sentence window) to establish the scene and contrast the officer's reasonable actions with the subject's arrogant or defiant attitude.
+- Causal Bridges & Mid-Scene Commentary: Realize input.storyScope.commentaryOpportunities as mode='narrated_story' blocks in spine.deliveryBlocks. When a subject walks away to call 911, or when a 911 dispatch waveform or prolonged transport/roadside argument plays, do NOT leave the entire phone call or argument as one giant raw_evidence block. Play the sharpest raw quote(s) as proof (raw_evidence), then step in with a narrated_story block (CAUSAL_BRIDGE / COMMENTARY / INTERPRETATION) over the waveform, cruiser or B-roll picture (~6-10s) to interpret the behavioral or legal contradiction (e.g., treating an emergency hotline like customer service, or mistaking a lawful order for optional advice) and hand off to the next raw confrontation.
+- Strict Scope Window & Duration Budgeting: Every beat in a narrated_story block MUST still lie 100% inside a logical scopeWindow (windowStartSec..windowEndSec in input.scopeReelManifest) — never cut into context padding outside windowStartSec..windowEndSec. Budget your beat durations so the total duration of ALL beats combined (raw_evidence + narrated_story) lands inside input.targetBandMinSec..input.targetBandMaxSec (around input.targetDurationSec, never exceeding input.targetDurationMaxSec): keep raw_evidence proof beats tight (6-12s per raw block) so that including 2-4 narrated_story commentary blocks (~6-10s each) keeps the total timeline around 75-85s.
+- Clean Audio Separation (sourceAudioTreatment): Whenever a narrated_story block runs over footage that contains foreground speech, a 911 call recording, or an argument in the source audio, set sourceAudioTreatment='voiceover_only' so the competing source speech is muted and never clashes with the narrator. Use sourceAudioTreatment='voiceover_with_ambient' only over visual B-roll where no foreground speaker is talking.
+- Narration must not: describe obvious movement, paraphrase a strong quote we are about to hear, talk over an important confrontation, invent information, or spoil input.storyScope.mustWithhold.
+- A fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) can only enter as narration over in-scope footage that fits it.
 
 DELIVERY BLOCKS (spine.deliveryBlocks) — the audio-ownership layer over your beats.
 - Every beat belongs to exactly one block; a block's beatIds are CONSECUTIVE beats in EDL order; blocks follow EDL order. Blocks never change a beat's range, order or role.
 - raw_evidence: the real moment speaks with its original audio. Give evidenceFunction (what the viewer must see/hear/believe).
-- narrated_story: ONE continuous narration passage runs across ALL of the block's beats (visual cuts stay; only the voice spans them). Give storyFunction, narratorFunction, narrationIntent (exactly what the passage must make the viewer understand) and sourceAudioTreatment: voiceover_with_ambient (keep and duck the scene ambience) or voiceover_only (mute the source, e.g. it contains another narrator or unusable speech). handoffTargetBeatId names the raw beat the passage hands the viewer to, when there is one.
-- A narrated block needs enough seconds for its whole passage (input.narrationWordsPerSecond words per second when given, otherwise about 2.5). The narration text itself is written later from your narrationIntent.
-- Each beat's audio follows its block; you do not need to set beat audioMode.
+- narrated_story: ONE continuous narration passage runs across ALL of the block's beats (visual cuts stay; only the voice spans them). Give storyFunction, narratorFunction (HOOK | CONTEXT | CAUSAL_BRIDGE | ESCALATION | COMMENTARY | INTERPRETATION | ANTICIPATION | PAYOFF | CLIFFHANGER | BRIDGE | TIME_JUMP), narrationIntent (the exact setup + editorial commentary point the passage must deliver) and sourceAudioTreatment: voiceover_with_ambient or voiceover_only. handoffTargetBeatId names the raw beat the passage hands the viewer to, when there is one.
+- A narrated block needs enough seconds for its whole passage (input.narrationWordsPerSecond words per second when given, otherwise about 2.5). Group 1-3 consecutive visual/B-roll/waveform beats into a narrated_story block (~6-12s total) when needed so the narrator has sufficient time for a complete 2-sentence commentary passage. The narration text itself is written later from your narrationIntent.
+- Each beat's audio follows its block; when a beat belongs to a narrated_story block, set its audioMode to match the block's sourceAudioTreatment ('voiceover_only' or 'voiceover_with_ambient').
 - If input.narrationEnabled is false, every block must be raw_evidence.
 - A block must not hide a change of scene, time or perspective: put a block boundary where the viewer's sense of where/when/whose account changes, so the transition is visible and can be judged.
 
 DELIVERY SELF-CHECK (answer in the block fields before finalizing spine.deliveryBlocks; the goal is correct ownership, not more or less narration).
-- For every raw_evidence block (ownershipReason): does the viewer need to HEAR this material directly — proof, emotion, confrontation, reaction, authenticity? Or is it mostly explanation or backstory that narration could compress? If several consecutive raw beats do the same explanatory job, keep only the strongest real quote(s) and let a narrated_story block carry the connective information.
-- For every narrated_story block (ownershipReason): what comprehension, compression or orientation does the narrator add, and which real moment does it set up or hand off to?
+- For every raw_evidence block (ownershipReason): does the viewer need to HEAR this material directly — proof, emotion, confrontation, reaction, authenticity? Or is it mostly explanation or backstory that narration could compress? If several consecutive raw beats do the same explanatory job, keep only the strongest real quote(s) and let a narrated_story block carry the connective information and editorial commentary.
+- For every narrated_story block (ownershipReason): what comprehension, compression, commentary or orientation does the narrator add, and which real moment does it set up or hand off to?
 - BLOCK-LEVEL DENSITY, not per beat: blockSummary = the WHOLE block in one sentence; viewerStateChanges = how many genuinely new viewer-state changes happen across the whole block. Distinct lines are not distinct changes. A long block whose sentences all serve one explanatory function should be compressed editorially: fewer, stronger raw beats, or narration.
-- An all-raw EDL is legitimate when every stretch truly needs the real audio; many narrated blocks are legitimate when the story needs orientation. Decide from the material.
+- An all-raw EDL is legitimate when every stretch truly needs the real audio; many narrated blocks are legitimate when the story needs orientation and commentary. Decide from the material.
 
 TRANSITIONS (spine.transitionChecks, one per boundary between consecutive blocks).
 - For each boundary answer: could a cold viewer understand why the next scene is being shown (coldViewerUnderstandsWhy) and how they know (howTheViewerKnows: the picture, the dialogue, or the narration)? Judge from what the viewer sees and hears, not from how far apart the timestamps are.
 - If the honest answer is no, fix it before returning: change delivery ownership, narrationIntent or the block boundary. Do not return coldViewerUnderstandsWhy=false.
 
 OPENING STRATEGY (spine.openingStrategy) — compare BOTH before choosing the first beat:
-1. chronologicalOption: open at the start of the causal spine — what the first seconds show and how much immediate curiosity that creates.
+1. chronologicalOption: open at the start of the causal spine — what the first seconds show and how much immediate curiosity that creates. When the opening encounter ALREADY contains immediate interpersonal friction, an absurd repetitive excuse loop, or defiant refusal to accept help from an officer, opening chronologically on that sharp exchange (followed immediately by a narrated_story block that frames the date/context and arrogant attitude before continuing into the escalation) is often cleaner and more gripping than a teaser rewind.
 2. conflictTeaserOption: open on the strongest conflict or contradiction moment inside the scope (auditioning input.storyScope.hookCandidates, hook_material windows and high-editorialValue contradiction/denial quotes in input.modelContext.quotes) as a teaser, then rewind — which moment, what curiosity it creates, and whether it would spend input.storyScope.mustWithhold or confuse the causal order.
 Choose (chosen) whichever creates the stronger immediate curiosity while preserving mustWithhold and causal clarity; neither is preferred by default. why = the reason. hookStrategy must describe the chosen opening. A conflict_teaser_rewind opening starts with a 'teaser' beat; a chronological opening does not.
 
 HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
-- An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must NEVER spend input.storyScope.mustWithhold (never open on the officer announcing the final criminal charge or outcome when that reveal is withheld for the payoff; prefer a bold denial, absurd self-justification quote or physical flashpoint that makes the viewer ask why this happened).
-- Then rewind (chronologyMode 'rewind') to the start of the causal spine. After the rewind the viewer must still have an open question. Replaying part of the hook later in its full context is allowed. An exact duplicate of a range is not.
+- Whether chronological or teaser, the opening must deliver immediate behavioral friction, a bizarre excuse loop, or a high-stakes confrontation in the very first seconds. An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must NEVER spend input.storyScope.mustWithhold (never open on the officer announcing the final criminal charge or outcome when that reveal is withheld for the payoff; prefer a bold denial, absurd self-justification quote or physical flashpoint that makes the viewer ask why this happened).
+- If you use a teaser, rewind (chronologyMode 'rewind') to the start of the causal spine with a narrated_story block bridging the rewind. After the rewind the viewer must still have an open question. Replaying part of the hook later in its full context is allowed. An exact duplicate of a range is not.
 - The FIRST beat must use a hook role (teaser_conflict, cold_open, cold_open_hook, hook or micro_payoff).
 
 ENDING = A CONSEQUENCE OF THE CENTRAL CONFLICT.
@@ -200,8 +230,8 @@ ${payload.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\
   return `TARGETED EDITORIAL REPAIR — the RENDERED video of your EDL was watched by a media critic, who found the problems listed in input.criticFindings. Each has an output-time region and the beat ids it maps to (input.weakRegions).
 - Return the COMPLETE repaired EDL.
 - Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order).
-- Delivery findings (who owns the audio; input.weakRegions[].deliveryBlockIds) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent, and the weak-region beats themselves (e.g. compress an explanatory raw stretch to its strongest quote plus narration). Keep every unaffected block as it was. Return deliveryBlocks and transitionChecks covering every block.
-- Weak opening or ending replacement: when weakRegions flags the opening (hook_spends_payoff, opening_lacks_curiosity, stronger_hook_buried) or the ending (payoff_unsatisfying, ending_cuts_mid_line, unusable_footage), do NOT merely trim a fraction of a second off the same weak beat — replace or extend the weak opening/ending beat using stronger hook_material / hookCandidates or candidateEndingEvents / ending_material from the attached scope reel so the opening hooks curiosity without spending mustWithhold and the ending lands on a complete, answered resolution with usable picture.
+- Delivery findings (who owns the audio; input.weakRegions[].deliveryBlockIds) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent, and the weak-region beats themselves (e.g. compress an explanatory raw stretch to its strongest quote plus narration, using sourceAudioTreatment='voiceover_only' when underlying footage has speech). Keep every unaffected block as it was. Return deliveryBlocks and transitionChecks covering every block.
+- Weak opening or ending replacement: when weakRegions flags the opening (hook_spends_payoff, opening_lacks_curiosity, stronger_hook_buried) or the ending (payoff_unsatisfying, ending_cuts_mid_line, unusable_footage), do NOT merely trim a fraction of a second off the same weak beat — replace the ending with another in-scope ending candidate or shorten the ending beat to a visually usable endpoint, or replace/extend the opening using stronger hook_material / hookCandidates from the attached scope reel so the opening hooks curiosity without spending mustWithhold and the ending lands on a complete, answered resolution with usable picture.
 - Stay inside input.storyScope. Replacement footage must come from the attached scope reel. Do not introduce a new branch of the incident to fill time.
 - Keep the total duration inside input.targetDurationMinSec..input.targetDurationMaxSec.`;
 }
@@ -355,6 +385,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
     violations.push(...Delivery.validateDeliveryBlocks(beats, spine?.deliveryBlocks, { narrationEnabled, requireSelfCheck: true }).filter(v => v.code === 'DELIVERY_BLOCK_SELF_CHECK_MISSING'));
     violations.push(...Delivery.validateTransitionChecks(spine?.deliveryBlocks, spine?.transitionChecks));
     violations.push(...openingViolations(spine, beats));
+    violations.push(...narrativePlanViolations(spine, beats, scope, { narrationEnabled }));
   }
 
   beats.forEach((b, i) => {
@@ -490,6 +521,48 @@ function openingViolations(spine, beats) {
   return out;
 }
 
+// Structural consistency between storyScope.commentaryOpportunities / spine.narrativePlan
+// and spine.deliveryBlocks when present.
+function narrativePlanViolations(spine, beats, scope, { narrationEnabled = true } = {}) {
+  const out = [];
+  if (!narrationEnabled) return out;
+  const scopeOpportunities = Array.isArray(scope?.commentaryOpportunities) ? scope.commentaryOpportunities : [];
+  const hasNarrativePlan = Boolean(spine?.narrativePlan);
+  if (!hasNarrativePlan && !scopeOpportunities.length) return out;
+  const moments = Array.isArray(spine?.narrativePlan?.plannedNarratedMoments) ? spine.narrativePlan.plannedNarratedMoments : [];
+  const expectedMin = scopeOpportunities.length > 0 ? Math.min(2, scopeOpportunities.length) : moments.length;
+  if (expectedMin > 0 && moments.length < expectedMin) {
+    out.push({
+      code: 'NARRATIVE_PLAN_INCONSISTENT',
+      message: `storyScope.commentaryOpportunities identified ${scopeOpportunities.length} storyteller commentary window(s), but spine.narrativePlan.plannedNarratedMoments only lists ${moments.length}. Plan the storyteller commentary/bridge moments in spine.narrativePlan.plannedNarratedMoments and realize each as a mode='narrated_story' block in spine.deliveryBlocks.`
+    });
+  }
+  const blocks = Array.isArray(spine?.deliveryBlocks) ? spine.deliveryBlocks : [];
+  const narratedBlocks = blocks.filter(b => b.mode === 'narrated_story');
+  const requiredNarratedCount = Math.max(moments.length, expectedMin);
+  if (requiredNarratedCount > 0 && narratedBlocks.length < requiredNarratedCount) {
+    out.push({
+      code: 'NARRATIVE_PLAN_INCONSISTENT',
+      message: `spine.narrativePlan / storyScope.commentaryOpportunities declared ${requiredNarratedCount} narrated storyteller moment(s) (${moments.map(m => `${m.role || 'COMMENTARY'}${m.targetBlockId ? `@${m.targetBlockId}` : ''}`).join(', ') || 'from commentaryOpportunities'}), but spine.deliveryBlocks only has ${narratedBlocks.length} block(s) with mode='narrated_story'. Realize every plannedNarratedMoment as a mode='narrated_story' block in spine.deliveryBlocks (with narratorFunction, narrationIntent, and sourceAudioTreatment='voiceover_only' when underlying footage has speech) alternating with raw_evidence blocks.`
+    });
+  }
+  const beatMap = new Map((beats || []).map(b => [b.beatId, b]));
+  for (const nb of narratedBlocks) {
+    const dur = (nb.beatIds || []).reduce((sum, id) => {
+      const b = beatMap.get(id);
+      return sum + (b ? Math.max(0, num(b.sourceEndSec) - num(b.sourceStartSec)) : 0);
+    }, 0);
+    if (dur > 0 && dur < 5.0) {
+      out.push({
+        code: 'NARRATIVE_PLAN_INCONSISTENT',
+        blockId: nb.blockId,
+        message: `Narrated block '${nb.blockId}' is only ${round2(dur)}s long, which is too short for a natural storyteller commentary passage. Extend its beat range(s) inside the cuttable scope window or group adjacent visual/bridge/waveform beat(s) into '${nb.blockId}' so the narrated_story block is 6-12s long.`
+      });
+    }
+  }
+  return out;
+}
+
 // Scope-local slice of the Source Story Model: only what the reel covers.
 function modelContextForReel(model, reel) {
   const inReel = (s, e) => (reel?.ranges || []).some(r => Math.min(e, r.sourceEndSec) - Math.max(s, r.sourceStartSec) > 0);
@@ -573,7 +646,12 @@ function outputLimitError(engine, key, cause) {
 // Output-limit / degenerate generations are NOT: they fail fast.
 async function callDirector(engine, key, input, instr, evidence, shape) {
   try {
-    return { result: await engine.ask(key, input, schemas.directorEdl, instr, evidence, shape, 'auto_story_edit', { ...DIRECTOR_GENERATION }) };
+    const useStoryteller = shape === validateShape
+      && input?.narrationEnabled !== false
+      && Array.isArray(input?.storyScope?.commentaryOpportunities)
+      && input.storyScope.commentaryOpportunities.length > 0;
+    const schema = useStoryteller ? schemas.directorEdlStoryteller : schemas.directorEdl;
+    return { result: await engine.ask(key, input, schema, instr, evidence, shape, 'auto_story_edit', { ...DIRECTOR_GENERATION }) };
   } catch (e) {
     if (NON_REPAIRABLE_OUTPUT.has(e?.kind)) throw e;
     if (/MAX_TOKENS/.test(e?.message || '')) throw outputLimitError(engine, key, e);
@@ -746,7 +824,8 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
   // returns a structurally invalid EDL is diagnostic only and is never promoted.
   let violations = null, current = extraInput.currentEdl || null, reelObservations = '', previousCompression = null;
   let lastAccepted = null, lastInvalidRepair = null, previousUnderMin = null, stalledRepair = null;
-  for (let attempt = 0; attempt <= maxTechnicalRepairs; attempt++) {
+  let effectiveMaxRepairs = maxTechnicalRepairs;
+  for (let attempt = 0; attempt <= effectiveMaxRepairs; attempt++) {
     const technical = attempt > 0;
     // Once the EDL is media-grounded and ONLY duration is wrong, repair it with a
     // lightweight text-only director call instead of re-watching all reel files.
@@ -904,7 +983,12 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     }
     const nextKind = !onlyDurationViolations(report.violations) ? 'multimodal technical'
       : report.violations.some(v => v.code === 'TOTAL_DURATION_OVER_MAX') ? 'text-only compression' : 'multimodal under-minimum';
-    if (attempt < maxTechnicalRepairs) emit('design', `[Director] EDL needs repair #${attempt + 1} (${nextKind}): ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
+    if (attempt === effectiveMaxRepairs && effectiveMaxRepairs === maxTechnicalRepairs && structurallyValid
+      && !previousCompression && report.violations.every(v => v.code === 'TOTAL_DURATION_OVER_MAX')
+      && Array.isArray(scope?.commentaryOpportunities) && scope.commentaryOpportunities.length > 0) {
+      effectiveMaxRepairs = maxTechnicalRepairs + 1;
+    }
+    if (attempt < effectiveMaxRepairs) emit('design', `[Director] EDL needs repair #${attempt + 1} (${nextKind}): ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
     else emit('design', `[Director] EDL still invalid (${report.violations.map(v => v.code).join(', ')}); no repair slot remains.`, 'WARNING');
     violations = report.violations;
     // Only a structurally valid EDL (or, before any exists, the Director's own

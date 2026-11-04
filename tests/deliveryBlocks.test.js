@@ -518,5 +518,50 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     assert.match(rep, /replace the ending with another in-scope ending candidate/); assert.match(rep, /shorten the ending beat to a visually usable endpoint/);
   });
 
+  await ok('V6 Storyteller: expanded narrator functions, commentary hedging, and critic promotion of overlong raw stretches', async () => {
+    const Taxonomy = require(svc('autoStoryV3Taxonomy.js'));
+    for (const fn of ['HOOK', 'CONTEXT', 'CAUSAL_BRIDGE', 'ESCALATION', 'COMMENTARY', 'INTERPRETATION', 'ANTICIPATION', 'PAYOFF_SETUP', 'PAYOFF', 'CLIFFHANGER', 'CONSEQUENCE']) {
+      assert.ok(Taxonomy.NARRATOR_FUNCTIONS.includes(fn), `missing narratorFunction ${fn}`);
+    }
+    const commentaryBlocks = BLOCKS().map(b => b.blockId === 'story_setup' ? { ...b, narratorFunction: 'COMMENTARY' } : b);
+    assert.deepStrictEqual(Delivery.validateDeliveryBlocks(BEATS, commentaryBlocks), []);
+
+    const claimModel = {
+      events: [{ id: 'e1', startSec: 8.5, endSec: 13.5, summary: '911 misuse', isReveal: false }],
+      quotes: [{ id: 'q-claim', startSec: 9, endSec: 12.5, text: 'She walked up to my car screaming.', epistemic: 'claim' }]
+    };
+    const commentaryMap = new Map([['story_setup', {
+      narrationText: 'Instead of cooperating, she called 911 and complained that the officer walked up to her car screaming.',
+      narratorFunction: 'COMMENTARY',
+      newInformation: ['911 complaint'],
+      newInformationRefs: ['q-claim']
+    }]]);
+    const gated = BlockNarration.gateBlocks(withModes(), Delivery.blockTimeline(withModes(), commentaryBlocks), commentaryMap, claimModel);
+    assert.ok(!gated.issues.some(i => i.code === 'epistemic'), JSON.stringify(gated.issues));
+
+    const Critic = require(svc('scopeMediaCriticService.js'));
+    const overlongTimeline = [
+      { beatId: 'b1', outputStartSec: 0, outputEndSec: 14, deliveryBlockId: 'raw_1' },
+      { beatId: 'b2', outputStartSec: 14, outputEndSec: 20, deliveryBlockId: 'narr_1' },
+      { beatId: 'b3', outputStartSec: 20, outputEndSec: 46, deliveryBlockId: 'raw_2' },
+      { beatId: 'b4', outputStartSec: 46, outputEndSec: 65, deliveryBlockId: 'raw_3' }
+    ];
+    const deliveryBlocks = [
+      { blockId: 'raw_1', mode: 'raw_evidence', beatIds: ['b1'], outputStartSec: 0, outputEndSec: 14 },
+      { blockId: 'narr_1', mode: 'narrated_story', beatIds: ['b2'], outputStartSec: 14, outputEndSec: 20, narrationText: 'Context.' },
+      { blockId: 'raw_2', mode: 'raw_evidence', beatIds: ['b3'], outputStartSec: 20, outputEndSec: 46 },
+      { blockId: 'raw_3', mode: 'raw_evidence', beatIds: ['b4'], outputStartSec: 46, outputEndSec: 65 }
+    ];
+    const basePass = {
+      scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true,
+      finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'ok', summary: '',
+      issues: [], openingCuriosity: { firstSecondsDescription: 'hook', createsCuriosity: true },
+      transitions: [], finalSeconds: { visualDescription: 'clear', subjectClearlyVisible: true }
+    };
+    const critiqued = Critic.normalizeCritique(basePass, { durationSec: 65, timeline: overlongTimeline, deliveryAware: true, deliveryBlocks, narrationActive: true });
+    assert.strictEqual(critiqued.isCompliant, false, '26s raw stretch with only 1 short narrated block should fail critic');
+    assert.ok(critiqued.weakRegions.some(r => r.type === 'raw_explanation_overlong' && r.beatIds.includes('b3')));
+  });
+
   console.log(`\n${passed} passed`);
 })().catch(e => { console.error(e); process.exit(1); });

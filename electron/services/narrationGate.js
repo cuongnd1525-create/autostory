@@ -20,7 +20,7 @@
 const { NARRATOR_FUNCTIONS, NON_FACT_EPISTEMIC } = require('./autoStoryV3Taxonomy');
 
 const DIALOGUE_OVERLAP_LIMIT = 0.5;   // Jaccard token overlap with original dialogue
-const HEDGE = /\b(claim|claims|claimed|allege|alleged|allegedly|report|reports|reported|reporting|reportedly|says|said|told|according to|police say|appears|seems|would later|investigators|suspected|accused)\b/i;
+const HEDGE = /\b(claim|claims|claimed|allege|alleged|allegedly|report|reports|reported|reporting|reportedly|says|said|told|according to|police say|appears|seems|would later|investigators|suspected|accused|complain|complains|complained|complaining|insist|insists|insisted|insisting|argue|argues|argued|arguing|demand|demands|demanded|blamed|blaming|called 911|calling 911)\b/i;
 const STOP = new Set(['the', 'a', 'an', 'to', 'of', 'and', 'or', 'but', 'in', 'on', 'at', 'is', 'are', 'was', 'were', 'be', 'he', 'she', 'they', 'it', 'his', 'her', 'their', 'this', 'that', 'with', 'for', 'as', 'i', 'you', 'we', 'not', 'no']);
 
 function tokens(text) {
@@ -87,8 +87,8 @@ function inspect(beats = [], model = {}) {
     const newInfo = Array.isArray(beat.newInformation) ? beat.newInformation.filter(Boolean) : [];
     const refs = Array.isArray(beat.newInformationRefs) ? beat.newInformationRefs.filter(Boolean) : [];
 
-    // A. Information gap: narration must add something or serve a transition function.
-    const transitionFns = new Set(['BRIDGE', 'TIME_JUMP', 'LOCATION_CHANGE', 'RECAP']);
+    // A. Information gap: narration must add something or serve a transition/commentary function.
+    const transitionFns = new Set(['BRIDGE', 'CAUSAL_BRIDGE', 'TIME_JUMP', 'LOCATION_CHANGE', 'RECAP', 'COMMENTARY', 'INTERPRETATION', 'ANTICIPATION', 'CLIFFHANGER', 'PAYOFF', 'HOOK']);
     if (!newInfo.length && !transitionFns.has(beat.narratorFunction)) {
       push('no_information_gap', 'Narration adds no new information and is not a transition; make the beat original audio.');
     }

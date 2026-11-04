@@ -6972,7 +6972,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     });
     const blockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
     const ambientVolume = treatment === "voiceover_only" ? 0 : getBlockAmbientVolume(lead, project);
-    const duck = project.mixer?.narrationDuckDefault === true;
+    const duck = project.mixer?.narrationDuckDefault !== false;
     const voiceVolume = Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100);
     const maxStretchRatio = project.analysisWorkflow === "manual_gemini_draft_review"
       ? Math.min(0.04, Math.max(0, safeNumber(project.manualDraftMaxVoiceStretch ?? settings.manualDraftMaxVoiceStretch, 0.04)))

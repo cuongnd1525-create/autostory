@@ -562,7 +562,7 @@ class FfmpegService {
           `${bed}volume=${safeSourceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=stereo[bg_raw]`,
           `[1:a]volume=${safeVoiceVolume.toFixed(3)},aresample=async=1:first_pts=0,aformat=channel_layouts=mono,pan=stereo|c0=c0|c1=c0[vo]`,
           `[vo]asplit=2[vo_sc][vo_mix]`,
-          `[bg_raw][vo_sc]sidechaincompress=threshold=-30dB:ratio=10:attack=8:release=260:makeup=1[bg]`,
+          `[bg_raw][vo_sc]sidechaincompress=threshold=-30dB:ratio=10:attack=8:release=650:makeup=1[bg]`,
           `[bg][vo_mix]amix=inputs=2:duration=first:weights='1.0 1.0':normalize=0${limiter ? ",alimiter=limit=0.95" : ""}[a]`
         ].join(";"),
         "-map", "0:v:0", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", "-b:a", "320k", "-shortest", outputPath

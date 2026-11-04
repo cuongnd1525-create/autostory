@@ -36,19 +36,28 @@ const schema = object({ accessGranted: { type: 'boolean' }, narrations: list(blo
 
 const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the requested narrated_story blocks in input.blocks.
 Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction and narrationIntent, and carries the viewer from viewerStateEntering to viewerStateLeaving.
-The narrator owns comprehension, compression, orientation, causal connection, anticipation and momentum. Hand the viewer to the real moment that follows (followingRawBlock / handoffTargetBeatId) without paraphrasing what that moment will say.
-Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their ids in newInformationRefs. A quote whose epistemic status is not known_fact is attributed or hedged ("the caller said/reported...", "according to her"), never stated as fact. The attribution must appear in narrationText itself, not only in metadata. Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
-safeWords is an ADVISORY first-pass target for the whole block, never a quota. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
-Active voice, spoken English, grounded and specific. previewVi is a natural Vietnamese rendering of the passage.`;
+You are an American True Crime Storyteller and Commentary Editor. The narrator owns comprehension, compression, orientation, causal connection, behavioral commentary (COMMENTARY / INTERPRETATION), contrast framing, anticipation and momentum:
+- Editorial Commentary & Contrast Framing: Do not write dry timestamp labels or flat summaries. Frame the behavioral or legal irony using sharp contrast and cause-and-effect ("Instead of accepting help with her disabled car, she met the officer with an arrogant attitude...", "Instead of thanking the officer trying to push her car out of traffic, she walked away to harass the emergency hotline...", "Hijacking the 911 line just to complain about an officer's attitude — failing to understand the difference between an emergency and customer service.").
+- Natural Spoken Cadence & Breath Pauses: Write 1-2 punchy, spoken-English sentences per block with deliberate clause breaks (commas, periods) so the voice delivers each thought with natural pauses and authority.
+- Clean Handoff to Raw Proof: Hand the viewer directly to the real moment that follows (followingRawBlock / handoffTargetBeatId) by setting up what is at stake or what the subject is about to do, without paraphrasing or quoting the exact words that the next raw clip will play.
+- Grounding & Epistemic Safety: Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their valid ids in newInformationRefs. A quote whose epistemic status is not known_fact is attributed or hedged ("the caller said/reported...", "she complained that...", "according to her"), never stated as unhedged fact. The attribution must appear in narrationText itself, not only in metadata. Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
+safeWords is an ADVISORY first-pass target for the whole block, never a quota. Aim slightly below safeWords (about 80-90% of safeWords) so the voice finishes cleanly with a natural breath before the next raw clip begins. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
+Active voice, spoken American English, grounded and incisive. previewVi is a natural Vietnamese rendering of the passage.`;
 
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
 const overlaps = (s, e, a, z) => Math.min(e, z) - Math.max(s, a) > 0;
 
 function sourceContext(model, ranges) {
   const inside = (s, e) => ranges.some(([a, z]) => overlaps(num(s), num(e), a, z));
+  const allEvents = Array.isArray(model?.events) ? model.events : [];
+  let matchedEvents = allEvents.filter(e => inside(e.startSec, e.endSec));
+  if (!matchedEvents.length && allEvents.length) {
+    const wid = ranges.map(([a, z]) => [a - 30, z + 30]);
+    matchedEvents = allEvents.filter(e => wid.some(([a, z]) => overlaps(num(e.startSec), num(e.endSec), a, z)));
+    if (!matchedEvents.length) matchedEvents = allEvents.slice(0, 6);
+  }
   return {
-    events: (model?.events || []).filter(e => inside(e.startSec, e.endSec))
-      .map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, summary: e.summary, isReveal: !!e.isReveal })),
+    events: matchedEvents.map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, summary: e.summary, isReveal: !!e.isReveal })),
     quotes: (model?.quotes || []).filter(q => inside(q.startSec, q.endSec))
       .map(q => ({ id: q.id, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic })),
     facts: (model?.facts || []).map(f => ({ id: f.id, text: f.text || f.summary || '', epistemic: f.epistemic || 'known_fact' }))

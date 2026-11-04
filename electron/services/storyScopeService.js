@@ -69,7 +69,8 @@ const WINDOW_PURPOSES = ['core', 'hook_material', 'ending_material', 'supporting
 
 const spineNode = flexible({ eventId: text, sourceStartSec: number, sourceEndSec: number }, { role: text, whyInScope: text });
 const scopeWindow = flexible({ startSec: number, endSec: number }, { windowId: text, purposes: { type: 'array', items: choice(...WINDOW_PURPOSES) }, purpose: choice(...WINDOW_PURPOSES), why: text });
-const hookCandidate = flexible({ windowId: text, sourceStartSec: number, sourceEndSec: number }, { why: text });
+const hookCandidate = flexible({ windowId: text, sourceStartSec: number, sourceEndSec: number }, { hookType: text, curiosityQuestion: text, why: text });
+const commentaryOpportunity = flexible({ sourceStartSec: number, sourceEndSec: number }, { editorialAngle: text, whyNarratorNeeded: text });
 const supportingContext = flexible({ description: text, sourceStartSec: number, sourceEndSec: number, treatment: choice('narration_only', 'footage') });
 const branch = flexible({ description: text, sourceStartSec: number, sourceEndSec: number }, { whyExcluded: text });
 const ending = flexible({ sourceStartSec: number, sourceEndSec: number, endingType: choice(...END_TARGETS) }, { eventId: text, whyItIsAConsequence: text });
@@ -92,7 +93,7 @@ const storyScope = flexible({
   targetDurationSec: number,
   candidateEndingEvents: list(ending),
   footageAvailability: text
-}, { hookCandidates: list(hookCandidate) });
+}, { hookCandidates: list(hookCandidate), commentaryOpportunities: list(commentaryOpportunity) });
 
 const storyScopeSelection = flexible({
   accessGranted: boolean,
@@ -118,12 +119,13 @@ PRINCIPLES
 2. CAPTURE THE FULL CAUSAL ARC OF ONE CONFLICT (ACTION + VERBAL/LEGAL RECKONING): Prefer one coherent conflict arc over a tour of unrelated branches. However, do NOT artificially split one conflict into a "street action/detention scope" and a separate "post-detention justification/supervisor verdict scope" when the later exchange directly answers the central viewer question, exposes the subject's sharpest self-justification or contradiction quote (high editorialValue), or delivers an authoritative verbal shutdown / legal charge outcome. Include those high-value later moments as separate logical scopeWindows (with purposes hook_material, core, or ending_material) inside the SAME Story Scope and widen explicitScopeBoundary.endSec to cover them, while leaving routine procedural transport/waiting gaps out of scopeWindows so the packed reel stays compact. Only place genuinely unrelated branches (a different subject, an unrelated dispute, or repetitive low-value small talk that adds no thesis contradiction or payoff) into outOfScopeBranches.
 3. When the story needs a brief fact that lives outside the scope windows (background, who someone is, a final court/charge disposition), put it in allowedSupportingContext with treatment='narration_only'. It will be delivered as one narrated sentence over in-scope footage, not by cutting to it. Use treatment='footage' only when the picture itself is causally necessary.
 4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the logical source regions the editor may cut from; list as many as the conflict needs. They must hold enough usable footage for the duration. The system packs them into a media reel for the editor and compacts broad windows around the model's events and quotes, but the packed reel must fit input.maxScopeReelSec, so keep the windows to the causal spine of ONE conflict.
-5. AUDITION HOOK CANDIDATES ACROSS THE FULL SCOPE (hookCandidates): The hook may borrow from later inside the SAME scope (hook_material window), including a post-detention rationalization, absurd denial, or high-friction confrontation flashpoint, provided the scope keeps the resolution in mustWithhold. List 2-4 distinct hookCandidates (windowId + exact sub-range) comparing (a) the sharpest thesis contradiction / absurd excuse quote and (b) the strongest confrontation / escalation flashpoint. Never pick a hook candidate that merely announces the final criminal charge or outcome without friction.
+5. AUDITION HOOK CANDIDATES ACROSS THE FULL SCOPE (hookCandidates): List 2-4 distinct hookCandidates (windowId + exact sub-range + hookType + curiosityQuestion) explicitly comparing: (a) an OPENING BEHAVIORAL-FRICTION / ABSURD-EXCUSE HOOK from the initial encounter (where the subject's bizarre repetition, entitled refusal to cooperate, or immediate clash with an officer trying to help creates instant irritation and curiosity while allowing the story to flow forward chronologically without a disorienting rewind), and (b) a LATER CONTRADICTION / ESCALATION TEASER HOOK from inside the scope (a bold denial or confrontation flashpoint that keeps the final resolution in mustWithhold). Never pick a hook candidate that merely announces the final criminal charge or outcome without friction. Also include early establishing/approach footage inside the first core scopeWindow so the Editorial Director has B-roll picture available for post-hook narrator setup.
 6. candidateEndingEvents must lie inside the scope windows and must deliver a genuine consequence or authoritative verbal/legal shutdown of the central conflict (never an unanswered question or a mid-argument pause). When a later supervisor rebuttal, charge explanation, or legal outcome resolves the central conflict more decisively than the moment handcuffs click, include its window as ending_material and list it in candidateEndingEvents.
+7. IDENTIFY STORYTELLER COMMENTARY & COMPRESSION OPPORTUNITIES (commentaryOpportunities): List 2-4 source ranges inside the scope where an editorial narrator should step in to frame the behavioral contradiction (e.g., contrasting an officer's offer to help with the subject's arrogant attitude), bridge a causal shift (e.g., walking away to harass 911), compress the middle of a repetitive 911 call or argument into a sharp commentary insight (e.g., failing to understand the difference between an emergency and customer service), or set up the final confrontation/reckoning.
 
 OUTPUT
 - Propose 2-4 candidate scopes (different mini-stories or scope framings the source could support). For each, fill every field with absolute source seconds.
-- Choose ONE (chosenStoryScopeId) and explain why in selectionRationale. Judge by: clear conflict, full-arc causal completeness (inciting premise -> contradiction -> confrontation/detention -> verbal/legal reckoning), quote and footage strength, support for the requested duration, a decisive in-scope payoff, and minimal dependency on unrelated branches.
+- Choose ONE (chosenStoryScopeId) and explain why in selectionRationale. Judge by: clear conflict, full-arc causal completeness (inciting premise -> contradiction -> confrontation/detention -> verbal/legal reckoning), quote and footage strength, commentary richness, support for the requested duration, a decisive in-scope payoff, and minimal dependency on unrelated branches.
 - scopeWindows are UNIQUE, NON-OVERLAPPING source ranges, each listed ONCE with a windowId and a purposes array (core | hook_material | ending_material | supporting_context). If one range is both core and hook or ending material, it is ONE window with purposes ['core','hook_material'] — never repeat a range for a second role. Reference hook material in hookCandidates (windowId + exact sub-range) and endings in candidateEndingEvents. supporting_context windows are only for allowedSupportingContext items with treatment='footage'.
 - COUNT LIMITS (hard; "candidates" is per selection, all others per candidate): ${limitsText()}.
 - explicitScopeBoundary.startSec/endSec must contain every core, hook_material and ending_material window.
@@ -289,7 +291,16 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
     }
   });
 
-  const normalizedScope = { ...scope, scopeWindows: windows };
+  const normalizedCommentary = Array.isArray(scope.commentaryOpportunities)
+    ? scope.commentaryOpportunities.map(c => {
+        const s = num(c?.sourceStartSec), e = num(c?.sourceEndSec);
+        if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return null;
+        const win = windows.find(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0);
+        if (!win) return c;
+        return { ...c, sourceStartSec: round2(Math.max(s, win.startSec)), sourceEndSec: round2(Math.min(e, win.endSec)) };
+      }).filter(Boolean)
+    : undefined;
+  const normalizedScope = { ...scope, scopeWindows: windows, ...(normalizedCommentary ? { commentaryOpportunities: normalizedCommentary } : {}) };
   const reel = planScopeReel(normalizedScope, { durationSec, paddingSec, maxScopeReelSec, model, maxReelFiles });
   const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
   if (windows.length && watchable < targetDurationMinSec) {
