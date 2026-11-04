@@ -71,12 +71,27 @@ assert.strictEqual(accept(clean, { transcriptCues: [{ startSec: 457.5, endSec: 4
 const criticHeardCut = critique({ ...rawPass, finalSeconds: { ...rawPass.finalSeconds, lastWordsHeard: "I know you", endsAtCompleteBoundary: false } });
 assert.ok(criticHeardCut.weakRegions.some(r => r.type === "ending_cuts_mid_line"));
 
-// 4. Technically valid EDL with an unsatisfying or missing payoff.
+// 4. Technically valid EDL with an unsatisfying or missing payoff, premature hook reveal, or unanswered final question.
 const noPayoff = critique({ ...rawPass, payoffFulfillsOpeningPromise: false });
 assert.strictEqual(noPayoff.isCompliant, false);
 const aNoPayoff = accept(noPayoff);
 assert.strictEqual(aNoPayoff.technical.verdict, "PASS", "technically valid");
 assert.strictEqual(aNoPayoff.status, ACCEPTANCE.NEEDS_EDITORIAL_REVIEW, "but not editorially ready");
+assert.strictEqual(aNoPayoff.qualityGate.technicalGate, "TECHNICAL_PASS");
+assert.strictEqual(aNoPayoff.qualityGate.editorialGate, "NEEDS_REVIEW");
+assert.strictEqual(aNoPayoff.qualityGate.finalGateStatus, "NEEDS_REVIEW");
+assert.strictEqual(aNoPayoff.qualityGate.publishReady, false);
+assert.strictEqual(accept(clean).qualityGate.finalGateStatus, "EDITORIAL_PASS");
+assert.strictEqual(accept(clean).qualityGate.publishReady, true);
+
+const spendsPayoff = critique({ ...rawPass, issues: [{ type: "hook_spends_payoff", severity: "minor", outputStartSec: 0, outputEndSec: 12, evidence: "reveals the final charge immediately", whyItFails: "spends mustWithhold in the opening" }] });
+assert.strictEqual(spendsPayoff.isCompliant, false, "hook_spends_payoff on the opening beat is promoted to blocking");
+assert.ok(spendsPayoff.weakRegions.some(r => r.type === "hook_spends_payoff" && r.beatIds.includes("b1")));
+
+const unansweredQuestionEnd = critique({ ...rawPass, finalSeconds: { ...rawPass.finalSeconds, lastWordsHeard: "How did I misuse the emergency line?" } });
+assert.strictEqual(unansweredQuestionEnd.isCompliant, false, "ending on an unanswered question fails pragmatic closure");
+assert.ok(unansweredQuestionEnd.weakRegions.some(r => r.type === "payoff_unsatisfying" && r.beatIds.includes("b4")));
+assert.ok(accept(unansweredQuestionEnd).editorial.readiness.findings.some(f => f.code === "PAYOFF_UNSATISFYING"));
 
 // 5. Source footage with embedded external branding / subtitles / promo graphics.
 const branded = critique({ ...rawPass, externalOverlays: { brandingVisible: true, burnedInSubtitlesVisible: true, promoGraphicVisible: false, evidence: "channel watermark", regions: [] } });

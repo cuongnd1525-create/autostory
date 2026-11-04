@@ -148,6 +148,7 @@ SOURCE AUDIO owns proof, confrontation, emotion, authenticity, the strongest quo
 For each stretch of the EDL decide: does the viewer need to UNDERSTAND this section? A narrated_story block may own it. Does the viewer need to EXPERIENCE or BELIEVE this moment? A raw_evidence block should own it.
 Useful grammar when it fits: NARRATE TO THE MOMENT -> LET THE REAL MOMENT SPEAK -> NARRATE OUT OF IT.
 Narration may: set up or rewind context, identify people, compress procedural or repetitive explanation, bridge a meaningful time jump, establish whose account we are hearing, frame a contradiction, build anticipation, set up a reveal, open an unresolved question.
+When input.narrationEnabled is true and the edit rewinds after a cold open (chronologyMode 'rewind') or crosses a major time, location or perspective jump (e.g. from dispatch/setup to physical confrontation, or from street detention to post-detention transport/supervisor review), use a concise narrated_story block (CONTEXT / TIME_JUMP / BRIDGE) so a cold viewer immediately understands who is speaking, why the scene shifted and what is at stake, while letting raw_evidence own the sharpest confrontation quotes, denials, arrests and authoritative rebuttals.
 Narration must not: describe obvious movement, paraphrase a strong quote we are about to hear, talk over an important confrontation, invent information, or spoil input.storyScope.mustWithhold.
 A fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) can only enter as narration over in-scope footage that fits it.
 
@@ -172,16 +173,18 @@ TRANSITIONS (spine.transitionChecks, one per boundary between consecutive blocks
 
 OPENING STRATEGY (spine.openingStrategy) — compare BOTH before choosing the first beat:
 1. chronologicalOption: open at the start of the causal spine — what the first seconds show and how much immediate curiosity that creates.
-2. conflictTeaserOption: open on the strongest conflict moment inside the scope (e.g. input.storyScope hook_material) as a teaser, then rewind — which moment, what curiosity it creates, and whether it would spend input.storyScope.mustWithhold or confuse the causal order.
+2. conflictTeaserOption: open on the strongest conflict or contradiction moment inside the scope (auditioning input.storyScope.hookCandidates, hook_material windows and high-editorialValue contradiction/denial quotes in input.modelContext.quotes) as a teaser, then rewind — which moment, what curiosity it creates, and whether it would spend input.storyScope.mustWithhold or confuse the causal order.
 Choose (chosen) whichever creates the stronger immediate curiosity while preserving mustWithhold and causal clarity; neither is preferred by default. why = the reason. hookStrategy must describe the chosen opening. A conflict_teaser_rewind opening starts with a 'teaser' beat; a chronological opening does not.
 
 HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
-- An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must not spend input.storyScope.mustWithhold.
+- An optional cold open (chronologyMode 'teaser', scopeMembership 'hook') may borrow from later inside the scope: conflict -> escalation -> partial reveal -> cut before the resolution. It must NEVER spend input.storyScope.mustWithhold (never open on the officer announcing the final criminal charge or outcome when that reveal is withheld for the payoff; prefer a bold denial, absurd self-justification quote or physical flashpoint that makes the viewer ask why this happened).
 - Then rewind (chronologyMode 'rewind') to the start of the causal spine. After the rewind the viewer must still have an open question. Replaying part of the hook later in its full context is allowed. An exact duplicate of a range is not.
 - The FIRST beat must use a hook role (teaser_conflict, cold_open, cold_open_hook, hook or micro_payoff).
 
 ENDING = A CONSEQUENCE OF THE CENTRAL CONFLICT.
-- The final beat (scopeMembership 'ending') must come from input.storyScope.candidateEndingEvents or an ending_material window, and must match input.storyScope.scopeEndTarget. For a forward cliffhanger, name the specific consequence that is now likely and stop before it is shown (payoffTiming 'part_2', isForwardConsequence=true, expectedNextConsequence, whyCutHere). A new question from another branch is not an ending.
+- The final beat (scopeMembership 'ending') must come from input.storyScope.candidateEndingEvents or an ending_material window, and must match input.storyScope.scopeEndTarget.
+- Pragmatic closure: never cut the final beat right after an unanswered question or protest from the subject without including the authoritative rebuttal, consequence or charge reveal that answers it (unless scopeEndTarget is forward_cliffhanger). Avoid ending on static map/graphic overlays when clean live-action footage is available in the scope reel.
+- For a forward cliffhanger, name the specific consequence that is now likely and stop before it is shown (payoffTiming 'part_2', isForwardConsequence=true, expectedNextConsequence, whyCutHere). A new question from another branch is not an ending.
 
 SCOPE MEMBERSHIP
 - hook | core | supporting_context | bridge_picture | ending. bridge_picture = in-reel footage used as picture under a narration bridge. Beats outside the reel are impossible.
@@ -198,7 +201,7 @@ ${payload.violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\
 - Return the COMPLETE repaired EDL.
 - Fix the problems by changing ONLY the beats in the weak regions, plus an adjacent beat if the transition itself needs it. Preserve every other beat exactly (same ranges, same order).
 - Delivery findings (who owns the audio; input.weakRegions[].deliveryBlockIds) are repaired in spine.deliveryBlocks: you may change raw_evidence / narrated_story ownership, block membership or narrationIntent, and the weak-region beats themselves (e.g. compress an explanatory raw stretch to its strongest quote plus narration). Keep every unaffected block as it was. Return deliveryBlocks and transitionChecks covering every block.
-- Unusable final footage (unusable_footage at the end): replace the ending with another in-scope ending candidate (input.storyScope.candidateEndingEvents or an ending_material window) whose picture is clearly observable, or shorten the ending beat to a visually usable endpoint.
+- Weak opening or ending replacement: when weakRegions flags the opening (hook_spends_payoff, opening_lacks_curiosity, stronger_hook_buried) or the ending (payoff_unsatisfying, ending_cuts_mid_line, unusable_footage), do NOT merely trim a fraction of a second off the same weak beat — replace or extend the weak opening/ending beat using stronger hook_material / hookCandidates or candidateEndingEvents / ending_material from the attached scope reel so the opening hooks curiosity without spending mustWithhold and the ending lands on a complete, answered resolution with usable picture.
 - Stay inside input.storyScope. Replacement footage must come from the attached scope reel. Do not introduce a new branch of the incident to fill time.
 - Keep the total duration inside input.targetDurationMinSec..input.targetDurationMaxSec.`;
 }
@@ -491,9 +494,9 @@ function openingViolations(spine, beats) {
 function modelContextForReel(model, reel) {
   const inReel = (s, e) => (reel?.ranges || []).some(r => Math.min(e, r.sourceEndSec) - Math.max(s, r.sourceStartSec) > 0);
   const events = (model?.events || []).filter(e => inReel(num(e.startSec), num(e.endSec)))
-    .map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, type: e.type, summary: e.summary, location: e.location, peopleIds: e.peopleIds }));
+    .map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, type: e.type, summary: e.summary, location: e.location, peopleIds: e.peopleIds, tension: e.tension, dialogueImpact: e.dialogueImpact, isReveal: e.isReveal }));
   const quotes = (model?.quotes || []).filter(q => inReel(num(q.startSec), num(q.endSec)))
-    .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic }));
+    .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic, editorialValue: q.editorialValue }));
   return { people: model?.people || [], events, quotes };
 }
 
@@ -1060,7 +1063,7 @@ function endingBoundary(beats, cues) {
 // Editorial readiness from the critic's own verdicts on the rendered MP4 plus the
 // deterministic ending-boundary check. Each finding is a reason the edit is not yet
 // ready even when the EDL is technically valid.
-function editorialReadiness(critique, beats, cues) {
+function editorialReadiness(critique, beats, cues, scope = null) {
   const findings = [];
   const boundary = endingBoundary(beats, cues);
   if (boundary.checked && !boundary.complete) {
@@ -1074,15 +1077,19 @@ function editorialReadiness(critique, beats, cues) {
   if (c.finalSeconds && c.finalSeconds.endsAtCompleteBoundary === false) {
     findings.push({ code: 'ENDING_INCOMPLETE', message: `The critic heard the ending cut before a line/action finished${c.finalSeconds.lastWordsHeard ? ` ("${String(c.finalSeconds.lastWordsHeard).slice(0, 120)}")` : ''}.` });
   }
-  if (c.payoffFulfillsOpeningPromise === false) {
+  const lastWords = String(c.finalSeconds?.lastWordsHeard || '').trim();
+  if (scope?.scopeEndTarget !== 'forward_cliffhanger' && /\?\s*["']?$/.test(lastWords) && /\b(how|why|what|for what|are you|who)\b/i.test(lastWords)) {
+    findings.push({ code: 'PAYOFF_UNSATISFYING', message: `The final beat ends on an unanswered question ("${lastWords.slice(0, 120)}") without the authoritative rebuttal or consequence.` });
+  }
+  if (c.payoffFulfillsOpeningPromise === false && !findings.some(f => f.code === 'PAYOFF_UNSATISFYING')) {
     findings.push({ code: 'PAYOFF_UNSATISFYING', message: 'The critic judged that the ending does not pay off the promise made by the opening.' });
   }
   for (const it of c.issues || []) {
     if (it.severity !== 'minor') continue; // blocking issues already fail the critic verdict
     const touchesEnd = (it.beatIds || []).includes(beats[beats.length - 1]?.beatId);
     const touchesStart = (it.beatIds || []).includes(beats[0]?.beatId);
-    if (it.type === 'low_value_stretch' && touchesEnd) findings.push({ code: 'PAYOFF_UNSATISFYING', message: `The final beat is a low-value stretch (${String(it.whyItFails || it.evidence || '').slice(0, 160)}).` });
-    if ((it.type === 'low_value_stretch' || it.type === 'opening_lacks_curiosity') && touchesStart) findings.push({ code: 'WEAK_OPENING', message: `The opening beat was flagged (${it.type}: ${String(it.whyItFails || it.evidence || '').slice(0, 160)}).` });
+    if (it.type === 'low_value_stretch' && touchesEnd && !findings.some(f => f.code === 'PAYOFF_UNSATISFYING')) findings.push({ code: 'PAYOFF_UNSATISFYING', message: `The final beat is a low-value stretch (${String(it.whyItFails || it.evidence || '').slice(0, 160)}).` });
+    if ((it.type === 'low_value_stretch' || it.type === 'opening_lacks_curiosity' || it.type === 'hook_spends_payoff') && touchesStart) findings.push({ code: 'WEAK_OPENING', message: `The opening beat was flagged (${it.type}: ${String(it.whyItFails || it.evidence || '').slice(0, 160)}).` });
   }
   return { boundary, findings };
 }
@@ -1168,14 +1175,20 @@ function acceptanceReport(spine, { config = {}, durationSec, scriptSegments = nu
   // Technical validity is not editorial readiness: a critic PASS with any readiness
   // finding (buried hook, mid-sentence ending, unsatisfying payoff, ...) or a visible
   // external overlay is surfaced for review instead of being ACCEPTED.
-  const readiness = editorialReadiness(critique, beats, transcriptCues);
+  const readiness = editorialReadiness(critique, beats, transcriptCues, scope);
   const presentation = presentationReadiness(critique);
   if (editorial.verdict === 'PASS' && readiness.findings.length) editorial.verdict = 'NEEDS_REVIEW';
   editorial.readiness = readiness;
   const status = technical.verdict === 'FAIL' ? ACCEPTANCE.REJECTED
     : renderViolations.length ? ACCEPTANCE.NEEDS_EDITORIAL_REVIEW
       : editorial.verdict === 'PASS' && !presentation.findings.length ? ACCEPTANCE.ACCEPTED : ACCEPTANCE.NEEDS_EDITORIAL_REVIEW;
-  return { contract: ACCEPTANCE_CONTRACT, status, technical, editorial, presentation };
+  const qualityGate = {
+    technicalGate: technical.verdict === 'PASS' && !renderViolations.length ? 'TECHNICAL_PASS' : 'REJECTED',
+    editorialGate: editorial.verdict === 'PASS' && !presentation.findings.length ? 'EDITORIAL_PASS' : editorial.verdict === 'NOT_RUN' ? 'NOT_RUN' : 'NEEDS_REVIEW',
+    finalGateStatus: status === ACCEPTANCE.ACCEPTED ? 'EDITORIAL_PASS' : status === ACCEPTANCE.REJECTED ? 'REJECTED' : 'NEEDS_REVIEW',
+    publishReady: status === ACCEPTANCE.ACCEPTED
+  };
+  return { contract: ACCEPTANCE_CONTRACT, status, qualityGate, technical, editorial, presentation };
 }
 
 // Integrity check used by buildScript: downstream stages must hand the compiler

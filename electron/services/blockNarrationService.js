@@ -73,7 +73,7 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
   const prev = rawNeighbour(timeline, k, -1), next = rawNeighbour(timeline, k, +1);
   const ranges = [...blk.beats, ...(prev?.beats || []), ...(next?.beats || [])].map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
   return {
-    blockId: blk.blockId, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '', narrationIntent: blk.narrationIntent || '',
+    blockId: blk.blockId, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '', narrationIntent: blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '',
     sourceAudioTreatment: Delivery.audioModeFor(blk), handoffTargetBeatId: blk.handoffTargetBeatId || null,
     beats: blk.beats.map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec,
       durationSec: Math.round((num(b.sourceEndSec) - num(b.sourceStartSec)) * 100) / 100, narrativeRole: b.narrativeRole,

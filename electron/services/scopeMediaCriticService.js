@@ -142,17 +142,17 @@ Answer from what you actually SEE and HEAR:
 3. endingIsConsequenceOfCentralConflict: is the ending a payoff, or a named forward consequence, of this conflict (not a new question from another branch)?
 4. finalFootageUsable: LOOK at the picture of the last 3-5 seconds itself. Is the subject/action clearly visible, or is the frame blocked, dark, covered, pointed away or unreadable? Describe what you literally see there in finalSeconds.visualDescription and set finalSeconds.subjectClearlyVisible. The transcript or a resolved story is NOT evidence that the picture is usable.
 5. issues: every genuine problem, with its output-time region: ${ISSUE_TYPES.join(', ')}. 'blocking' means a viewer would lose the story or feel it is assembled from unrelated moments. 'minor' means it could be better. Do not report a problem just because the location or speaker stays the same: a continuous exchange that keeps changing the conflict is fine. A large source-time jump is fine when the edit makes clear why we are there.
-6. transitions: list EVERY major visual, time, place or perspective change you see in the rendered video (outputSec, change, whatViewerSeesAndHears) and for each judge coldViewerUnderstandsWhy — does the picture, dialogue or narration tell a first-time viewer why we are now seeing this? Inspect each transition as you watch; do not rely on the transcript flowing on.
+6. transitions: list EVERY major visual, time, place or perspective change you see in the rendered video (outputSec, change, whatViewerSeesAndHears) and for each judge coldViewerUnderstandsWhy — does the picture, dialogue or narration tell a first-time viewer why we are now seeing this? Inspect each transition as you watch; do not rely on the transcript flowing on. When a cold-open teaser rewinds backward in source time to an earlier scene, or when the edit jumps across locations/perspectives without narration or spoken orientation explaining the rewind/jump, set coldViewerUnderstandsWhy=false.
    coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? It cannot be true while a listed transition is not understood. coldViewerNotes: where that breaks, if anywhere.
    openingCuriosity: describe the first seconds (firstSecondsDescription) and judge whether they create immediate curiosity for a cold viewer (createsCuriosity).
 7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). Report only what you actually experience while watching, with its output-time region.
 8. EDITORIAL READINESS — a technically valid edit can still be weak. Judge from what you saw:
-   - openingCuriosity.strongerHookAtOutputSec: if a LATER moment in THIS rendered edit would hook a cold viewer clearly better than the opening (a sharper line, conflict or reveal you actually saw/heard), give its output second and describe it in strongerHookEvidence; otherwise -1. A routine exchange that only becomes interesting later is not a hook.
+   - openingCuriosity.strongerHookAtOutputSec: if a LATER moment in THIS rendered edit would hook a cold viewer clearly better than the opening (a sharper line, conflict or reveal you actually saw/heard), give its output second and describe it in strongerHookEvidence; otherwise -1. A routine exchange that only becomes interesting later is not a hook. If the opening beat prematurely gives away the final criminal charge or outcome that should be withheld, report hook_spends_payoff as blocking.
    - finalSeconds.lastWordsHeard: the last words spoken before the video ends. finalSeconds.endsAtCompleteBoundary: false if the cut interrupts a sentence or an action mid-way.
-   - payoffFulfillsOpeningPromise: does the ending answer or pay off the question/promise the opening raised (not just "time runs out")?
-   - Report a static or blocked picture that adds no new information for several seconds as low_information_footage, and an ending that drags after the conflict is resolved as low_value_stretch.
+   - payoffFulfillsOpeningPromise: does the ending answer or pay off the question/promise the opening raised (not just "time runs out", and NEVER ending on an unanswered question from the subject such as "How did I...?" or "Why am I...?" without the answer)?
+   - Report a static or blocked picture that adds no new information for several seconds (including static map/waveform graphics) as low_information_footage, and an ending that drags after the conflict is resolved as low_value_stretch.
 9. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
-10. externalOverlays: material burned into the SOURCE picture by a third party — channel watermark/logo (brandingVisible), the source's own subtitles (burnedInSubtitlesVisible), subscribe/like/end-screen or other promo graphics (promoGraphicVisible). List the output-time regions where a promo graphic or other overlay is visible.
+10. externalOverlays: material burned into the SOURCE picture by a third party — channel watermark/logo (brandingVisible), the source's own subtitles (burnedInSubtitlesVisible), subscribe/like/end-screen promotional graphics (promoGraphicVisible — only set true for actual channel subscribe/like/end-screen promo banners, NOT for 911 dispatch audio waveform/map screens shown while a 911 call is playing). List the output-time regions where a promo graphic or other overlay is visible.
 Return JSON only.`;
 }
 
@@ -218,6 +218,12 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
   }
   // Editorial readiness verdicts become repairable blocking regions (same call, no new model).
   const firstRegion = timeline[0] ? [timeline[0].outputStartSec, timeline[0].outputEndSec] : [0, Math.min(5, durationSec)];
+  for (const it of issues) {
+    if (it.type === 'hook_spends_payoff' && it.severity === 'minor' && it.outputStartSec <= firstRegion[1] + 0.5) {
+      it.severity = 'blocking';
+      it.derivedFromVerdict = 'hook_spends_payoff@opening';
+    }
+  }
   const hookAt = Number(raw.openingCuriosity?.strongerHookAtOutputSec);
   if (Number.isFinite(hookAt) && hookAt >= 0 && !issues.some(x => x.severity === 'blocking' && x.type === 'stronger_hook_buried')) {
     const at = Math.max(0, Math.min(durationSec, hookAt));
@@ -229,11 +235,18 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false }
     issues.push({ type: 'ending_cuts_mid_line', severity: 'blocking', outputStartSec: tail[0], outputEndSec: tail[1], evidence: raw.finalSeconds?.lastWordsHeard || '',
       whyItFails: 'Critic verdict: the final cut interrupts a sentence or action before it completes.', beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: 'finalSeconds.endsAtCompleteBoundary' });
   }
+  const lastWords = String(raw.finalSeconds?.lastWordsHeard || '').trim();
+  const endsOnUnansweredQuestion = /\?\s*["']?$/.test(lastWords) && /^(how|why|what|for what|are you|who)\b/i.test(lastWords.replace(/^["'\s]+/, ''));
   const endDrags = issues.some(x => x.type === 'low_value_stretch' && x.severity === 'minor' && x.outputEndSec >= tail[0] + 0.05 && x.outputStartSec < tail[1]);
-  if ((raw.payoffFulfillsOpeningPromise === false || endDrags) && !issues.some(x => x.severity === 'blocking' && x.type === 'payoff_unsatisfying')) {
-    issues.push({ type: 'payoff_unsatisfying', severity: 'blocking', outputStartSec: tail[0], outputEndSec: tail[1], evidence: raw.observedStory || '',
-      whyItFails: raw.payoffFulfillsOpeningPromise === false ? 'Critic verdict: the ending does not pay off the opening promise.' : 'The final beat itself was reported as a low-value stretch: the story ends on filler, not a payoff.',
-      beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: raw.payoffFulfillsOpeningPromise === false ? 'payoffFulfillsOpeningPromise' : 'low_value_stretch@ending' });
+  if ((raw.payoffFulfillsOpeningPromise === false || endDrags || endsOnUnansweredQuestion) && !issues.some(x => x.severity === 'blocking' && x.type === 'payoff_unsatisfying')) {
+    const why = raw.payoffFulfillsOpeningPromise === false
+      ? 'Critic verdict: the ending does not pay off the opening promise.'
+      : endsOnUnansweredQuestion
+        ? `The edit ends on an unanswered question ("${lastWords}") instead of a completed consequence or authoritative answer.`
+        : 'The final beat itself was reported as a low-value stretch: the story ends on filler, not a payoff.';
+    issues.push({ type: 'payoff_unsatisfying', severity: 'blocking', outputStartSec: tail[0], outputEndSec: tail[1], evidence: endsOnUnansweredQuestion ? lastWords : (raw.observedStory || ''),
+      whyItFails: why,
+      beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: raw.payoffFulfillsOpeningPromise === false ? 'payoffFulfillsOpeningPromise' : endsOnUnansweredQuestion ? 'finalSeconds.lastWordsHeard@unanswered_question' : 'low_value_stretch@ending' });
   }
   for (const r of (Array.isArray(raw.externalOverlays?.regions) ? raw.externalOverlays.regions : [])) {
     let s = Number(r?.outputStartSec), e = Number(r?.outputEndSec);

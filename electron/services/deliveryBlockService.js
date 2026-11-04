@@ -97,7 +97,9 @@ function validateDeliveryBlocks(beats = [], blocks, { narrationEnabled = true, r
     if (requireSelfCheck && !String(blk?.ownershipReason || '').trim()) add('DELIVERY_BLOCK_SELF_CHECK_MISSING', `Block '${id}' needs ownershipReason: why the real moment (raw_evidence) or the narrator (narrated_story) owns it.`, { blockId: id });
     if (blk?.mode === 'narrated_story') {
       if (!narrationEnabled) add('NARRATION_DISABLED', `Block '${id}' is narrated_story but narration is disabled for this project; use raw_evidence.`, { blockId: id });
-      if (!String(blk.narrationIntent || '').trim()) add('NARRATED_BLOCK_WITHOUT_INTENT', `Narrated block '${id}' needs narrationIntent: what the passage must make the viewer understand.`, { blockId: id });
+      const intent = String(blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '').trim();
+      if (!intent) add('NARRATED_BLOCK_WITHOUT_INTENT', `Narrated block '${id}' needs narrationIntent: what the passage must make the viewer understand.`, { blockId: id });
+      else if (!String(blk.narrationIntent || '').trim()) blk.narrationIntent = intent;
       if (blk.handoffTargetBeatId && !order.has(blk.handoffTargetBeatId)) add('DELIVERY_HANDOFF_UNKNOWN_BEAT', `Block '${id}' hands off to unknown beat '${blk.handoffTargetBeatId}'.`, { blockId: id });
     }
   });

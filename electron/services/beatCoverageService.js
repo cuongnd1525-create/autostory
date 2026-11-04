@@ -16,6 +16,7 @@
 // treatment like any other beat. Duration Fit afterwards only fine-tunes.
 
 const { timelineSeconds } = require('./autoStoryDurationFit');
+const { toV2Role } = require('./autoStoryV3Taxonomy');
 
 const STRUCTURAL_RATIO = 0.7;      // base < 0.7*min => structural deficit (not a small gap)
 const MIN_BEAT_SEC = 2.0;          // never add a sub-2s flash
@@ -311,8 +312,8 @@ function computeEditorialMetrics(beats = [], model = {}, config = {}, extra = {}
   const noveltyProgression = evs.map((e, i) => Number(noveltyScores(e, evs.slice(0, i)).aggregate.toFixed(3)));
   const avgNovelty = noveltyProgression.length ? noveltyProgression.reduce((a, b) => a + b, 0) / noveltyProgression.length : 0;
 
-  const hookRoles = new Set(['hook', 'cold_open']);
-  const hookPresent = beats.length > 0 && hookRoles.has(beats[0].narrativeRole);
+  const hookRoles = new Set(['hook', 'cold_open', 'cold_open_hook', 'teaser_conflict', 'micro_payoff']);
+  const hookPresent = beats.length > 0 && (hookRoles.has(beats[0].narrativeRole) || toV2Role(beats[0].narrativeRole) === 'hook');
   const coverageRatio = min ? Number((meaningfulSeconds / min).toFixed(3)) : null;
   const repetitionScore = beatCount ? Number((1 - distinctLocations / beatCount).toFixed(3)) : 0;
   const distinctEventRatio = beatCount ? Number((distinctEvents / beatCount).toFixed(3)) : 0;

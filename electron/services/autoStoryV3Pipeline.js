@@ -875,7 +875,9 @@ async function critiqueDirectorRender(ai, spine, mp4, probe, script) {
 
 function directorAudit(id, verdict, extra = {}) {
   const acceptanceStatus = extra.acceptance?.status || verdict.acceptanceStatus || null;
-  return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, ...verdict, ...(acceptanceStatus ? { acceptanceStatus } : {}), ...extra };
+  const qualityGate = extra.acceptance?.qualityGate || null;
+  const publishReady = qualityGate ? qualityGate.publishReady : !verdict.needsUserReview;
+  return { scriptId: id, complete: true, contractVersion: 4, editorialContract: Director.DIRECTOR_CONTRACT, pending: false, publishReady, ...verdict, ...(acceptanceStatus ? { acceptanceStatus } : {}), ...(qualityGate ? { qualityGate } : {}), ...extra };
 }
 
 // Deterministic acceptance of the EDL that was actually rendered (see
