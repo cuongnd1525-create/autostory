@@ -1,0 +1,56 @@
+{
+  "manifestVersion": "1.0.0",
+  "projectId": "v6-recovery-benchmark-mw34",
+  "projectTitle": "V6-Recovery-Storyteller-Benchmark",
+  "generatedAt": "2026-11-05T07:11:30.000Z",
+  "workspaceRoot": "D:\\OutputVideo",
+  "projectRoot": "D:\\OutputVideo\\v6-recovery-benchmark-mw34",
+  "exportRoot": "D:\\Video",
+  "source": {
+    "sourceVideoPath": "C:\\Users\\Admin\\Documents\\MovieRecapToolWorkspace\\sources\\youtube-m6ow9dqxqcg\\source-m6ow9dqxqcg.mp4",
+    "subtitleSourcePath": "C:\\Users\\Admin\\Documents\\MovieRecapToolWorkspace\\sources\\youtube-m6ow9dqxqcg\\source-m6ow9dqxqcg.en.srt",
+    "sceneManifestPath": "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\scene-manifest.json",
+    "sourceTranscriptPath": "D:\\Video\\source-m6ow9dqxqcg-gemini-analysis-pack\\01-GUI-GEMINI\\source-transcript.srt"
+  },
+  "referenceVideos": {
+    "viralStorytellingReference": "C:\\Users\\Admin\\Videos\\va.mp4",
+    "v5FullArcBaseline": "D:\\Video\\v5-full-arc-benchmark-1104-final.mp4",
+    "v6StorytellerBaseline": "D:\\Video\\v6-storyteller-benchmark-1104-final.mp4",
+    "v6EditorialUpgrade": "D:\\Video\\v6-upgrade-storyteller-benchmark-final.mp4"
+  },
+  "outputs": {
+    "fastDraftVideoPath": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\output\\highlight-cut-variant_01-fast-draft.mp4",
+    "productionFinalVideoPath": "D:\\Video\\v6-recovery-storyteller-benchmark-final.mp4",
+    "internalProductionFinalVideoPath": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\output\\highlight-cut-variant_01-final.mp4"
+  },
+  "artifacts": {
+    "storyScope": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\story-scope.json",
+    "storyScopeSelection": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\story-scope-selection.json",
+    "storySpine": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\story-spine.json",
+    "script": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\script-1.json",
+    "beatCasting": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\beat-casting-1.json",
+    "blockNarration": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\block-narration-1.json",
+    "editorialMetrics": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\editorial-metrics-1.json",
+    "runCosts": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\run-costs.json",
+    "reviewState": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\review-state-1.json",
+    "initialMediaAudit": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\initial-media-audit-1.json",
+    "benchmarkSummary": "D:\\OutputVideo\\v6-recovery-benchmark-mw34\\analysis\\auto-story-fast\\v6-recovery-benchmark-summary.json"
+  },
+  "technicalParameters": {
+    "resolution": "1080x1920",
+    "aspectRatio": "9:16",
+    "fps": 30,
+    "videoCodec": "libx264",
+    "crf": 21,
+    "preset": "fast",
+    "audioCodec": "aac",
+    "audioBitrate": "192k",
+    "durationSec": 80.77,
+    "sizeBytes": 42068312,
+    "integratedLoudness": -13.5,
+    "loudnessRange": 6.1,
+    "voiceProvider": "kokoro",
+    "voiceId": "am_adam",
+    "voiceSpeed": 1.2
+  }
+}

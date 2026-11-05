@@ -645,7 +645,7 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
       { beatId: 'b02', sourceStartSec: 527.4, sourceEndSec: 531.0, narrativeRole: 'payoff', observedInFootage: 'end', whyNecessaryNow: 'end' }
     ];
     const outroSpine = { beats: outroBeats, deliveryBlocks: testBlocks };
-    const outroScope = { candidateEndingEvents: [{ sourceStartSec: 520, sourceEndSec: 531.0 }] };
+    const outroScope = { candidateEndingEvents: [{ sourceStartSec: 520, sourceEndSec: 531.0 }], liveActionEndSec: 529.8 };
     const outroReport = Director.validateDirectorEdl(outroSpine, outroScope, {
       durationSec: 600, targetDurationMinSec: 10, targetDurationMaxSec: 100,
       narrationEnabled: true, cues: [], requireDeliveryBlocks: true

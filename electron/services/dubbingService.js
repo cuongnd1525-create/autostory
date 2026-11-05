@@ -6439,7 +6439,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     });
   }
 
-  async renderHighlightFastDraft({ workspaceRoot, projectId, settings, onProgress, project: suppliedProject = null }) {
+  async renderHighlightFastDraft({ workspaceRoot, projectId, settings, onProgress, project: suppliedProject = null, isFinal = false }) {
     let project = suppliedProject || await this.projectStore.getProject(workspaceRoot, projectId);
     project = resolveEffectiveVideoEditProject(project);
     if (project.analysisWorkflow === "manual_gemini_draft_review" && (project.draftVoiceMode || "edge_neural") === "edge_neural") {
@@ -6466,12 +6466,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }
 
     const draftStamp = Date.now();
-    const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.mp4`);
-    const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-base.mp4`);
-    const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-decorated.mp4`);
-    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}.vi.srt`);
-    const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-voice-warnings.json`);
-    const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-fast-draft-${draftStamp}-gemini-rewrite-prompt.txt`);
+    const outputTag = isFinal ? "final" : "fast-draft";
+    const outputPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-${outputTag}-${draftStamp}.mp4`);
+    const undecoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-${outputTag}-${draftStamp}-base.mp4`);
+    const decoratedOutputPath = path.join(paths.tempDir, `highlight-cut-${variantSuffix}-${outputTag}-${draftStamp}-decorated.mp4`);
+    const subtitlePath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-${outputTag}-${draftStamp}.vi.srt`);
+    const voiceWarningReportPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-${outputTag}-${draftStamp}-voice-warnings.json`);
+    const geminiRewritePromptPath = path.join(paths.outputDir, `highlight-cut-${variantSuffix}-${outputTag}-${draftStamp}-gemini-rewrite-prompt.txt`);
     const clipPaths = [];
     const draftVoiceReports = [];
     const draftVoiceProvider = this.getFastDraftVoiceProvider(project, settings);
@@ -6708,8 +6709,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       paths,
       inputPath: undecoratedOutputPath,
       outputPath: decoratedOutputPath,
-      name: `highlight-${variantSuffix}-draft`,
-      draft: true
+      name: isFinal ? `highlight-${variantSuffix}-final` : `highlight-${variantSuffix}-draft`,
+      draft: !isFinal
     });
     const previewSubtitleSegments = await this.buildHighlightFastDraftPreviewSubtitles({
       workspaceRoot,
@@ -6836,18 +6837,28 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       percent: 98,
       message: `[SEGMENT_CACHE] ${renderSummary.segmentCacheHits} HIT / ${renderSummary.segmentCacheMisses} MISS · [TTS_CACHE] ${renderSummary.ttsCacheHits} HIT / ${renderSummary.ttsCacheMisses} MISS · ${renderMetrics.segmentCacheLog.join(", ")}`.slice(0, 400)
     });
-    let publishedDraftPath = "";
+    let publishedOutputPath = "";
     // Variant renders may run concurrently: the read-modify-write of project.json
     // must be serialized or one variant would overwrite the other's artifacts.
     await this.withProjectWriteLock(workspaceRoot, projectId, async () => {
       const latestProject = await this.projectStore.getProject(workspaceRoot, projectId).catch(() => project);
-      publishedDraftPath = await publishDraftVideo({
-        settings,
-        project: latestProject,
-        sourcePath: outputPath,
-        mode: "highlight",
-        variant: `${variantMetadata.fileTag}-${activeVariant.label || variantId}`
-      });
+      if (isFinal) {
+        publishedOutputPath = await publishFinalVideo({
+          settings,
+          project: latestProject,
+          sourcePath: outputPath,
+          mode: "highlight",
+          variant: `${variantMetadata.fileTag}-${activeVariant.label || variantId}`
+        });
+      } else {
+        publishedOutputPath = await publishDraftVideo({
+          settings,
+          project: latestProject,
+          sourcePath: outputPath,
+          mode: "highlight",
+          variant: `${variantMetadata.fileTag}-${activeVariant.label || variantId}`
+        });
+      }
       const variants = Array.isArray(latestProject.analysis?.highlightVariants) ? latestProject.analysis.highlightVariants : [];
       const previousWarnings = Array.isArray(latestProject.analysis?.warnings) ? latestProject.analysis.warnings : [];
       const retainedWarnings = previousWarnings.filter((warning) => {
@@ -6868,18 +6879,34 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         draftReviewReadiness: buildDraftReviewReadiness(variant, voiceAlignmentReport),
         artifacts: {
           ...(variant.artifacts || {}),
-          fastDraftVideoPath: publishedDraftPath,
-          internalFastDraftVideoPath: outputPath,
-          fastDraftBaseVideoPath: undecoratedOutputPath,
-          fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
-          fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
-          fastDraftVoiceWarningReportPath: voiceWarningReportPath,
-          fastDraftResolvedTimelinePath: resolvedTimelinePath,
-          fastDraftGeminiRewritePromptPath: geminiRewritePromptPath,
-          fastDraftDeliveryBlockReportPath: deliveryBlockReportPath,
-          fastDraftBlockNarrationSubtitlePath: blockNarrationSubtitlePath,
-          fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
+          ...(isFinal ? {
+            finalVideoPath: publishedOutputPath,
+            internalFinalVideoPath: outputPath,
+            finalBaseVideoPath: undecoratedOutputPath,
+            finalSubtitlePath: subtitlePath,
+            finalSubtitleLanguage: "vi",
+            finalSubtitlesEmbedded: embedPreviewSubtitles,
+            finalVoiceWarningReportPath: voiceWarningReportPath,
+            finalResolvedTimelinePath: resolvedTimelinePath,
+            finalDeliveryBlockReportPath: deliveryBlockReportPath,
+            finalBlockNarrationSubtitlePath: blockNarrationSubtitlePath,
+            finalRenderedAt: voiceAlignmentReport.generatedAt,
+            renderType: "production_final"
+          } : {
+            fastDraftVideoPath: publishedOutputPath,
+            internalFastDraftVideoPath: outputPath,
+            fastDraftBaseVideoPath: undecoratedOutputPath,
+            fastDraftSubtitlePath: subtitlePath,
+            fastDraftSubtitleLanguage: "vi",
+            fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
+            fastDraftVoiceWarningReportPath: voiceWarningReportPath,
+            fastDraftResolvedTimelinePath: resolvedTimelinePath,
+            fastDraftGeminiRewritePromptPath: geminiRewritePromptPath,
+            fastDraftDeliveryBlockReportPath: deliveryBlockReportPath,
+            fastDraftBlockNarrationSubtitlePath: blockNarrationSubtitlePath,
+            fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
+            renderType: "editorial_preview"
+          }),
           autoStoryDraftKey: autoStoryKey,
           fastDraftRenderMetrics: renderSummary
         }
@@ -6887,16 +6914,22 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await this.projectStore.updateProject(workspaceRoot, projectId, {
         artifacts: {
           ...(latestProject.artifacts || {}),
-          previewVideoPath: publishedDraftPath,
-          fastDraftVideoPath: publishedDraftPath,
-          internalFastDraftVideoPath: outputPath,
-          fastDraftBaseVideoPath: undecoratedOutputPath,
-          fastDraftSubtitlePath: subtitlePath,
-          fastDraftSubtitleLanguage: "vi",
-          fastDraftSubtitlesArePreviewOnly: true,
-          fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
-          fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
-          previewRenderedAt: voiceAlignmentReport.generatedAt
+          ...(isFinal ? {
+            finalVideoPath: publishedOutputPath,
+            internalFinalVideoPath: outputPath,
+            finalRenderedAt: voiceAlignmentReport.generatedAt
+          } : {
+            previewVideoPath: publishedOutputPath,
+            fastDraftVideoPath: publishedOutputPath,
+            internalFastDraftVideoPath: outputPath,
+            fastDraftBaseVideoPath: undecoratedOutputPath,
+            fastDraftSubtitlePath: subtitlePath,
+            fastDraftSubtitleLanguage: "vi",
+            fastDraftSubtitlesArePreviewOnly: true,
+            fastDraftSubtitlesEmbedded: embedPreviewSubtitles,
+            fastDraftRenderedAt: voiceAlignmentReport.generatedAt,
+            previewRenderedAt: voiceAlignmentReport.generatedAt
+          })
         },
         analysis: {
           ...(latestProject.analysis || {}),
@@ -6925,12 +6958,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     }
     await pruneDraftArtifacts(paths.outputDir, `highlight-cut-${variantMetadata.variantTag}-`, 3).catch(() => {});
     return {
-      outputPath: publishedDraftPath,
+      outputPath: publishedOutputPath,
       internalOutputPath: outputPath,
+      isFinal: Boolean(isFinal),
+      renderType: isFinal ? "production_final" : "editorial_preview",
       subtitlePath,
       variantId,
       previewSubtitleLanguage: "vi",
-      previewOnly: true,
+      previewOnly: !isFinal,
       voiceWarningCount: voiceAlignmentReport.warningCount,
       voiceWarningReportPath,
       resolvedTimelinePath,
@@ -6939,6 +6974,10 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       deliveryBlocks: blockVoiceReports,
       renderMetrics: renderSummary
     };
+  }
+
+  async renderHighlightFinalExport(opts) {
+    return this.renderHighlightFastDraft({ ...opts, isFinal: true });
   }
 
   async withProjectWriteLock(workspaceRoot, projectId, operation) {

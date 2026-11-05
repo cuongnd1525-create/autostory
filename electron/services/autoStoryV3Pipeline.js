@@ -633,8 +633,8 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
 // persisted as each completes and per-script failures are returned.
 const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING', 'UNDER_MIN_SCOPE_INFEASIBLE']);
 async function directStories(engine, model, root, emit, config) {
-  const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit });
-  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model };
+  const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit, liveActionEndSec: model.liveActionEndSec });
+  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model, liveActionEndSec: model.liveActionEndSec };
   const alternates = StoryScope.alternateScopes(selected.selection, selected.scope.storyScopeId, scopeOpts)
     .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION, targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
   const scopes = [selected.scope, ...alternates].slice(0, Math.max(1, config.outputCount || 1));
@@ -643,7 +643,7 @@ async function directStories(engine, model, root, emit, config) {
   const spines = [], failures = [];
   for (let i = 0; i < scopes.length; i++) {
     try {
-      const directed = await Director.directEdl(engine, { model, scope: scopes[i], root, write, emit, scriptId: i + 1 });
+      const directed = await Director.directEdl(engine, { model, scope: scopes[i], root, write, emit, scriptId: i + 1, liveActionEndSec: model.liveActionEndSec });
       spines.push({ ...directed.spine, scriptId: i + 1 });
       await write(path.join(root, 'story-spine.json'), { spines });
     } catch (err) {
@@ -786,6 +786,27 @@ async function run(service, opts) {
   }
   emit('understand', `[V3] Source Story Model completed — ${model.events.length} events, ${model.quotes.length} quotes, ${(model.audioEvents || []).length} audio events.`, 25);
 
+  // Dynamic live-action ending boundary detection (avoids hardcoding)
+  const { detectSourceEndingBoundary } = require('./sourceEndingBoundaryService');
+  let sceneManifest = null;
+  try {
+    const sceneManifestPath = path.join(path.dirname(project.sourceVideoPath), 'scene-manifest.json');
+    sceneManifest = JSON.parse(await fs.readFile(sceneManifestPath, 'utf8'));
+  } catch (_) {}
+  const endingBoundary = await detectSourceEndingBoundary({
+    sourcePath: project.sourceVideoPath,
+    durationSec: probe.duration,
+    cues,
+    sceneManifest,
+    model,
+    cacheDir: cache
+  });
+  if (endingBoundary && endingBoundary.liveActionEndSec > 0) {
+    model.liveActionEndSec = endingBoundary.liveActionEndSec;
+    model.endingBoundary = endingBoundary;
+    emit('understand', `[Boundary] Live-action encounter boundary detected at ${endingBoundary.liveActionEndSec}s (${endingBoundary.outroType || 'detected'}).`, 26);
+  }
+
   const architecture = config.editorialArchitecture;
   let spines;
   try {
@@ -841,9 +862,26 @@ async function run(service, opts) {
     }
   }
 
-  await write(path.join(root, 'failures.json'), failures);
-  project = await update({ storyScriptPaths: scriptPaths, storyScriptPath: scriptPaths[0] || '',
-    autoStoryState: { phase: failures.length && !scriptPaths.length ? 'review_failed' : 'ready_to_render', failures } });
+  const primarySpine = chosen[0] || {};
+  const hookPromiseText = primarySpine.hookPromise || primarySpine.title || '';
+  project = await update({
+    storyScriptPaths: scriptPaths,
+    storyScriptPath: scriptPaths[0] || '',
+    spine: primarySpine,
+    autoStorySpine: primarySpine,
+    hookPromise: hookPromiseText,
+    videoDecoration: {
+      ...(project.videoDecoration || {}),
+      canvasEnabled: true,
+      canvasAspect: '9:16',
+      blurBackgroundEnabled: true,
+      topCaptionEnabled: true,
+      topCaptionAutoFromScript: true,
+      topCaptionStyle: 'default',
+      topCaptionText: project.videoDecoration?.topCaptionText || hookPromiseText
+    },
+    autoStoryState: { phase: failures.length && !scriptPaths.length ? 'review_failed' : 'ready_to_render', failures }
+  });
   return { project, scriptPaths, config, analysisDir: root, failures };
 }
 

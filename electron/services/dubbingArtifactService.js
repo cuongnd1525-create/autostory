@@ -272,10 +272,14 @@ function resolveSourceSubtitleMask(project = {}, draft = false) {
 
 function resolveSuggestedTopCaption(project = {}) {
   const analysis = project.analysis || {};
+  const spine = project.spine || project.autoStorySpine || {};
   const variants = Array.isArray(analysis.highlightVariants) ? analysis.highlightVariants : [];
   const firstVariant = variants[0] || {};
   return safeText(
-    analysis.hookHeadline
+    project.videoDecoration?.topCaptionText
+    || spine.hookPromise
+    || project.hookPromise
+    || analysis.hookHeadline
     || analysis.sharedTopBannerText
     || analysis.shared_top_banner_text
     || analysis.topHeader

@@ -174,13 +174,15 @@ The NARRATOR owns comprehension, compression, orientation, causal connection, be
 SOURCE AUDIO owns proof, confrontation, emotion, authenticity, the strongest quote, reaction, discovery and consequence.
 For each stretch of the EDL decide: does the viewer need to UNDERSTAND or INTERPRET this section? A narrated_story block may own it. Does the viewer need to EXPERIENCE or BELIEVE this moment? A raw_evidence block should own it.
 When input.narrationEnabled is true, act as an American True Crime Storyteller and Commentary Editor, not a passive clip compiler. Narrator density is NOT a fixed percentage quota — place narrated_story blocks wherever they genuinely guide the viewer, connect cause and effect, and make the story gripping. Typically 2 to 3 well-placed narrated blocks alternating with authentic raw confrontations create an ideal pace for a 75-85s video. Fill spine.narrativePlan FIRST (storytellerAngle, alternationPattern, plannedNarratedMoments with each targetBlockId) BEFORE writing spine.beats and spine.deliveryBlocks, and realize EVERY plannedNarratedMoment as a mode='narrated_story' block in spine.deliveryBlocks alternating with raw_evidence blocks:
-  RAW HOOK / FRICTION PROOF -> NARRATOR CONTEXT / CAUSAL BRIDGE -> RAW ESCALATION / 911 PROOF -> (NARRATOR ESCALATION / COMMENTARY BRIDGE) -> RAW ARREST & SUPERVISOR RECKONING -> NARRATOR CLOSING LESSON TAKEAWAY & COMMENT-PROVOKING QUESTION (PAYOFF).
+  RAW HOOK / FRICTION PROOF -> NARRATOR CONTEXT / CAUSAL BRIDGE -> RAW ESCALATION / 911 PROOF -> (NARRATOR ESCALATION / COMMENTARY BRIDGE) -> RAW ARREST & SUSPECT RATIONALIZATION -> RAW SUPERVISOR RECKONING -> NARRATOR CLOSING LESSON TAKEAWAY & COMMENT-PROVOKING QUESTION (PAYOFF).
 - Post-Hook Context Framing: When needed after the opening hook (or on a rewind), use a narrated_story block over establishing/approach/B-roll beats (scopeMembership 'bridge_picture' or early scene beats, spanning ~6-10s) to establish the scene, date/location, and context of the encounter. Maintain an objective, journalistic, evidence-grounded tone: describe verifiable actions and stated claims without biased character judgments.
 - Causal Bridges & Mid-Scene Commentary: Use input.storyScope.commentaryOpportunities to guide the viewer across time/location jumps or prolonged arguments. When a subject walks away to call 911, or when a 911 dispatch waveform plays, play the sharpest raw quote(s) as proof (raw_evidence), and use narrated_story blocks (~6-10s) over visual movement or cruiser driving to connect cause and effect and hand off to the next raw confrontation.
 - VISUAL OWNERSHIP FOR NARRATED BLOCKS (MANDATORY): Every mode='narrated_story' block MUST only use visual B-roll, establishing shots, physical action, or silent reaction shots (e.g. cruiser dashcam, roadside approach, officer waiting, transport vehicle exterior or door). NEVER place voiceover over active conversations where characters are speaking on camera with moving lips, and NEVER place voiceover over footage with burned-in subtitles of dialogue. Muting visible speech produces an unnatural mime effect and confusing visual/audio conflict. If dialogue occurs, let it play as raw_evidence, or select visual B-roll without active speech for the voiceover.
-- Mandatory Closing Lesson Takeaway & Comment-Provoking Question: Conclude the story with a closing takeaway block delivering a 1-sentence evidence-grounded lesson/takeaway distinguishing legal reality from personal grievance, followed by a 1-sentence situation-specific comment-provoking engagement question to the viewer (e.g., asking whether officers followed proper protocol or if the situation could have been handled differently). Avoid biased or loaded questions. To ensure clean visual ownership, let the supervisor's dialogue inside the van ('What was your name? - Just close the door', ~523.2-527.2s) play as raw_evidence, and deliver the closing narrator takeaway over clean visual footage (e.g. the door closing 527.2-529.8s).
-- LIVE-ACTION ENDING BOUNDARY: The incident must conclude cleanly on actual footage (at or before 529.8s when the van door latches shut). NEVER cut past the live encounter boundary into 3-frame split-screen recaps, channel end-cards, or promotional graphics.
-- Strict Scope Window & Duration Budgeting: Every beat in a narrated_story block MUST still lie 100% inside a logical scopeWindow (windowStartSec..windowEndSec in input.scopeReelManifest) — never cut into context padding outside windowStartSec..windowEndSec. Budget your beat durations so the total duration of ALL beats combined (raw_evidence + narrated_story) lands inside input.targetBandMinSec..input.targetBandMaxSec (around input.targetDurationSec, never exceeding input.targetDurationMaxSec): keep raw_evidence proof beats tight (6-12s per raw block) so that including commentary blocks plus the closing takeaway block keeps the total timeline around 75-85s.
+- Mandatory Closing Lesson Takeaway & Comment-Provoking Question: Conclude the story with a closing takeaway block delivering a 1-sentence evidence-grounded lesson/takeaway distinguishing legal reality from personal grievance, followed by a 1-sentence situation-specific comment-provoking engagement question to the viewer (e.g., asking whether officers followed proper protocol or if the situation could have been handled differently). Avoid biased or loaded questions. To ensure clean visual ownership, whenever subjects are actively talking on camera with burned-in subtitles, play that confrontation as raw_evidence. Deliver narrator commentary or the closing takeaway over clean visual footage (such as physical action, B-roll, or scene closure) without active visible speech.
+- LIVE-ACTION ENDING BOUNDARY: The incident must conclude cleanly on actual footage. NEVER cut past the live encounter boundary into 3-frame split-screen recaps, channel end-cards, or promotional graphics.
+- PUNCHLINE & CORE DEFENSE PRESERVATION: When the Story Scope includes a window where the subject delivers their central rationalization, contradiction, or punchline quote (e.g. self-justification inside transport or custody), you MUST include that key verbal exchange as raw_evidence. Never cut the subject's primary defense to save time while keeping long physical transit or sidewalk warnings.
+- PACING & RUNTIME BUDGETING: Budget raw_evidence beats tightly (typically 5-9s per raw beat) so you have room for all essential turning points of the causal arc: roadside stop -> 911 dispatch -> street stop & arrest (keep this tight: 6-10s is plenty to show the physical arrest, do NOT spend 25+ seconds here) -> suspect rationalization / verbal defense (5-8s as raw_evidence) -> authoritative reckoning / supervisor explanation (6-8s) -> closing resolution & takeaway (5-8s).
+- Strict Scope Window & Duration Budgeting: Every beat in a narrated_story block MUST still lie 100% inside a logical scopeWindow (windowStartSec..windowEndSec in input.scopeReelManifest) — never cut into context padding outside windowStartSec..windowEndSec. Budget your beat durations so the total duration of ALL beats combined (raw_evidence + narrated_story) lands inside input.targetBandMinSec..input.targetBandMaxSec (around input.targetDurationSec, never exceeding input.targetDurationMaxSec): keep raw_evidence proof beats tight (5-9s per raw block) so that including commentary blocks plus the closing takeaway block keeps the total timeline around 75-85s.
 - Clean Audio Separation (sourceAudioTreatment): Whenever a narrated_story block runs over footage, set sourceAudioTreatment='voiceover_only' so competing background noise is muted, or use sourceAudioTreatment='voiceover_with_ambient' over visual B-roll where subtle ambient sound is desired.
 - Narration must not: describe obvious movement, paraphrase a strong quote we are about to hear (Narrator-to-Evidence Contract: never spoil upcoming punchlines), talk over an important confrontation, invent information, or spoil input.storyScope.mustWithhold.
 - A fact that lives outside the scope (input.storyScope.allowedSupportingContext with treatment narration_only, or outOfScopeBranches) can only enter as narration over in-scope footage that fits it.
@@ -216,7 +218,7 @@ HOOK = A COMPACT MINI-ARC FROM INSIDE THE SCOPE.
 
 ENDING = A CONSEQUENCE OF THE CENTRAL CONFLICT + NARRATOR CLOSING TAKEAWAY.
 - The ending beats (scopeMembership 'ending') must come from input.storyScope.candidateEndingEvents or an ending_material window, and must match input.storyScope.scopeEndTarget.
-- Pragmatic closure: first let the raw_evidence payoff beat show the authoritative rebuttal, consequence or charge reveal in the subject's and officer's own voices, and then conclude with the final narrated_story block (~6.5-9.0s inside the ending window, sourceAudioTreatment='voiceover_only') delivering the moral takeaway and comment-provoking viewer question. Avoid ending on static map/graphic overlays when clean live-action footage is available in the scope reel.
+- Pragmatic closure: first let the raw_evidence payoff beat show the authoritative rebuttal, consequence or charge reveal in the subject's and officer's own voices (including her final reaction, e.g. 'just close the door'), and then conclude with the final narrated_story block (~2.5-6.0s over clean live-action B-roll / physical action such as the door closing/latching up to the live-action boundary, sourceAudioTreatment='voiceover_only' or 'voiceover_with_ambient') delivering the moral takeaway and comment-provoking viewer question WITHOUT speaking over active character dialogue. Avoid ending on static map/graphic overlays when clean live-action footage is available in the scope reel.
 - For a forward cliffhanger, name the specific consequence that is now likely and stop before it is shown (payoffTiming 'part_2', isForwardConsequence=true, expectedNextConsequence, whyCutHere). A new question from another branch is not an ending.
 
 SCOPE MEMBERSHIP
@@ -392,7 +394,7 @@ function mergedCueSpan(cues, s, e) {
   return total;
 }
 
-function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null, requireDeliveryBlocks = false, cues = null } = {}) {
+function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec = 65, targetDurationMaxSec = 90, reel, narrationEnabled = true, preferredDurationSec = null, targetBandMinSec = null, targetBandMaxSec = null, requireDeliveryBlocks = false, cues = null, liveActionEndSec = null } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
   const beats = Array.isArray(spine?.beats) ? spine.beats : [];
@@ -453,7 +455,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
         // Multi-turn active dialogue between characters (>1 speaker turn or question/answer)
         const hasConversationTurns = beatCues.length >= 2 && beatCues.some(c => String(c.text || '').includes('?') || String(c.text || '').startsWith('>>'));
         const isHeavyDialogue = dialogueSec >= 5.0 && (dialogueSec / beatLen >= 0.75) && hasConversationTurns;
-        const isEndingDialogueConflict = isFinalBeat && s < 527.0 && dialogueSec >= 2.0;
+        const isEndingDialogueConflict = isFinalBeat && (dialogueSec >= 2.5 || (dialogueSec >= 1.5 && hasConversationTurns));
         if (isHeavyDialogue || isEndingDialogueConflict) {
           const firstCue = beatCues[0];
           add('NARRATED_BLOCK_ACTIVE_DIALOGUE', `Beat '${id}' (${s}-${e}s) runs voiceover over ${round2(dialogueSec)}s of active spoken dialogue ("${String(firstCue?.text || '').slice(0, 50)}..."). Voiceover must run only over visual B-roll, establishing shots, or physical action without active conversation.`, { beatId: id, dialogueSec: round2(dialogueSec) });
@@ -499,9 +501,10 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   if (endingRanges.length && !endingRanges.some(([s, e]) => Math.min(le, e) - Math.max(ls, s) > 0)) {
     add('ENDING_NOT_IN_SCOPE', `The final beat '${last.beatId}' (${ls}-${le}s) is not one of the scope's candidate endings or ending_material windows.`, { beatId: last.beatId });
   }
-  // Live action boundary: never allow the final beat to cut into outro cards, end screens, or channel recaps (> 529.8s).
-  if (le > 529.85 && ls < 530.0) {
-    add('ENDING_CUTS_INTO_OUTRO', `The final beat '${last.beatId}' (${ls}-${le}s) extends past the live-action encounter boundary (529.8s) into post-incident outro/recap graphics. Cut at or before 529.8s.`, { beatId: last.beatId, sourceEndSec: le });
+  // Live action boundary: never allow the final beat to cut into outro cards, end screens, or channel recaps
+  const endingBoundary = num(scope?.liveActionEndSec || liveActionEndSec || 0);
+  if (endingBoundary > 0 && le > endingBoundary + 0.05 && ls < endingBoundary) {
+    add('ENDING_CUTS_INTO_OUTRO', `The final beat '${last.beatId}' (${ls}-${le}s) extends past the live-action encounter boundary (${endingBoundary}s) into post-incident outro/recap graphics. Cut at or before ${endingBoundary}s.`, { beatId: last.beatId, sourceEndSec: le, liveActionEndSec: endingBoundary });
   }
 
   return { valid: violations.length === 0, violations, metrics: { totalSec: round2(total), beatCount: beats.length } };
@@ -1197,12 +1200,13 @@ const ACCEPTANCE = Object.freeze({ ACCEPTED: 'ACCEPTED', REJECTED: 'REJECTED', N
 const SPEECH_FAST_WPS = 3.5;
 const SPEECH_NORMAL_WPS = 2.5;
 const BOUNDARY_SLACK_SEC = 0.5;
-function endingBoundary(beats, cues) {
+function endingBoundary(beats, cues, scope = null) {
   const last = beats[beats.length - 1];
   if (!last || !Array.isArray(cues) || !cues.length) return { checked: false };
   const cut = num(last.sourceEndSec);
-  if (cut > 529.85 && num(last.sourceStartSec) < 530.0) {
-    return { checked: true, complete: false, cutSec: cut, reason: 'ENDING_CUTS_INTO_OUTRO', interruptedLine: 'Post-incident outro/recap graphics' };
+  const liveActionEndSec = num(last?.liveActionEndSec || scope?.liveActionEndSec || 0);
+  if (liveActionEndSec > 0 && cut > liveActionEndSec + 0.05 && num(last.sourceStartSec) < liveActionEndSec) {
+    return { checked: true, complete: false, cutSec: cut, reason: 'ENDING_CUTS_INTO_OUTRO', liveActionEndSec, interruptedLine: 'Post-incident outro/recap graphics' };
   }
   if (last.deliveryMode === 'narrated_story' || (last.audioMode && last.audioMode !== 'original_audio')) {
     return { checked: true, complete: true, cutSec: cut, narratedEnding: true };
@@ -1228,10 +1232,10 @@ function endingBoundary(beats, cues) {
 // ready even when the EDL is technically valid.
 function editorialReadiness(critique, beats, cues, scope = null) {
   const findings = [];
-  const boundary = endingBoundary(beats, cues);
+  const boundary = endingBoundary(beats, cues, scope);
   if (boundary.checked && !boundary.complete) {
     if (boundary.reason === 'ENDING_CUTS_INTO_OUTRO') {
-      findings.push({ code: 'ENDING_CUTS_INTO_OUTRO', message: `The final cut at ${boundary.cutSec}s cuts into post-incident outro/recap graphics. Must cut at or before 529.8s.` });
+      findings.push({ code: 'ENDING_CUTS_INTO_OUTRO', message: `The final cut at ${boundary.cutSec}s cuts into post-incident outro/recap graphics. Must cut at or before ${boundary.liveActionEndSec || 'live-action boundary'}s.` });
     } else {
       findings.push({ code: 'ENDING_MID_UTTERANCE', message: `The final cut at ${boundary.cutSec}s interrupts a line that started at ${boundary.lineStartSec}s and cannot finish before ~${boundary.earliestLineEndSec}s ("${boundary.interruptedLine}").` });
     }
