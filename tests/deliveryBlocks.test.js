@@ -561,6 +561,35 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     const critiqued = Critic.normalizeCritique(basePass, { durationSec: 65, timeline: overlongTimeline, deliveryAware: true, deliveryBlocks, narrationActive: true });
     assert.strictEqual(critiqued.isCompliant, false, '26s raw stretch with only 1 short narrated block should fail critic');
     assert.ok(critiqued.weakRegions.some(r => r.type === 'raw_explanation_overlong' && r.beatIds.includes('b3')));
+
+    // Closing narrated_story block with lesson takeaway + viewer engagement question must NOT fail as unanswered suspect question
+    const closingTimeline = [
+      { beatId: 'b1', outputStartSec: 0, outputEndSec: 15, deliveryBlockId: 'raw_1' },
+      { beatId: 'b2', outputStartSec: 15, outputEndSec: 23, deliveryBlockId: 'narr_1' },
+      { beatId: 'b3', outputStartSec: 23, outputEndSec: 40, deliveryBlockId: 'raw_2' },
+      { beatId: 'b4', outputStartSec: 40, outputEndSec: 48, deliveryBlockId: 'narr_2' },
+      { beatId: 'b5', outputStartSec: 48, outputEndSec: 62, deliveryBlockId: 'raw_3' },
+      { beatId: 'b6', outputStartSec: 62, outputEndSec: 70, deliveryBlockId: 'narr_outro' }
+    ];
+    const closingBlocks = [
+      { blockId: 'raw_1', mode: 'raw_evidence', beatIds: ['b1'], outputStartSec: 0, outputEndSec: 15 },
+      { blockId: 'narr_1', mode: 'narrated_story', beatIds: ['b2'], outputStartSec: 15, outputEndSec: 23, narrationText: 'Context.' },
+      { blockId: 'raw_2', mode: 'raw_evidence', beatIds: ['b3'], outputStartSec: 23, outputEndSec: 40 },
+      { blockId: 'narr_2', mode: 'narrated_story', beatIds: ['b4'], outputStartSec: 40, outputEndSec: 48, narrationText: 'Escalation.' },
+      { blockId: 'raw_3', mode: 'raw_evidence', beatIds: ['b5'], outputStartSec: 48, outputEndSec: 62 },
+      { blockId: 'narr_outro', mode: 'narrated_story', beatIds: ['b6'], outputStartSec: 62, outputEndSec: 70, narrationText: 'What started as a simple warning turned into an expensive charge. What do you think—did the officer handle this fairly, or did she deserve even worse?' }
+    ];
+    const closingCritique = Critic.normalizeCritique({
+      ...basePass,
+      payoffFulfillsOpeningPromise: true,
+      finalSeconds: {
+        visualDescription: 'clear reaction shot',
+        subjectClearlyVisible: true,
+        endsAtCompleteBoundary: true,
+        lastWordsHeard: 'What do you think—did the officer handle this fairly, or did she deserve even worse?'
+      }
+    }, { durationSec: 70, timeline: closingTimeline, deliveryAware: true, deliveryBlocks: closingBlocks, narrationActive: true });
+    assert.strictEqual(closingCritique.isCompliant, true, `Closing narrator engagement question should pass critic: ${JSON.stringify(closingCritique.issues)}`);
   });
 
   console.log(`\n${passed} passed`);

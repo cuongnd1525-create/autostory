@@ -36,21 +36,30 @@ const schema = object({ accessGranted: { type: 'boolean' }, narrations: list(blo
 
 const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the requested narrated_story blocks in input.blocks.
 Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction and narrationIntent, and carries the viewer from viewerStateEntering to viewerStateLeaving.
-You are an American True Crime Storyteller and Commentary Editor. The narrator owns comprehension, compression, orientation, causal connection, behavioral commentary (COMMENTARY / INTERPRETATION), contrast framing, anticipation and momentum:
+You are an American True Crime Storyteller and Commentary Editor. The narrator owns comprehension, compression, orientation, causal connection, behavioral commentary (COMMENTARY / INTERPRETATION), contrast framing, anticipation, moral takeaway and momentum:
 - Editorial Commentary & Contrast Framing: Do not write dry timestamp labels or flat summaries. Frame the behavioral or legal irony using sharp contrast and cause-and-effect ("Instead of accepting help with her disabled car, she met the officer with an arrogant attitude...", "Instead of thanking the officer trying to push her car out of traffic, she walked away to harass the emergency hotline...", "Hijacking the 911 line just to complain about an officer's attitude — failing to understand the difference between an emergency and customer service.").
 - Natural Spoken Cadence & Breath Pauses: Write 1-2 punchy, spoken-English sentences per block with deliberate clause breaks (commas, periods) so the voice delivers each thought with natural pauses and authority.
-- Clean Handoff to Raw Proof: Hand the viewer directly to the real moment that follows (followingRawBlock / handoffTargetBeatId) by setting up what is at stake or what the subject is about to do, without paraphrasing or quoting the exact words that the next raw clip will play.
-- Grounding & Epistemic Safety: Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their valid ids in newInformationRefs. A quote whose epistemic status is not known_fact is attributed or hedged ("the caller said/reported...", "she complained that...", "according to her"), never stated as unhedged fact. The attribution must appear in narrationText itself, not only in metadata. Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
-safeWords is an ADVISORY first-pass target for the whole block, never a quota. Aim slightly below safeWords (about 80-90% of safeWords) so the voice finishes cleanly with a natural breath before the next raw clip begins. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
+- Clean Handoff to Raw Proof (when followingRawBlock is present): Hand the viewer directly to the real moment that follows (followingRawBlock / handoffTargetBeatId) by setting up what is at stake or what the subject is about to do, without paraphrasing or quoting the exact words that the next raw clip will play.
+- Closing Lesson Takeaway & Comment-Provoking Question (when isClosingBlock is true or followingRawBlock is null at the end of the video): The final narrated block MUST deliver a two-part outro (kept concise within ~80-88% of safeWords so the voice finishes cleanly before the video ends):
+  1. Sentence 1 (Lesson / Takeaway Summary): Sum up the moral lesson or ironic downfall of the incident ("What started as a simple offer of roadside help turned into handcuffs—all because she treated 911 like personal customer service.").
+  2. Sentence 2 (Comment-Provoking Engagement Question): End with a direct, debatable question to the viewer that sparks comments ("Do you think the officers handled this fairly, or did she deserve even worse?").
+- Grounding & Epistemic Safety: Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their valid ids in newInformationRefs. Prefer referencing event IDs (e.g. e1, e2) in newInformationRefs when describing observable actions or outcomes; only reference a quote ID whose epistemic status is not known_fact if narrationText itself explicitly attributes or hedges the claim ("the caller said/reported...", "she complained/insisted that...", "according to her"). Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
+safeWords is an ADVISORY first-pass target for the whole block, never a quota. Aim slightly below safeWords (about 80-90% of safeWords) so the voice finishes cleanly with a natural breath before the next raw clip or video end. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
 Active voice, spoken American English, grounded and incisive. previewVi is a natural Vietnamese rendering of the passage.`;
 
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
 const overlaps = (s, e, a, z) => Math.min(e, z) - Math.max(s, a) > 0;
 
-function sourceContext(model, ranges) {
+function sourceContext(model, ranges, { isClosingBlock = false } = {}) {
   const inside = (s, e) => ranges.some(([a, z]) => overlaps(num(s), num(e), a, z));
   const allEvents = Array.isArray(model?.events) ? model.events : [];
   let matchedEvents = allEvents.filter(e => inside(e.startSec, e.endSec));
+  if (isClosingBlock && allEvents.length) {
+    const ids = new Set(matchedEvents.map(e => e.id));
+    for (const e of [allEvents[0], allEvents[1], ...allEvents.slice(-3)]) {
+      if (e && !ids.has(e.id)) { matchedEvents.push(e); ids.add(e.id); }
+    }
+  }
   if (!matchedEvents.length && allEvents.length) {
     const wid = ranges.map(([a, z]) => [a - 30, z + 30]);
     matchedEvents = allEvents.filter(e => wid.some(([a, z]) => overlaps(num(e.startSec), num(e.endSec), a, z)));
@@ -79,18 +88,19 @@ const rawNeighbour = (timeline, k, dir) => {
 // Everything the narration model needs for one block (Phase 3 contract).
 function blockPayload(timeline, k, model, wordsPerSecond) {
   const blk = timeline[k];
+  const isClosingBlock = k === timeline.length - 1;
   const prev = rawNeighbour(timeline, k, -1), next = rawNeighbour(timeline, k, +1);
   const ranges = [...blk.beats, ...(prev?.beats || []), ...(next?.beats || [])].map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
   return {
-    blockId: blk.blockId, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '', narrationIntent: blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '',
+    blockId: blk.blockId, isClosingBlock, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '', narrationIntent: blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '',
     sourceAudioTreatment: Delivery.audioModeFor(blk), handoffTargetBeatId: blk.handoffTargetBeatId || null,
     beats: blk.beats.map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec,
-      durationSec: Math.round((num(b.sourceEndSec) - num(b.sourceStartSec)) * 100) / 100, narrativeRole: b.narrativeRole,
+      durationSec: Math.round((num(b.sourceStartSec !== undefined ? num(b.sourceEndSec) - num(b.sourceStartSec) : 0)) * 100) / 100, narrativeRole: b.narrativeRole,
       observedInFootage: b.observedInFootage || '', newInformation: b.newInformation || '' })),
     viewerStateEntering: blk.beats[0]?.viewerStateBefore || '',
     viewerStateLeaving: blk.beats[blk.beats.length - 1]?.viewerStateAfter || '',
     precedingRawBlock: prev, followingRawBlock: next,
-    sourceContext: sourceContext(model, ranges),
+    sourceContext: sourceContext(model, ranges, { isClosingBlock }),
     blockVisualDurationSec: blk.durationSec,
     measuredWordsPerSecond: wordsPerSecond,
     safeWords: Delivery.blockSafeWords(blk.durationSec, wordsPerSecond)

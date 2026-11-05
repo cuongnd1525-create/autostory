@@ -149,7 +149,7 @@ Answer from what you actually SEE and HEAR:
 8. EDITORIAL READINESS — a technically valid edit can still be weak. Judge from what you saw:
    - openingCuriosity.strongerHookAtOutputSec: if a LATER moment in THIS rendered edit would hook a cold viewer clearly better than the opening (a sharper line, conflict or reveal you actually saw/heard), give its output second and describe it in strongerHookEvidence; otherwise -1. A routine exchange that only becomes interesting later is not a hook. If the opening beat prematurely gives away the final criminal charge or outcome that should be withheld, report hook_spends_payoff as blocking.
    - finalSeconds.lastWordsHeard: the last words spoken before the video ends. finalSeconds.endsAtCompleteBoundary: false if the cut interrupts a sentence or an action mid-way.
-   - payoffFulfillsOpeningPromise: does the ending answer or pay off the question/promise the opening raised (not just "time runs out", and NEVER ending on an unanswered question from the subject such as "How did I...?" or "Why am I...?" without the answer)?
+   - payoffFulfillsOpeningPromise: does the ending answer or pay off the question/promise the opening raised (not just "time runs out", and NEVER ending on an unanswered protest question from the subject in raw footage such as "How did I...?" or "Why am I...?" without the answer; however, a closing NARRATOR block that summarizes the lesson/takeaway and asks the viewer a comment-provoking engagement question after the raw consequence has been shown IS a complete, satisfying payoff)?
    - Report a static or blocked picture that adds no new information for several seconds (including static map/waveform graphics) as low_information_footage, and an ending that drags after the conflict is resolved as low_value_stretch.
 9. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
 10. externalOverlays: material burned into the SOURCE picture by a third party — channel watermark/logo (brandingVisible), the source's own subtitles (burnedInSubtitlesVisible), subscribe/like/end-screen promotional graphics (promoGraphicVisible — only set true for actual channel subscribe/like/end-screen promo banners, NOT for 911 dispatch audio waveform/map screens shown while a 911 call is playing). List the output-time regions where a promo graphic or other overlay is visible.
@@ -257,7 +257,12 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
       whyItFails: 'Critic verdict: the final cut interrupts a sentence or action before it completes.', beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: 'finalSeconds.endsAtCompleteBoundary' });
   }
   const lastWords = String(raw.finalSeconds?.lastWordsHeard || '').trim();
-  const endsOnUnansweredQuestion = /\?\s*["']?$/.test(lastWords) && /^(how|why|what|for what|are you|who)\b/i.test(lastWords.replace(/^["'\s]+/, ''));
+  const lastDeliveryBlock = Array.isArray(deliveryBlocks) && deliveryBlocks.length ? deliveryBlocks[deliveryBlocks.length - 1] : null;
+  const isViewerEngagementQuestion = lastDeliveryBlock?.mode === 'narrated_story'
+    || /\b(do you think|what do you think|did (he|she|they) deserve|handled (this|her|him|it) fairly|deserve even worse|would you|who was in the wrong|was the officer)\b/i.test(lastWords);
+  const endsOnUnansweredQuestion = !isViewerEngagementQuestion
+    && /\?\s*["']?$/.test(lastWords)
+    && /^(how|why|what|for what|are you|who)\b/i.test(lastWords.replace(/^["'\s]+/, ''));
   const endDrags = issues.some(x => x.type === 'low_value_stretch' && x.severity === 'minor' && x.outputEndSec >= tail[0] + 0.05 && x.outputStartSec < tail[1]);
   if ((raw.payoffFulfillsOpeningPromise === false || endDrags || endsOnUnansweredQuestion) && !issues.some(x => x.severity === 'blocking' && x.type === 'payoff_unsatisfying')) {
     const why = raw.payoffFulfillsOpeningPromise === false

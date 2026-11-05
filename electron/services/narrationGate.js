@@ -20,7 +20,7 @@
 const { NARRATOR_FUNCTIONS, NON_FACT_EPISTEMIC } = require('./autoStoryV3Taxonomy');
 
 const DIALOGUE_OVERLAP_LIMIT = 0.5;   // Jaccard token overlap with original dialogue
-const HEDGE = /\b(claim|claims|claimed|allege|alleged|allegedly|report|reports|reported|reporting|reportedly|says|said|told|according to|police say|appears|seems|would later|investigators|suspected|accused|complain|complains|complained|complaining|insist|insists|insisted|insisting|argue|argues|argued|arguing|demand|demands|demanded|blamed|blaming|called 911|calling 911)\b/i;
+const HEDGE = /\b(claim|claims|claimed|allege|alleged|allegedly|report|reports|reported|reporting|reportedly|says|said|told|according to|police say|appears|seems|would later|investigators|suspected|accused|complain|complains|complained|complaining|insist|insists|insisted|insisting|argue|argues|argued|arguing|demand|demands|demanded|blamed|blaming|called 911|calling 911|refuse|refuses|refused|refusing|reject|rejects|rejected|dare|dares|dared|berate|berates|berated|insult|insults|insulted|threaten|threatens|threatened|walked away|walks away|stormed off|storms off|believing|believed|excuse|excuses)\b/i;
 const STOP = new Set(['the', 'a', 'an', 'to', 'of', 'and', 'or', 'but', 'in', 'on', 'at', 'is', 'are', 'was', 'were', 'be', 'he', 'she', 'they', 'it', 'his', 'her', 'their', 'this', 'that', 'with', 'for', 'as', 'i', 'you', 'we', 'not', 'no']);
 
 function tokens(text) {
