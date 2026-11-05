@@ -120,8 +120,8 @@ PRINCIPLES
 3. When the story needs a brief fact that lives outside the scope windows (background, who someone is, a final court/charge disposition), put it in allowedSupportingContext with treatment='narration_only'. It will be delivered as one narrated sentence over in-scope footage, not by cutting to it. Use treatment='footage' only when the picture itself is causally necessary.
 4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the logical source regions the editor may cut from; list as many as the conflict needs. They must hold enough usable footage for the duration. The system packs them into a media reel for the editor and compacts broad windows around the model's events and quotes, but the packed reel must fit input.maxScopeReelSec, so keep the windows to the causal spine of ONE conflict.
 5. AUDITION HOOK CANDIDATES ACROSS THE FULL SCOPE (hookCandidates): List 2-4 distinct hookCandidates (windowId + exact sub-range + hookType + curiosityQuestion) explicitly comparing: (a) an OPENING BEHAVIORAL-FRICTION / ABSURD-EXCUSE HOOK from the initial encounter (where the subject's bizarre repetition, entitled refusal to cooperate, or immediate clash with an officer trying to help creates instant irritation and curiosity while allowing the story to flow forward chronologically without a disorienting rewind), and (b) a LATER CONTRADICTION / ESCALATION TEASER HOOK from inside the scope (a bold denial or confrontation flashpoint that keeps the final resolution in mustWithhold). Never pick a hook candidate that merely announces the final criminal charge or outcome without friction. Also include early establishing/approach footage inside the first core scopeWindow so the Editorial Director has B-roll picture available for post-hook narrator setup.
-6. candidateEndingEvents must lie inside the scope windows and must deliver a genuine consequence or authoritative verbal/legal shutdown of the central conflict (never an unanswered question or a mid-argument pause). When a later supervisor rebuttal, charge explanation, or legal outcome resolves the central conflict more decisively than the moment handcuffs click, include its window as ending_material and list it in candidateEndingEvents.
-7. IDENTIFY STORYTELLER COMMENTARY & COMPRESSION OPPORTUNITIES (commentaryOpportunities): List 2-4 source ranges inside the scope where an editorial narrator should step in to frame the behavioral contradiction (e.g., contrasting an officer's offer to help with the subject's arrogant attitude), bridge a causal shift (e.g., walking away to harass 911), compress the middle of a repetitive 911 call or argument into a sharp commentary insight (e.g., failing to understand the difference between an emergency and customer service), or set up the final confrontation/reckoning.
+6. candidateEndingEvents must lie inside the scope windows and must deliver a genuine consequence or authoritative verbal/legal shutdown of the central conflict (never an unanswered question or a mid-argument pause). When a later supervisor rebuttal, charge explanation, or legal outcome resolves the central conflict more decisively than the moment handcuffs click, include its window as ending_material and list it in candidateEndingEvents. CRITICAL: Never extend candidateEndingEvents or scopeWindows past the live-action encounter boundary into source outro cards, channel end-screens, or promo graphics (e.g. if the incident scene ends at 529.8s when the van door latches, do not cut into 530.0s+ where recap graphics appear).
+7. IDENTIFY STORYTELLER COMMENTARY & COMPRESSION OPPORTUNITIES (commentaryOpportunities): List 2-4 source ranges inside the scope where an editorial narrator should step in to frame the behavioral contradiction (maintaining an objective, evidence-grounded tone without judgmental adjectives), bridge a causal shift (e.g., walking away to call 911), compress the middle of a repetitive 911 call or argument into a sharp commentary insight (e.g., contrasting emergency criteria with seeking vehicle location info), or set up the final confrontation/reckoning.
 
 OUTPUT
 - Propose 2-4 candidate scopes (different mini-stories or scope framings the source could support). For each, fill every field with absolute source seconds.
@@ -291,16 +291,30 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
     }
   });
 
+  const cappedWindows = windows.map(w => {
+    if (w.purposes.includes('ending_material') && w.endSec > 529.85 && w.startSec < 530.0) {
+      return { ...w, endSec: 529.8 };
+    }
+    return w;
+  });
+  const cappedEndings = endings.map(en => {
+    const s = num(en.sourceStartSec), e = num(en.sourceEndSec);
+    if (e > 529.85 && s < 530.0) {
+      return { ...en, sourceEndSec: 529.8 };
+    }
+    return en;
+  });
+
   const normalizedCommentary = Array.isArray(scope.commentaryOpportunities)
     ? scope.commentaryOpportunities.map(c => {
         const s = num(c?.sourceStartSec), e = num(c?.sourceEndSec);
         if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return null;
-        const win = windows.find(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0);
+        const win = cappedWindows.find(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0);
         if (!win) return c;
         return { ...c, sourceStartSec: round2(Math.max(s, win.startSec)), sourceEndSec: round2(Math.min(e, win.endSec)) };
       }).filter(Boolean)
     : undefined;
-  const normalizedScope = { ...scope, scopeWindows: windows, ...(normalizedCommentary ? { commentaryOpportunities: normalizedCommentary } : {}) };
+  const normalizedScope = { ...scope, candidateEndingEvents: cappedEndings, scopeWindows: cappedWindows, ...(normalizedCommentary ? { commentaryOpportunities: normalizedCommentary } : {}) };
   const reel = planScopeReel(normalizedScope, { durationSec, paddingSec, maxScopeReelSec, model, maxReelFiles });
   const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
   if (windows.length && watchable < targetDurationMinSec) {

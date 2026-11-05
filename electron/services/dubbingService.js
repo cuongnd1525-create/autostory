@@ -6971,7 +6971,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       return { segment, sourceStartSec, sourceEndSec, sourceDurationSec, durationSec };
     });
     const blockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
-    const ambientVolume = treatment === "voiceover_only" ? 0 : getBlockAmbientVolume(lead, project);
+    const ambientVolume = treatment === "voiceover_only" ? 0.05 : getBlockAmbientVolume(lead, project);
     const duck = project.mixer?.narrationDuckDefault !== false;
     const voiceVolume = Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100);
     const maxStretchRatio = project.analysisWorkflow === "manual_gemini_draft_review"
@@ -6988,7 +6988,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     let cache = null;
     if (autoStorySourceStat) {
       const key = crypto.createHash("sha256").update(JSON.stringify({
-        version: 3, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+        version: 4, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
         pieces: pieces.map((p) => [p.sourceStartSec, p.sourceDurationSec, p.durationSec]), treatment, ambientVolume, duck, voiceVolume, maxStretchRatio,
         voice: resolveFastDraftVoicePlan({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions }).cache.cacheKey,
         normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true
@@ -7020,7 +7020,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const normalizedClipPath = path.join(paths.clipsDir, `${tag}-${String(offset + 1).padStart(2, "0")}-normalized.mp4`);
       await ffmpeg.extractVoiceDrivenClipWithAudio({
         sourcePath: project.sourceVideoPath, outputPath: rawClipPath, startSec: p.sourceStartSec, sourceDurationSec: p.sourceDurationSec,
-        targetDurationSec: p.durationSec, width: 540, preset: "ultrafast", crf: 32, includeAudio: treatment === "voiceover_with_ambient"
+        targetDurationSec: p.durationSec, width: 540, preset: "ultrafast", crf: 32, includeAudio: true
       });
       // Narrated-block pieces must carry a full-length ambient bed. The older
       // keep-audio helper stream-copies audio and can become shorter than the

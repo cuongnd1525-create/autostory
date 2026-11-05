@@ -37,12 +37,20 @@ const schema = object({ accessGranted: { type: 'boolean' }, narrations: list(blo
 const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the requested narrated_story blocks in input.blocks.
 Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction and narrationIntent, and carries the viewer from viewerStateEntering to viewerStateLeaving.
 You are an American True Crime Storyteller and Commentary Editor. The narrator owns comprehension, compression, orientation, causal connection, behavioral commentary (COMMENTARY / INTERPRETATION), contrast framing, anticipation, moral takeaway and momentum:
-- Editorial Commentary & Contrast Framing: Do not write dry timestamp labels or flat summaries. Frame the behavioral or legal irony using sharp contrast and cause-and-effect ("Instead of accepting help with her disabled car, she met the officer with an arrogant attitude...", "Instead of thanking the officer trying to push her car out of traffic, she walked away to harass the emergency hotline...", "Hijacking the 911 line just to complain about an officer's attitude — failing to understand the difference between an emergency and customer service.").
+- Editorial Commentary & Contrast Framing: Do not write dry timestamp labels or flat summaries. Frame the behavioral contrast and legal cause-and-effect using objective, incisive language:
+  - Good: "Instead of accepting assistance with her disabled car, she refuses to cooperate and walks away, leaving deputies with no choice but to tow the vehicle."
+  - Good: "Rather than waiting for roadside help, she dials 911 to complain about the deputy's tone—treating an emergency line like customer service."
+  - BAD (FORBIDDEN): Never use subjective, derogatory labels or emotional insults like "pure entitlement", "arrogant attitude", "stupid", "idiot", or "acting like a brat". Focus on observable actions, decisions, and statutory reality.
 - Natural Spoken Cadence & Breath Pauses: Write 1-2 punchy, spoken-English sentences per block with deliberate clause breaks (commas, periods) so the voice delivers each thought with natural pauses and authority.
-- Clean Handoff to Raw Proof (when followingRawBlock is present): Hand the viewer directly to the real moment that follows (followingRawBlock / handoffTargetBeatId) by setting up what is at stake or what the subject is about to do, without paraphrasing or quoting the exact words that the next raw clip will play.
-- Closing Lesson Takeaway & Comment-Provoking Question (when isClosingBlock is true or followingRawBlock is null at the end of the video): The final narrated block MUST deliver a two-part outro (kept concise within ~80-88% of safeWords so the voice finishes cleanly before the video ends):
-  1. Sentence 1 (Lesson / Takeaway Summary): Sum up the moral lesson or ironic downfall of the incident ("What started as a simple offer of roadside help turned into handcuffs—all because she treated 911 like personal customer service.").
-  2. Sentence 2 (Comment-Provoking Engagement Question): End with a direct, debatable question to the viewer that sparks comments ("Do you think the officers handled this fairly, or did she deserve even worse?").
+- Clean Handoff & Punchline Protection (Narrator-to-Evidence Reveal Contract):
+  - When followingRawBlock is present, hand the viewer directly to the real moment that follows by setting up what is at stake, the escalating situation, or what the subject is attempting to do.
+  - CRITICAL PUNCHLINE RULE: NEVER spoil, summarize, or paraphrase the subject's exact words, legal defense, or punchline quote that the upcoming raw clip is about to deliver!
+  - Good: "Locked inside the transport van, she demands to speak with a supervisor, insisting her actions did not warrant an arrest." (Sets up the confrontation without stealing her defense).
+  - BAD (FORBIDDEN): "Locked inside the transport van, she attempts to justify her actions to a supervisor—arguing that being rude isn't against the law." (Spoils her exact line before she says it on camera).
+  - Inspect input.blocks[].mustWithholdUpcomingQuotes: do not use the key words or arguments from these quotes in your narration text.
+- Closing Lesson Takeaway & Thoughtful Engagement Question (when isClosingBlock is true or followingRawBlock is null at the end of the video): The final narrated block MUST deliver a two-part outro (kept concise within ~80-88% of safeWords so the voice finishes cleanly before the video ends):
+  1. Sentence 1 (Lesson / Takeaway Summary): Deliver a measured summary connecting the legal cause and outcome, distinguishing the statutory violation from attitude ("What began as an offer of roadside assistance ended in an arrest for misuse of emergency dispatch.").
+  2. Sentence 2 (Comment-Provoking Engagement Question): End with a genuine, debatable question exploring both perspectives ("Did the situation warrant criminal charges, or should deputies have handled it differently?"). Do not ask loaded or rhetorical questions like "did she deserve even worse?".
 - Grounding & Epistemic Safety: Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their valid ids in newInformationRefs. Prefer referencing event IDs (e.g. e1, e2) in newInformationRefs when describing observable actions or outcomes; only reference a quote ID whose epistemic status is not known_fact if narrationText itself explicitly attributes or hedges the claim ("the caller said/reported...", "she complained/insisted that...", "according to her"). Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
 safeWords is an ADVISORY first-pass target for the whole block, never a quota. Aim slightly below safeWords (about 80-90% of safeWords) so the voice finishes cleanly with a natural breath before the next raw clip or video end. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
 Active voice, spoken American English, grounded and incisive. previewVi is a natural Vietnamese rendering of the passage.`;
@@ -91,6 +99,10 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
   const isClosingBlock = k === timeline.length - 1;
   const prev = rawNeighbour(timeline, k, -1), next = rawNeighbour(timeline, k, +1);
   const ranges = [...blk.beats, ...(prev?.beats || []), ...(next?.beats || [])].map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
+  const nextRanges = (next?.beats || []).map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
+  const mustWithholdUpcomingQuotes = (model?.quotes || [])
+    .filter(q => nextRanges.some(([a, z]) => overlaps(num(q.startSec), num(q.endSec), a, z)))
+    .map(q => ({ speaker: q.speaker, text: q.text }));
   return {
     blockId: blk.blockId, isClosingBlock, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '', narrationIntent: blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '',
     sourceAudioTreatment: Delivery.audioModeFor(blk), handoffTargetBeatId: blk.handoffTargetBeatId || null,
@@ -100,6 +112,7 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
     viewerStateEntering: blk.beats[0]?.viewerStateBefore || '',
     viewerStateLeaving: blk.beats[blk.beats.length - 1]?.viewerStateAfter || '',
     precedingRawBlock: prev, followingRawBlock: next,
+    mustWithholdUpcomingQuotes,
     sourceContext: sourceContext(model, ranges, { isClosingBlock }),
     blockVisualDurationSec: blk.durationSec,
     measuredWordsPerSecond: wordsPerSecond,
@@ -109,7 +122,7 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
 
 async function askBlockNarration(engine, story, payloads, evidence, repair = null, attempt = 0) {
   const instruction = repair
-    ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks failed a deterministic narration check (input.blocks[].rewriteReason). Return a complete, SHORTER or corrected passage for that block that still serves its narrationIntent. If rewriteTargetWords is present, stay at or below that many words. If rewriteReason contains "epistemic", narrationText MUST explicitly attribute the non-fact claim (for example "the caller said...", "the caller reported...", or "according to her..."); changing only newInformationRefs is not a fix. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
+    ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks failed a deterministic narration check (input.blocks[].rewriteReason). Return a complete, SHORTER or corrected passage for that block that still serves its narrationIntent. If rewriteTargetWords is present, stay at or below that many words. If rewriteReason contains "epistemic", narrationText MUST explicitly attribute the non-fact claim (for example "the caller said...", "the caller reported...", or "according to her..."); changing only newInformationRefs is not a fix. If rewriteReason contains "punchline_spoiler", DO NOT paraphrase or quote the subject's upcoming defense or dialogue; frame only the situation and anticipation. If rewriteReason contains "judgmental_framing", remove loaded or derogatory terms ("pure entitlement", etc.) and state the observable behavioral contrast and legal cause-and-effect objectively. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
     : INSTRUCTION;
   const attachedEvidence = repair ? [] : evidence;
   const result = await engine.ask(`v5-block-narration${repair ? `_rewrite${attempt}` : ''}-${story.scriptId}`,

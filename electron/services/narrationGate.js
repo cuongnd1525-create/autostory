@@ -55,6 +55,40 @@ function contentContainment(a, b) {
   return Math.max(inA, inB);
 }
 
+const JUDGMENTAL_TERMS = /\b(pure entitlement|entitled brat|arrogant attitude|acting like a karen|deserve even worse|worthless|trash)\b/i;
+
+function detectJudgmentalTerms(text) {
+  const match = String(text || '').match(JUDGMENTAL_TERMS);
+  return {
+    hasJudgmentalTerms: Boolean(match),
+    matchedTerms: match ? [match[0]] : []
+  };
+}
+
+function detectPunchlineSpoiler(text, upcomingQuotes = []) {
+  const t = String(text || '');
+  const textTokens = tokens(t);
+  const spoiled = [];
+  for (const quote of upcomingQuotes) {
+    const qStr = typeof quote === 'string' ? quote : (quote?.text || '');
+    if (!qStr) continue;
+    const qTokens = tokens(qStr);
+    if (qTokens.length >= 3) {
+      const shared = qTokens.filter(x => textTokens.some(y => fuzzyMatch(x, y)));
+      const shareRatio = shared.length / qTokens.length;
+      const spoilsKeyDefense = /\brude\b/i.test(t) && /\b(illegal|law|crime|against the law)\b/i.test(t)
+        && /\brude\b/i.test(qStr) && /\b(illegal|law|crime)\b/i.test(qStr);
+      if (shareRatio >= 0.55 || spoilsKeyDefense) {
+        spoiled.push(qStr);
+      }
+    }
+  }
+  return {
+    hasSpoiler: spoiled.length > 0,
+    spoiledQuotes: spoiled
+  };
+}
+
 // model: { events:[{id,isReveal}], quotes:[{id,text,epistemic}], facts?:[{id}] }
 // beats: ordered array of casted beats:
 //   { beatId, order, narratorText, narratorFunction, audioIntent|speaks,
@@ -134,6 +168,19 @@ function inspect(beats = [], model = {}) {
         push('spoiler', `Narration reveals event ${id} before its reveal beat (${revealBeat.beatId}).`);
       }
     }
+
+    // H. Judgmental or derogatory framing: keep true-crime narration objective, evidence-grounded, and professional.
+    const judgeCheck = detectJudgmentalTerms(text);
+    if (judgeCheck.hasJudgmentalTerms) {
+      push('judgmental_framing', `Narration uses judgmental/derogatory labels ("${judgeCheck.matchedTerms.join('", "')}") instead of objective behavioral contrast and legal cause-and-effect.`);
+    }
+
+    // I. Punchline spoiler: narration must not preempt or paraphrase any key upcoming quote that raw evidence is about to play.
+    const upcoming = (beat.originalQuoteIds || []).map(qid => quoteById.get(qid)?.text).filter(Boolean);
+    const spoilCheck = detectPunchlineSpoiler(text, upcoming);
+    if (spoilCheck.hasSpoiler) {
+      push('punchline_spoiler', `Narration preempts key upcoming dialogue ("${spoilCheck.spoiledQuotes[0].slice(0, 60)}..."); frame the situation or anticipation without spoiling the character's exact words or legal defense.`);
+    }
   });
 
   const errors = issues.filter(x => x.severity === 'error');
@@ -144,4 +191,4 @@ function inspect(beats = [], model = {}) {
   };
 }
 
-module.exports = { inspect, jaccard, DIALOGUE_OVERLAP_LIMIT };
+module.exports = { inspect, jaccard, DIALOGUE_OVERLAP_LIMIT, detectJudgmentalTerms, detectPunchlineSpoiler, JUDGMENTAL_TERMS };

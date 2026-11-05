@@ -592,5 +592,84 @@ function compiledScript(blocks = BLOCKS(), passage = PASSAGE, narratedMeta = {})
     assert.strictEqual(closingCritique.isCompliant, true, `Closing narrator engagement question should pass critic: ${JSON.stringify(closingCritique.issues)}`);
   });
 
+  await ok('V6 Editorial Quality Upgrade: non-judgmental wording, punchline protection, visual ownership, and live-action ending boundary', async () => {
+    const NarrationGate = require(svc('narrationGate.js'));
+    const Director = require(svc('editorialDirectorService.js'));
+    const Critic = require(svc('scopeMediaCriticService.js'));
+
+    // 1. Judgmental terms test
+    const biasedText = 'She stormed off out of pure entitlement, showing her arrogant attitude to the deputy.';
+    const biasedCheck = NarrationGate.detectJudgmentalTerms(biasedText);
+    assert.strictEqual(biasedCheck.hasJudgmentalTerms, true);
+    assert.ok(biasedCheck.matchedTerms.includes('pure entitlement'));
+
+    const neutralText = 'She walked away from the vehicle and repeatedly refused to provide identification.';
+    const neutralCheck = NarrationGate.detectJudgmentalTerms(neutralText);
+    assert.strictEqual(neutralCheck.hasJudgmentalTerms, false);
+
+    // 2. Punchline preemption test
+    const upcomingQuotes = ['being rude is not illegal'];
+    const spoilingText = "Locked inside the van, she argues that being rude isn't against the law.";
+    const spoilerCheck = NarrationGate.detectPunchlineSpoiler(spoilingText, upcomingQuotes);
+    assert.strictEqual(spoilerCheck.hasSpoiler, true);
+    assert.ok(spoilerCheck.spoiledQuotes.length > 0);
+
+    const nonSpoilingText = "Locked inside the van, she attempts to justify her actions to the supervisor.";
+    const nonSpoilerCheck = NarrationGate.detectPunchlineSpoiler(nonSpoilingText, upcomingQuotes);
+    assert.strictEqual(nonSpoilerCheck.hasSpoiler, false);
+
+    // 3. Visual ownership: voiceover over active dialogue test
+    const mockCues = [
+      { startSec: 523.2, endSec: 525.6, text: 'What was your name?' },
+      { startSec: 525.6, endSec: 527.0, text: 'Just close the door.' }
+    ];
+    const testBeats = [
+      { beatId: 'b01', sourceStartSec: 0, sourceEndSec: 10, narrativeRole: 'hook', observedInFootage: 'start', whyNecessaryNow: 'hook' },
+      { beatId: 'b02', sourceStartSec: 523.2, sourceEndSec: 528.0, narrativeRole: 'payoff', observedInFootage: 'end', whyNecessaryNow: 'end' }
+    ];
+    const testBlocks = [
+      { blockId: 'raw_01', mode: 'raw_evidence', beatIds: ['b01'], evidenceFunction: 'hook' },
+      { blockId: 'narr_02', mode: 'narrated_story', beatIds: ['b02'], narrationIntent: 'takeaway', sourceAudioTreatment: 'voiceover_only' }
+    ];
+    const spine = { beats: testBeats, deliveryBlocks: testBlocks };
+    const scope = { candidateEndingEvents: [{ sourceStartSec: 520, sourceEndSec: 529.5 }] };
+    const edlReport = Director.validateDirectorEdl(spine, scope, {
+      durationSec: 600, targetDurationMinSec: 10, targetDurationMaxSec: 100,
+      narrationEnabled: true, cues: mockCues, requireDeliveryBlocks: true
+    });
+    assert.ok(edlReport.violations.some(v => v.code === 'NARRATED_BLOCK_ACTIVE_DIALOGUE'), 'Should flag active dialogue under voiceover');
+
+    // 4. Ending cuts into outro (>529.85s) test
+    const outroBeats = [
+      { beatId: 'b01', sourceStartSec: 0, sourceEndSec: 10, narrativeRole: 'hook', observedInFootage: 'start', whyNecessaryNow: 'hook' },
+      { beatId: 'b02', sourceStartSec: 527.4, sourceEndSec: 531.0, narrativeRole: 'payoff', observedInFootage: 'end', whyNecessaryNow: 'end' }
+    ];
+    const outroSpine = { beats: outroBeats, deliveryBlocks: testBlocks };
+    const outroScope = { candidateEndingEvents: [{ sourceStartSec: 520, sourceEndSec: 531.0 }] };
+    const outroReport = Director.validateDirectorEdl(outroSpine, outroScope, {
+      durationSec: 600, targetDurationMinSec: 10, targetDurationMaxSec: 100,
+      narrationEnabled: true, cues: [], requireDeliveryBlocks: true
+    });
+    assert.ok(outroReport.violations.some(v => v.code === 'ENDING_CUTS_INTO_OUTRO'), 'Should flag cut extending into outro >529.85s');
+
+    // 5. Critic detects split-screen outro
+    const criticTl = [
+      { beatId: 'b1', outputStartSec: 0, outputEndSec: 60, deliveryBlockId: 'raw_1' },
+      { beatId: 'b2', outputStartSec: 60, outputEndSec: 75, deliveryBlockId: 'narr_outro' }
+    ];
+    const criticBlocks = [
+      { blockId: 'raw_1', mode: 'raw_evidence', beatIds: ['b1'], outputStartSec: 0, outputEndSec: 60 },
+      { blockId: 'narr_outro', mode: 'narrated_story', beatIds: ['b2'], outputStartSec: 60, outputEndSec: 75, narrationText: 'Closing.' }
+    ];
+    const outroCritique = Critic.normalizeCritique({
+      scopeSurvived: true, centralQuestionActiveThroughout: true, endingIsConsequenceOfCentralConflict: true,
+      finalFootageUsable: true, coldViewerCanFollow: true, coldViewerNotes: '', observedStory: 'ok', summary: '',
+      issues: [], openingCuriosity: { firstSecondsDescription: 'hook', createsCuriosity: true },
+      transitions: [], finalSeconds: { visualDescription: 'three-frame split-screen channel recap outro', subjectClearlyVisible: true, endsAtCompleteBoundary: true }
+    }, { durationSec: 75, timeline: criticTl, deliveryAware: true, deliveryBlocks: criticBlocks, narrationActive: true });
+    assert.strictEqual(outroCritique.isCompliant, false, 'Outro layout jump should fail critic');
+    assert.ok(outroCritique.issues.some(i => i.type === 'ending_layout_jump'), 'Critic should flag ending_layout_jump');
+  });
+
   console.log(`\n${passed} passed`);
 })().catch(e => { console.error(e); process.exit(1); });

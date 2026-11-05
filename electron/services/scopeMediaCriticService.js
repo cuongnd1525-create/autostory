@@ -24,6 +24,7 @@ const ISSUE_TYPES = [
   'raw_explanation_overlong',      // raw audio spends a long stretch explaining what a narrator could compress
   'narration_underused',           // the viewer is lost where one narrated passage would orient them
   'narration_overwrites_evidence', // narration talks over / paraphrases a moment that should speak for itself
+  'dialogue_under_voiceover',      // visible speaking/lip movement or dialogue captions under muted voiceover
   'weak_narrator_to_raw_handoff',  // the narrator does not set up why the next real moment matters
   'weak_raw_to_narrator_handoff',  // coming out of a real moment, the narrator does not connect it forward
   'opening_lacks_curiosity',       // the first seconds give a cold viewer no reason to keep watching
@@ -31,6 +32,8 @@ const ISSUE_TYPES = [
   'stronger_hook_buried',          // a clearly stronger verified hook sits later in the edit while the opening is routine
   'low_information_footage',       // static/blocked picture that adds no new information (e.g. dashboard, redaction box)
   'ending_cuts_mid_line',          // the final cut interrupts a sentence or an action before it completes
+  'ending_layout_jump',            // abrupt cut to multi-frame/split-screen recap, outro card, or end-screen graphic
+  'audio_tail_silence',            // abrupt digital silence/dead air (>0.5s) at the end of the video
   'payoff_unsatisfying',           // the ending does not answer the question the opening raised
   'external_overlay'               // someone else's branding/subscribe graphic/subtitles burned into the picture
 ];
@@ -145,10 +148,12 @@ Answer from what you actually SEE and HEAR:
 6. transitions: list EVERY major visual, time, place or perspective change you see in the rendered video (outputSec, change, whatViewerSeesAndHears) and for each judge coldViewerUnderstandsWhy — does the picture, dialogue or narration tell a first-time viewer why we are now seeing this? Inspect each transition as you watch; do not rely on the transcript flowing on. When a cold-open teaser rewinds backward in source time to an earlier scene, or when the edit jumps across locations/perspectives without narration or spoken orientation explaining the rewind/jump, set coldViewerUnderstandsWhy=false.
    coldViewerCanFollow: could a viewer who has NEVER seen the source understand who is speaking, why we moved here, what changed, and why the next raw clip matters? It cannot be true while a listed transition is not understood. coldViewerNotes: where that breaks, if anywhere.
    openingCuriosity: describe the first seconds (firstSecondsDescription) and judge whether they create immediate curiosity for a cold viewer (createsCuriosity).
-7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). When a 911 waveform/map screen or a prolonged van/roadside argument plays raw for over 16-20 seconds without a narrator stepping in to compress the repetition and deliver editorial commentary, report raw_explanation_overlong or narration_underused as blocking. Report only what you actually experience while watching, with its output-time region.
+7. DELIVERY PASS — judge each separately as you watch: opening curiosity (opening_lacks_curiosity); raw/narrator ownership; whether an explanatory raw stretch should have been compressed; perspective and time transitions; narrator->raw handoffs; raw->narrator handoffs; final visual usability. Issue types: a perspective shift nobody bridges (unbridged_perspective_shift), a time/place jump with no reason given (unexplained_time_jump), raw audio spending long stretches on explanation a narrator could compress (raw_explanation_overlong), a place where one narrated passage would orient a lost viewer (narration_underused), narration talking over or paraphrasing a moment that should speak for itself (narration_overwrites_evidence), dialogue or moving lips underneath muted voiceover (dialogue_under_voiceover — report as blocking if characters on camera are actively speaking with moving lips or burned-in dialogue captions during a narrator block), a narrator passage that does not set up why the next real moment matters (weak_narrator_to_raw_handoff), or a real moment the narration does not connect forward (weak_raw_to_narrator_handoff). When a 911 waveform/map screen or a prolonged van/roadside argument plays raw for over 16-20 seconds without a narrator stepping in to compress the repetition and deliver editorial commentary, report raw_explanation_overlong or narration_underused as blocking. Report only what you actually experience while watching, with its output-time region.
 8. EDITORIAL READINESS — a technically valid edit can still be weak. Judge from what you saw:
    - openingCuriosity.strongerHookAtOutputSec: if a LATER moment in THIS rendered edit would hook a cold viewer clearly better than the opening (a sharper line, conflict or reveal you actually saw/heard), give its output second and describe it in strongerHookEvidence; otherwise -1. A routine exchange that only becomes interesting later is not a hook. If the opening beat prematurely gives away the final criminal charge or outcome that should be withheld, report hook_spends_payoff as blocking.
    - finalSeconds.lastWordsHeard: the last words spoken before the video ends. finalSeconds.endsAtCompleteBoundary: false if the cut interrupts a sentence or an action mid-way.
+   - ending_layout_jump: report as blocking if the ending abruptly cuts from live action to a multi-frame split screen, YouTube channel recap card, or end-screen outro layout.
+   - audio_tail_silence: report as blocking if the audio abruptly dies to complete digital silence/dead air (>0.5s) before the video finishes.
    - payoffFulfillsOpeningPromise: does the ending answer or pay off the question/promise the opening raised (not just "time runs out", and NEVER ending on an unanswered protest question from the subject in raw footage such as "How did I...?" or "Why am I...?" without the answer; however, a closing NARRATOR block that summarizes the lesson/takeaway and asks the viewer a comment-provoking engagement question after the raw consequence has been shown IS a complete, satisfying payoff)?
    - Report a static or blocked picture that adds no new information for several seconds (including static map/waveform graphics) as low_information_footage, and an ending that drags after the conflict is resolved as low_value_stretch.
 9. observedStory: 2-3 sentences on the story as a viewer experiences it. summary: one sentence.
@@ -227,6 +232,14 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
       it.severity = 'blocking';
       it.derivedFromVerdict = `${it.type}@overlong_stretch`;
     }
+    if (['ending_layout_jump', 'dialogue_under_voiceover'].includes(it.type)) {
+      it.severity = 'blocking';
+      it.derivedFromVerdict = `${it.type}@rule`;
+    }
+    if (it.type === 'audio_tail_silence' && (it.outputEndSec - it.outputStartSec) >= 0.5) {
+      it.severity = 'blocking';
+      it.derivedFromVerdict = 'audio_tail_silence@tail';
+    }
   }
   if (Array.isArray(deliveryBlocks) && deliveryBlocks.length) {
     const isNarrationActive = narrationActive || deliveryBlocks.some(d => d.mode === 'narrated_story');
@@ -255,6 +268,15 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
   if (raw.finalSeconds?.endsAtCompleteBoundary === false && !issues.some(x => x.severity === 'blocking' && x.type === 'ending_cuts_mid_line')) {
     issues.push({ type: 'ending_cuts_mid_line', severity: 'blocking', outputStartSec: tail[0], outputEndSec: tail[1], evidence: raw.finalSeconds?.lastWordsHeard || '',
       whyItFails: 'Critic verdict: the final cut interrupts a sentence or action before it completes.', beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: 'finalSeconds.endsAtCompleteBoundary' });
+  }
+  const finalDesc = String(raw.finalSeconds?.visualDescription || '').toLowerCase();
+  if ((finalDesc.includes('split') || finalDesc.includes('outro') || finalDesc.includes('recap') || finalDesc.includes('end-screen') || finalDesc.includes('promo') || finalDesc.includes('three-frame') || finalDesc.includes('multiple frame')) && !issues.some(x => x.type === 'ending_layout_jump')) {
+    issues.push({
+      type: 'ending_layout_jump', severity: 'blocking', outputStartSec: tail[0], outputEndSec: tail[1],
+      evidence: raw.finalSeconds?.visualDescription || 'Split-screen or outro card visible in ending',
+      whyItFails: 'Ending cuts into multi-frame split screen or channel outro graphics; must end cleanly on live action.',
+      beatIds: beatsInRegion(timeline, tail[0], tail[1]), derivedFromVerdict: 'finalSeconds.visualDescription@outro'
+    });
   }
   const lastWords = String(raw.finalSeconds?.lastWordsHeard || '').trim();
   const lastDeliveryBlock = Array.isArray(deliveryBlocks) && deliveryBlocks.length ? deliveryBlocks[deliveryBlocks.length - 1] : null;
