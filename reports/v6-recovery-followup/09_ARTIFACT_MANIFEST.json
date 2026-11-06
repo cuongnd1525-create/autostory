@@ -1,0 +1,124 @@
+{
+  "manifestVersion": "1.0.0",
+  "generatedAt": "2026-11-06T01:55:00.000Z",
+  "workspaceRoot": "D:\\Project\\cineviral-studio",
+  "targetBranch": "feat/autostory-v6-recovery-followup",
+  "baseCommit": "63212e6",
+  "primaryIncident": {
+    "sourceId": "youtube-m6ow9dqxqcg",
+    "sourceVideoPath": "C:\\Users\\Admin\\Documents\\MovieRecapToolWorkspace\\sources\\youtube-m6ow9dqxqcg\\source-m6ow9dqxqcg.mp4",
+    "sourceDurationSec": 549.741,
+    "sourceSha256": "d5528e4e755b5d2b8256c08b53284a1d695970afb1f9395eb6ea7bad186db279",
+    "sourceSizeBytes": 131546316
+  },
+  "deliveredProductionFinal": {
+    "filePath": "D:\\Video\\v6-followup-storyteller-benchmark-final.mp4",
+    "sha256": "6877284292b08d84eecbb586a02ffdff83589d98cdfaf0947403435fd0e231b2",
+    "sizeBytes": 47341792,
+    "durationSec": 74.4,
+    "resolution": "1080x1920",
+    "fps": 30,
+    "pacingPreset": "commentary_led",
+    "publishReady": true,
+    "qaResult": "PASS",
+    "bindingValid": true
+  },
+  "alternativeEvidenceHeavyFinal": {
+    "filePath": "D:\\OutputVideo\\v6-followup-evidence-a\\v6-followup-option-a-evidence-heavy-final.mp4",
+    "sha256": "eb1ced94545553f590f92a0761aacc7f280977e82472ee7b4ac84ccb8b44a03d",
+    "sizeBytes": 47783978,
+    "durationSec": 70.67,
+    "resolution": "1080x1920",
+    "pacingPreset": "evidence_heavy",
+    "publishReady": true,
+    "qaResult": "PASS",
+    "bindingValid": true
+  },
+  "historicalBenchmarksPreserved": [
+    {
+      "label": "Human Curated Reference (va.mp4)",
+      "filePath": "C:\\Users\\Admin\\Videos\\va.mp4",
+      "sha256": "ee404e077004849a89fa15812e47629985cef671b9af71f87ba351dc25f54de0",
+      "sizeBytes": 28524132,
+      "durationSec": 107.367
+    },
+    {
+      "label": "V6 Storyteller Pre-Upgrade Baseline",
+      "filePath": "D:\\Video\\v6-storyteller-benchmark-1104-final.mp4",
+      "sha256": "4d1f5023e29f822c7efff9778d775ab333652382c4dc9fabeb2745d602ba8c85",
+      "sizeBytes": 19039614,
+      "durationSec": 84.2
+    },
+    {
+      "label": "V6 Recovery Prior Buggy Build",
+      "filePath": "D:\\Video\\v6-recovery-storyteller-benchmark-final.mp4",
+      "sha256": "30ed00e9a8efd5aa8145aef4ca53e58b8ee6f5ba4badb4ebcfbef45c9a5a4704",
+      "sizeBytes": 42068312,
+      "durationSec": 80.77
+    }
+  ],
+  "productionArtifacts": {
+    "storyScope": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\story-scope.json",
+      "sha256": "bdac84a044eabcc27433404c6c0d9bfc1df4015ac02694f36755782a93914f7e",
+      "sizeBytes": 33946
+    },
+    "storySpine": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\story-spine.json",
+      "sha256": "1d34565fcbff9efce7997edabfa37906a25b579c57c752bdfbbf265020797c1f",
+      "sizeBytes": 51821
+    },
+    "lastRenderedSpine": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\last-rendered-story-spine-1.json",
+      "sha256": "5ddf5fc62c6b698b8e1795b4298a96e988767edfa292f78fac5e5f64dff80b47",
+      "sizeBytes": 46995
+    },
+    "scriptEdl": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\script-1.json",
+      "sha256": "801a50dde790b2dd3dabe88bee5cc0a3a3642a1cbc233f9272bc44ca875638da",
+      "sizeBytes": 72010
+    },
+    "sourceEndingBoundary": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\source-ending-boundary.json",
+      "sha256": "9ef0e9dbdd0a295b562e7af30a76d1846bbd6d330c5920b75c792bb9d7ceae4e",
+      "sizeBytes": 1052
+    },
+    "hookAuditionReport": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\hook-audition-report.json",
+      "sizeBytes": 4972
+    },
+    "narrationPerformanceAudit": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\narration-performance-audit.json",
+      "sha256": "1171093e95d49cfc0431ff1e3c90790df9826ff0aa6edec679fc71e0d44c1507",
+      "sizeBytes": 6858
+    },
+    "finalQualityGate": {
+      "path": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\final-quality-gate.json",
+      "sha256": "c37ccf8c4b8c9d98686640cf9f29e2cf3870e30b6579593eda89d68a22dd2173",
+      "sizeBytes": 4032
+    }
+  },
+  "handoverReports": [
+    "reports/v6-recovery-followup/01_ROOT_CAUSE.md",
+    "reports/v6-recovery-followup/02_CODE_CHANGES.md",
+    "reports/v6-recovery-followup/03_NARRATION_AUDIT.md",
+    "reports/v6-recovery-followup/04_EDITORIAL_TIMELINE.md",
+    "reports/v6-recovery-followup/05_TECHNICAL_FINAL_QA.md",
+    "reports/v6-recovery-followup/06_BEFORE_AFTER_BENCHMARK.md",
+    "reports/v6-recovery-followup/07_TEST_RESULTS.md",
+    "reports/v6-recovery-followup/08_FINAL_EDITORIAL_REVIEW.md",
+    "reports/v6-recovery-followup/09_ARTIFACT_MANIFEST.json"
+  ],
+  "stageCSecondarySourcesReport": {
+    "path": "reports/v6-recovery-followup/stage-c-secondary-sources.json",
+    "exists": true,
+    "sizeBytes": 6207,
+    "sha256": "62ddc93f1dce952888cdceb784672759b8f08819cd58917df353676e8adee1c1"
+  },
+  "stageDBlindReviewReport": {
+    "path": "reports/v6-recovery-followup/stage-d-blind-editorial-review.json",
+    "exists": true,
+    "sizeBytes": 12417,
+    "sha256": "c42b131a3aa508c6037fb037ef1f1168b9524734d55b608517373728836cbb3f"
+  }
+}

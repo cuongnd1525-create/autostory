@@ -35,28 +35,40 @@ const blockNarrationLine = object({
 const schema = object({ accessGranted: { type: 'boolean' }, narrations: list(blockNarrationLine, 40) });
 
 const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the requested narrated_story blocks in input.blocks.
-Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction and narrationIntent, and carries the viewer from viewerStateEntering to viewerStateLeaving.
-You are an American True Crime Storyteller and Commentary Editor. The narrator owns comprehension, compression, orientation, causal connection, behavioral commentary (COMMENTARY / INTERPRETATION), contrast framing, anticipation, moral takeaway and momentum:
-- Editorial Commentary & Contrast Framing: Do not write dry timestamp labels or flat summaries. Frame the behavioral contrast and legal cause-and-effect using objective, incisive language:
-  - Good: "Instead of accepting assistance with her disabled car, she refuses to cooperate and walks away, leaving deputies with no choice but to tow the vehicle."
-  - Good: "Rather than waiting for roadside help, she dials 911 to complain about the deputy's tone—treating an emergency line like customer service."
-  - BAD (FORBIDDEN): Never use subjective, derogatory labels or emotional insults like "pure entitlement", "arrogant attitude", "stupid", "idiot", or "acting like a brat". Focus on observable actions, decisions, and statutory reality.
-- Natural Spoken Cadence & Breath Pauses: Write 1-2 punchy, spoken-English sentences per block with deliberate clause breaks (commas, periods) so the voice delivers each thought with natural pauses and authority.
+Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction, commentaryValue and narrationIntent, carrying the viewer from viewerKnows / viewerStateEntering to viewerWantsToKnow / viewerStateLeaving.
+You are an American True Crime Storyteller and Commentary Editor. Narrator owns comprehension, compression, orientation, causal connection, behavioral/statutory commentary (COMMENTARY / INTERPRETATION), re-hook curiosity (REHOOK / ANTICIPATION), escalation framing and closing synthesis:
+- Function-Specific Editorial Value (NEVER flat play-by-play of visible action):
+  - CONTEXT / CAUSAL_BRIDGE: Compress procedural dead time and orient who, why, and what changed without describing obvious movement already visible on screen.
+  - COMMENTARY / INTERPRETATION: Surface the core contradiction between a subject's assumptions/claims and the statutory or operational reality officers are acting on, grounded strictly in input.blocks[].sourceContext.
+  - ANTICIPATION / REHOOK / ESCALATION: Pivot the story into its next phase by planting a concrete curiosity gap before the upcoming raw evidence—tell the viewer what is about to be tested or challenged without giving away the answer.
+  - PAYOFF / CLOSING: Connect the inciting decision to the concrete legal consequence and leave the viewer with a balanced, comment-provoking takeaway question.
+- Grounded Contrast Without Insults:
+  - Good: "Instead of accepting assistance with her disabled car, she walks away from the scene—leaving deputies with an obstructing vehicle and no cooperative driver."
+  - Good: "Minutes after refusing help at the roadside, she dials 911 to report the deputy's demeanor—using an emergency dispatch line over a dispute about tone."
+  - Good (Re-hook / Interpretation before van confrontation): "Once inside the transport van, she demands a supervisor, convinced that her words alone could not cross a criminal line."
+  - BAD (FORBIDDEN): Never use subjective, derogatory labels or emotional insults like "pure entitlement", "arrogant attitude", "stupid", "idiot", or "acting like a brat". Never state unverified legal conclusions as fact.
+- Natural Spoken Cadence & Breath Pauses: Write 1-2 crisp, spoken American English sentences per block with deliberate clause breaks (commas, em-dashes, periods) so the voice delivers each thought with natural pauses, weight and authority.
 - Clean Handoff & Punchline Protection (Narrator-to-Evidence Reveal Contract):
-  - When followingRawBlock is present, hand the viewer directly to the real moment that follows by setting up what is at stake, the escalating situation, or what the subject is attempting to do.
+  - Inspect input.blocks[].heldBackForFootage and input.blocks[].mustWithholdUpcomingQuotes.
   - CRITICAL PUNCHLINE RULE: NEVER spoil, summarize, or paraphrase the subject's exact words, legal defense, or punchline quote that the upcoming raw clip is about to deliver!
   - Good: "Locked inside the transport van, she demands to speak with a supervisor, insisting her actions did not warrant an arrest." (Sets up the confrontation without stealing her defense).
   - BAD (FORBIDDEN): "Locked inside the transport van, she attempts to justify her actions to a supervisor—arguing that being rude isn't against the law." (Spoils her exact line before she says it on camera).
-  - Inspect input.blocks[].mustWithholdUpcomingQuotes: do not use the key words or arguments from these quotes in your narration text.
-- Closing Lesson Takeaway & Thoughtful Engagement Question (when isClosingBlock is true or followingRawBlock is null at the end of the video): The final narrated block MUST deliver a two-part outro (kept concise within ~80-88% of safeWords so the voice finishes cleanly before the video ends):
-  1. Sentence 1 (Lesson / Takeaway Summary): Deliver a measured summary connecting the legal cause and outcome, distinguishing the statutory violation from attitude ("What began as an offer of roadside assistance ended in an arrest for misuse of emergency dispatch.").
-  2. Sentence 2 (Comment-Provoking Engagement Question): End with a genuine, debatable question exploring both perspectives ("Did the situation warrant criminal charges, or should deputies have handled it differently?"). Do not ask loaded or rhetorical questions like "did she deserve even worse?".
+- Closing Lesson Takeaway & Thoughtful Engagement Question (when isClosingBlock is true or followingRawBlock is null at the end of the video): The final narrated block MUST deliver a complete two-part closing (~82-92% of safeWords so the voice fills the closing block cleanly without leaving dead-air silence, never a bare 3-5 word question stub):
+  1. Sentence 1 (Grounded Synthesis): Connect the inciting choice to the concrete outcome, distinguishing the statutory issue from attitude.
+  2. Sentence 2 (Balanced Discussion Question): End with a genuine, debatable question exploring the tension in the case ("Did this call cross the line into a crime, or could deputies have resolved it without an arrest?"). Do not ask loaded questions like "did she deserve even worse?".
 - Grounding & Epistemic Safety: Ground every factual claim in input.blocks[].sourceContext (events, quotes, facts) and return their valid ids in newInformationRefs. Prefer referencing event IDs (e.g. e1, e2) in newInformationRefs when describing observable actions or outcomes; only reference a quote ID whose epistemic status is not known_fact if narrationText itself explicitly attributes or hedges the claim ("the caller said/reported...", "she complained/insisted that...", "according to her"). Never invent information, never describe obvious movement the picture already shows, never spoil input.mustWithhold.
-safeWords is an ADVISORY first-pass target for the whole block, never a quota. Aim slightly below safeWords (about 80-90% of safeWords) so the voice finishes cleanly with a natural breath before the next raw clip or video end. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad words to fill the picture.
+safeWords is an ADVISORY first-pass target for the whole block, never a quota. Aim around 82-92% of safeWords so the voice finishes cleanly with a natural breath before the next raw clip or video end. The real TTS measurement is authoritative: a passage may be slightly above safeWords when its measured voice still fits the block within the allowed safe speed-up. Finish naturally and do not pad empty words.
 Active voice, spoken American English, grounded and incisive. previewVi is a natural Vietnamese rendering of the passage.`;
 
 const num = v => (Number.isFinite(Number(v)) ? Number(v) : NaN);
 const overlaps = (s, e, a, z) => Math.min(e, z) - Math.max(s, a) > 0;
+
+function cadenceForNarratorFunction(fn, isClosing = false) {
+  if (isClosing || fn === 'CLOSING' || fn === 'PAYOFF') return { deliveryProfile: 'intimate_payoff', speechRateMultiplier: 1.0 };
+  if (fn === 'COMMENTARY' || fn === 'INTERPRETATION') return { deliveryProfile: 'warm_story', speechRateMultiplier: 1.0 };
+  if (fn === 'REHOOK' || fn === 'ANTICIPATION' || fn === 'ESCALATION') return { deliveryProfile: 'process_energy', speechRateMultiplier: 1.0 };
+  return { deliveryProfile: 'natural', speechRateMultiplier: 1.0 };
+}
 
 function sourceContext(model, ranges, { isClosingBlock = false } = {}) {
   const inside = (s, e) => ranges.some(([a, z]) => overlaps(num(s), num(e), a, z));
@@ -85,7 +97,7 @@ const rawNeighbour = (timeline, k, dir) => {
   for (let j = k + dir; j >= 0 && j < timeline.length; j += dir) {
     const b = timeline[j];
     if (b.mode === 'raw_evidence') {
-      return { blockId: b.blockId, evidenceFunction: b.evidenceFunction || b.storyFunction || '',
+      return { blockId: b.blockId, footageFunction: b.footageFunction || '', evidenceFunction: b.evidenceFunction || b.storyFunction || '',
         beats: b.beats.map(x => ({ beatId: x.beatId, sourceStartSec: x.sourceStartSec, sourceEndSec: x.sourceEndSec, observedInFootage: x.observedInFootage || '', newInformation: x.newInformation || '' })) };
     }
     if (b.mode === 'narrated_story') return null; // another narrated block comes first
@@ -104,13 +116,18 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
     .filter(q => nextRanges.some(([a, z]) => overlaps(num(q.startSec), num(q.endSec), a, z)))
     .map(q => ({ speaker: q.speaker, text: q.text }));
   return {
-    blockId: blk.blockId, isClosingBlock, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '', narrationIntent: blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '',
+    blockId: blk.blockId, isClosingBlock, storyFunction: blk.storyFunction || '', narratorFunction: blk.narratorFunction || '',
+    narrationIntent: blk.narrationIntent || blk.blockSummary || blk.storyFunction || blk.ownershipReason || '',
+    commentaryValue: blk.commentaryValue || '',
+    viewerKnows: blk.viewerKnows || blk.beats[0]?.viewerStateBefore || '',
+    viewerWantsToKnow: blk.viewerWantsToKnow || blk.beats[blk.beats.length - 1]?.viewerStateAfter || '',
+    heldBackForFootage: blk.heldBackForFootage || '',
     sourceAudioTreatment: Delivery.audioModeFor(blk), handoffTargetBeatId: blk.handoffTargetBeatId || null,
     beats: blk.beats.map(b => ({ beatId: b.beatId, sourceStartSec: b.sourceStartSec, sourceEndSec: b.sourceEndSec,
       durationSec: Math.round((num(b.sourceStartSec !== undefined ? num(b.sourceEndSec) - num(b.sourceStartSec) : 0)) * 100) / 100, narrativeRole: b.narrativeRole,
       observedInFootage: b.observedInFootage || '', newInformation: b.newInformation || '' })),
-    viewerStateEntering: blk.beats[0]?.viewerStateBefore || '',
-    viewerStateLeaving: blk.beats[blk.beats.length - 1]?.viewerStateAfter || '',
+    viewerStateEntering: blk.viewerKnows || blk.beats[0]?.viewerStateBefore || '',
+    viewerStateLeaving: blk.viewerWantsToKnow || blk.beats[blk.beats.length - 1]?.viewerStateAfter || '',
     precedingRawBlock: prev, followingRawBlock: next,
     mustWithholdUpcomingQuotes,
     sourceContext: sourceContext(model, ranges, { isClosingBlock }),
@@ -120,11 +137,38 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
   };
 }
 
+const MAX_NARRATION_EVIDENCE_FILES = 10;
+
+function selectNarrationEvidence(evidence, payloads) {
+  if (!Array.isArray(evidence) || evidence.length <= MAX_NARRATION_EVIDENCE_FILES) return evidence || [];
+  const primaryRanges = (payloads || []).flatMap(p => p.beats || []).map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
+  const handoffRanges = (payloads || [])
+    .flatMap(p => [...(p.precedingRawBlock?.beats || []), ...(p.followingRawBlock?.beats || [])])
+    .map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
+  const scored = evidence.map((ev, index) => {
+    const start = num(ev?.sourceStart ?? ev?.sourceStartSec);
+    const end = Number.isFinite(num(ev?.sourceEndSec))
+      ? num(ev.sourceEndSec)
+      : (Number.isFinite(start) && Number.isFinite(num(ev?.duration)) ? start + num(ev.duration) : NaN);
+    let priority = 0;
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      if (primaryRanges.some(([a, z]) => overlaps(start, end, a, z))) priority = 2;
+      else if (handoffRanges.some(([a, z]) => overlaps(start, end, a, z))) priority = 1;
+    }
+    return { ev, index, priority };
+  });
+  return scored
+    .sort((a, b) => (b.priority - a.priority) || (a.index - b.index))
+    .slice(0, MAX_NARRATION_EVIDENCE_FILES)
+    .sort((a, b) => a.index - b.index)
+    .map(x => x.ev);
+}
+
 async function askBlockNarration(engine, story, payloads, evidence, repair = null, attempt = 0) {
   const instruction = repair
-    ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks failed a deterministic narration check (input.blocks[].rewriteReason). Return a complete, SHORTER or corrected passage for that block that still serves its narrationIntent. If rewriteTargetWords is present, stay at or below that many words. If rewriteReason contains "epistemic", narrationText MUST explicitly attribute the non-fact claim (for example "the caller said...", "the caller reported...", or "according to her..."); changing only newInformationRefs is not a fix. If rewriteReason contains "punchline_spoiler", DO NOT paraphrase or quote the subject's upcoming defense or dialogue; frame only the situation and anticipation. If rewriteReason contains "judgmental_framing", remove loaded or derogatory terms ("pure entitlement", etc.) and state the observable behavioral contrast and legal cause-and-effect objectively. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
+    ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks failed a deterministic narration check (input.blocks[].rewriteReason). Return a complete, corrected passage for that block that still serves its narrationIntent and commentaryValue. If rewriteTargetWords is present, stay at or below that many words. If rewriteMinWords is present, expand into a complete grounded two-part takeaway + discussion question of at least rewriteMinWords words (while staying <= safeWords) so the closing block does not leave dead-air silence. If rewriteReason contains "epistemic", narrationText MUST explicitly attribute the non-fact claim (for example "the caller said...", "the caller reported...", or "according to her..."); changing only newInformationRefs is not a fix. If rewriteReason contains "punchline_spoiler", DO NOT paraphrase or quote the subject's upcoming defense or dialogue; frame only the situation and anticipation. If rewriteReason contains "judgmental_framing", remove loaded or derogatory terms ("pure entitlement", etc.) and state the observable behavioral contrast and legal cause-and-effect objectively. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
     : INSTRUCTION;
-  const attachedEvidence = repair ? [] : evidence;
+  const attachedEvidence = repair ? [] : selectNarrationEvidence(evidence, payloads);
   const result = await engine.ask(`v5-block-narration${repair ? `_rewrite${attempt}` : ''}-${story.scriptId}`,
     { spine: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise },
       mustWithhold: story.storyScope?.mustWithhold || [], blocks: payloads },
@@ -191,7 +235,7 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   const texts = await askBlockNarration(engine, story, [...payloads.values()], evidence);
   const measured = new Map();
 
-  const problemsOf = async () => {
+  const problemsOf = async (rewritePass = 0) => {
     const out = new Map();
     for (const { b } of narrated) {
       const line = texts.get(b.blockId);
@@ -231,25 +275,32 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
         ));
         out.set(b.blockId, { code: 'BLOCK_VOICE_OVERFLOW', reason: `the passage measures ${m.rawBlockVoiceSec.toFixed(2)}s of speech for a ${b.durationSec}s block (fit ratio ${fitRatio.toFixed(3)}; at most ${(1 + BLOCK_MAX_SPEEDUP).toFixed(2)} can be absorbed without trimming words). Rewrite to about ${suggestedMaxWords} words or fewer, while preserving the narrationIntent.`,
           rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio, currentWords, safeWords: payload?.safeWords ?? 0, suggestedMaxWords });
+      } else if (rewritePass === 0 && payload?.isClosingBlock && b.durationSec >= 3.8 && compiler.words(t) <= 6 && payload.safeWords >= 10 && (b.durationSec - m.rawBlockVoiceSec) > 0.9) {
+        const minWords = Math.max(8, Math.min(payload.safeWords - 1, Math.floor(payload.safeWords * 0.75)));
+        out.set(b.blockId, { code: 'BLOCK_CLOSING_UNDERSIZED', advisoryOnly: true,
+          reason: `the closing passage is a ${compiler.words(t)}-word stub (${m.rawBlockVoiceSec.toFixed(2)}s in a ${b.durationSec}s closing block), which would leave ${(b.durationSec - m.rawBlockVoiceSec).toFixed(2)}s of dead-air silence at the end of the video. Expand into a complete two-part takeaway sentence + balanced viewer discussion question (~${minWords}-${payload.safeWords} words).`,
+          rawBlockVoiceSec: m.rawBlockVoiceSec, fitRatio, currentWords: compiler.words(t), safeWords: payload.safeWords, suggestedMinWords: minWords });
       }
     }
     return out;
   };
 
-  let problems = await problemsOf();
+  let problems = await problemsOf(0);
   for (let attempt = 1; attempt <= MAX_TEXT_REWRITES && problems.size; attempt++) {
     const redo = [...problems.keys()].map(id => {
       const p = problems.get(id);
       return { ...payloads.get(id), previousNarrationText: texts.get(id)?.narrationText || '', rewriteReason: p.reason,
-        ...(Number.isFinite(p.suggestedMaxWords) ? { rewriteTargetWords: p.suggestedMaxWords } : {}) };
+        ...(Number.isFinite(p.suggestedMaxWords) ? { rewriteTargetWords: p.suggestedMaxWords } : {}),
+        ...(Number.isFinite(p.suggestedMinWords) ? { rewriteMinWords: p.suggestedMinWords } : {}) };
     });
     audit.rewrites.push({ attempt, blocks: [...problems.entries()].map(([blockId, p]) => ({ blockId, ...p })) });
     const again = await askBlockNarration(engine, story, redo, evidence, true, attempt);
     for (const [id, line] of again) if (problems.has(id)) texts.set(id, line);
-    problems = await problemsOf();
+    problems = await problemsOf(attempt);
   }
-  if (problems.size) {
-    const [blockId, p] = problems.entries().next().value;
+  const blockingProblems = new Map([...problems.entries()].filter(([, p]) => !p.advisoryOnly));
+  if (blockingProblems.size) {
+    const [blockId, p] = blockingProblems.entries().next().value;
     throw repairRequest(blockId, p.code === 'BLOCK_VOICE_OVERFLOW' ? 'NARRATED_BLOCK_VOICE_OVERFLOW' : 'NARRATED_BLOCK_UNFIT', p.reason, {
       rawBlockVoiceSec: p.rawBlockVoiceSec,
       fitRatio: p.fitRatio,
@@ -258,23 +309,29 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
     });
   }
 
-  const out = timeline.map(b => {
+  const out = timeline.map((b, idx) => {
     if (b.mode !== 'narrated_story') return b;
     const line = texts.get(b.blockId);
     const t = String(line.narrationText).trim();
     const m = measured.get(t) || {};
-    const blockOut = { ...b, narrationText: t, previewVi: line.previewVi || '', narratorFunction: line.narratorFunction || b.narratorFunction,
+    const resolvedFn = line.narratorFunction || b.narratorFunction;
+    const cadence = cadenceForNarratorFunction(resolvedFn, idx === timeline.length - 1);
+    const blockOut = { ...b, narrationText: t, previewVi: line.previewVi || '', narratorFunction: resolvedFn,
       newInformation: line.newInformation || [], newInformationRefs: line.newInformationRefs || [], emotionTag: line.emotionTag || 'NEUTRAL',
+      deliveryProfile: cadence.deliveryProfile, speechRateMultiplier: cadence.speechRateMultiplier,
       sourceAudioTreatment: Delivery.audioModeFor(b), safeWords: payloads.get(b.blockId).safeWords, words: compiler.words(t),
       rawBlockVoiceSec: m.rawBlockVoiceSec ?? null, blockTimelineSec: b.durationSec,
       fitRatio: m.rawBlockVoiceSec ? Math.round((m.rawBlockVoiceSec / b.durationSec) * 1000) / 1000 : null };
     blockOut.fingerprint = Delivery.blockFingerprint(blockOut, beats);
     audit.blocks.push({ blockId: b.blockId, beatIds: b.beatIds, durationSec: b.durationSec, safeWords: blockOut.safeWords, words: blockOut.words,
       advisorySafeWordsExceeded: blockOut.safeWords > 0 && blockOut.words > blockOut.safeWords,
-      rawBlockVoiceSec: blockOut.rawBlockVoiceSec, fitRatio: blockOut.fitRatio, narrationText: t });
+      rawBlockVoiceSec: blockOut.rawBlockVoiceSec, fitRatio: blockOut.fitRatio,
+      narratorFunction: resolvedFn, deliveryProfile: cadence.deliveryProfile, speechRateMultiplier: cadence.speechRateMultiplier,
+      narrationText: t });
     return blockOut;
   });
   return { blocks: out, audit };
 }
 
-module.exports = { INSTRUCTION, schema, blockPayload, gateBlocks, narrateBlocks, BLOCK_MAX_SPEEDUP };
+module.exports = { INSTRUCTION, schema, blockPayload, gateBlocks, narrateBlocks, cadenceForNarratorFunction, selectNarrationEvidence, BLOCK_MAX_SPEEDUP };
+

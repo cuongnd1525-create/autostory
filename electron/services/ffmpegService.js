@@ -787,11 +787,52 @@ class FfmpegService {
     ], { captureStdout: false });
   }
 
+  async probeSpeechTailEnd(inputPath, rawDuration) {
+    if (!inputPath || !(rawDuration > 0.4)) return rawDuration;
+    try {
+      const stderr = await this.run(this.ffmpegPath, [
+        "-hide_banner",
+        "-nostats",
+        "-i",
+        inputPath,
+        "-af",
+        "silencedetect=noise=-42dB:d=0.10",
+        "-f",
+        "null",
+        "-"
+      ], { captureStdout: false });
+      const silences = [];
+      let pendingStart = null;
+      for (const line of String(stderr || "").split(/\r?\n/)) {
+        const ms = line.match(/silence_start:\s*([0-9.]+)/);
+        if (ms) pendingStart = Number(ms[1]);
+        const me = line.match(/silence_end:\s*([0-9.]+)\s*\|\s*silence_duration:\s*([0-9.]+)/);
+        if (me) {
+          const end = Number(me[1]);
+          const dur = Number(me[2]);
+          const start = Number.isFinite(pendingStart) ? pendingStart : Math.max(0, end - dur);
+          silences.push({ start, end, dur });
+          pendingStart = null;
+        }
+      }
+      if (Number.isFinite(pendingStart) && rawDuration > pendingStart) {
+        silences.push({ start: pendingStart, end: rawDuration, dur: rawDuration - pendingStart });
+      }
+      const trailing = silences.find((s) => s.end >= rawDuration - 0.08 && s.start > 0.25);
+      if (trailing) {
+        return Math.min(rawDuration, trailing.start + 0.16);
+      }
+    } catch (_) {}
+    return rawDuration;
+  }
+
   async fitDubbingClusterAudio({
     inputPath,
     outputPath,
     targetDuration,
     maxStretchRatio = 0.08,
+    maxSlowDownRatio = null,
+    isClosingBlock = false,
     normalize = true,
     allowTrim = false,
     allowSlowDown = true,
@@ -800,23 +841,66 @@ class FfmpegService {
     const audioMeta = await this.probeAudio(inputPath);
     const safeTargetDuration = Math.max(0.3, Number(targetDuration));
     const rawDuration = Math.max(0.3, Number(audioMeta.duration || safeTargetDuration));
-    const ratio = rawDuration / safeTargetDuration;
+    const cleanDuration = isClosingBlock
+      ? await this.probeSpeechTailEnd(inputPath, rawDuration)
+      : rawDuration;
+    const ratio = cleanDuration / safeTargetDuration;
     const safeOverflowSec = Math.min(0.5, Math.max(0.3, safeTargetDuration * 0.03));
-    const overflowSec = Math.max(0, rawDuration - safeTargetDuration);
+    const overflowSec = Math.max(0, cleanDuration - safeTargetDuration);
     const stretchLimit = Math.max(Number(maxStretchRatio || 0.08), safeOverflowSec / safeTargetDuration);
+    const slowDownLimit = Math.max(0, Number(maxSlowDownRatio ?? maxStretchRatio ?? 0.08));
     const filters = [];
     let fitStrategy = "natural";
+    let effectiveSpeedRatio = ratio;
 
-    if (allowSpeedUp && ratio > 1 && ratio <= 1 + stretchLimit) {
+    if (isClosingBlock && cleanDuration < rawDuration - 0.02) {
+      filters.push(`atrim=0:${formatSeconds(cleanDuration)}`);
+      filters.push("asetpts=N/SR/TB");
+    }
+
+    if (isClosingBlock && cleanDuration <= safeTargetDuration) {
+      const tailPadSec = Math.min(0.24, Math.max(0.14, safeTargetDuration * 0.04));
+      const targetSpeechWindow = Math.max(0.3, safeTargetDuration - tailPadSec);
+      let stretchedSec = cleanDuration;
+      if (cleanDuration > targetSpeechWindow) {
+        effectiveSpeedRatio = 1;
+        filters.push("asetpts=N/SR/TB");
+        filters.push(`apad=pad_dur=${formatSeconds(safeTargetDuration)}`);
+        filters.push(`atrim=0:${formatSeconds(safeTargetDuration)}`);
+        fitStrategy = "closing_clean_tail";
+      } else {
+        const minLeadIn = Math.min(0.38, Math.max(0, targetSpeechWindow - cleanDuration));
+        const remainingForSpeech = Math.max(cleanDuration, targetSpeechWindow - minLeadIn);
+        const slowRate = allowSlowDown
+          ? Math.max(1 - Math.min(0.14, slowDownLimit || 0.12), Math.min(1, cleanDuration / remainingForSpeech))
+          : 1;
+        if (slowRate < 0.995) {
+          filters.push(buildAtempoFilterChain(slowRate));
+          stretchedSec = cleanDuration / slowRate;
+          effectiveSpeedRatio = slowRate;
+        } else {
+          effectiveSpeedRatio = 1;
+        }
+        const leadInSec = Math.min(1.25, Math.max(0, targetSpeechWindow - stretchedSec));
+        const delayMs = Math.round(leadInSec * 1000);
+        if (delayMs >= 25) {
+          filters.push(`adelay=${delayMs}:all=1`);
+        }
+        filters.push("asetpts=N/SR/TB");
+        filters.push(`apad=pad_dur=${formatSeconds(safeTargetDuration)}`);
+        filters.push(`atrim=0:${formatSeconds(safeTargetDuration)}`);
+        fitStrategy = slowRate < 0.995 ? "closing_paced_settle" : "closing_breath_settle";
+      }
+    } else if (allowSpeedUp && ratio > 1 && ratio <= 1 + stretchLimit) {
       filters.push(buildAtempoFilterChain(ratio));
       filters.push(`atrim=0:${formatSeconds(safeTargetDuration)}`);
       fitStrategy = "light_speed_up";
-    } else if (allowSlowDown && ratio < 1 && ratio >= 1 - Number(maxStretchRatio || 0.08)) {
+    } else if (allowSlowDown && ratio < 1 && ratio >= 1 - slowDownLimit) {
       filters.push(buildAtempoFilterChain(ratio));
       filters.push(`atrim=0:${formatSeconds(safeTargetDuration)}`);
       fitStrategy = "light_slow_down";
     } else if (ratio < 1) {
-      filters.push(`apad=pad_dur=${formatSeconds(safeTargetDuration - rawDuration + 0.2)}`);
+      filters.push(`apad=pad_dur=${formatSeconds(safeTargetDuration - cleanDuration + 0.2)}`);
       filters.push(`atrim=0:${formatSeconds(safeTargetDuration)}`);
       fitStrategy = "pad_silence";
     } else if (!allowSpeedUp && ratio > 1) {
@@ -834,11 +918,11 @@ class FfmpegService {
       // loudnorm measures over a 3 s window; on a shorter clip its single pass
       // attenuates by ~35 dB (a 2.9 s narrated block came out at -35 dBFS peak).
       // Pad to a measurable length, normalize, then trim back to the fitted length.
-      const fittedSec = fitStrategy === "overflow_keep_full" ? rawDuration : safeTargetDuration;
+      const fittedSec = fitStrategy === "overflow_keep_full" ? cleanDuration : safeTargetDuration;
       const shortClip = fittedSec < LOUDNORM_MIN_SEC;
       if (shortClip) filters.push(`apad=whole_dur=${formatSeconds(LOUDNORM_MIN_SEC + 0.5)}`);
       filters.push("loudnorm=I=-16:TP=-2:LRA=11");
-      filters.push("alimiter=limit=0.95");
+      filters.push("alimiter=limit=0.85");
       if (shortClip) filters.push(`atrim=0:${formatSeconds(fittedSec)}`);
     }
     filters.push("asetpts=N/SR/TB");
@@ -859,9 +943,10 @@ class FfmpegService {
     const fittedMeta = await this.probeAudio(outputPath).catch(() => ({ duration: rawDuration }));
     return {
       rawDuration,
+      cleanDuration,
       outputDuration: Number(fittedMeta.duration || rawDuration),
       targetDuration: safeTargetDuration,
-      speedRatio: ratio,
+      speedRatio: effectiveSpeedRatio,
       fitStrategy,
       trimmed: fitStrategy === "legacy_trim"
     };
@@ -1341,7 +1426,7 @@ class FfmpegService {
     if (titleOverlayPath) inputArgs.push("-loop", "1", "-framerate", "30", "-i", titleOverlayPath);
 
     const audioOutputArgs = masterAudio
-      ? ["-filter:a", "loudnorm=I=-14:TP=-1.5:LRA=9,alimiter=limit=0.95", "-c:a", "aac", "-b:a", "192k"]
+      ? ["-filter:a", "loudnorm=I=-14:TP=-1.5:LRA=9,alimiter=limit=0.82", "-c:a", "aac", "-b:a", "192k"]
       : ["-c:a", "copy"];
 
     await this.run(this.ffmpegPath, [

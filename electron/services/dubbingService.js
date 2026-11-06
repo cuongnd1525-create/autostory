@@ -1351,7 +1351,9 @@ function getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOpt
     omniVoiceNumStep: Number(project.omniVoiceNumStep || settings.omniVoiceNumStep || 8),
     kokoroModel: settings.kokoroModel || "",
     kokoroDevice: settings.kokoroDevice || "",
-    kokoroSpeed: Number(settings.kokoroSpeed || 1),
+    kokoroSpeed: Number.isFinite(Number(project.kokoroSpeed)) && Number(project.kokoroSpeed) > 0
+      ? Number(project.kokoroSpeed)
+      : Number(settings.kokoroSpeed || 1),
     deliveryProfile: safeText(voiceRenderOptions.deliveryProfile || "natural"),
     speechRateMultiplier: safeNumber(voiceRenderOptions.speechRateMultiplier, 1),
     pauseAfterPhrase: safeText(voiceRenderOptions.pauseAfterPhrase || ""),
@@ -1391,19 +1393,23 @@ function getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOpt
 function resolveFastDraftVoicePlan({ project = {}, settings = {}, text = "", outputPath = "voice.mp3", voiceRenderOptions = {} }) {
   const draftMode = project.draftVoiceMode || (project.analysisWorkflow === "manual_gemini_draft_review" ? "final" : "edge_neural");
   const provider = draftMode === "final"
-    ? (project.voiceProvider || settings.defaultVoiceProvider || "edge_neural")
+    ? (project.voiceProvider || project.draftVoiceProvider || settings.defaultVoiceProvider || "edge_neural")
     : draftMode === "custom"
       ? (project.draftVoiceProvider || "edge_neural")
       : "edge_neural";
   let voiceId = draftMode === "final"
-    ? (project.voiceId || "")
+    ? (project.voiceId || project.draftVoiceId || "")
     : draftMode === "custom"
       ? (project.draftVoiceId || "")
       : "";
   if (provider === "kokoro" && !/^[ab][fm]_[a-z0-9_]+$/i.test(voiceId)) {
-    voiceId = project.voiceProvider === "kokoro" && /^[ab][fm]_[a-z0-9_]+$/i.test(project.voiceId || "")
-      ? project.voiceId
-      : "af_heart";
+    if (/^[ab][fm]_[a-z0-9_]+$/i.test(project.voiceId || "")) {
+      voiceId = project.voiceId;
+    } else if (/^[ab][fm]_[a-z0-9_]+$/i.test(project.draftVoiceId || "")) {
+      voiceId = project.draftVoiceId;
+    } else {
+      voiceId = "af_heart";
+    }
   }
   if (provider === "edge_neural" && voiceId && !/Neural$/i.test(voiceId)) {
     voiceId = "";
@@ -3658,7 +3664,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       height: canvas.height,
       preset: draft ? "ultrafast" : "fast",
       crf: draft ? 29 : 21,
-      masterAudio: project.autoStoryContractVersion === 3 || Boolean(project.mixer?.masterAudio),
+      masterAudio: project.autoStoryContractVersion === 3 || project.autoStoryContractVersion === 4 || Boolean(project.mixer?.masterAudio),
       onProgress,
       totalDurationSec
     });
@@ -4848,9 +4854,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
   async synthesizeKokoroWithDelivery({ settings, project, text, outputPath, language, voiceRenderOptions, onProgress }) {
     const kokoro = new KokoroVoiceService(settings);
-    const voiceName = project.voiceId || "af_heart";
+    const voiceName = /^[ab][fm]_[a-z0-9_]+$/i.test(project.voiceId || "")
+      ? project.voiceId
+      : (/^[ab][fm]_[a-z0-9_]+$/i.test(project.draftVoiceId || "") ? project.draftVoiceId : "af_heart");
+    const baseKokoroSpeed = Number.isFinite(Number(project.kokoroSpeed)) && Number(project.kokoroSpeed) > 0
+      ? Number(project.kokoroSpeed)
+      : Number(settings.kokoroSpeed || 1);
     const speed = Math.max(0.5, Math.min(2,
-      Number(settings.kokoroSpeed || 1) * safeNumber(voiceRenderOptions?.speechRateMultiplier, 1)));
+      baseKokoroSpeed * safeNumber(voiceRenderOptions?.speechRateMultiplier, 1)));
     const pauseDurationMs = safeNumber(voiceRenderOptions?.pauseDurationMs, 0);
     const split = pauseDurationMs >= 150
       ? splitTextAfterPhrase(text, voiceRenderOptions?.pauseAfterPhrase)
@@ -6510,7 +6521,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           message: `Đang render khối narrator ${blockRun.blockId} (${blockRun.end - blockRun.start + 1} cảnh)` });
         const block = await this.renderNarratedDeliveryBlock({
           ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat,
-          members: renderSegments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics
+          members: renderSegments.slice(blockRun.start, blockRun.end + 1), startIndex: blockRun.start, renderMetrics,
+          isFinal: Boolean(isFinal), isClosingBlock: blockRun.end === renderSegments.length - 1
         });
         clipPaths.push(block.clipPath);
         blockVoiceReports.push(block.report);
@@ -6585,7 +6597,8 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           voice: voiceText ? (voiceResult?.cacheKey || resolveFastDraftVoicePlan({ project, settings, text: voiceText, outputPath: rawVoicePath, voiceRenderOptions: getSegmentVoiceRenderOptions(segment) }).cache.cacheKey) : null,
           sourceVolume: getHighlightAmbientVolume(segment, project), voiceVolume: project.mixer?.voiceVolume ?? 100,
           normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true,
-          stretch: project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08
+          stretch: project.dubbingMaxSafeStretch || settings.dubbingMaxSafeStretch || 0.08,
+          ...(isFinal ? { qualityTier: "production_final" } : {})
         })).digest("hex");
         const cacheDir = path.join(paths.clipsDir, ".auto-story-cache");
         await fs.mkdir(cacheDir, { recursive: true });
@@ -6612,9 +6625,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         startSec: sourceStartSec,
         sourceDurationSec,
         targetDurationSec: renderDurationSec,
-        width: 540,
-        preset: "ultrafast",
-        crf: 32,
+        width: isFinal ? null : 540,
+        preset: isFinal ? "veryfast" : "ultrafast",
+        crf: isFinal ? 20 : 32,
         includeAudio: !voiceText || audioMode === "voiceover_with_ambient"
       });
       if (voiceText) {
@@ -6995,7 +7008,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
   // AutoStory V5 continuous block primitive. members = the consecutive segments
   // of ONE narrated_story delivery block (first member carries the passage).
-  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex, renderMetrics = null }) {
+  async renderNarratedDeliveryBlock({ ffmpeg, project, settings, workspaceRoot, paths, variantSuffix, draftVoiceProvider, draftVoiceExt, autoStorySourceStat, members, startIndex, renderMetrics = null, isFinal = false, isClosingBlock = false }) {
     const lead = members[0];
     const text = safeText(lead.blockNarrationText);
     if (!text) throw new Error(`Narrated block ${lead.deliveryBlockId} has no narration passage.`);
@@ -7010,7 +7023,9 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       return { segment, sourceStartSec, sourceEndSec, sourceDurationSec, durationSec };
     });
     const blockTimelineSec = pieces.reduce((sum, p) => sum + p.durationSec, 0);
-    const ambientVolume = treatment === "voiceover_only" ? 0.05 : getBlockAmbientVolume(lead, project);
+    const ambientVolume = treatment === "voiceover_only"
+      ? (isClosingBlock && !lead.source_audio_unclean ? 0.12 : 0.05)
+      : (isClosingBlock ? Math.min(0.12, getBlockAmbientVolume(lead, project)) : getBlockAmbientVolume(lead, project));
     const duck = project.mixer?.narrationDuckDefault !== false;
     const voiceVolume = Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100);
     const maxStretchRatio = project.analysisWorkflow === "manual_gemini_draft_review"
@@ -7027,10 +7042,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     let cache = null;
     if (autoStorySourceStat) {
       const key = crypto.createHash("sha256").update(JSON.stringify({
-        version: 4, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
+        version: 5, kind: "narrated_block", source: project.sourceVideoPath, size: autoStorySourceStat.size, modified: autoStorySourceStat.mtimeMs,
         pieces: pieces.map((p) => [p.sourceStartSec, p.sourceDurationSec, p.durationSec]), treatment, ambientVolume, duck, voiceVolume, maxStretchRatio,
         voice: resolveFastDraftVoicePlan({ project, settings, text, outputPath: rawVoicePath, voiceRenderOptions }).cache.cacheKey,
-        normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true
+        normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true,
+        ...(isFinal ? { qualityTier: "production_final" } : {}),
+        ...(isClosingBlock ? { isClosingBlock: true } : {})
       })).digest("hex");
       const cacheDir = path.join(paths.clipsDir, ".auto-story-cache");
       await fs.mkdir(cacheDir, { recursive: true });
@@ -7059,7 +7076,11 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const normalizedClipPath = path.join(paths.clipsDir, `${tag}-${String(offset + 1).padStart(2, "0")}-normalized.mp4`);
       await ffmpeg.extractVoiceDrivenClipWithAudio({
         sourcePath: project.sourceVideoPath, outputPath: rawClipPath, startSec: p.sourceStartSec, sourceDurationSec: p.sourceDurationSec,
-        targetDurationSec: p.durationSec, width: 540, preset: "ultrafast", crf: 32, includeAudio: true
+        targetDurationSec: p.durationSec,
+        width: isFinal ? null : 540,
+        preset: isFinal ? "veryfast" : "ultrafast",
+        crf: isFinal ? 20 : 32,
+        includeAudio: true
       });
       // Narrated-block pieces must carry a full-length ambient bed. The older
       // keep-audio helper stream-copies audio and can become shorter than the
@@ -7092,11 +7113,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       error.details = { blockId: lead.deliveryBlockId, rawVoiceSec, blockTimelineSec, fitRatio };
       throw error;
     }
-    // 7. Fit ONCE against the whole block (light speed-up or natural finish + silence pad).
+    // 7. Fit ONCE against the whole block (light speed-up or natural finish + closing breath settle).
     const fit = await ffmpeg.fitDubbingClusterAudio({
       inputPath: rawVoicePath, outputPath: fittedVoicePath, targetDuration: blockTimelineSec, maxStretchRatio,
+      maxSlowDownRatio: isClosingBlock ? 0.12 : maxStretchRatio, isClosingBlock: Boolean(isClosingBlock),
       normalize: project.dubbingVoiceNormalize ?? settings.dubbingVoiceNormalize ?? true,
-      allowTrim: false, allowSlowDown: false, allowSpeedUp: true
+      allowTrim: false, allowSlowDown: Boolean(isClosingBlock), allowSpeedUp: true
     });
     // 8-9. Mix ONCE; the sidechain duck runs continuously across the internal cuts.
     await ffmpeg.mixVideoAudioWithVoice({ videoPath: timedBlockVideoPath, voicePath: fittedVoicePath, outputPath: voicedClipPath,

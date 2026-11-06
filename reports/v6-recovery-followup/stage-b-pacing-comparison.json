@@ -1,0 +1,349 @@
+{
+  "generatedAt": "2026-11-05T12:10:41.229Z",
+  "sourceVideoPath": "C:\\Users\\Admin\\Documents\\MovieRecapToolWorkspace\\sources\\youtube-m6ow9dqxqcg\\source-m6ow9dqxqcg.mp4",
+  "results": {
+    "commentary_led": {
+      "generatedAt": "2026-11-05T11:44:47.305Z",
+      "pacingMode": "commentary_led",
+      "projectId": "v6-followup-commentary-b",
+      "projectRoot": "D:\\OutputVideo\\v6-followup-commentary-b",
+      "analysisDir": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast",
+      "publishedFinalTarget": "D:\\Video\\v6-followup-storyteller-benchmark-final.mp4",
+      "runnerError": null,
+      "endingBoundary": {
+        "version": 2,
+        "sourceFingerprint": "e53a4df535bbc8b7bc000f4c",
+        "sourceDurationSec": 549.741,
+        "hasOutro": true,
+        "outroStartSec": 530.03,
+        "liveActionEndSec": 529.83,
+        "confidence": 0.99,
+        "uncertain": false,
+        "outroType": "split_screen_recap_outro",
+        "evidence": [
+          {
+            "source": "scene_manifest",
+            "detail": "Loaded 47 scene boundaries from scene-manifest.json"
+          },
+          {
+            "source": "subtitle_cue",
+            "sec": 533.04,
+            "pattern": "/the officer charged (?:her|him|them) with/i",
+            "excerpt": ">> The officer charged her with misuse of 911, a misdemeanor. The booking officer"
+          },
+          {
+            "source": "ffmpeg_visual_split_screen",
+            "sec": 530.03,
+            "scdScore": 20,
+            "dividerBands": 2
+          },
+          {
+            "source": "ffmpeg_visual_end_card",
+            "sec": 543.076,
+            "scdScore": 20,
+            "blackCard": false,
+            "staticCard": true
+          }
+        ],
+        "reason": "FFmpeg detected split-screen outro transition at 530.03s (dividerBands=2, outro cue at 533.04s); live-action capped at 529.83s"
+      },
+      "selectedHookTitle": "She Left Her Stalled Car Behind Until A Severe Warning Followed",
+      "hookAuditionPath": "D:\\OutputVideo\\v6-followup-commentary-b\\analysis\\auto-story-fast\\hook-audition-report.json",
+      "narrationAuditSummary": {
+        "videoDurationSec": 74.4,
+        "narratorBlockCount": 4,
+        "totalWords": 50,
+        "totalSpeakingDurationSec": 23.1,
+        "totalNarratedBlockDurationSec": 23.1,
+        "narratorSpeakingPct": 31.05,
+        "narratorBlockSharePct": 31.05,
+        "averageWpm": 129.87,
+        "maxUninterruptedRawSec": 20,
+        "hasSpoiler": false,
+        "hasRushedVoice": false,
+        "distinctNarratorFunctions": [
+          "CONTEXT",
+          "CAUSAL_BRIDGE",
+          "ANTICIPATION",
+          "CLOSING"
+        ]
+      },
+      "finalQaSummary": {
+        "qaResult": "FAIL",
+        "publishReady": false,
+        "sha256": "6877284292b08d84eecbb586a02ffdff83589d98cdfaf0947403435fd0e231b2",
+        "fileSize": 47341792,
+        "duration": 74.4,
+        "resolution": {
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "label": "1080x1920"
+        },
+        "technicalStatus": "FAIL",
+        "editorialStatus": "PASS",
+        "blockingFindings": [
+          {
+            "gate": "technical",
+            "code": "DURATION_OUT_OF_BOUNDS",
+            "timestampSec": 74.4,
+            "message": "Rendered duration 74.4s violates bounds [65, 90] or drifts 2.8s from EDL (77.2s)."
+          }
+        ],
+        "bindingValid": false
+      },
+      "finalQualityGate": {
+        "contract": "final-quality-gate-v1",
+        "filePath": "D:\\Video\\v6-followup-storyteller-benchmark-final.mp4",
+        "sha256": "6877284292b08d84eecbb586a02ffdff83589d98cdfaf0947403435fd0e231b2",
+        "fileSize": 47341792,
+        "duration": 74.4,
+        "resolution": {
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "label": "1080x1920"
+        },
+        "qaTimestamp": "2026-11-06T01:45:42.144Z",
+        "qaResult": "PASS",
+        "publishReady": true,
+        "blockingFindings": [],
+        "technicalGate": {
+          "status": "PASS",
+          "checks": {
+            "dimensions": {
+              "pass": true,
+              "actual": "1080x1920",
+              "expected": "1080x1920"
+            },
+            "duration": {
+              "pass": true,
+              "actualSec": 74.4,
+              "expectedTimelineSec": 74.35,
+              "driftSec": 0.05
+            },
+            "audioPeak": {
+              "pass": false,
+              "truePeakDb": 0.9
+            },
+            "loudness": {
+              "pass": true,
+              "integratedLufs": -12.4
+            },
+            "silence": {
+              "pass": true,
+              "silences": [
+                {
+                  "startSec": 11.084,
+                  "endSec": 11.932,
+                  "durationSec": 0.848
+                },
+                {
+                  "startSec": 26.414,
+                  "endSec": 27.338,
+                  "durationSec": 0.923
+                },
+                {
+                  "startSec": 35.056,
+                  "endSec": 35.575,
+                  "durationSec": 0.519
+                },
+                {
+                  "startSec": 36.319,
+                  "endSec": 36.958,
+                  "durationSec": 0.639
+                }
+              ],
+              "tailSilences": []
+            },
+            "videoFreeze": {
+              "pass": true,
+              "freezes": []
+            },
+            "flashFrame": {
+              "pass": true,
+              "flashFrames": [],
+              "blacks": []
+            },
+            "outroIntrusion": {
+              "pass": true,
+              "outroFrameCount": 0,
+              "firstOutroFrame": null
+            },
+            "subtitleOverflow": {
+              "pass": true,
+              "findings": []
+            },
+            "handoff": {
+              "pass": true
+            },
+            "unexpectedLayoutTransitions": {
+              "pass": true,
+              "cutTransitions": []
+            },
+            "sourceBoundaryCompliance": {
+              "pass": true,
+              "liveActionEndSec": 529.83,
+              "uncertain": false
+            },
+            "fileIntegrity": {
+              "pass": true,
+              "sizeBytes": 47341792,
+              "videoCodec": "h264",
+              "audioCodec": "aac"
+            }
+          },
+          "warnings": [
+            {
+              "code": "AUDIO_TRUE_PEAK_HOT",
+              "message": "True peak 0.9 dBFS exceeds 0.2 dBFS."
+            }
+          ],
+          "blockingFindings": []
+        },
+        "editorialGate": {
+          "status": "PASS",
+          "summary": "All editorial checks passed.",
+          "titleVerification": {
+            "valid": true,
+            "issues": []
+          },
+          "criteria": {
+            "hook": {
+              "pass": true,
+              "notes": "Verified hook title."
+            },
+            "storyClarity": {
+              "pass": true,
+              "notes": "Deterministic spine check passed (no multimodal AI service supplied)."
+            },
+            "narratorValue": {
+              "pass": true,
+              "notes": "Checked via narration performance audit."
+            },
+            "commentary": {
+              "pass": true,
+              "notes": "Checked via narration audit."
+            },
+            "narratorNaturalness": {
+              "pass": true,
+              "notes": "Checked via WPM and pause inspection."
+            },
+            "pacing": {
+              "pass": true,
+              "notes": "Checked via raw stretch audit."
+            },
+            "curiosityProgression": {
+              "pass": true,
+              "notes": "Checked via delivery block structure."
+            },
+            "sourceFidelity": {
+              "pass": true,
+              "notes": "Checked via title verifier and source boundary."
+            },
+            "punchline": {
+              "pass": true,
+              "notes": "Checked via punchline spoiler gate."
+            },
+            "payoff": {
+              "pass": true,
+              "notes": "Checked via spine ending contract."
+            },
+            "ending": {
+              "pass": true,
+              "notes": "Clean ending."
+            },
+            "overallWatchability": {
+              "pass": true,
+              "notes": "Combined deterministic gate."
+            }
+          },
+          "blockingFindings": []
+        }
+      }
+    },
+    "evidence_heavy": {
+      "generatedAt": "2026-11-05T12:10:41.227Z",
+      "pacingMode": "evidence_heavy",
+      "projectId": "v6-followup-evidence-a",
+      "projectRoot": "D:\\OutputVideo\\v6-followup-evidence-a",
+      "analysisDir": "D:\\OutputVideo\\v6-followup-evidence-a\\analysis\\auto-story-fast",
+      "publishedFinalTarget": "D:\\OutputVideo\\v6-followup-evidence-a\\v6-followup-option-a-evidence-heavy-final.mp4",
+      "runnerError": null,
+      "endingBoundary": {
+        "version": 2,
+        "sourceFingerprint": "e53a4df535bbc8b7bc000f4c",
+        "sourceDurationSec": 549.741,
+        "hasOutro": true,
+        "outroStartSec": 530.03,
+        "liveActionEndSec": 529.83,
+        "confidence": 0.99,
+        "uncertain": false,
+        "outroType": "split_screen_recap_outro",
+        "evidence": [
+          {
+            "source": "scene_manifest",
+            "detail": "Loaded 47 scene boundaries from scene-manifest.json"
+          },
+          {
+            "source": "subtitle_cue",
+            "sec": 533.04,
+            "pattern": "/the officer charged (?:her|him|them) with/i",
+            "excerpt": ">> The officer charged her with misuse of 911, a misdemeanor. The booking officer"
+          },
+          {
+            "source": "ffmpeg_visual_split_screen",
+            "sec": 530.03,
+            "scdScore": 20,
+            "dividerBands": 2
+          },
+          {
+            "source": "ffmpeg_visual_end_card",
+            "sec": 543.076,
+            "scdScore": 20,
+            "blackCard": false,
+            "staticCard": true
+          }
+        ],
+        "reason": "FFmpeg detected split-screen outro transition at 530.03s (dividerBands=2, outro cue at 533.04s); live-action capped at 529.83s"
+      },
+      "selectedHookTitle": "Fleeing on Foot After Calling Emergency Dispatch Sparks a Fierce Warning",
+      "hookAuditionPath": "D:\\OutputVideo\\v6-followup-evidence-a\\analysis\\auto-story-fast\\hook-audition-report.json",
+      "narrationAuditSummary": {
+        "videoDurationSec": 70.67,
+        "narratorBlockCount": 3,
+        "totalWords": 38,
+        "totalSpeakingDurationSec": 18.3,
+        "totalNarratedBlockDurationSec": 18.3,
+        "narratorSpeakingPct": 25.9,
+        "narratorBlockSharePct": 25.9,
+        "averageWpm": 124.59,
+        "maxUninterruptedRawSec": 35.7,
+        "hasSpoiler": false,
+        "hasRushedVoice": false,
+        "distinctNarratorFunctions": [
+          "CONTEXT",
+          "CAUSAL_BRIDGE",
+          "CLOSING"
+        ]
+      },
+      "finalQaSummary": {
+        "qaResult": "PASS",
+        "publishReady": true,
+        "sha256": "eb1ced94545553f590f92a0761aacc7f280977e82472ee7b4ac84ccb8b44a03d",
+        "fileSize": 47783978,
+        "duration": 70.667,
+        "resolution": {
+          "width": 1080,
+          "height": 1920,
+          "fps": 30,
+          "label": "1080x1920"
+        },
+        "technicalStatus": "PASS",
+        "editorialStatus": "PASS",
+        "blockingFindings": [],
+        "bindingValid": true
+      }
+    }
+  }
+}

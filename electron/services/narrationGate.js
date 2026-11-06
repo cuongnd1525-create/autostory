@@ -122,7 +122,7 @@ function inspect(beats = [], model = {}) {
     const refs = Array.isArray(beat.newInformationRefs) ? beat.newInformationRefs.filter(Boolean) : [];
 
     // A. Information gap: narration must add something or serve a transition/commentary function.
-    const transitionFns = new Set(['BRIDGE', 'CAUSAL_BRIDGE', 'TIME_JUMP', 'LOCATION_CHANGE', 'RECAP', 'COMMENTARY', 'INTERPRETATION', 'ANTICIPATION', 'CLIFFHANGER', 'PAYOFF', 'HOOK']);
+    const transitionFns = new Set(['BRIDGE', 'CAUSAL_BRIDGE', 'TIME_JUMP', 'LOCATION_CHANGE', 'RECAP', 'COMMENTARY', 'INTERPRETATION', 'ANTICIPATION', 'REHOOK', 'ESCALATION', 'CLOSING', 'CLIFFHANGER', 'PAYOFF', 'HOOK']);
     if (!newInfo.length && !transitionFns.has(beat.narratorFunction)) {
       push('no_information_gap', 'Narration adds no new information and is not a transition; make the beat original audio.');
     }

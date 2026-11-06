@@ -120,15 +120,15 @@ PRINCIPLES
 3. When the story needs a brief fact that lives outside the scope windows (background, who someone is, a final court/charge disposition), put it in allowedSupportingContext with treatment='narration_only'. It will be delivered as one narrated sentence over in-scope footage, not by cutting to it. Use treatment='footage' only when the picture itself is causally necessary.
 4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the logical source regions the editor may cut from; list as many as the conflict needs. They must hold enough usable footage for the duration. The system packs them into a media reel for the editor and compacts broad windows around the model's events and quotes, but the packed reel must fit input.maxScopeReelSec, so keep the windows to the causal spine of ONE conflict.
 5. AUDITION HOOK CANDIDATES ACROSS THE FULL SCOPE (hookCandidates): List 2-4 distinct hookCandidates (windowId + exact sub-range + hookType + curiosityQuestion) explicitly comparing: (a) an OPENING BEHAVIORAL-FRICTION / ABSURD-EXCUSE HOOK from the initial encounter (where the subject's bizarre repetition, entitled refusal to cooperate, or immediate clash with an officer trying to help creates instant irritation and curiosity while allowing the story to flow forward chronologically without a disorienting rewind), and (b) a LATER CONTRADICTION / ESCALATION TEASER HOOK from inside the scope (a bold denial or confrontation flashpoint that keeps the final resolution in mustWithhold). Never pick a hook candidate that merely announces the final criminal charge or outcome without friction. Also include early establishing/approach footage inside the first core scopeWindow so the Editorial Director has B-roll picture available for post-hook narrator setup.
-6. candidateEndingEvents must lie inside the scope windows and must deliver a genuine consequence or authoritative verbal/legal shutdown of the central conflict (never an unanswered question or a mid-argument pause). When a later supervisor rebuttal, charge explanation, or legal outcome resolves the central conflict more decisively than the moment handcuffs click, include its window as ending_material and list it in candidateEndingEvents. Extend the ending_material window through the physical conclusion of the live encounter (such as the suspect's final reaction and the transport door closing/latching up to the live-action encounter boundary), giving the editor clean physical action footage to conclude the scene. CRITICAL: When a live-action encounter boundary precedes post-incident outro/recap graphics, channel end-screens, or promotional material, never extend candidateEndingEvents or scopeWindows past that boundary into post-incident outro/recap graphics.
-7. IDENTIFY STORYTELLER COMMENTARY & COMPRESSION OPPORTUNITIES (commentaryOpportunities): List 2-4 source ranges inside the scope where an editorial narrator should step in to frame the behavioral contradiction (maintaining an objective, evidence-grounded tone without judgmental adjectives), bridge a causal shift (e.g., walking away to call 911), compress the middle of a repetitive 911 call or argument into a sharp commentary insight (e.g., contrasting emergency criteria with seeking vehicle location info), or set up the final confrontation/reckoning.
+6. candidateEndingEvents must lie inside the scope windows and must deliver a genuine consequence or authoritative verbal/legal shutdown of the central conflict (never an unanswered question or a mid-argument pause). When a later supervisor rebuttal, charge explanation, or legal outcome resolves the central conflict more decisively than the moment handcuffs click, include its window as ending_material and list it in candidateEndingEvents. Extend the ending_material window through the physical conclusion of the live encounter (such as the suspect's final reaction and the transport door closing/latching up to input.liveActionEndSec), giving the editor clean physical action footage to conclude the scene. CRITICAL: When input.liveActionEndSec < input.model.durationSec (meaning post-incident outro/recap graphics, split-screen end cards, sentencing cards, or channel promos begin after input.liveActionEndSec), NEVER place or extend any scopeWindow, causalSpine node, hookCandidate, or candidateEndingEvent past input.liveActionEndSec. If a post-incident disposition fact from the outro is helpful, list it ONLY in allowedSupportingContext with treatment='narration_only'.
+7. IDENTIFY NARRATOR-LED COMMENTARY & RE-HOOK OPPORTUNITIES (commentaryOpportunities): List 3-6 source moments inside the scope where a true-crime commentator adds genuine editorial value beyond raw footage: (a) setting up the premise and behavioral contradiction after the cold open, (b) bridging causal shifts (e.g., walking away, calling 911, officers connecting two calls), (c) compressing low-information stretches while building anticipation for an upcoming quote without spoiling its punchline, (d) delivering a mid-story REHOOK / interpretation when the encounter shifts from roadside friction to legal consequence or supervisor confrontation, and (e) synthesizing the central contradiction at the close.
 
 OUTPUT
 - Propose 2-4 candidate scopes (different mini-stories or scope framings the source could support). For each, fill every field with absolute source seconds.
 - Choose ONE (chosenStoryScopeId) and explain why in selectionRationale. Judge by: clear conflict, full-arc causal completeness (inciting premise -> contradiction -> confrontation/detention -> verbal/legal reckoning), quote and footage strength, commentary richness, support for the requested duration, a decisive in-scope payoff, and minimal dependency on unrelated branches.
 - scopeWindows are UNIQUE, NON-OVERLAPPING source ranges, each listed ONCE with a windowId and a purposes array (core | hook_material | ending_material | supporting_context). If one range is both core and hook or ending material, it is ONE window with purposes ['core','hook_material'] — never repeat a range for a second role. Reference hook material in hookCandidates (windowId + exact sub-range) and endings in candidateEndingEvents. supporting_context windows are only for allowedSupportingContext items with treatment='footage'.
 - COUNT LIMITS (hard; "candidates" is per selection, all others per candidate): ${limitsText()}.
-- explicitScopeBoundary.startSec/endSec must contain every core, hook_material and ending_material window.
+- explicitScopeBoundary.startSec/endSec must contain every core, hook_material and ending_material window, and must NOT exceed input.liveActionEndSec when provided.
 - Never invent events. Reference real event ids and real source seconds from the model. Set accessGranted=true after reading the model.`;
 
 function limitsText() {
@@ -160,12 +160,22 @@ const overlaps = (a0, a1, b0, b1) => Math.max(0, Math.min(a1, b1) - Math.max(a0,
 const windowPurposes = w => [...new Set([...(Array.isArray(w?.purposes) ? w.purposes : []), ...(w?.purpose ? [w.purpose] : [])])];
 const primaryPurpose = purposes => PURPOSE_PRIORITY.find(p => purposes.includes(p)) || null;
 
-// Lossless normalization of scopeWindows into UNIQUE source ranges. Overlapping
-// declarations of the same footage (e.g. a range listed once as core and again as
-// hook_material) become ONE window carrying every purpose; each original
-// sub-range is kept in purposeRanges so no role or boundary information is lost.
-// Nothing is dropped or truncated: the union of footage is unchanged (and the reel
-// would merge these ranges anyway). Every merge is reported in `notes`.
+function resolveMaxLiveActionSec({ liveActionEndSec = null, endingBoundary = null, scope = null, model = null, durationSec = Infinity } = {}) {
+  const dur = Number.isFinite(Number(durationSec)) && Number(durationSec) > 0 ? Number(durationSec) : Infinity;
+  const candidates = [
+    liveActionEndSec,
+    endingBoundary?.liveActionEndSec,
+    scope?.liveActionEndSec,
+    scope?.endingBoundary?.liveActionEndSec,
+    model?.liveActionEndSec,
+    model?.endingBoundary?.liveActionEndSec,
+    model?.liveActionBoundary?.liveActionEndSec
+  ].map(num).filter(v => Number.isFinite(v) && v > 0);
+  if (!candidates.length) return dur;
+  return Math.min(dur, ...candidates);
+}
+
+// Lossless normalization of scopeWindows into UNIQUE source ranges.
 function normalizeScopeWindows(windows = []) {
   const valid = [], notes = [];
   (Array.isArray(windows) ? windows : []).forEach((w, i) => {
@@ -202,17 +212,15 @@ function chosenScope(selection) {
   return candidates.find(c => c && c.storyScopeId === selection.chosenStoryScopeId) || null;
 }
 
-// Media reel plan for the Editorial Director. Delegates to the media packing layer
-// (scopeReelPacker): logical windows -> media segments (compacted if over budget) ->
-// <= provider-limit composite reel files, with a reel->source manifest.
-function planScopeReel(scope, { durationSec, paddingSec = DEFAULT_REEL_PADDING_SEC, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, model = null, maxReelFiles } = {}) {
-  return Packer.planReel(scope, { durationSec, paddingSec, maxReelSec: maxScopeReelSec, model, maxReelFiles });
+// Media reel plan for the Editorial Director.
+function planScopeReel(scope, { durationSec, paddingSec = DEFAULT_REEL_PADDING_SEC, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, model = null, maxReelFiles, liveActionEndSec = null, endingBoundary = null } = {}) {
+  const maxLive = resolveMaxLiveActionSec({ liveActionEndSec, endingBoundary, scope, model, durationSec });
+  const effectiveDuration = Number.isFinite(maxLive) && maxLive > 0 ? Math.min(Number(durationSec) || maxLive, maxLive) : durationSec;
+  return Packer.planReel(scope, { durationSec: effectiveDuration, paddingSec, maxReelSec: maxScopeReelSec, model, maxReelFiles });
 }
 
-// Deterministic STRUCTURAL validation of a Gemini-declared scope. It checks that
-// the declaration is internally consistent, lies inside the source, can support the
-// requested duration, and fits the reel cost budget. It does not judge story quality.
-function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, paddingSec = DEFAULT_REEL_PADDING_SEC, model = null, maxReelFiles, liveActionEndSec = null } = {}) {
+// Deterministic STRUCTURAL validation of a Gemini-declared scope.
+function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, maxScopeReelSec = DEFAULT_MAX_SCOPE_REEL_SEC, paddingSec = DEFAULT_REEL_PADDING_SEC, model = null, maxReelFiles, liveActionEndSec = null, endingBoundary = null } = {}) {
   const violations = [];
   const add = (code, message, extra = {}) => violations.push({ code, message, ...extra });
   if (!scope || typeof scope !== 'object') {
@@ -220,6 +228,8 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
     return { valid: false, violations, reel: null };
   }
   const dur = Number.isFinite(durationSec) && durationSec > 0 ? durationSec : Infinity;
+  const maxEndingSec = resolveMaxLiveActionSec({ liveActionEndSec, endingBoundary, scope, model, durationSec: dur });
+  const hasOutroCap = Number.isFinite(maxEndingSec) && maxEndingSec > 0 && maxEndingSec < dur - 0.05;
   const inSource = (s, e) => Number.isFinite(s) && Number.isFinite(e) && s >= -TIME_EPS && e <= dur + TIME_EPS && e > s;
 
   for (const f of ['storyScopeId', 'centralConflict', 'centralViewerQuestion', 'whyThisIsOneStory']) {
@@ -230,8 +240,10 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   const b = scope.explicitScopeBoundary || {};
   const b0 = num(b.startSec), b1 = num(b.endSec);
   if (!inSource(b0, b1)) add('SCOPE_BOUNDARY_INVALID', `explicitScopeBoundary ${b.startSec}-${b.endSec}s must be a valid range inside the source (0-${round2(dur)}s).`);
+  if (hasOutroCap && Number.isFinite(b0) && b0 >= maxEndingSec - 0.05) {
+    add('SCOPE_BOUNDARY_IN_OUTRO', `explicitScopeBoundary starts at ${b0}s inside the post-incident outro region (liveActionEndSec=${round2(maxEndingSec)}s).`);
+  }
 
-  // Count limits (single source of truth: SCOPE_LIMITS) with explicit, actionable messages.
   for (const field of Object.keys(SCOPE_LIMITS)) {
     if (field === 'candidates' || field === 'scopeWindows') continue;
     const arr = scope[field];
@@ -244,6 +256,9 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   declaredWindows.forEach((w, i) => {
     const s = num(w?.startSec), e = num(w?.endSec);
     if (!inSource(s, e)) add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}] ${w?.startSec}-${w?.endSec}s is not a valid source range.`, { index: i });
+    if (hasOutroCap && Number.isFinite(s) && s >= maxEndingSec - 0.1) {
+      add('SCOPE_WINDOW_IN_OUTRO', `scopeWindows[${i}] (${w?.windowId || i}) starts at ${s}s inside post-incident outro/recap graphics (valid live-action footage ends at ${round2(maxEndingSec)}s). Put outro facts in allowedSupportingContext with treatment='narration_only'.`, { index: i, liveActionEndSec: round2(maxEndingSec) });
+    }
     const ps = windowPurposes(w);
     if (!ps.length || ps.some(p => !WINDOW_PURPOSES.includes(p))) add('SCOPE_WINDOW_INVALID', `scopeWindows[${i}].purposes must be a non-empty subset of ${WINDOW_PURPOSES.join('|')}.`, { index: i });
   });
@@ -251,7 +266,7 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   const windows = normalization.windows;
   if (!windows.length) add('SCOPE_WINDOWS_EMPTY', 'scopeWindows must list the in-scope source windows the editor will watch.');
   if (Number.isFinite(SCOPE_LIMITS.scopeWindows.max) && windows.length > SCOPE_LIMITS.scopeWindows.max) {
-    add('SCOPE_COUNT_OVER_LIMIT', `scopeWindows contains ${windows.length} unique windows${normalization.declaredCount !== windows.length ? ` (${normalization.declaredCount} declared; overlapping duplicates already merged)` : ''}; maximum allowed is ${SCOPE_LIMITS.scopeWindows.max}. Keep only the windows the central conflict needs, or join adjacent moments into one window.`, { field: 'scopeWindows', count: windows.length, declared: normalization.declaredCount, max: SCOPE_LIMITS.scopeWindows.max });
+    add('SCOPE_COUNT_OVER_LIMIT', `scopeWindows contains ${windows.length} unique windows${normalization.declaredCount !== windows.length ? ` (${normalization.declaredCount} declared; overlapping duplicates already merged)` : ''}; maximum allowed is ${SCOPE_LIMITS.scopeWindows.max}.`, { field: 'scopeWindows', count: windows.length, declared: normalization.declaredCount, max: SCOPE_LIMITS.scopeWindows.max });
   }
   const inScope = w => w.purposes.some(p => p !== 'supporting_context');
   const supportingFootage = (scope.allowedSupportingContext || []).filter(c => c && c.treatment === 'footage');
@@ -269,6 +284,9 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
     if (!inSource(s, e) || !windows.some(w => inScope(w) && s >= w.startSec - TIME_EPS && e <= w.endSec + TIME_EPS)) {
       add('SCOPE_HOOK_OUTSIDE_SCOPE', `hookCandidates[${i}] ${h.sourceStartSec}-${h.sourceEndSec}s must lie inside one in-scope window.`, { index: i });
     }
+    if (hasOutroCap && Number.isFinite(e) && e > maxEndingSec + 0.05) {
+      add('SCOPE_HOOK_IN_OUTRO', `hookCandidates[${i}] ${s}-${e}s extends past valid liveActionEndSec (${round2(maxEndingSec)}s).`, { index: i });
+    }
   });
 
   const spine = Array.isArray(scope.causalSpine) ? scope.causalSpine : [];
@@ -276,7 +294,9 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   spine.forEach((n, i) => {
     const s = num(n.sourceStartSec), e = num(n.sourceEndSec);
     if (!inSource(s, e)) add('SCOPE_SPINE_INVALID', `causalSpine[${i}] ${n.sourceStartSec}-${n.sourceEndSec}s is not a valid source range.`, { index: i });
-    else if (!windows.some(w => overlaps(s, e, num(w.startSec), num(w.endSec)) > 0)) {
+    else if (hasOutroCap && s >= maxEndingSec - 0.1) {
+      add('SCOPE_SPINE_IN_OUTRO', `causalSpine[${i}] (${n.eventId}) starts at ${s}s inside post-incident outro (valid live-action ends at ${round2(maxEndingSec)}s).`, { index: i });
+    } else if (!windows.some(w => overlaps(s, e, num(w.startSec), num(w.endSec)) > 0)) {
       add('SCOPE_SPINE_NOT_WATCHABLE', `causalSpine[${i}] (${n.eventId}) ${s}-${e}s is not covered by any scopeWindow, so the editor could not see it.`, { index: i });
     }
   });
@@ -286,45 +306,74 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   endings.forEach((en, i) => {
     const s = num(en.sourceStartSec), e = num(en.sourceEndSec);
     if (!inSource(s, e)) add('SCOPE_ENDING_INVALID', `candidateEndingEvents[${i}] ${en.sourceStartSec}-${en.sourceEndSec}s is not a valid source range.`, { index: i });
-    else if (!windows.some(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0)) {
+    else if (hasOutroCap && s >= maxEndingSec - 0.1) {
+      add('SCOPE_ENDING_IN_OUTRO', `candidateEndingEvents[${i}] starts at ${s}s inside post-incident outro (valid liveActionEndSec=${round2(maxEndingSec)}s).`, { index: i });
+    } else if (!windows.some(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0)) {
       add('SCOPE_ENDING_OUTSIDE_SCOPE', `candidateEndingEvents[${i}] ${s}-${e}s is not inside an in-scope window.`, { index: i });
     }
   });
 
-  const maxEndingSec = num(liveActionEndSec || scope?.liveActionEndSec || model?.liveActionBoundary?.liveActionEndSec || dur);
-  const cappedWindows = windows.map(w => {
-    if (w.purposes.includes('ending_material') && maxEndingSec > 0 && maxEndingSec < dur && w.endSec > maxEndingSec + 0.05 && w.startSec < maxEndingSec) {
-      return { ...w, endSec: maxEndingSec };
-    }
-    return w;
-  });
-  const cappedEndings = endings.map(en => {
-    const s = num(en.sourceStartSec), e = num(en.sourceEndSec);
-    if (maxEndingSec > 0 && maxEndingSec < dur && e > maxEndingSec + 0.05 && s < maxEndingSec) {
-      return { ...en, sourceEndSec: maxEndingSec };
-    }
-    return en;
-  });
+  // Deterministically clamp ALL windows, purposeRanges, causalSpine, hooks, endings, and explicitScopeBoundary to maxEndingSec
+  const clampEnd = (s, e) => (hasOutroCap && Number.isFinite(e) && e > maxEndingSec && Number.isFinite(s) && s < maxEndingSec ? round2(maxEndingSec) : e);
+  const cappedWindows = windows
+    .filter(w => !(hasOutroCap && w.startSec >= maxEndingSec - 0.05))
+    .map(w => {
+      if (hasOutroCap && w.endSec > maxEndingSec && w.startSec < maxEndingSec) {
+        const cappedPr = Array.isArray(w.purposeRanges)
+          ? w.purposeRanges
+              .filter(pr => num(pr.startSec) < maxEndingSec - 0.05)
+              .map(pr => ({ ...pr, endSec: clampEnd(num(pr.startSec), num(pr.endSec)) }))
+          : w.purposeRanges;
+        return { ...w, endSec: round2(maxEndingSec), purposeRanges: cappedPr };
+      }
+      return w;
+    });
+  const cappedEndings = endings
+    .filter(en => !(hasOutroCap && num(en.sourceStartSec) >= maxEndingSec - 0.05))
+    .map(en => ({ ...en, sourceEndSec: clampEnd(num(en.sourceStartSec), num(en.sourceEndSec)) }));
+  const cappedSpine = spine
+    .filter(n => !(hasOutroCap && num(n.sourceStartSec) >= maxEndingSec - 0.05))
+    .map(n => ({ ...n, sourceEndSec: clampEnd(num(n.sourceStartSec), num(n.sourceEndSec)) }));
+  const cappedHooks = Array.isArray(scope.hookCandidates)
+    ? scope.hookCandidates
+        .filter(h => !(hasOutroCap && num(h.sourceStartSec) >= maxEndingSec - 0.05))
+        .map(h => ({ ...h, sourceEndSec: clampEnd(num(h.sourceStartSec), num(h.sourceEndSec)) }))
+    : scope.hookCandidates;
+  const cappedExplicitBoundary = scope.explicitScopeBoundary
+    ? { ...scope.explicitScopeBoundary, endSec: clampEnd(b0, b1) }
+    : scope.explicitScopeBoundary;
 
   const normalizedCommentary = Array.isArray(scope.commentaryOpportunities)
     ? scope.commentaryOpportunities.map(c => {
-        const s = num(c?.sourceStartSec), e = num(c?.sourceEndSec);
+        const s = num(c?.sourceStartSec), e = clampEnd(num(c?.sourceStartSec), num(c?.sourceEndSec));
         if (!Number.isFinite(s) || !Number.isFinite(e) || e <= s) return null;
         const win = cappedWindows.find(w => inScope(w) && overlaps(s, e, w.startSec, w.endSec) > 0);
         if (!win) return c;
         return { ...c, sourceStartSec: round2(Math.max(s, win.startSec)), sourceEndSec: round2(Math.min(e, win.endSec)) };
       }).filter(Boolean)
     : undefined;
-  const normalizedScope = { ...scope, candidateEndingEvents: cappedEndings, scopeWindows: cappedWindows, ...(normalizedCommentary ? { commentaryOpportunities: normalizedCommentary } : {}), ...(maxEndingSec > 0 && maxEndingSec < dur ? { liveActionEndSec: maxEndingSec } : {}) };
-  const reel = planScopeReel(normalizedScope, { durationSec, paddingSec, maxScopeReelSec, model, maxReelFiles });
-  const watchable = totalSec(mergeRanges(windows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
-  if (windows.length && watchable < targetDurationMinSec) {
-    add('SCOPE_FOOTAGE_INSUFFICIENT', `In-scope windows hold only ${round2(watchable)}s of footage; the requested minimum duration is ${targetDurationMinSec}s. Widen the windows inside the same conflict (or choose a scope whose conflict has enough footage).`);
+
+  const resolvedBoundaryMeta = endingBoundary || scope?.endingBoundary || model?.endingBoundary || model?.liveActionBoundary || null;
+  const normalizedScope = {
+    ...scope,
+    explicitScopeBoundary: cappedExplicitBoundary,
+    causalSpine: cappedSpine,
+    candidateEndingEvents: cappedEndings,
+    scopeWindows: cappedWindows,
+    ...(cappedHooks !== undefined ? { hookCandidates: cappedHooks } : {}),
+    ...(normalizedCommentary ? { commentaryOpportunities: normalizedCommentary } : {}),
+    ...(Number.isFinite(maxEndingSec) ? { liveActionEndSec: round2(maxEndingSec) } : {}),
+    ...(resolvedBoundaryMeta ? { endingBoundary: resolvedBoundaryMeta } : {})
+  };
+  const reel = planScopeReel(normalizedScope, { durationSec: dur, paddingSec, maxScopeReelSec, model, maxReelFiles, liveActionEndSec: maxEndingSec, endingBoundary: resolvedBoundaryMeta });
+  const watchable = totalSec(mergeRanges(cappedWindows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
+  if (cappedWindows.length && watchable < targetDurationMinSec) {
+    add('SCOPE_FOOTAGE_INSUFFICIENT', `In-scope windows hold only ${round2(watchable)}s of usable live-action footage; the requested minimum duration is ${targetDurationMinSec}s. Widen the windows inside the same conflict.`);
   }
   if (reel.totalSec > maxScopeReelSec + TIME_EPS) {
     add('SCOPE_REEL_OVER_BUDGET', `The scope media reel would be ${reel.totalSec}s even after compacting broad windows around their events/quotes (logical footage ${reel.logicalFootageSec}s, ${paddingSec}s context padding); the budget is ${maxScopeReelSec}s. Tighten the windows to the causal spine of ONE conflict.`);
   }
-  return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: windows.length, merges: normalization.notes } };
+  return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: cappedWindows.length, merges: normalization.notes, liveActionEndSec: Number.isFinite(maxEndingSec) ? round2(maxEndingSec) : null } };
 }
 
 function validateSelectionShape(v) {
@@ -333,33 +382,62 @@ function validateSelectionShape(v) {
   return v;
 }
 
-// Compact, text-only view of the model for scope selection.
-function modelForScope(model) {
+// Compact, text-only view of the model for scope selection, annotated with live-action footage boundary.
+function modelForScope(model, liveActionEndSec = null) {
+  const maxLive = resolveMaxLiveActionSec({ liveActionEndSec, model, durationSec: model?.durationSec });
+  const hasCap = Number.isFinite(maxLive) && maxLive > 0 && maxLive < (Number(model?.durationSec) || Infinity) - 0.05;
   return {
     durationSec: model.durationSec,
+    ...(Number.isFinite(maxLive) ? { liveActionEndSec: round2(maxLive) } : {}),
+    ...(model.endingBoundary ? { endingBoundary: { hasOutro: !!model.endingBoundary.hasOutro, outroStartSec: model.endingBoundary.outroStartSec, liveActionEndSec: model.endingBoundary.liveActionEndSec, outroType: model.endingBoundary.outroType, uncertain: !!model.endingBoundary.uncertain } } : {}),
     people: model.people || [],
-    events: (model.events || []).map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, type: e.type, summary: e.summary, location: e.location, peopleIds: e.peopleIds, tension: e.tension, dialogueImpact: e.dialogueImpact, isReveal: e.isReveal })),
-    quotes: (model.quotes || []).map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic, editorialValue: q.editorialValue }))
+    events: (model.events || []).map(e => ({
+      id: e.id,
+      startSec: e.startSec,
+      endSec: hasCap && e.startSec < maxLive && e.endSec > maxLive ? round2(maxLive) : e.endSec,
+      type: e.type,
+      summary: e.summary,
+      location: e.location,
+      peopleIds: e.peopleIds,
+      tension: e.tension,
+      dialogueImpact: e.dialogueImpact,
+      isReveal: e.isReveal,
+      ...(hasCap && e.startSec >= maxLive - 0.05 ? { postLiveActionOutroOnly: true } : {})
+    })),
+    quotes: (model.quotes || [])
+      .filter(q => !(hasCap && Number(q.startSec) >= maxLive - 0.05))
+      .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: hasCap ? Math.min(Number(q.endSec), round2(maxLive)) : q.endSec, text: q.text, epistemic: q.epistemic, editorialValue: q.editorialValue }))
   };
 }
 
 // ---------------------------------------------------------------- Gemini stage
 // Returns { scope, selection, reel, attempts } or throws StoryError('STORY_SCOPE_INVALID').
-async function selectStoryScope(engine, model, { root = null, write = null, emit = () => {}, maxRepairs = 2 } = {}) {
+async function selectStoryScope(engine, model, { root = null, write = null, emit = () => {}, maxRepairs = 2, liveActionEndSec = null, endingBoundary = null } = {}) {
   if (!model || !Array.isArray(model.events) || !model.events.length) {
     throw new StoryError('INPUT_MISSING', 'Story Scope requires a Source Story Model with events.');
   }
   const cfg = engine.config || {};
+  const resolvedBoundary = endingBoundary || model?.endingBoundary || model?.liveActionBoundary || null;
+  const resolvedLiveActionEndSec = resolveMaxLiveActionSec({
+    liveActionEndSec,
+    endingBoundary: resolvedBoundary,
+    model,
+    durationSec: engine.duration || model.durationSec
+  });
   const opts = {
     durationSec: engine.duration || model.durationSec,
     targetDurationMinSec: cfg.targetDurationMinSec || 65,
     maxScopeReelSec: cfg.maxScopeReelSec || DEFAULT_MAX_SCOPE_REEL_SEC,
     paddingSec: cfg.scopeReelPaddingSec ?? DEFAULT_REEL_PADDING_SEC,
     model,
-    maxReelFiles: cfg.maxReelFiles || undefined
+    maxReelFiles: cfg.maxReelFiles || undefined,
+    liveActionEndSec: resolvedLiveActionEndSec,
+    endingBoundary: resolvedBoundary
   };
   const input = {
-    model: modelForScope(model),
+    model: modelForScope(model, resolvedLiveActionEndSec),
+    liveActionEndSec: round2(resolvedLiveActionEndSec),
+    ...(resolvedBoundary?.hasOutro ? { outroBoundaryWarning: `Post-incident outro/recap begins at ${resolvedBoundary.outroStartSec}s; ALL scopeWindows, causalSpine nodes, hookCandidates, and candidateEndingEvents MUST end <= ${round2(resolvedLiveActionEndSec)}s.` } : {}),
     targetDurationMinSec: cfg.targetDurationMinSec || 65,
     targetDurationMaxSec: cfg.targetDurationMaxSec || 90,
     maxScopeReelSec: opts.maxScopeReelSec,
@@ -395,15 +473,16 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
     }
     attempts.push({ attempt, chosenStoryScopeId: selection?.chosenStoryScopeId || null, valid: report.valid, violations: report.violations,
       scopeWindowsDeclared: report.normalization?.declaredCount ?? null, scopeWindowsUnique: report.normalization?.uniqueCount ?? null,
+      liveActionEndSec: round2(resolvedLiveActionEndSec),
       selectionFingerprint: selection ? require('crypto').createHash('sha256').update(JSON.stringify(selection)).digest('hex').slice(0, 16) : null });
     if (write && root) {
       await write(require('path').join(root, `story-scope-selection${repair ? `-repair-${attempt}` : ''}.json`), { selection, validation: report });
     }
     if (report.valid) {
-      // The NORMALIZED scope (unique windows) is what the reel, director and critic use.
+      // The NORMALIZED scope (unique windows, clamped to liveActionEndSec) is what the reel, director and critic use.
       const finalScope = { ...report.normalizedScope, contract: SCOPE_CONTRACT_VERSION, targetDurationMinSec: input.targetDurationMinSec, targetDurationMaxSec: input.targetDurationMaxSec,
         windowNormalization: report.normalization };
-      emit('design', `[Scope] Story Scope selected: ${finalScope.storyScopeId} — ${finalScope.centralViewerQuestion}`);
+      emit('design', `[Scope] Story Scope selected: ${finalScope.storyScopeId} (liveActionEndSec=${finalScope.liveActionEndSec}s) — ${finalScope.centralViewerQuestion}`);
       return { scope: finalScope, selection, reel: report.reel, attempts };
     }
     emit('design', `[Scope] Story Scope needs repair #${attempt + 1}: ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
@@ -424,6 +503,6 @@ function alternateScopes(selection, chosenId, opts) {
 
 module.exports = {
   SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC, SCOPE_LIMITS, normalizeScopeWindows, limitsText,
-  schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
+  resolveMaxLiveActionSec, schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
   chosenScope, alternateScopes, modelForScope
 };

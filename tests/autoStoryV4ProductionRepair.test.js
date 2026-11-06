@@ -1074,13 +1074,15 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
         outputCount: 1,
         targetDurationMinSec: 65,
         targetDurationMaxSec: 90,
-        narration: { enabled: true, measuredWordsPerSecond: 2.5 }
+        narration: { enabled: true, measuredWordsPerSecond: 2.5 },
+        editorialArchitecture: 'legacy_v4'
       },
       autoStoryEditorialConfig: {
         outputCount: 1,
         targetDurationMinSec: 65,
         targetDurationMaxSec: 90,
-        narration: { enabled: true, measuredWordsPerSecond: 2.5 }
+        narration: { enabled: true, measuredWordsPerSecond: 2.5 },
+        editorialArchitecture: 'legacy_v4'
       },
       autoStorySourceV3: {
         identity,
@@ -1506,7 +1508,7 @@ const UNIQUE_BEAT_ID = 'repaired_unique_beat_88';
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
-})().catch(err => {
+})().then(() => process.exit(0)).catch(err => {
   console.error('\nTest Failed with Error:', err);
   process.exit(1);
 });

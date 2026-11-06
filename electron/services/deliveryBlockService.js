@@ -45,8 +45,14 @@ const deliveryBlockSchema = {
     narratorFunction: text,
     narrationIntent: text,
     handoffTargetBeatId: text,
-    // raw_evidence only
-    evidenceFunction: text
+    // raw_evidence only (FOOTAGE_FUNCTIONS: CONFLICT | REAL_EVIDENCE | REACTION | CHARACTER_REVEAL | CONSEQUENCE | TURNING_POINT | PAYOFF)
+    footageFunction: text,
+    evidenceFunction: text,
+    // Viewer-journey commentary planning fields
+    viewerKnows: text,
+    viewerWantsToKnow: text,
+    heldBackForFootage: text,
+    commentaryValue: text
   }
 };
 

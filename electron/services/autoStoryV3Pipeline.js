@@ -633,8 +633,8 @@ async function buildScript(engine, service, opts, story, model, root, emit = () 
 // persisted as each completes and per-script failures are returned.
 const DIRECTOR_FAILURE_KINDS = new Set(['DIRECTOR_EDL_INVALID', 'STORY_SCOPE_INVALID', 'INPUT_MISSING', 'UNDER_MIN_SCOPE_INFEASIBLE']);
 async function directStories(engine, model, root, emit, config) {
-  const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit, liveActionEndSec: model.liveActionEndSec });
-  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model, liveActionEndSec: model.liveActionEndSec };
+  const selected = await StoryScope.selectStoryScope(engine, model, { root, write, emit, liveActionEndSec: model.liveActionEndSec, endingBoundary: model.endingBoundary });
+  const scopeOpts = { durationSec: engine.duration, targetDurationMinSec: config.targetDurationMinSec || 65, maxScopeReelSec: config.maxScopeReelSec || StoryScope.DEFAULT_MAX_SCOPE_REEL_SEC, model, liveActionEndSec: model.liveActionEndSec, endingBoundary: model.endingBoundary };
   const alternates = StoryScope.alternateScopes(selected.selection, selected.scope.storyScopeId, scopeOpts)
     .map(c => ({ ...c, contract: StoryScope.SCOPE_CONTRACT_VERSION, targetDurationMinSec: selected.scope.targetDurationMinSec, targetDurationMaxSec: selected.scope.targetDurationMaxSec }));
   const scopes = [selected.scope, ...alternates].slice(0, Math.max(1, config.outputCount || 1));
@@ -643,7 +643,17 @@ async function directStories(engine, model, root, emit, config) {
   const spines = [], failures = [];
   for (let i = 0; i < scopes.length; i++) {
     try {
-      const directed = await Director.directEdl(engine, { model, scope: scopes[i], root, write, emit, scriptId: i + 1, liveActionEndSec: model.liveActionEndSec });
+      const directed = await Director.directEdl(engine, {
+        model,
+        scope: scopes[i],
+        root,
+        write,
+        emit,
+        scriptId: i + 1,
+        liveActionEndSec: model.liveActionEndSec,
+        endingBoundary: model.endingBoundary,
+        pacingMode: config.pacingMode || null
+      });
       spines.push({ ...directed.spine, scriptId: i + 1 });
       await write(path.join(root, 'story-spine.json'), { spines });
     } catch (err) {
@@ -689,7 +699,7 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
       let currentStory = story, violations = firstViolations, lastError = e, lastRepair = null;
       for (let pass = 1; pass <= 2; pass++) {
         emit('design', `[Director] Script ${scriptId}: delivery-only repair #${pass} (${lastError.message}); EDL stays locked.`, 'WARNING');
-        const fixed = await deliveryRepair(engine, { model, spine: currentStory, violations, root, write, emit, scriptId });
+        const fixed = await deliveryRepair(engine, { model, spine: currentStory, violations, root, write, emit, scriptId, liveActionEndSec: model?.liveActionEndSec, endingBoundary: model?.endingBoundary });
         currentStory = { ...currentStory, ...fixed.spine };
         lastRepair = fixed.spine;
         try {
@@ -705,7 +715,7 @@ async function buildDirectorScript(ctx, story, { build = buildScript, repair = D
     }
 
     emit('design', `[Director] Script ${scriptId}: ${e.kind} (${e.message}) — returning EDL to the director.`, 'WARNING');
-    const fixed = await repair(engine, { model, spine: story, violations: firstViolations, root, write, emit, scriptId });
+    const fixed = await repair(engine, { model, spine: story, violations: firstViolations, root, write, emit, scriptId, liveActionEndSec: model?.liveActionEndSec, endingBoundary: model?.endingBoundary });
     const repairedStory = { ...story, ...fixed.spine };
     return { built: await build(engine, service, opts, repairedStory, model, root, emit), story: repairedStory, repairedSpine: fixed.spine };
   }
@@ -725,6 +735,7 @@ async function run(service, opts) {
   const rawCfg = project.autoStoryConfig || {};
   config.editorialArchitecture = editorialArchitecture(project, {});
   if (rawCfg.storyMode) config.storyMode = rawCfg.storyMode;
+  if (rawCfg.pacingMode) config.pacingMode = rawCfg.pacingMode;
   if (Number.isFinite(Number(rawCfg.maxScopeReelSec)) && Number(rawCfg.maxScopeReelSec) > 0) config.maxScopeReelSec = Number(rawCfg.maxScopeReelSec);
   const update = patch => service.store.updateProject(opts.workspaceRoot, opts.projectId, patch);
   const emit = (stage, message, percent) => opts.onProgress?.({ stage, message, ...(percent === undefined ? {} : { percent }) });
@@ -799,12 +810,15 @@ async function run(service, opts) {
     cues,
     sceneManifest,
     model,
-    cacheDir: cache
+    cacheDir: cache,
+    analysisDir: root
   });
-  if (endingBoundary && endingBoundary.liveActionEndSec > 0) {
-    model.liveActionEndSec = endingBoundary.liveActionEndSec;
+  if (endingBoundary) {
     model.endingBoundary = endingBoundary;
-    emit('understand', `[Boundary] Live-action encounter boundary detected at ${endingBoundary.liveActionEndSec}s (${endingBoundary.outroType || 'detected'}).`, 26);
+    if (endingBoundary.liveActionEndSec > 0) {
+      model.liveActionEndSec = endingBoundary.liveActionEndSec;
+      emit('understand', `[Boundary] Live-action encounter boundary detected at ${endingBoundary.liveActionEndSec}s (${endingBoundary.outroType || 'detected'}, confidence=${endingBoundary.confidence}).`, 26);
+    }
   }
 
   const architecture = config.editorialArchitecture;
@@ -876,7 +890,7 @@ async function run(service, opts) {
       canvasAspect: '9:16',
       blurBackgroundEnabled: true,
       topCaptionEnabled: true,
-      topCaptionAutoFromScript: true,
+      topCaptionAutoFromScript: project.videoDecoration?.topCaptionAutoFromScript ?? true,
       topCaptionStyle: 'default',
       topCaptionText: project.videoDecoration?.topCaptionText || hookPromiseText
     },
@@ -920,12 +934,15 @@ function directorAudit(id, verdict, extra = {}) {
 
 // Deterministic acceptance of the EDL that was actually rendered (see
 // Director.acceptanceReport): hard duration limits on the real beat sum, viewed-media
-// grounding, duplicates, downstream order/ranges, rendered length, critic verdict.
-function directorAcceptance(engine, spine, script, renderedDurationSec, critique) {
+// grounding, duplicates, downstream order/ranges, rendered length, critic verdict,
+// AND source ending-boundary compliance (liveActionEndSec + uncertain check).
+function directorAcceptance(engine, spine, script, renderedDurationSec, critique, model = null) {
   return Director.acceptanceReport(spine, {
     config: engine.config || {}, durationSec: engine.duration,
     scriptSegments: Array.isArray(script?.segments) ? script.segments : null,
     renderedDurationSec, critique,
+    liveActionEndSec: model?.liveActionEndSec ?? spine?.directorMeta?.liveActionEndSec ?? null,
+    endingBoundary: model?.endingBoundary ?? null,
     // Source transcript the run already loaded: used only for the deterministic
     // "does the last cut interrupt a line?" check.
     transcriptCues: Array.isArray(engine.cues) ? engine.cues : null
@@ -963,10 +980,17 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   const probe = f => service.ffmpeg.probeVideo(f);
   const summarize = c => ({ scopeSurvived: c.scopeSurvived, centralQuestionActiveThroughout: c.centralQuestionActiveThroughout,
     endingIsConsequence: c.endingIsConsequence, finalFootageUsable: c.finalFootageUsable, blockingIssues: (c.issues || []).filter(x => x.severity === 'blocking').length, mp4Duration: c.mp4Duration });
+  const repairHistory = [];
+  const writeRepairLog = async () => {
+    if (repairHistory.length > 0) {
+      await fs.writeFile(path.join(root, `repair-log-${id}.json`), JSON.stringify({ scriptId: id, entries: repairHistory }, null, 2)).catch(() => {});
+    }
+  };
   const criticFailed = async (critique, duration, repairPasses, spineNow = spine, scriptNow = script) => {
+    await writeRepairLog();
     const audit = directorAudit(id, { needsUserReview: true, status: 'MEDIA_CRITIC_FAILED', failureType: 'MEDIA_CRITIC_FAILED' }, {
-      repairPasses, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
-      metrics: { mp4Duration: duration }, auditResult: critique, acceptance: directorAcceptance(engine, spineNow, scriptNow, duration, null) });
+      repairPasses, repairHistory, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `MEDIA_CRITIC_FAILED: ${critique.summary}` }] },
+      metrics: { mp4Duration: duration }, auditResult: critique, acceptance: directorAcceptance(engine, spineNow, scriptNow, duration, null, model) });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     const err = new Error(`MEDIA_CRITIC_FAILED: Scope critic failed after retry (${critique.summary})`);
     err.code = 'MEDIA_CRITIC_FAILED'; err.audit = audit; throw err;
@@ -984,18 +1008,19 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   await fs.writeFile(path.join(root, `initial-story-spine-${id}.json`), JSON.stringify(spine, null, 2));
   await fs.writeFile(path.join(root, `initial-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
   if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, 0);
-  let acceptance = directorAcceptance(engine, spine, script, duration, critique);
+  let acceptance = directorAcceptance(engine, spine, script, duration, critique, model);
   await fs.writeFile(path.join(root, `initial-acceptance-${id}.json`), JSON.stringify(acceptance, null, 2));
   const rejectedAudit = async (acc, repairPasses) => {
+    await writeRepairLog();
     const kind = acc.status === Director.ACCEPTANCE.REJECTED ? 'DIRECTOR_EDL_REJECTED' : acc.technical.renderViolations.length ? 'RENDER_DURATION_MISMATCH' : 'PRESENTATION_REVIEW';
     const audit = directorAudit(id, { needsUserReview: true, status: kind, failureType: kind }, {
-      repairPasses, finalCheck: { complete: true, verdict: 'FAIL', issues: [...acc.technical.violations, ...acc.technical.renderViolations, ...(acc.presentation?.findings || [])].map(v => ({ reason: `${v.code}: ${v.message}` })) },
+      repairPasses, repairHistory, finalCheck: { complete: true, verdict: 'FAIL', issues: [...acc.technical.violations, ...acc.technical.renderViolations, ...(acc.presentation?.findings || [])].map(v => ({ reason: `${v.code}: ${v.message}` })) },
       metrics: summarize(critique), acceptance: acc });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
   };
   if (acceptance.status === Director.ACCEPTANCE.ACCEPTED) {
-    const audit = directorAudit(id, { needsUserReview: false }, { finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique), acceptance });
+    const audit = directorAudit(id, { needsUserReview: false }, { repairHistory, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique), acceptance });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
   }
@@ -1009,20 +1034,45 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
   const passFailure = async (pass, err) => {
     // Budget exhaustion / an unrepairable director or compile failure is a reviewable
     // outcome for this script, not a crash that drops the other scripts' audits.
+    await writeRepairLog();
     const budget = /yêu cầu AI|call limit|budget/i.test(err.message || '');
     if (!budget && !err.kind) throw err;
     const audit = directorAudit(id, { needsUserReview: true, status: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind, failureType: budget ? 'AI_CALL_BUDGET_EXHAUSTED' : err.kind,
       acceptanceStatus: budget ? Director.ACCEPTANCE.NEEDS_EDITORIAL_REVIEW : Director.ACCEPTANCE.REJECTED }, {
-      repairPasses: pass - 1, finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: `Repair pass ${pass} could not complete: ${err.message}` }] }, metrics: summarize(critique) });
+      repairPasses: pass - 1, repairHistory, finalCheck: { complete: true, verdict: 'FAIL', issues: [{ reason: `Repair pass ${pass} could not complete: ${err.message}` }] }, metrics: summarize(critique) });
     await fs.writeFile(record, JSON.stringify(audit, null, 2));
     return audit;
   };
   let renderedScript = script;
+  let prevObservedCodes = [];
   for (let pass = 1; pass <= 2; pass++) {
     signal?.throwIfAborted();
+    const observedIssue = [
+      ...(critique.weakRegions || []).map(r => `${r.type}[${r.outputStartSec ?? '?'}-${r.outputEndSec ?? '?'}s]: ${r.reason}`),
+      ...(acceptance.technical?.violations || []).map(v => `${v.code}: ${v.message}`),
+      ...(acceptance.editorial?.readiness?.findings || []).map(f => `${f.code}: ${f.message}`)
+    ];
+    const observedCodes = [
+      ...(critique.weakRegions || []).map(r => r.type),
+      ...(acceptance.technical?.violations || []).map(v => v.code)
+    ];
+    const rootCauseCategory = (acceptance.technical?.violations || []).some(v => v.code.includes('OUTRO'))
+      ? 'source_boundary_or_edl_range'
+      : (critique.weakRegions || []).some(r => /handoff|dialogue/i.test(r.type || ''))
+        ? 'visual_ownership_handoff'
+        : (critique.weakRegions || []).some(r => /hook|opening/i.test(r.type || ''))
+          ? 'hook_or_opening_selection'
+          : (acceptance.technical?.violations || []).some(v => v.code.includes('DURATION'))
+            ? 'scene_selection_and_duration_budget'
+            : 'narrative_delivery_or_payoff';
+    let repairedMeta = null;
     try {
     const emitProgress = (st, msg, pct) => onProgress?.({ stage: st, message: msg, percent: pct });
-    const repaired = await Director.repairEdl(engine, { model, spine: current, critique, weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id });
+    const repaired = await Director.repairEdl(engine, {
+      model, spine: current, critique, weakRegions: critique.weakRegions, root, write, emit: emitProgress, pass, scriptId: id,
+      liveActionEndSec: model?.liveActionEndSec, endingBoundary: model?.endingBoundary, pacingMode: engine.config?.pacingMode || null
+    });
+    repairedMeta = repaired.narratorComparison || null;
     await fs.writeFile(path.join(root, `repair-${pass}-request-${id}.json`), JSON.stringify({
       storyScopeId: repaired.request.scope?.storyScopeId, weakRegions: repaired.request.weakRegions,
       criticSummary: critique.summary, reelRanges: repaired.request.reel.ranges, evidenceFiles: repaired.request.evidenceFiles.map(f => path.basename(f || ''))
@@ -1052,28 +1102,69 @@ async function auditDirectorDraft({ service, opts, engine, model, root, id, reco
     ({ critique, duration } = await critiqueDirectorRender(ai, current, currentMp4, probe, highlight));
     } catch (err) {
       if (signal?.aborted) throw err;
+      repairHistory.push({
+        pass,
+        observedIssue,
+        rootCause: rootCauseCategory,
+        change: `Repair pass ${pass} failed before completion: ${err.message}`,
+        newMp4Evidence: null,
+        outcome: 'REPAIR_ERROR'
+      });
       return passFailure(pass, err);
     }
     await fs.writeFile(path.join(root, `repair-${pass}-media-audit-${id}.json`), JSON.stringify(critique, null, 2));
     if (critique.status === 'MEDIA_CRITIC_INVALID') await criticFailed(critique, duration, pass, current, renderedScript);
-    acceptance = directorAcceptance(engine, current, renderedScript, duration, critique);
+    acceptance = directorAcceptance(engine, current, renderedScript, duration, critique, model);
     await fs.writeFile(path.join(root, `repair-${pass}-acceptance-${id}.json`), JSON.stringify(acceptance, null, 2));
+    const afterCodes = [
+      ...(critique.weakRegions || []).map(r => r.type),
+      ...(acceptance.technical?.violations || []).map(v => v.code)
+    ];
+    const repeatedSameFailure = prevObservedCodes.length > 0 && afterCodes.length > 0
+      && afterCodes.every(c => prevObservedCodes.includes(c));
+    repairHistory.push({
+      pass,
+      observedIssue,
+      rootCause: rootCauseCategory,
+      change: {
+        beatCount: Array.isArray(current.beats) ? current.beats.length : 0,
+        narratorComparison: repairedMeta
+      },
+      newMp4Evidence: {
+        mp4Path: currentMp4,
+        durationSec: duration,
+        criticSummary: critique.summary,
+        remainingIssues: afterCodes
+      },
+      outcome: acceptance.status,
+      escalateToHigherLayer: repeatedSameFailure
+    });
+    prevObservedCodes = observedCodes;
+    await writeRepairLog();
     if (UNREPAIRABLE(acceptance)) return rejectedAudit(acceptance, pass);
     critique = withReadinessRegions(critique, acceptance);
     if (acceptance.status === Director.ACCEPTANCE.ACCEPTED) {
       try { await persistAcceptedSpine(root, id, { ...current, acceptance: { contract: acceptance.contract, status: acceptance.status, timelineSec: acceptance.technical.timelineSec, repairPass: pass } }); }
       catch (err) {
         const audit = directorAudit(id, { needsUserReview: true, status: 'PERSIST_ACCEPTED_EDL_FAILED', failureType: 'PERSIST_ACCEPTED_EDL_FAILED', acceptanceStatus: Director.ACCEPTANCE.REJECTED }, {
-          repairPasses: pass, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `PERSIST_ACCEPTED_EDL_FAILED: ${err.message}` }] }, metrics: summarize(critique) });
+          repairPasses: pass, repairHistory, finalCheck: { complete: false, verdict: 'FAIL', issues: [{ reason: `PERSIST_ACCEPTED_EDL_FAILED: ${err.message}` }] }, metrics: summarize(critique) });
         await fs.writeFile(record, JSON.stringify(audit, null, 2)).catch(() => {});
         const e = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`); e.code = 'PERSIST_ACCEPTED_EDL_FAILED'; e.audit = audit; throw e;
       }
-      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique), acceptance });
+      const audit = directorAudit(id, { needsUserReview: false }, { repairPasses: pass, repairHistory, finalCheck: { complete: true, verdict: 'PASS', issues: [] }, metrics: summarize(critique), acceptance });
       await fs.writeFile(record, JSON.stringify(audit, null, 2));
       return audit;
     }
   }
-  const audit = directorAudit(id, { needsUserReview: true }, { repairPasses: 2,
+  await writeRepairLog();
+  if (current !== spine && acceptance?.status === Director.ACCEPTANCE.NEEDS_EDITORIAL_REVIEW
+    && !(acceptance.technical?.violations?.length) && !(acceptance.technical?.renderViolations?.length)) {
+    await persistAcceptedSpine(root, id, {
+      ...current,
+      acceptance: { contract: acceptance.contract, status: acceptance.status, timelineSec: acceptance.technical?.timelineSec, repairPass: 2 }
+    }).catch(() => {});
+  }
+  const audit = directorAudit(id, { needsUserReview: true }, { repairPasses: 2, repairHistory,
     finalCheck: { complete: true, verdict: 'FAIL', issues: [
       ...(critique.weakRegions || []).map(r => ({ reason: `${r.type}: ${r.reason}`, outputStartSec: r.outputStartSec, outputEndSec: r.outputEndSec, beatIds: r.beatIds })),
       ...acceptance.technical.violations.map(v => ({ reason: `${v.code}: ${v.message}` }))] },
@@ -1131,6 +1222,33 @@ async function auditDrafts(service, opts) {
       auditCues = Dubbing.normalizeRollingSubtitleCues(await service.dubbing.readSubtitleSegments(project.subtitleSourcePath));
     }
   } catch (_) { auditCues = []; }
+
+  // Reload or re-verify dynamic source ending boundary so auditDrafts & repairs
+  // enforce the exact same liveActionEndSec and uncertainty contract as run().
+  try {
+    const { detectSourceEndingBoundary } = require('./sourceEndingBoundaryService');
+    const sourceDurationSec = project.autoStorySourceV3?.duration || project.analysis?.media?.duration || 0;
+    if (project.sourceVideoPath && sourceDurationSec > 0) {
+      let sceneManifest = null;
+      try {
+        sceneManifest = JSON.parse(await fs.readFile(path.join(path.dirname(project.sourceVideoPath), 'scene-manifest.json'), 'utf8'));
+      } catch (_) {}
+      const endingBoundary = await detectSourceEndingBoundary({
+        sourcePath: project.sourceVideoPath,
+        durationSec: sourceDurationSec,
+        cues: auditCues,
+        sceneManifest,
+        model,
+        cacheDir: sourceCachePath,
+        analysisDir: root
+      });
+      if (endingBoundary) {
+        model.endingBoundary = endingBoundary;
+        if (endingBoundary.liveActionEndSec > 0) model.liveActionEndSec = endingBoundary.liveActionEndSec;
+      }
+    }
+  } catch (_) {}
+
   const engine = new Engine(service, {
     project,
     root,

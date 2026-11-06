@@ -163,10 +163,14 @@ function compileDeliveryBlocks(blocks, segments, config) {
     const outputStartSec = members[0].outputStartSec, outputEndSec = members[members.length - 1].outputEndSec;
     const durationSec = outputEndSec - outputStartSec;
     const base = { blockId: b.blockId, mode: b.mode, order, beatIds: [...b.beatIds], segmentIds: members.map(s => s.id),
-      outputStartSec, outputEndSec, durationSec, storyFunction: b.storyFunction || '' };
+      outputStartSec, outputEndSec, durationSec, storyFunction: b.storyFunction || '',
+      ...(b.viewerKnows ? { viewerKnows: b.viewerKnows } : {}),
+      ...(b.viewerWantsToKnow ? { viewerWantsToKnow: b.viewerWantsToKnow } : {}),
+      ...(b.heldBackForFootage ? { heldBackForFootage: b.heldBackForFootage } : {}),
+      ...(b.commentaryValue ? { commentaryValue: b.commentaryValue } : {}) };
     if (b.mode !== 'narrated_story') {
       members.forEach(s => { if (s.audioMode !== 'original_audio') throw new StoryError('LOCAL_EDITORIAL', `Raw block '${b.blockId}' must keep original audio.`, { blockId: b.blockId }); });
-      return { ...base, evidenceFunction: b.evidenceFunction || '', sourceAudioTreatment: 'original_audio' };
+      return { ...base, ...(b.footageFunction ? { footageFunction: b.footageFunction } : {}), evidenceFunction: b.evidenceFunction || '', sourceAudioTreatment: 'original_audio' };
     }
     const narrationText = String(b.narrationText || '').trim();
     if (!config.narration?.enabled || !narrationText) throw new StoryError('LOCAL_EDITORIAL', `Narrated block '${b.blockId}' has no narration passage or narration is disabled.`, { blockId: b.blockId });

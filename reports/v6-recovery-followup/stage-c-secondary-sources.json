@@ -1,0 +1,165 @@
+{
+  "generatedAt": "2026-11-06T02:09:07.521Z",
+  "boundaryGeneralizationCount": 4,
+  "boundaryResults": [
+    {
+      "id": "source-cqf2r254dy8",
+      "label": "Bodycam Case cqf2r254dy8 (Kyle Sentencing Epilogue Card Outro)",
+      "videoPath": "D:\\Video\\source-cqf2r254dy8-gemini-analysis-pack\\temp\\analysis-proxy-full.mp4",
+      "durationSec": 743.75,
+      "expectedBehavior": "Must detect CASE DETAILS sentencing epilogue card near ~698.1s and cap liveActionEndSec before it.",
+      "boundary": {
+        "version": 2,
+        "sourceFingerprint": "be7720712253d2a39e010d91",
+        "sourceDurationSec": 743.75,
+        "hasOutro": true,
+        "outroStartSec": 698.125,
+        "liveActionEndSec": 697.93,
+        "confidence": 0.93,
+        "uncertain": false,
+        "outroType": "channel_recap_outro",
+        "evidence": [
+          {
+            "source": "subtitle_cue",
+            "sec": 713.96,
+            "pattern": "/pleaded guilty|pleading guilty|pled guilty|made a plea deal/i",
+            "excerpt": "eventually pled guilty and was sentenced"
+          },
+          {
+            "source": "ffmpeg_visual_end_card",
+            "sec": 741.5,
+            "scdScore": 20,
+            "blackCard": false,
+            "staticCard": true
+          }
+        ],
+        "reason": "Outro cue/model signal at 713.96s aligned to scene boundary at 698.125s (capped at 697.93s)"
+      }
+    },
+    {
+      "id": "source-ualmmh8bb4g",
+      "label": "Bodycam Case ualmmh8bb4g (Officer John Channel Commentary Outro)",
+      "videoPath": "D:\\Video\\source-ualmmh8bb4g-gemini-analysis-pack\\temp\\analysis-proxy-full.mp4",
+      "durationSec": 652.25,
+      "expectedBehavior": "Must detect channel host wrap-up (\"Because our purpose here isn’t just to show you videos...\") near ~637.1s.",
+      "boundary": {
+        "version": 2,
+        "sourceFingerprint": "2377dd54048253d4ed5bebdb",
+        "sourceDurationSec": 652.25,
+        "hasOutro": false,
+        "outroStartSec": null,
+        "liveActionEndSec": 652.25,
+        "confidence": 0.95,
+        "uncertain": false,
+        "outroType": "none",
+        "evidence": [],
+        "reason": "Live action continues cleanly to end of source video"
+      }
+    },
+    {
+      "id": "source-5ztfoq-8rs0",
+      "label": "Full-HD True Crime Case 5ztfoq-8rs0",
+      "videoPath": "D:\\sources\\queue\\e99b424b-85db-4ff9-972c-b1ff5b5709db\\youtube-5ztfoq-8rs0\\source-5ztfoq-8rs0.mp4",
+      "durationSec": 2095.961,
+      "expectedBehavior": "Must inspect trailing media & cues dynamically without crashing or applying 911 timestamps.",
+      "boundary": {
+        "version": 2,
+        "sourceFingerprint": "60c9762d9c28622290a6198d",
+        "sourceDurationSec": 2095.961,
+        "hasOutro": true,
+        "outroStartSec": 2060.833,
+        "liveActionEndSec": 2060.63,
+        "confidence": 0.95,
+        "uncertain": false,
+        "outroType": "channel_recap_outro",
+        "evidence": [
+          {
+            "source": "subtitle_cue",
+            "sec": 2064.639,
+            "pattern": "/was sentenced to|sentenced to a minimum|sentenced to prison|parole eligible/i",
+            "excerpt": "charges. She was sentenced to life in"
+          }
+        ],
+        "reason": "Outro cue/model signal at 2064.64s aligned to FFmpeg visual scene cut at 2060.833s (capped at 2060.63s)"
+      }
+    },
+    {
+      "id": "va-reference-no-outro",
+      "label": "Clean Live-Action Reference Cut (va.mp4 — No Outro Control)",
+      "videoPath": "C:\\Users\\Admin\\Videos\\va.mp4",
+      "durationSec": 107.367007,
+      "expectedBehavior": "Must report hasOutro=false and preserve full live-action duration without false-positive trimming.",
+      "boundary": {
+        "version": 2,
+        "sourceFingerprint": "299b28897ec68aecf6fb374f",
+        "sourceDurationSec": 107.367007,
+        "hasOutro": false,
+        "outroStartSec": null,
+        "liveActionEndSec": 107.367007,
+        "confidence": 0.95,
+        "uncertain": false,
+        "outroType": "none",
+        "evidence": [],
+        "reason": "Live action continues cleanly to end of source video"
+      }
+    }
+  ],
+  "secondaryPipelineRun": {
+    "projectId": "v6-followup-secondary-cqf2",
+    "sourceId": "source-cqf2r254dy8",
+    "runnerError": null,
+    "endingBoundary": {
+      "version": 2,
+      "sourceFingerprint": "be7720712253d2a39e010d91",
+      "sourceDurationSec": 743.75,
+      "hasOutro": true,
+      "outroStartSec": 698.125,
+      "liveActionEndSec": 697.93,
+      "confidence": 0.93,
+      "uncertain": false,
+      "outroType": "channel_recap_outro",
+      "evidence": [
+        {
+          "source": "subtitle_cue",
+          "sec": 713.96,
+          "pattern": "/pleaded guilty|pleading guilty|pled guilty|made a plea deal/i",
+          "excerpt": "eventually pled guilty and was sentenced"
+        },
+        {
+          "source": "ffmpeg_visual_end_card",
+          "sec": 741.5,
+          "scdScore": 20,
+          "blackCard": false,
+          "staticCard": true
+        }
+      ],
+      "reason": "Outro cue/model signal at 713.96s aligned to scene boundary at 698.125s (capped at 697.93s)"
+    },
+    "scopeTitle": null,
+    "scopeMaxWindowEndSec": 535,
+    "beatCount": 12,
+    "maxBeatSourceEndSec": 529.5,
+    "strictlyWithinLiveActionBoundary": true,
+    "narratedBlockCount": 3,
+    "narratedBlocks": [
+      {
+        "blockId": "blk_02",
+        "narratorFunction": "CONTEXT",
+        "narrationText": "With an armed gunman barricaded inside, deputies hold exterior cover while planning their breach."
+      },
+      {
+        "blockId": "blk_04",
+        "narratorFunction": "CAUSAL_BRIDGE",
+        "narrationText": "Instead of rushing the shattered entrance, deputies move to flank the building from behind."
+      },
+      {
+        "blockId": "blk_06",
+        "narratorFunction": "CLOSING",
+        "narrationText": "Deputies saved the wounded suspect who ambushed them. Did their split-second decisions prevent further bloodshed?"
+      }
+    ],
+    "hookAuditionSelectedTitle": "A Fleeing Truck Smashes Through A Storefront As Officers Close In",
+    "hookTitleValid": true,
+    "reviewStatus": "NEEDS_EDITORIAL_REVIEW"
+  }
+}

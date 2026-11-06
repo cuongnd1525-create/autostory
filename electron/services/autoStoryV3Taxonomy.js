@@ -44,11 +44,16 @@ const ROLE_TO_V2 = {
   button: 'payoff'
 };
 
-// Narrator functions (Phase 10). A narration line MUST carry one of these.
+// Narrator functions (Phase 10 / V6 Storyteller). A narration line MUST carry one of these.
 const NARRATOR_FUNCTIONS = [
-  'HOOK', 'CONTEXT', 'BRIDGE', 'CAUSAL_BRIDGE', 'FORESHADOW', 'OPEN_LOOP', 'ESCALATION', 'CLARIFICATION',
+  'HOOK', 'CONTEXT', 'BRIDGE', 'CAUSAL_BRIDGE', 'FORESHADOW', 'OPEN_LOOP', 'REHOOK', 'ESCALATION', 'CLARIFICATION',
   'TIME_JUMP', 'LOCATION_CHANGE', 'IDENTITY', 'COMMENTARY', 'INTERPRETATION', 'ANTICIPATION',
-  'CONSEQUENCE', 'RECAP', 'PAYOFF_SETUP', 'PAYOFF', 'CLIFFHANGER'
+  'CONSEQUENCE', 'RECAP', 'PAYOFF_SETUP', 'PAYOFF', 'CLOSING', 'CLIFFHANGER'
+];
+
+// Footage functions (V6 Narrative Delivery Plan) for raw_evidence blocks.
+const FOOTAGE_FUNCTIONS = [
+  'CONFLICT', 'REAL_EVIDENCE', 'REACTION', 'CHARACTER_REVEAL', 'CONSEQUENCE', 'TURNING_POINT', 'PAYOFF'
 ];
 
 // Information classes (Phase 6).
@@ -113,7 +118,7 @@ function strategyToAudioMode(strategy, { unclean = false } = {}) {
 }
 
 module.exports = {
-  NARRATIVE_ROLES, V2_STORY_ROLES, ROLE_TO_V2, NARRATOR_FUNCTIONS, INFORMATION_CLASSES,
+  NARRATIVE_ROLES, V2_STORY_ROLES, ROLE_TO_V2, NARRATOR_FUNCTIONS, FOOTAGE_FUNCTIONS, INFORMATION_CLASSES,
   STORY_ARCHETYPES, CAUSAL_RELATIONS, EVIDENCE_TYPES,
   AUDIO_STRATEGIES, EPISTEMIC, NON_FACT_EPISTEMIC, toV2Role, strategyToAudioMode
 };

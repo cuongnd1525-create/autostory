@@ -95,31 +95,51 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
         for (const name of [
           `initial-story-spine-${scriptId}.json`,
           `initial-media-audit-${scriptId}.json`,
+          `initial-acceptance-${scriptId}.json`,
           `repair-1-specification-${scriptId}.json`,
+          `repair-1-request-${scriptId}.json`,
           `repair-1-story-spine-${scriptId}.json`,
           `repair-1-media-audit-${scriptId}.json`,
+          `repair-1-acceptance-${scriptId}.json`,
           `repair-2-specification-${scriptId}.json`,
+          `repair-2-request-${scriptId}.json`,
           `repair-2-story-spine-${scriptId}.json`,
-          `repair-2-media-audit-${scriptId}.json`
+          `repair-2-media-audit-${scriptId}.json`,
+          `repair-2-acceptance-${scriptId}.json`,
+          `last-rendered-story-spine-${scriptId}.json`,
+          `repair-log-${scriptId}.json`
         ]) {
           await copyIfExists(path.join(analysis, name), path.join(sourceAnalysis, name));
         }
 
-        // Canonical update of parent story-spine.json with accepted repaired spine
+        // Canonical update of parent story-spine.json with accepted/promoted repaired spine
         // MUST happen BEFORE persisting review-state PASS!
         let isPassAudit = false;
+        let isPromotedTechnicalPass = false;
         try {
           const parsed = JSON.parse(audit);
           isPassAudit = parsed?.finalCheck?.verdict === 'PASS';
+          isPromotedTechnicalPass = parsed?.acceptanceStatus === 'NEEDS_EDITORIAL_REVIEW'
+            && parsed?.qualityGate?.technicalGate === 'TECHNICAL_PASS';
         } catch (_) {}
 
-        if (isPassAudit) {
+        if (isPassAudit || isPromotedTechnicalPass) {
           const workerSpineFile = path.join(analysis, 'story-spine.json');
           const parentSpineFile = path.join(sourceAnalysis, 'story-spine.json');
           try {
-            const workerSpineData = JSON.parse(await fs.readFile(workerSpineFile, 'utf8'));
-            const acceptedSpine = (workerSpineData.spines || []).find(s => Number(s.scriptId) === Number(scriptId))
-              || (workerSpineData.spines || [])[0];
+            let acceptedSpine = null;
+            const lastRenderedFile = path.join(analysis, `last-rendered-story-spine-${scriptId}.json`);
+            try {
+              const lastData = JSON.parse(await fs.readFile(lastRenderedFile, 'utf8'));
+              if (Array.isArray(lastData.beats) && lastData.beats.length) {
+                acceptedSpine = lastData;
+              }
+            } catch (_) {}
+            if (!acceptedSpine) {
+              const workerSpineData = JSON.parse(await fs.readFile(workerSpineFile, 'utf8'));
+              acceptedSpine = (workerSpineData.spines || []).find(s => Number(s.scriptId) === Number(scriptId))
+                || (workerSpineData.spines || [])[0];
+            }
             if (acceptedSpine) {
               let parentSpineData = { spines: [] };
               try {
@@ -140,9 +160,11 @@ async function run({ settings, store, workspaceRoot, projectId, scriptId, script
               await store.writeText(parentSpineFile, JSON.stringify(parentSpineData, null, 2));
             }
           } catch (err) {
-            const persistErr = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`);
-            persistErr.code = 'PERSIST_ACCEPTED_EDL_FAILED';
-            throw persistErr;
+            if (isPassAudit) {
+              const persistErr = new Error(`PERSIST_ACCEPTED_EDL_FAILED: ${err.message}`);
+              persistErr.code = 'PERSIST_ACCEPTED_EDL_FAILED';
+              throw persistErr;
+            }
           }
         }
       }
