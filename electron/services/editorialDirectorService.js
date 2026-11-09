@@ -342,6 +342,69 @@ function coveredByReel(b, reelRanges, maxEndSec = Infinity) {
   return inside / (e - s);
 }
 
+function technicalWindowPaddingAdjustment(spine, reel, { durationSec = Infinity, liveActionEndSec = null } = {}) {
+  const beats = spine?.beats || [];
+  if (!beats.length) return { applied: false, reason: 'no beats' };
+  const maxLive = resolveLiveActionBoundary({ liveActionEndSec, scope: spine?.storyScope, durationSec });
+  const rows = (reel?.ranges || []).map(r => ({
+    row: r,
+    padLo: Math.max(0, num(r.sourceStartSec)),
+    padHi: Math.min(num(r.sourceEndSec), durationSec, maxLive),
+    winLo: Math.max(0, num(r.sourceStartSec), Number.isFinite(num(r.windowStartSec)) ? num(r.windowStartSec) : -Infinity),
+    winHi: Math.min(num(r.sourceEndSec), Number.isFinite(num(r.windowEndSec)) ? num(r.windowEndSec) : Infinity, durationSec, maxLive)
+  })).filter(r => r.winHi > r.winLo && r.padHi >= r.winHi - 1e-6 && r.padLo <= r.winLo + 1e-6);
+
+  const adjustments = [];
+  const nextBeats = beats.map((b, i) => {
+    const s = num(b.sourceStartSec), e = num(b.sourceEndSec);
+    if (!(e > s)) return b;
+    const cov = coveredByReel(b, reel?.ranges || [], maxLive);
+    if ((e - s) * (1 - cov) <= GROUNDING_TOLERANCE_SEC) return b;
+    const home = rows.find(r =>
+      s >= r.padLo - 0.1
+      && e <= r.padHi + 0.1
+      && Math.min(e, r.winHi) - Math.max(s, r.winLo) >= (e - s) * 0.5
+    );
+    if (!home) return b;
+    const clampedStart = round2(Math.max(s, home.winLo));
+    const clampedEnd = round2(Math.min(e, home.winHi));
+    const isNarrated = (b.audioMode && b.audioMode !== 'original_audio') || b.deliveryMode === 'narrated_story';
+    const minBeatDur = isNarrated ? 3.8 : MIN_BEAT_SEC;
+    let newStart = clampedStart;
+    let newEnd = clampedEnd;
+    if (newEnd - newStart < minBeatDur && (home.winHi - home.winLo) >= minBeatDur) {
+      const targetLen = Math.min(e - s, home.winHi - home.winLo);
+      if (e > home.winHi) {
+        newEnd = round2(home.winHi);
+        newStart = round2(Math.max(home.winLo, newEnd - targetLen));
+      } else if (s < home.winLo) {
+        newStart = round2(home.winLo);
+        newEnd = round2(Math.min(home.winHi, newStart + targetLen));
+      }
+    }
+    if (!(newEnd - newStart >= MIN_BEAT_SEC) || (Math.abs(newStart - s) < 1e-6 && Math.abs(newEnd - e) < 1e-6)) return b;
+    const collides = beats.some((other, j) => j !== i && Math.min(num(other.sourceEndSec), newEnd) - Math.max(num(other.sourceStartSec), newStart) > 1e-6);
+    if (collides) return b;
+    adjustments.push({
+      beatId: b.beatId,
+      oldStartSec: s,
+      oldEndSec: e,
+      newStartSec: newStart,
+      newEndSec: newEnd,
+      sourceWindowId: home.row.scopeWindowId || null,
+      reason: `clamped watched reel padding overhang (${s}-${e}s -> ${newStart}-${newEnd}s) into logical window ${round2(home.winLo)}-${round2(home.winHi)}s`
+    });
+    return { ...b, sourceStartSec: newStart, sourceEndSec: newEnd };
+  });
+
+  if (!adjustments.length) return { applied: false, reason: 'no eligible watched-padding overhang' };
+  return {
+    applied: true,
+    spine: { ...spine, beats: nextBeats },
+    adjustments
+  };
+}
+
 function endingMaterialRanges(scope) {
   const out = [];
   for (const w of scope?.scopeWindows || []) {
@@ -585,7 +648,20 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
     ...endingMaterialRanges(scope).map(([s, e]) => [s, Math.min(maxLiveSec, e)])
   ].filter(([s, e]) => e > s);
   const ls = num(last.sourceStartSec), le = num(last.sourceEndSec);
-  if (endingRanges.length && !endingRanges.some(([s, e]) => Math.min(le, e) - Math.max(ls, s) > 0)) {
+  const inEndingRange = (bs, be) => endingRanges.some(([s, e]) => Math.min(be, e) - Math.max(bs, s) > 0);
+  const lastAudioBeat = audioBeats[beats.length - 1] || last;
+  const isClosingNarratedCallback = (
+    lastAudioBeat.deliveryMode === 'narrated_story'
+    || lastAudioBeat.audioMode === 'voiceover_with_ambient'
+    || lastAudioBeat.audioMode === 'voiceover_only'
+  ) && (
+    last.scopeMembership === 'ending'
+    || lastAudioBeat.narratorFunction === 'CLOSING'
+    || lastAudioBeat.narratorFunction === 'PAYOFF'
+    || /^(button|resolution|payoff)$/i.test(String(last.narrativeRole || ''))
+  ) && coveredByReel(last, reelRanges, maxLiveSec) >= 0.95
+    && beats.slice(0, -1).some(b => b.scopeMembership === 'ending' && inEndingRange(num(b.sourceStartSec), num(b.sourceEndSec)));
+  if (endingRanges.length && !inEndingRange(ls, le) && !isClosingNarratedCallback) {
     add('ENDING_NOT_IN_SCOPE', `The final beat '${last.beatId}' (${ls}-${le}s) is not one of the scope's candidate endings or ending_material windows (<= ${round2(maxLiveSec)}s).`, { beatId: last.beatId });
   }
 
@@ -1134,7 +1210,16 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       : validateDirectorEdl(spine, scope, valOpts);
     if (!schemaError && technical && spine && current) {
       const was = (current.beats || [])[current.beats.length - 1], now = (spine.beats || [])[spine.beats.length - 1];
-      if (was?.scopeMembership === 'ending' && now && now.scopeMembership !== 'ending') {
+      const nowBlocks = Array.isArray(spine.deliveryBlocks) ? spine.deliveryBlocks : [];
+      const lastBlk = nowBlocks[nowBlocks.length - 1];
+      const isNarratedClosingTail = Boolean(
+        lastBlk
+        && lastBlk.mode === 'narrated_story'
+        && (lastBlk.narratorFunction === 'CLOSING' || lastBlk.narratorFunction === 'PAYOFF')
+        && (lastBlk.beatIds || []).includes(now?.beatId)
+        && (spine.beats || []).slice(0, -1).some(b => b.scopeMembership === 'ending')
+      );
+      if (was?.scopeMembership === 'ending' && now && now.scopeMembership !== 'ending' && !isNarratedClosingTail) {
         report = { ...report, valid: false, violations: [...report.violations, { code: 'ENDING_DISPLACED',
           message: `The repaired EDL no longer ends on its ending beat: '${now.beatId}' (${now.scopeMembership}) comes after it. Place new material BEFORE the ending.`, beatId: now.beatId }] };
       }
@@ -1224,6 +1309,20 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
       continue;
     }
     if (structurallyValid) { lastAccepted = spine; if (mode === 'multimodal_under_min') previousUnderMin = null; }
+
+    if (spine && !schemaError && report.violations.length > 0 && report.violations.every(v => v.code === 'OUTSIDE_SCOPE_REEL')) {
+      const padTech = technicalWindowPaddingAdjustment(spine, reel, { durationSec: engine.duration, liveActionEndSec: maxLiveSec });
+      if (padTech.applied) {
+        const recheck = validateDirectorEdl(padTech.spine, scope, valOpts);
+        if (recheck.valid) {
+          entry.technicalWindowPaddingAdjustment = padTech.adjustments;
+          entry.technicalRecheck = { valid: recheck.valid, violations: recheck.violations, metrics: recheck.metrics };
+          if (write && root) await write(path.join(root, `${callKey}-padding-adjustment.json`), { technicalWindowPaddingAdjustment: padTech.adjustments, validation: recheck });
+          emit('design', `[Director] Technical window-padding clamp: ${padTech.adjustments.map(a => `${a.beatId} ${a.oldStartSec}-${a.oldEndSec}s -> ${a.newStartSec}-${a.newEndSec}s`).join(', ')} (${recheck.metrics.totalSec}s).`);
+          return { spine: { ...padTech.spine, technicalWindowPaddingAdjustment: padTech.adjustments }, report: recheck, reelObservations: reelObservations || result.reelObservations, attempts, narratorComparison };
+        }
+      }
+    }
 
     if (spine && onlyDurationViolations(report.violations) && report.violations.every(v => v.code === 'TOTAL_DURATION_UNDER_MIN')) {
       const tech = technicalDurationAdjustment(spine, reel, { hardMinSec: targets.hardMinSec, durationSec: engine.duration, liveActionEndSec: maxLiveSec });
@@ -1558,7 +1657,7 @@ module.exports = {
   resolveLiveActionBoundary, estimatedSpeechSpan, buildVisualOwnershipMap, summarizeNarratorPlan, compareNarratorPlans, punchlinePreservationViolations,
   validateDirectorEdl, modelContextForReel, stampSpine, isDirectorSpine, prepareReel,
   directEdl, repairEdl, repairTechnical, repairDeliveryTechnical, runDirector, assertEdlIntact, timelineSec, coveredByReel,
-  durationTargets, durationDelta, technicalDurationAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
+  durationTargets, durationDelta, technicalDurationAdjustment, technicalWindowPaddingAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
   acceptanceReport, ACCEPTANCE, ACCEPTANCE_CONTRACT, RENDER_DURATION_TOLERANCE_SEC, endingMaterialRanges, endingBoundary, editorialReadiness, presentationReadiness,
   deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape

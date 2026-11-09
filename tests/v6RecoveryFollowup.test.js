@@ -974,4 +974,74 @@ test('Stage A (13): BlockNarration caps >10 evidence video files to 10 AND closi
   }
 });
 
+test('Stage A (14): Resolves 3-way Catch-22 between NARRATED_BLOCK_ACTIVE_DIALOGUE, ENDING_NOT_IN_SCOPE, and OUTSIDE_SCOPE_REEL padding overhang', () => {
+  const scope = {
+    liveActionEndSec: 1275.02,
+    scopeWindows: [
+      { windowId: 'win_breach', startSec: 506, endSec: 641, purpose: 'core', purposes: ['core', 'hook_material'] },
+      { windowId: 'win_station', startSec: 680, endSec: 750, purpose: 'core', purposes: ['core', 'ending_material'], purposeRanges: [{ purpose: 'ending_material', startSec: 680, endSec: 750 }] },
+      { windowId: 'win_suspension', startSec: 881, endSec: 940, purpose: 'core', purposes: ['core', 'ending_material'], purposeRanges: [{ purpose: 'ending_material', startSec: 881, endSec: 940 }] }
+    ],
+    candidateEndingEvents: [
+      { eventId: 'evt_dancer', sourceStartSec: 680, sourceEndSec: 750 },
+      { eventId: 'evt_susp', sourceStartSec: 881, sourceEndSec: 940 }
+    ]
+  };
+  const reel = {
+    ranges: [
+      { scopeWindowId: 'win_breach', sourceStartSec: 504, sourceEndSec: 643, windowStartSec: 506, windowEndSec: 641 },
+      { scopeWindowId: 'win_station', sourceStartSec: 678, sourceEndSec: 752, windowStartSec: 680, windowEndSec: 750 },
+      { scopeWindowId: 'win_suspension', sourceStartSec: 879, sourceEndSec: 942, windowStartSec: 881, windowEndSec: 940 }
+    ]
+  };
+
+  // 14A: When preceding ending beats (b2, b3) deliver the raw payoff inside ending_material (680-750s, 881-940s),
+  // a final CLOSING narrated_story beat over clean in-scope custody B-roll (615-621.5s) passes ENDING_NOT_IN_SCOPE.
+  const callbackSpine = {
+    beats: [
+      { beatId: 'b1', sourceStartSec: 506.13, sourceEndSec: 516.13, narrativeRole: 'teaser_conflict', scopeMembership: 'hook', observedInFootage: 'Sergeant warns driver', whyNecessaryNow: 'hook' },
+      { beatId: 'b2', sourceStartSec: 680.93, sourceEndSec: 685.28, narrativeRole: 'reveal', scopeMembership: 'ending', observedInFootage: 'Driver asks to hide dancer job', whyNecessaryNow: 'reveal' },
+      { beatId: 'b3', sourceStartSec: 886.06, sourceEndSec: 892.85, narrativeRole: 'payoff', scopeMembership: 'ending', observedInFootage: 'Officer announces 12-month suspension', whyNecessaryNow: 'payoff' },
+      { beatId: 'b4', sourceStartSec: 615.0, sourceEndSec: 621.5, chronologyMode: 'callback', narrativeRole: 'button', scopeMembership: 'ending', audioMode: 'voiceover_with_ambient', observedInFootage: 'Officer escorts handcuffed driver to patrol car', whyNecessaryNow: 'closing B-roll' }
+    ],
+    deliveryBlocks: [
+      { blockId: 'blk_1', mode: 'raw_evidence', beatIds: ['b1', 'b2', 'b3'], evidenceFunction: 'CONSEQUENCE', footageFunction: 'CONSEQUENCE' },
+      { blockId: 'blk_2', mode: 'narrated_story', beatIds: ['b4'], narratorFunction: 'CLOSING', sourceAudioTreatment: 'voiceover_with_ambient', narrationIntent: 'Closing takeaway' }
+    ]
+  };
+  const callbackVal = Director.validateDirectorEdl(callbackSpine, scope, {
+    durationSec: 1275.02,
+    targetDurationMinSec: 20,
+    targetDurationMaxSec: 40,
+    reel,
+    narrationEnabled: true,
+    liveActionEndSec: 1275.02
+  });
+  assert.equal(callbackVal.valid, true, `Expected callback closing B-roll after in-scope ending beats to pass, got ${JSON.stringify(callbackVal.violations)}`);
+
+  // 14B: When a closing beat (935.86-941.77s) overhangs its logical scope window (881-940s) into the watched +2s reel padding (879-942s),
+  // technicalWindowPaddingAdjustment deterministically clamps it to 935.86-940.0s (4.14s) so it passes validation.
+  const overhangSpine = {
+    ...callbackSpine,
+    beats: [
+      ...callbackSpine.beats.slice(0, 3),
+      { beatId: 'b4', sourceStartSec: 935.86, sourceEndSec: 941.77, chronologyMode: 'chronological', narrativeRole: 'resolution', scopeMembership: 'ending', audioMode: 'voiceover_with_ambient', observedInFootage: 'Driver receives citation paperwork at counter', whyNecessaryNow: 'closing' }
+    ]
+  };
+  const padFix = Director.technicalWindowPaddingAdjustment(overhangSpine, reel, { durationSec: 1275.02, liveActionEndSec: 1275.02 });
+  assert.equal(padFix.applied, true);
+  assert.equal(padFix.spine.beats[3].sourceStartSec, 935.86);
+  assert.equal(padFix.spine.beats[3].sourceEndSec, 940.0);
+  const clampedVal = Director.validateDirectorEdl(padFix.spine, scope, {
+    durationSec: 1275.02,
+    targetDurationMinSec: 20,
+    targetDurationMaxSec: 40,
+    reel,
+    narrationEnabled: true,
+    liveActionEndSec: 1275.02
+  });
+  assert.equal(clampedVal.valid, true, `Expected clamped padding overhang spine to pass validation, got ${JSON.stringify(clampedVal.violations)}`);
+});
+
+
 
