@@ -582,6 +582,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   // and pointing repairs directly to clean B-roll windows so narrator blocks are preserved!
   if (Array.isArray(cues) && cues.length) {
     const cleanWindows = buildVisualOwnershipMap(reel, null, cues, maxLiveSec).cleanVisualBrollWindows;
+    const scopeCommentaryOps = Array.isArray(scope?.commentaryOpportunities) ? scope.commentaryOpportunities : [];
     beats.forEach((b, i) => {
       const id = b.beatId || `#${i}`;
       const ab = audioBeats[i];
@@ -591,8 +592,19 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
         const { speechSec: dialogueSec, activeCues } = estimatedSpeechSpan(cues, s, e);
         const isFinalBeat = (i === beats.length - 1);
         const obsText = String(b.observedInFootage || '');
-        const isPhysicalOrTransitionBroll = /waveform|911\s+audio|dispatch\s+screen|cruiser|patrol|transport\s+van|open\s+door|shuts?\b|latch|clos(?:es?|ing)\s+(?:the\s+)?(?:van\s+|patrol\s+|car\s+|vehicle\s+)?door|walking|approaching|escort|handcuff|cuffing|parking\s+lot|sidewalk|roadside|establishing/i.test(obsText)
-          && !/arguing\s+that|explains\s+what|debating|heated\s+argument|lecture/i.test(obsText);
+        const roleText = String(b.narrativeRole || '');
+        const fnText = String(ab.narratorFunction || b.narratorFunction || '');
+        const overlapsCommentaryOp = scopeCommentaryOps.some(op =>
+          Math.min(e, num(op.sourceEndSec)) - Math.max(s, num(op.sourceStartSec)) >= Math.min(2.0, len * 0.5)
+        );
+        const isSetupBridgeOrClosingRole = b.chronologyMode === 'rewind'
+          || /^(setup|rewind_context|context|bridge|transition|button|resolution|aftermath)$/i.test(roleText)
+          || /^(CONTEXT|SETUP|BRIDGE|CAUSAL_BRIDGE|CLOSING|PAYOFF)$/i.test(fnText);
+        const isPhysicalOrTransitionBroll = (
+          overlapsCommentaryOp
+          || isSetupBridgeOrClosingRole
+          || /waveform|911\s+audio|dispatch\s+screen|cruiser|patrol|transport\s+van|open\s+door|shuts?\b|latch|clos(?:es?|ing)\s+(?:the\s+)?(?:van\s+|patrol\s+|car\s+|vehicle\s+)?door|walking|approaching|escort|handcuff|cuffing|parking\s+lot|sidewalk|roadside|establishing|standing\s+at|window|gas\s+station|booking|station|counter|paperwork|jeep|vehicle/i.test(obsText)
+        ) && !/arguing\s+that|explains\s+what|debating|heated\s+argument|lecture/i.test(obsText);
         const totalSpokenWords = activeCues.reduce((sum, c) => sum + (Number(c.words) || 0), 0);
         const isHeavySubstantiveDialogue = !isPhysicalOrTransitionBroll
           && activeCues.length >= 2
@@ -606,7 +618,9 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
           && (dialogueSec / len >= 0.48);
         if (isHeavySubstantiveDialogue || isExplicitVoiceoverOnlyEndingConflict) {
           const firstCue = activeCues[0];
-          const nearbyClean = cleanWindows
+          const preferredClean = cleanWindows.filter(w => w.durationSec >= 4.5);
+          const candidateClean = preferredClean.length ? preferredClean : cleanWindows.filter(w => w.durationSec >= 3.0);
+          const nearbyClean = [...candidateClean]
             .sort((w1, w2) => Math.abs(w1.sourceStartSec - s) - Math.abs(w2.sourceStartSec - s))
             .slice(0, 3)
             .map(w => `${w.sourceStartSec}-${w.sourceEndSec}s (${w.durationSec}s)`)
@@ -800,7 +814,7 @@ function narrativePlanViolations(spine, beats, scope, { narrationEnabled = true,
   }
   for (const nb of narratedBlocks) {
     const isEnding = (nb === blocks[blocks.length - 1] || nb.narratorFunction === 'CLOSING' || nb.narratorFunction === 'PAYOFF');
-    const minDur = isEnding ? 3.8 : 4.5;
+    const minDur = 3.0;
     const dur = (nb.beatIds || []).reduce((sum, id) => {
       const b = beatMap.get(id);
       return sum + (b ? Math.max(0, num(b.sourceEndSec) - num(b.sourceStartSec)) : 0);

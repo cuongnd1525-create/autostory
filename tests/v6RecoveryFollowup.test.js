@@ -1098,3 +1098,92 @@ test('Stage A (15): Climax Flashpoint Hook + Post-Hook Case-File Rewind Intro + 
   assert.ok(bridgePayload.sourceContext.events.some(e => e.id === 'evt_warnings'), 'Mid-story bridge should include omitted evt_warnings in gap');
   assert.ok(bridgePayload.sourceContext.events.some(e => e.id === 'evt_sergeant'), 'Mid-story bridge should include omitted evt_sergeant in gap');
 });
+
+test('Stage A (16): Resolves NARRATED_BLOCK_ACTIVE_DIALOGUE <-> NARRATIVE_PLAN_INCONSISTENT ping-pong on post-hook rewind intro and 3.0s clean B-roll windows', () => {
+  const cues = [
+    { startSec: 227.0, endSec: 230.2, text: "Okay. All right, we'll look for this after you step out." },
+    { startSec: 230.3, endSec: 233.5, text: 'I need you to step out of the vehicle right now for me.' },
+    { startSec: 241.0, endSec: 247.5, text: 'Under Pennsylvania versus Mimms I can order you out of the car anytime.' }
+  ];
+  const scope = {
+    liveActionEndSec: 1275.02,
+    commentaryOpportunities: [
+      { sourceStartSec: 227, sourceEndSec: 240, editorialAngle: 'Post-hook case setup' },
+      { sourceStartSec: 500, sourceEndSec: 511, editorialAngle: 'Escalation bridge' },
+      { sourceStartSec: 930, sourceEndSec: 940, editorialAngle: 'Closing takeaway' }
+    ],
+    candidateEndingEvents: [{ sourceStartSec: 881, sourceEndSec: 940 }]
+  };
+  const reel = {
+    ranges: [
+      { scopeWindowId: 'win_refusal', sourceStartSec: 227, sourceEndSec: 301, windowStartSec: 227, windowEndSec: 301 },
+      { scopeWindowId: 'win_breach', sourceStartSec: 500, sourceEndSec: 641, windowStartSec: 500, windowEndSec: 641 },
+      { scopeWindowId: 'win_end', sourceStartSec: 881, sourceEndSec: 940, windowStartSec: 881, windowEndSec: 940 }
+    ]
+  };
+  const makeSpineWithBeat02 = (startSec, endSec) => ({
+    openingStrategy: {
+      chronologicalOption: 'Start at 227s',
+      conflictTeaserOption: 'Open at 506s ultimatum',
+      chosen: 'conflict_teaser_rewind'
+    },
+    narrativePlan: {
+      plannedNarratedMoments: [
+        { targetBlockId: 'blk_02', role: 'CONTEXT' },
+        { targetBlockId: 'blk_04', role: 'CAUSAL_BRIDGE' },
+        { targetBlockId: 'blk_06', role: 'CLOSING' }
+      ]
+    },
+    beats: [
+      { beatId: 'beat_01', sourceStartSec: 506.13, sourceEndSec: 514, chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook', observedInFootage: 'Sergeant warns window will be broken; driver dares him.', whyNecessaryNow: 'hook' },
+      { beatId: 'beat_02', sourceStartSec: startSec, sourceEndSec: endSec, chronologyMode: 'rewind', narrativeRole: 'setup', scopeMembership: 'core', observedInFootage: 'Officer Von Seem standing at green Jeep window ordering the driver to step out.', whyNecessaryNow: 'rewind intro' },
+      { beatId: 'beat_03', sourceStartSec: 241, sourceEndSec: 259, chronologyMode: 'chronological', narrativeRole: 'confrontation', scopeMembership: 'core', observedInFootage: 'Officer cites Pennsylvania v. Mimms', whyNecessaryNow: 'escalation' },
+      { beatId: 'beat_04', sourceStartSec: 500, sourceEndSec: 506, chronologyMode: 'chronological', narrativeRole: 'escalation', scopeMembership: 'core', observedInFootage: 'Sergeant approaches driver side door', whyNecessaryNow: 'bridge' },
+      { beatId: 'beat_05', sourceStartSec: 581, sourceEndSec: 598, chronologyMode: 'chronological', narrativeRole: 'climax', scopeMembership: 'core', observedInFootage: 'Officers shatter window and extract driver', whyNecessaryNow: 'climax' },
+      { beatId: 'beat_06', sourceStartSec: 881, sourceEndSec: 895, chronologyMode: 'chronological', narrativeRole: 'payoff', scopeMembership: 'ending', observedInFootage: 'Officer announces 12-month suspension', whyNecessaryNow: 'payoff' },
+      { beatId: 'beat_07', sourceStartSec: 931, sourceEndSec: 937, chronologyMode: 'chronological', narrativeRole: 'button', scopeMembership: 'ending', observedInFootage: 'Driver receives paperwork at station counter', whyNecessaryNow: 'closing' }
+    ],
+    deliveryBlocks: [
+      { blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['beat_01'], ownershipReason: 'Raw hook', evidenceFunction: 'CONFLICT', footageFunction: 'CONFLICT', viewerStateChanges: 1, blockSummary: 'Hook' },
+      { blockId: 'blk_02', mode: 'narrated_story', beatIds: ['beat_02'], ownershipReason: 'Narrator rewind', narratorFunction: 'CONTEXT', sourceAudioTreatment: 'voiceover_with_ambient', narrationIntent: 'Case rewind intro', commentaryValue: 'Context', viewerKnows: 'Hook', viewerWantsToKnow: 'Why', viewerStateChanges: 1, blockSummary: 'Intro' },
+      { blockId: 'blk_03', mode: 'raw_evidence', beatIds: ['beat_03'], ownershipReason: 'Raw refusal', evidenceFunction: 'CONFLICT', footageFunction: 'CONFLICT', viewerStateChanges: 1, blockSummary: 'Refusal' },
+      { blockId: 'blk_04', mode: 'narrated_story', beatIds: ['beat_04'], ownershipReason: 'Narrator bridge', narratorFunction: 'CAUSAL_BRIDGE', sourceAudioTreatment: 'voiceover_with_ambient', narrationIntent: 'Escalation bridge', commentaryValue: 'Bridge', viewerKnows: 'Refusal', viewerWantsToKnow: 'Breach', viewerStateChanges: 1, blockSummary: 'Bridge' },
+      { blockId: 'blk_05', mode: 'raw_evidence', beatIds: ['beat_05', 'beat_06'], ownershipReason: 'Raw climax and payoff', evidenceFunction: 'PAYOFF', footageFunction: 'PAYOFF', viewerStateChanges: 2, blockSummary: 'Breach and payoff' },
+      { blockId: 'blk_06', mode: 'narrated_story', beatIds: ['beat_07'], ownershipReason: 'Narrator closing', narratorFunction: 'CLOSING', sourceAudioTreatment: 'voiceover_with_ambient', narrationIntent: 'Closing takeaway', commentaryValue: 'Closing', viewerKnows: 'Suspended', viewerWantsToKnow: 'Worth it?', viewerStateChanges: 1, blockSummary: 'Closing' }
+    ],
+    transitionChecks: [
+      { fromBlockId: 'blk_01', toBlockId: 'blk_02', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Rewind intro' },
+      { fromBlockId: 'blk_02', toBlockId: 'blk_03', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Handoff to officer' },
+      { fromBlockId: 'blk_03', toBlockId: 'blk_04', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Bridge to sergeant' },
+      { fromBlockId: 'blk_04', toBlockId: 'blk_05', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Handoff to breach' },
+      { fromBlockId: 'blk_05', toBlockId: 'blk_06', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Closing synthesis' }
+    ]
+  });
+
+  // 16A: Attempt 0 spine with beat_02 at 227-233s (6.0s rewind setup over ducked procedural chatter) passes cleanly
+  const attempt0Res = Director.validateDirectorEdl(makeSpineWithBeat02(227, 233), scope, {
+    durationSec: 1275.02,
+    targetDurationMinSec: 60,
+    targetDurationMaxSec: 90,
+    reel,
+    narrationEnabled: true,
+    requireDeliveryBlocks: true,
+    cues,
+    liveActionEndSec: 1275.02
+  });
+  assert.equal(attempt0Res.valid, true, `Expected Attempt 0 (227-233s) to pass, got ${JSON.stringify(attempt0Res.violations)}`);
+
+  // 16B: Attempt 1 (fix1) spine with beat_02 at 237.97-240.97s (3.0s clean B-roll window) ALSO passes cleanly
+  const attempt1Res = Director.validateDirectorEdl(makeSpineWithBeat02(237.97, 240.97), scope, {
+    durationSec: 1275.02,
+    targetDurationMinSec: 60,
+    targetDurationMaxSec: 90,
+    reel,
+    narrationEnabled: true,
+    requireDeliveryBlocks: true,
+    cues,
+    liveActionEndSec: 1275.02
+  });
+  assert.equal(attempt1Res.valid, true, `Expected Attempt 1 (237.97-240.97s, 3.0s) to pass, got ${JSON.stringify(attempt1Res.violations)}`);
+});
+
