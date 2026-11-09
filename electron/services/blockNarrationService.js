@@ -36,17 +36,23 @@ const schema = object({ accessGranted: { type: 'boolean' }, narrations: list(blo
 
 const INSTRUCTION = `PASS 3B — BLOCK NARRATION. Write narration ONLY for the requested narrated_story blocks in input.blocks.
 Each block is ONE continuous narration passage that plays across ALL of the block's consecutive beats; the visual cuts inside the block stay, the voice does not restart at them. Write ONE coherent passage per block (it may contain several natural sentences) that serves the block's storyFunction, narratorFunction, commentaryValue and narrationIntent, carrying the viewer from viewerKnows / viewerStateEntering to viewerWantsToKnow / viewerStateLeaving.
-You are an American True Crime Storyteller and Commentary Editor. Narrator owns comprehension, compression, orientation, causal connection, behavioral/statutory commentary (COMMENTARY / INTERPRETATION), re-hook curiosity (REHOOK / ANTICIPATION), escalation framing and closing synthesis:
-- Function-Specific Editorial Value (NEVER flat play-by-play of visible action):
-  - CONTEXT / CAUSAL_BRIDGE: Compress procedural dead time and orient who, why, and what changed without describing obvious movement already visible on screen.
+You are an American True Crime Storyteller and Commentary Editor. The narrator is the SCENE-TRANSITION BRIDGE and CASE STORYTELLER—NEVER a caption reader describing what is visibly happening on screen:
+- STRICT ANTI-PLAY-BY-PLAY RULE (NEVER DESCRIBE VISIBLE SCREEN ACTION):
+  - input.blocks[].beats[].observedInFootage is shown ONLY so you know what B-roll is on screen and DO NOT describe it.
+  - NEVER narrate literal camera movement or physical action visible on screen (e.g., NEVER write "An officer pulls into a gas station" just because the B-roll shows a cruiser pulling in, and NEVER write "Officers walk her to the patrol car" while that walk is on screen).
+  - Instead, treat the visual B-roll purely as background wallpaper while your voice bridges FROM precedingRawBlock TO followingRawBlock.
+- Function-Specific Editorial Value (Scene-Transition Bridges & Case Setup):
+  - POST-HOOK CASE-FILE REWIND INTRO (CONTEXT right after the opening hook): Right after the opening climax flashpoint throws the viewer into peak tension, step in to rewind the timeline and introduce the case background—how, when, where, and why the incident began (what driving behavior, dispatch call, or violation triggered the stop and who responded)—and hand off directly into the first raw exchange in followingRawBlock.
+  - SCENE-TRANSITION BRIDGE (CAUSAL_BRIDGE / TIME_JUMP / ESCALATION): Connect the scene that just ended (precedingRawBlock) to the next scene (followingRawBlock) by summarizing what happened across the omitted time or location shift (using sourceContext.events) and framing what is about to be tested or challenged next.
   - COMMENTARY / INTERPRETATION: Surface the core contradiction between a subject's assumptions/claims and the statutory or operational reality officers are acting on, grounded strictly in input.blocks[].sourceContext.
-  - ANTICIPATION / REHOOK / ESCALATION: Pivot the story into its next phase by planting a concrete curiosity gap before the upcoming raw evidence—tell the viewer what is about to be tested or challenged without giving away the answer.
+  - ANTICIPATION / REHOOK: Pivot the story into its next phase (such as moving from roadside arrest to station booking or supervisor confrontation) by planting a concrete curiosity gap before the upcoming raw evidence without giving away the answer.
   - PAYOFF / CLOSING: Connect the inciting decision to the concrete legal consequence and leave the viewer with a balanced, comment-provoking takeaway question.
 - Grounded Contrast Without Insults:
-  - Good: "Instead of accepting assistance with her disabled car, she walks away from the scene—leaving deputies with an obstructing vehicle and no cooperative driver."
-  - Good: "Minutes after refusing help at the roadside, she dials 911 to report the deputy's demeanor—using an emergency dispatch line over a dispute about tone."
-  - Good (Re-hook / Interpretation before van confrontation): "Once inside the transport van, she demands a supervisor, convinced that her words alone could not cross a criminal line."
-  - BAD (FORBIDDEN): Never use subjective, derogatory labels or emotional insults like "pure entitlement", "arrogant attitude", "stupid", "idiot", or "acting like a brat". Never state unverified legal conclusions as fact.
+  - Good (Post-Hook Case Intro): "To understand how this traffic stop ended in shattered glass, we go back to earlier that night—when Officer Von Seem spotted a vehicle swerving across the center line and initiated a stop."
+  - Good (Scene-Transition Bridge): "Instead of accepting assistance with her disabled car, she walks away from the scene—leaving deputies with an obstructing vehicle and no cooperative driver."
+  - Good (Time-Jump / Escalation Bridge): "Minutes after refusing help at the roadside, she dials 911 to report the deputy's demeanor—using an emergency dispatch line over a dispute about tone."
+  - Good (Re-hook / Location Bridge before custody confrontation): "Once inside the transport van, she demands a supervisor, convinced that her words alone could not cross a criminal line."
+  - BAD (FORBIDDEN): Never use subjective, derogatory labels or emotional insults like "pure entitlement", "arrogant attitude", "stupid", "idiot", or "acting like a brat". Never state unverified legal conclusions as fact, and never describe literal on-screen B-roll movement.
 - Natural Spoken Cadence & Breath Pauses: Write 1-2 crisp, spoken American English sentences per block with deliberate clause breaks (commas, em-dashes, periods) so the voice delivers each thought with natural pauses, weight and authority.
 - Clean Handoff & Punchline Protection (Narrator-to-Evidence Reveal Contract):
   - Inspect input.blocks[].heldBackForFootage and input.blocks[].mustWithholdUpcomingQuotes.
@@ -70,14 +76,34 @@ function cadenceForNarratorFunction(fn, isClosing = false) {
   return { deliveryProfile: 'natural', speechRateMultiplier: 1.0 };
 }
 
-function sourceContext(model, ranges, { isClosingBlock = false } = {}) {
+function sourceContext(model, ranges, { isClosingBlock = false, isOpeningContextBlock = false, bridgeGapRange = null, storyScope = null } = {}) {
   const inside = (s, e) => ranges.some(([a, z]) => overlaps(num(s), num(e), a, z));
   const allEvents = Array.isArray(model?.events) ? model.events : [];
   let matchedEvents = allEvents.filter(e => inside(e.startSec, e.endSec));
+  const ids = new Set(matchedEvents.map(e => e.id));
+  const addEvent = e => {
+    if (e && e.id && !ids.has(e.id)) {
+      matchedEvents.push(e);
+      ids.add(e.id);
+    }
+  };
+  if (isOpeningContextBlock && allEvents.length) {
+    // Provide the earliest inciting/approach events so the post-hook narrator can
+    // introduce how/when/where the case began instead of describing the B-roll clip.
+    for (const e of allEvents.filter(ev => !['teaser', 'commentary'].includes(ev.type)).slice(0, 3)) {
+      addEvent(e);
+    }
+  }
+  if (Array.isArray(bridgeGapRange) && Number.isFinite(bridgeGapRange[0]) && Number.isFinite(bridgeGapRange[1]) && bridgeGapRange[1] > bridgeGapRange[0]) {
+    // Include omitted events between precedingRawBlock and followingRawBlock so the
+    // narrator can bridge what transpired across the cut time or location shift.
+    for (const e of allEvents) {
+      if (overlaps(num(e.startSec), num(e.endSec), bridgeGapRange[0], bridgeGapRange[1])) addEvent(e);
+    }
+  }
   if (isClosingBlock && allEvents.length) {
-    const ids = new Set(matchedEvents.map(e => e.id));
     for (const e of [allEvents[0], allEvents[1], ...allEvents.slice(-3)]) {
-      if (e && !ids.has(e.id)) { matchedEvents.push(e); ids.add(e.id); }
+      addEvent(e);
     }
   }
   if (!matchedEvents.length && allEvents.length) {
@@ -85,11 +111,23 @@ function sourceContext(model, ranges, { isClosingBlock = false } = {}) {
     matchedEvents = allEvents.filter(e => wid.some(([a, z]) => overlaps(num(e.startSec), num(e.endSec), a, z)));
     if (!matchedEvents.length) matchedEvents = allEvents.slice(0, 6);
   }
+  matchedEvents.sort((a, b) => num(a.startSec) - num(b.startSec));
+  const baseFacts = (model?.facts || []).map(f => ({ id: f.id, text: f.text || f.summary || '', epistemic: f.epistemic || 'known_fact' }));
+  if (storyScope?.scopeStartState && isOpeningContextBlock) {
+    baseFacts.push({ id: 'scope_start_state', text: storyScope.scopeStartState, epistemic: 'known_fact' });
+  }
+  if (Array.isArray(storyScope?.allowedSupportingContext)) {
+    storyScope.allowedSupportingContext.forEach((ctx, idx) => {
+      if (ctx?.description) {
+        baseFacts.push({ id: `support_ctx_${idx + 1}`, text: ctx.description, epistemic: 'known_fact' });
+      }
+    });
+  }
   return {
     events: matchedEvents.map(e => ({ id: e.id, startSec: e.startSec, endSec: e.endSec, summary: e.summary, isReveal: !!e.isReveal })),
     quotes: (model?.quotes || []).filter(q => inside(q.startSec, q.endSec))
       .map(q => ({ id: q.id, speaker: q.speaker, startSec: q.startSec, endSec: q.endSec, text: q.text, epistemic: q.epistemic })),
-    facts: (model?.facts || []).map(f => ({ id: f.id, text: f.text || f.summary || '', epistemic: f.epistemic || 'known_fact' }))
+    facts: baseFacts
   };
 }
 
@@ -106,12 +144,18 @@ const rawNeighbour = (timeline, k, dir) => {
 };
 
 // Everything the narration model needs for one block (Phase 3 contract).
-function blockPayload(timeline, k, model, wordsPerSecond) {
+function blockPayload(timeline, k, model, wordsPerSecond, storyScope = null) {
   const blk = timeline[k];
   const isClosingBlock = k === timeline.length - 1;
+  const isOpeningContextBlock = k <= 1 || blk.narratorFunction === 'CONTEXT';
   const prev = rawNeighbour(timeline, k, -1), next = rawNeighbour(timeline, k, +1);
   const ranges = [...blk.beats, ...(prev?.beats || []), ...(next?.beats || [])].map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
   const nextRanges = (next?.beats || []).map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
+  const prevEndSec = prev?.beats?.length ? num(prev.beats[prev.beats.length - 1].sourceEndSec) : NaN;
+  const nextStartSec = next?.beats?.length ? num(next.beats[0].sourceStartSec) : NaN;
+  const bridgeGapRange = (!isOpeningContextBlock && Number.isFinite(prevEndSec) && Number.isFinite(nextStartSec) && nextStartSec > prevEndSec)
+    ? [prevEndSec, nextStartSec]
+    : null;
   const mustWithholdUpcomingQuotes = (model?.quotes || [])
     .filter(q => nextRanges.some(([a, z]) => overlaps(num(q.startSec), num(q.endSec), a, z)))
     .map(q => ({ speaker: q.speaker, text: q.text }));
@@ -130,7 +174,7 @@ function blockPayload(timeline, k, model, wordsPerSecond) {
     viewerStateLeaving: blk.viewerWantsToKnow || blk.beats[blk.beats.length - 1]?.viewerStateAfter || '',
     precedingRawBlock: prev, followingRawBlock: next,
     mustWithholdUpcomingQuotes,
-    sourceContext: sourceContext(model, ranges, { isClosingBlock }),
+    sourceContext: sourceContext(model, ranges, { isClosingBlock, isOpeningContextBlock, bridgeGapRange, storyScope }),
     blockVisualDurationSec: blk.durationSec,
     measuredWordsPerSecond: wordsPerSecond,
     safeWords: Delivery.blockSafeWords(blk.durationSec, wordsPerSecond)
@@ -231,7 +275,7 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   if (!narrated.length) return { blocks: timeline, audit };
   if (engine.config?.narration?.enabled === false) throw repairRequest(narrated[0].b.blockId, 'NARRATION_DISABLED', 'narration is disabled for this project.');
 
-  const payloads = new Map(narrated.map(({ b, k }) => [b.blockId, blockPayload(timeline, k, model, wps)]));
+  const payloads = new Map(narrated.map(({ b, k }) => [b.blockId, blockPayload(timeline, k, model, wps, story?.storyScope || null)]));
   const texts = await askBlockNarration(engine, story, [...payloads.values()], evidence);
   const measured = new Map();
 

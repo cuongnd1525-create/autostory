@@ -1043,5 +1043,58 @@ test('Stage A (14): Resolves 3-way Catch-22 between NARRATED_BLOCK_ACTIVE_DIALOG
   assert.equal(clampedVal.valid, true, `Expected clamped padding overhang spine to pass validation, got ${JSON.stringify(clampedVal.violations)}`);
 });
 
+test('Stage A (15): Climax Flashpoint Hook + Post-Hook Case-File Rewind Intro + Scene-Transition Bridge payload enrichment', () => {
+  const BlockNarration = require('../electron/services/blockNarrationService');
+  const Delivery = require('../electron/services/deliveryBlockService');
+  const Scope = require('../electron/services/storyScopeService');
 
+  assert.match(Scope.instruction, /IN-MEDIAS-RES CLIMAX \/ PEAK-ESCALATION FLASHPOINT HOOK/);
+  assert.match(Director.instruction, /STRICT ANTI-PLAY-BY-PLAY RULE/);
+  assert.match(BlockNarration.INSTRUCTION, /POST-HOOK CASE-FILE REWIND INTRO/);
+  assert.match(BlockNarration.INSTRUCTION, /SCENE-TRANSITION BRIDGE/);
 
+  const model = {
+    events: [
+      { id: 'evt_preview', startSec: 0, endSec: 11, type: 'teaser', summary: 'Teaser intro' },
+      { id: 'evt_dashcam', startSec: 23, endSec: 68, type: 'traffic_stop', summary: 'Dashcam captures vehicle swerving across center line into gas station.' },
+      { id: 'evt_approach', startSec: 68, endSec: 119, type: 'interrogation', summary: 'Officer approaches driver at Casey gas station.' },
+      { id: 'evt_refusal', startSec: 227, endSec: 301, type: 'verbal_standoff', summary: 'Driver refuses lawful order to step out.' },
+      { id: 'evt_warnings', startSec: 323, endSec: 415, type: 'verbal_standoff', summary: 'Officer warns window will be smashed.' },
+      { id: 'evt_sergeant', startSec: 416, endSec: 510, type: 'negotiation', summary: 'Sergeant arrives and gives final warning.' },
+      { id: 'evt_breach', startSec: 581, endSec: 606, type: 'physical_breach', summary: 'Officers shatter window and extract driver.' }
+    ],
+    quotes: [],
+    facts: []
+  };
+  const storyScope = {
+    scopeStartState: 'Officer Von Seem stops a swerving Jeep at Casey gas station at 2:22 AM.',
+    allowedSupportingContext: [
+      { description: 'Dashcam shows the Jeep swerving across the center line before the stop.', sourceStartSec: 23, sourceEndSec: 68, treatment: 'narration_only' }
+    ]
+  };
+  const beats = [
+    { beatId: 'b1', sourceStartSec: 581, sourceEndSec: 589, narrativeRole: 'teaser_conflict', observedInFootage: 'Baton shatters window' },
+    { beatId: 'b2', sourceStartSec: 68, sourceEndSec: 74, narrativeRole: 'rewind_context', observedInFootage: 'Cruiser pulls into gas station' },
+    { beatId: 'b3', sourceStartSec: 240, sourceEndSec: 297, narrativeRole: 'confrontation', observedInFootage: 'Driver says I do not have to' },
+    { beatId: 'b4', sourceStartSec: 365, sourceEndSec: 372.5, narrativeRole: 'escalation', observedInFootage: 'Silent roadside B-roll' },
+    { beatId: 'b5', sourceStartSec: 581, sourceEndSec: 600, narrativeRole: 'climax', observedInFootage: 'Officers extract driver' }
+  ];
+  const blocks = [
+    { blockId: 'blk_hook', mode: 'raw_evidence', beatIds: ['b1'] },
+    { blockId: 'blk_intro', mode: 'narrated_story', beatIds: ['b2'], narratorFunction: 'CONTEXT' },
+    { blockId: 'blk_refusal', mode: 'raw_evidence', beatIds: ['b3'] },
+    { blockId: 'blk_bridge', mode: 'narrated_story', beatIds: ['b4'], narratorFunction: 'CAUSAL_BRIDGE' },
+    { blockId: 'blk_climax', mode: 'raw_evidence', beatIds: ['b5'] }
+  ];
+  const timeline = Delivery.blockTimeline(beats, blocks);
+
+  // Post-hook CONTEXT block receives early inciting events (evt_dashcam) + scopeStartState + allowedSupportingContext
+  const introPayload = BlockNarration.blockPayload(timeline, 1, model, 2.5, storyScope);
+  assert.ok(introPayload.sourceContext.events.some(e => e.id === 'evt_dashcam'), 'Post-hook intro should include early inciting dashcam event');
+  assert.ok(introPayload.sourceContext.facts.some(f => f.id === 'scope_start_state'), 'Post-hook intro should include scopeStartState fact');
+
+  // Mid-story bridge block (297s -> 581s) receives omitted events in the gap (evt_warnings, evt_sergeant)
+  const bridgePayload = BlockNarration.blockPayload(timeline, 3, model, 2.5, storyScope);
+  assert.ok(bridgePayload.sourceContext.events.some(e => e.id === 'evt_warnings'), 'Mid-story bridge should include omitted evt_warnings in gap');
+  assert.ok(bridgePayload.sourceContext.events.some(e => e.id === 'evt_sergeant'), 'Mid-story bridge should include omitted evt_sergeant in gap');
+});
