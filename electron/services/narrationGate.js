@@ -99,7 +99,7 @@ function inspect(beats = [], model = {}) {
   const quoteById = new Map((model.quotes || []).map(q => [q.id, q]));
   const eventById = new Map((model.events || []).map(e => [e.id, e]));
   const factIds = new Set((model.facts || []).map(f => f.id));
-  const refExists = id => quoteById.has(id) || eventById.has(id) || factIds.has(id);
+  const refExists = id => quoteById.has(id) || eventById.has(id) || factIds.has(id) || /^scope_(?:start_state|support_\d+)$/.test(String(id || ''));
 
   // Order index for spoiler detection.
   const orderOf = new Map();

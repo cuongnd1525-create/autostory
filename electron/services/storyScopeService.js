@@ -119,7 +119,11 @@ PRINCIPLES
 2. CAPTURE THE FULL CAUSAL ARC OF ONE CONFLICT (ACTION + VERBAL/LEGAL RECKONING): Prefer one coherent conflict arc over a tour of unrelated branches. However, do NOT artificially split one conflict into a "street action/detention scope" and a separate "post-detention justification/supervisor verdict scope" when the later exchange directly answers the central viewer question, exposes the subject's sharpest self-justification or contradiction quote (high editorialValue), or delivers an authoritative verbal shutdown / legal charge outcome. Include those high-value later moments as separate logical scopeWindows (with purposes hook_material, core, or ending_material) inside the SAME Story Scope and widen explicitScopeBoundary.endSec to cover them, while leaving routine procedural transport/waiting gaps out of scopeWindows so the packed reel stays compact. Only place genuinely unrelated branches (a different subject, an unrelated dispute, or repetitive low-value small talk that adds no thesis contradiction or payoff) into outOfScopeBranches.
 3. When the story needs a brief fact that lives outside the scope windows (background, who someone is, a final court/charge disposition), put it in allowedSupportingContext with treatment='narration_only'. It will be delivered as one narrated sentence over in-scope footage, not by cutting to it. Use treatment='footage' only when the picture itself is causally necessary.
 4. The requested duration (input.targetDurationMinSec..input.targetDurationMaxSec) must be supportable by in-scope footage. scopeWindows are the logical source regions the editor may cut from; list as many as the conflict needs. They must hold enough usable footage for the duration. The system packs them into a media reel for the editor and compacts broad windows around the model's events and quotes, but the packed reel must fit input.maxScopeReelSec, so keep the windows to the causal spine of ONE conflict.
-5. AUDITION HOOK CANDIDATES ACROSS THE FULL SCOPE (hookCandidates): List 2-4 distinct hookCandidates (windowId + exact sub-range + hookType + curiosityQuestion) explicitly comparing: (a) an OPENING BEHAVIORAL-FRICTION / ABSURD-EXCUSE HOOK from the initial encounter (where the subject's bizarre repetition, entitled refusal to cooperate, or immediate clash with an officer trying to help creates instant irritation and curiosity while allowing the story to flow forward chronologically without a disorienting rewind), and (b) an IN-MEDIAS-RES CLIMAX / PEAK-ESCALATION FLASHPOINT HOOK from inside the scope (throwing the cold viewer straight into the highest-stakes ultimatum, defiant dare, or explosive physical breach/confrontation and cutting at the cliffhanger peak so the viewer urgently wants to know what led to that moment, while keeping ONLY the final post-climax legal disposition or station twist in mustWithhold — never lock the roadside climax flashpoint inside mustWithhold when it is the strongest cold-open hook). Never pick a hook candidate that merely announces the final criminal charge or outcome without friction. Also include early establishing/approach footage inside the first core scopeWindow so the Editorial Director has B-roll picture available for post-hook narrator case setup.
+5. AUDITION HOOK CANDIDATES ACROSS THE FULL SCOPE (hookCandidates): List 2-4 distinct hookCandidates (windowId + exact sub-range + hookType + curiosityQuestion) explicitly supporting an IN-MEDIAS-RES CLIMAX / PEAK-ESCALATION FLASHPOINT HOOK, and specifically a 2-PART SMASH-CUT COLD OPEN when the conflict features a verbal ultimatum/dare leading to a physical or legal climax:
+   - Part 1 ('defiant_dare_trigger' / 'ultimatum_trigger', ~2.0-3.5s): the exact tight sub-range of the sharpest verbal ultimatum, defiant dare, or bold contradiction right before the climax (trimmed tightly to the punchline itself, skipping any slow procedural preamble or pauses).
+   - Part 2 ('kinetic_climax_flashpoint', ~2.5-4.5s): the exact sub-range of the explosive physical climax, tactical breach, takedown, struggle, or decisive arrest shock that answers that dare, cut right at the peak impact before the aftermath settles.
+   - You may also list an opening behavioral-friction hook candidate from the initial encounter for comparison, and MUST include early establishing/approach footage inside the first core scopeWindow so the Editorial Director has B-roll picture available for the post-hook narrator case-file rewind intro.
+   - STRICT mustWithhold RULE: mustWithhold is ONLY for the final post-climax legal disposition, sentencing, or station twist at the very end of the story. NEVER put the physical climax, breach, takedown, or arrest flashpoint into mustWithhold! Ensure the scopeWindow containing the climax includes 'hook_material' in its purposes array (['core', 'hook_material']).
 6. candidateEndingEvents must lie inside the scope windows and must deliver a genuine consequence or authoritative verbal/legal shutdown of the central conflict (never an unanswered question or a mid-argument pause). When a later supervisor rebuttal, charge explanation, or legal outcome resolves the central conflict more decisively than the moment handcuffs click, include its window as ending_material and list it in candidateEndingEvents. Extend the ending_material window through the physical conclusion of the live encounter (such as the suspect's final reaction and the transport door closing/latching up to input.liveActionEndSec), giving the editor clean physical action footage to conclude the scene. CRITICAL: When input.liveActionEndSec < input.model.durationSec (meaning post-incident outro/recap graphics, split-screen end cards, sentencing cards, or channel promos begin after input.liveActionEndSec), NEVER place or extend any scopeWindow, causalSpine node, hookCandidate, or candidateEndingEvent past input.liveActionEndSec. If a post-incident disposition fact from the outro is helpful, list it ONLY in allowedSupportingContext with treatment='narration_only'.
 7. IDENTIFY NARRATOR-LED COMMENTARY & SCENE-TRANSITION BRIDGE OPPORTUNITIES (commentaryOpportunities): List 3-6 source moments inside the scope where a true-crime narrator acts as a connective bridge between scenes rather than describing visible screen action: (a) a POST-HOOK CASE-FILE REWIND INTRO right after the cold open that rewinds to introduce when, where, and how the incident began before handing off to the first raw exchange, (b) SCENE-TRANSITION BRIDGES across omitted time or location shifts (e.g., compressing minutes of roadside refusal into the arrival of a supervisor/tactical breach, or bridging from the roadside arrest into the police station booking room), (c) building anticipation for an upcoming high-value quote without spoiling its punchline, (d) delivering a mid-story REHOOK / interpretation when the encounter shifts from physical action to legal consequence, and (e) synthesizing the central contradiction at the close.
 
@@ -353,27 +357,40 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
       }).filter(Boolean)
     : undefined;
 
+  const climaxSpineNodes = cappedSpine.filter(n => /climax|breach|takedown|window_break|extraction|force|struggle/i.test(`${n.role || ''} ${n.eventId || ''} ${n.whyInScope || ''}`));
+  const enrichedWindows = cappedWindows.map(w => {
+    const coversClimax = climaxSpineNodes.some(n => overlaps(w.startSec, w.endSec, num(n.sourceStartSec), num(n.sourceEndSec)) > 0.5);
+    if (coversClimax && Array.isArray(w.purposes) && !w.purposes.includes('hook_material')) {
+      return { ...w, purposes: [...w.purposes, 'hook_material'] };
+    }
+    return w;
+  });
+  const normalizedMustWithhold = Array.isArray(scope.mustWithhold)
+    ? scope.mustWithhold.filter(item => !/\b(cold\s+open|teaser)\b/i.test(String(item || '')))
+    : scope.mustWithhold;
+
   const resolvedBoundaryMeta = endingBoundary || scope?.endingBoundary || model?.endingBoundary || model?.liveActionBoundary || null;
   const normalizedScope = {
     ...scope,
+    ...(normalizedMustWithhold !== undefined ? { mustWithhold: normalizedMustWithhold } : {}),
     explicitScopeBoundary: cappedExplicitBoundary,
     causalSpine: cappedSpine,
     candidateEndingEvents: cappedEndings,
-    scopeWindows: cappedWindows,
+    scopeWindows: enrichedWindows,
     ...(cappedHooks !== undefined ? { hookCandidates: cappedHooks } : {}),
     ...(normalizedCommentary ? { commentaryOpportunities: normalizedCommentary } : {}),
     ...(Number.isFinite(maxEndingSec) ? { liveActionEndSec: round2(maxEndingSec) } : {}),
     ...(resolvedBoundaryMeta ? { endingBoundary: resolvedBoundaryMeta } : {})
   };
   const reel = planScopeReel(normalizedScope, { durationSec: dur, paddingSec, maxScopeReelSec, model, maxReelFiles, liveActionEndSec: maxEndingSec, endingBoundary: resolvedBoundaryMeta });
-  const watchable = totalSec(mergeRanges(cappedWindows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
-  if (cappedWindows.length && watchable < targetDurationMinSec) {
+  const watchable = totalSec(mergeRanges(enrichedWindows.map(w => ({ startSec: w.startSec, endSec: w.endSec }))));
+  if (enrichedWindows.length && watchable < targetDurationMinSec) {
     add('SCOPE_FOOTAGE_INSUFFICIENT', `In-scope windows hold only ${round2(watchable)}s of usable live-action footage; the requested minimum duration is ${targetDurationMinSec}s. Widen the windows inside the same conflict.`);
   }
   if (reel.totalSec > maxScopeReelSec + TIME_EPS) {
     add('SCOPE_REEL_OVER_BUDGET', `The scope media reel would be ${reel.totalSec}s even after compacting broad windows around their events/quotes (logical footage ${reel.logicalFootageSec}s, ${paddingSec}s context padding); the budget is ${maxScopeReelSec}s. Tighten the windows to the causal spine of ONE conflict.`);
   }
-  return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: cappedWindows.length, merges: normalization.notes, liveActionEndSec: Number.isFinite(maxEndingSec) ? round2(maxEndingSec) : null } };
+  return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: enrichedWindows.length, merges: normalization.notes, liveActionEndSec: Number.isFinite(maxEndingSec) ? round2(maxEndingSec) : null } };
 }
 
 function validateSelectionShape(v) {
@@ -406,7 +423,10 @@ function modelForScope(model, liveActionEndSec = null) {
     })),
     quotes: (model.quotes || [])
       .filter(q => !(hasCap && Number(q.startSec) >= maxLive - 0.05))
-      .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: hasCap ? Math.min(Number(q.endSec), round2(maxLive)) : q.endSec, text: q.text, epistemic: q.epistemic, editorialValue: q.editorialValue }))
+      .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: hasCap ? Math.min(Number(q.endSec), round2(maxLive)) : q.endSec, text: q.text, epistemic: q.epistemic, editorialValue: q.editorialValue })),
+    ...(Array.isArray(model.audioEvents) && model.audioEvents.length ? {
+      audioEvents: model.audioEvents.filter(a => !(hasCap && Number(a.startSec ?? a.atSec ?? 0) >= maxLive - 0.05))
+    } : {})
   };
 }
 

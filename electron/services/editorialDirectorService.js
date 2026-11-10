@@ -180,8 +180,8 @@ DELIVERY: NARRATOR-LED TRUE CRIME COMMENTARY vs RAW EVIDENCE (NARRATOR <-> FOOTA
 - SOURCE FOOTAGE owns authentic proof, emotional confrontation, high-value quotes, character reveal, turning points, and real consequences (CONFLICT | REAL_EVIDENCE | REACTION | CHARACTER_REVEAL | CONSEQUENCE | TURNING_POINT | PAYOFF).
 - Never insert empty or generic filler voiceover merely to raise narrator seconds; every narrated_story block must answer in its plan/block fields: what the viewer already knows (viewerKnows), what curiosity question is now active (viewerWantsToKnow), what analytical/commentary insight the narrator adds (commentaryValue), and what raw quote or reveal is deliberately held back so the footage delivers the punchline (heldBackForFootage).
 - PACING MODE (input.pacingMode):
-  * When input.pacingMode is 'commentary_led' (default True Crime Storyteller style): organize the viewer journey dynamically around CLIMAX FLASHPOINT HOOK -> NARRATOR CASE-FILE REWIND INTRO -> EVIDENCE -> NARRATOR SCENE-TRANSITION BRIDGE -> NEW CONFLICT / CLIMAX -> NARRATOR LOCATION/PHASE BRIDGE -> CONSEQUENCE -> NARRATOR CLOSING SYNTHESIS. Do NOT leave a 30-40s uninterrupted wall of raw procedural footage spanning multiple story phases or jumping abruptly across locations (e.g. street arrest -> police station booking room) without a narrator transition bridge. Instead, connect distinct phases with purposeful narrated_story blocks (typically 4 to 5 substantive blocks of ~5.5-9.5s each across a 75-88s edit) over clean visual B-roll/action from input.visualOwnershipMap.cleanVisualBrollWindows:
-    1. CONTEXT / SETUP after the opening hook (Post-Hook Case-File Rewind Intro): right after throwing the viewer into the opening climax flashpoint, rewind to the start of the case and introduce when, where, and how the incident began (what driving behavior, dispatch call, or violation triggered the encounter) before handing off directly to the first raw dialogue clip (~5.5-8.5s).
+  * When input.pacingMode is 'commentary_led' (default True Crime Storyteller style): organize the viewer journey dynamically around 2-BEAT SMASH-CUT CLIMAX HOOK -> NARRATOR CASE-FILE REWIND INTRO -> EVIDENCE -> NARRATOR SCENE-TRANSITION BRIDGE -> NEW CONFLICT / SPLIT-CLIMAX CONTINUATION -> NARRATOR LOCATION/PHASE BRIDGE -> CONSEQUENCE -> NARRATOR CLOSING SYNTHESIS. Do NOT leave a 30-40s uninterrupted wall of raw procedural footage spanning multiple story phases or jumping abruptly across locations (e.g. street arrest -> police station booking room) without a narrator transition bridge. Instead, connect distinct phases with purposeful narrated_story blocks (typically 4 to 5 substantive blocks of ~5.5-9.5s each across a 75-88s edit) over clean visual B-roll/action from input.visualOwnershipMap.cleanVisualBrollWindows:
+    1. CONTEXT / SETUP after the opening hook (Post-Hook Case-File Rewind Intro): right after throwing the viewer into the opening smash-cut climax hook, rewind to the start of the case and introduce when, where, and how the incident began (what driving behavior, dispatch call, or violation triggered the encounter) before handing off directly to the first raw dialogue clip (~5.5-8.5s).
     2. CAUSAL_BRIDGE / INTERPRETATION (Scene-Transition Bridge): bridge across omitted time or location changes (e.g. summarizing minutes of roadside refusal leading up to a supervisor's ultimatum, or transitioning from the roadside arrest into the police station booking room) and frame what to listen for next (~5.5-8.5s).
     3. REHOOK / ANTICIPATION before the climax/custody argument: re-ignite curiosity when the encounter shifts from arrest to verbal rationalization or station reckoning — contrast the subject's mindset with the legal standard WITHOUT paraphrasing or spoiling the upcoming punchline quote (~5.0-8.0s).
     4. CLOSING / PAYOFF synthesis (~4.5-7.0s): after the authoritative rebuttal/consequence plays out in raw audio, deliver a sharp 2-sentence takeaway contrasting personal grievance with legal reality plus a situation-specific, non-loaded viewer debate question.
@@ -213,10 +213,14 @@ TRANSITIONS (spine.transitionChecks, one per boundary between consecutive blocks
 - For each boundary answer: could a cold viewer understand why the next scene is being shown (coldViewerUnderstandsWhy) and how they know (howTheViewerKnows: the picture, the dialogue, or the narration)? Judge from what the viewer sees and hears, not from how far apart the timestamps are.
 - If the honest answer is no, fix it before returning: change delivery ownership, narrationIntent or the block boundary. Do not return coldViewerUnderstandsWhy=false.
 
-OPENING STRATEGY (spine.openingStrategy) — compare BOTH before choosing the first beat:
+OPENING STRATEGY (spine.openingStrategy) — compare BOTH before choosing the opening beat(s):
 1. chronologicalOption: open on immediate interpersonal friction or an absurd refusal/excuse loop at the start of the encounter, followed by a narrated_story CONTEXT setup block.
-2. conflictTeaserOption: throw the cold viewer straight into the peak climax/confrontation flashpoint from input.storyScope.hookCandidates (the highest-tension ultimatum + defiant dare, physical glass breach, or takedown moment, cut at peak cliffhanger tension so the viewer urgently wonders what happened and why it escalated that far without spending input.storyScope.mustWithhold's final legal outcome), followed immediately by a narrated_story rewind/case-setup block introducing when, where, and how the incident began.
-Choose (chosen) whichever creates stronger verified curiosity while keeping causal clarity; neither is preferred by default, though when the reel contains an explosive climax flashpoint or high-stakes confrontation dare, conflict_teaser_rewind is strongly favored for immediate hook retention. The FIRST beat must use a hook role (teaser_conflict, cold_open, cold_open_hook, hook or micro_payoff).
+2. conflictTeaserOption (PREFERRED VIRAL 2-BEAT SMASH-CUT COLD OPEN): throw the cold viewer straight into the climax flashpoint using a 2-BEAT SMASH-CUT HOOK inside the first raw_evidence block (blk_01, ~5.0-7.5s total):
+   - ZERO DEAD-AIR RULE (First 1.5 Seconds): The viewer decides whether to scroll in the first 1.5 seconds. Never start beat_01 with slow procedural preamble, mid-sentence legal explanations, or >=1.5s pauses before the hook line lands! Trim beat_01.sourceStartSec forward so beat_01 opens immediately on the sharpest words or action.
+   - Beat 1 (beat_01, ~2.0-3.8s, chronologyMode='teaser', narrativeRole='teaser_conflict', scopeMembership='hook'): Cut tightly to the sharpest verbal ultimatum, defiant dare, or bold contradiction right before the climax (zero preamble!).
+   - Beat 2 (beat_02, ~2.5-4.5s, chronologyMode='teaser', narrativeRole='cold_open_hook', scopeMembership='hook'): Smash-cut IMMEDIATELY from the verbal dare/trigger straight to the explosive physical climax / breach / takedown / arrest shock (input.storyScope.hookCandidates / physical_climax spine event), and CUT AT THE PEAK OF THE PHYSICAL IMPACT before the extraction/aftermath finishes! Group beatIds: ['beat_01', 'beat_02'] inside blk_01 (mode='raw_evidence'), followed immediately by blk_02 (mode='narrated_story', narratorFunction='CONTEXT', chronologyMode='rewind') rewinding to introduce when, where, and how the incident began. (Only use a single 4.0-6.5s teaser beat in blk_01 if the verbal trigger and the physical impact already occur back-to-back within the same 4.0-6.5s span with zero dead air.)
+   - SPLIT-CLIMAX CONTINUATION (No Exact Duplicate Later): When blk_01 flashes the 2.5-4.5s physical impact peak ([impactStartSec..impactPeakSec]), do NOT repeat that exact same [impactStartSec..impactPeakSec] range later in the Climax block. Instead, start the later Climax beat right as the impact transitions into the extraction/struggle ([impactPeakSec - 0.5s .. extractionEndSec]) or cut the wider full-climax range so the viewer sees what happened right after the cold-open cliffhanger cut!
+Choose (chosen) whichever creates stronger verified curiosity while keeping causal clarity (neither is preferred by default — judge from the footage; when the reel contains an explosive climax flashpoint or high-stakes confrontation dare, conflict_teaser_rewind with the 2-beat smash-cut hook creates far stronger curiosity). The FIRST beat must use a hook role (teaser_conflict, cold_open, cold_open_hook, hook or micro_payoff).
 
 ENDING = AUTHORITATIVE CONSEQUENCE + CLEAN NARRATOR CLOSING SYNTHESIS.
 - Ending beats (scopeMembership 'ending') must come from input.storyScope.candidateEndingEvents or an ending_material window, ending strictly <= input.liveActionEndSec.
@@ -547,7 +551,7 @@ function validateDirectorEdl(spine, scope, { durationSec, targetDurationMinSec =
   if (requireDeliveryBlocks) {
     violations.push(...Delivery.validateDeliveryBlocks(beats, spine?.deliveryBlocks, { narrationEnabled, requireSelfCheck: true }).filter(v => v.code === 'DELIVERY_BLOCK_SELF_CHECK_MISSING'));
     violations.push(...Delivery.validateTransitionChecks(spine?.deliveryBlocks, spine?.transitionChecks));
-    violations.push(...openingViolations(spine, beats));
+    violations.push(...openingViolations(spine, beats, scope, { reelRanges, maxLiveSec, cues }));
     violations.push(...narrativePlanViolations(spine, beats, scope, { narrationEnabled, pacingMode }));
   }
 
@@ -730,7 +734,7 @@ function extensionOverlapViolations(before, after) {
   return out;
 }
 
-function openingViolations(spine, beats) {
+function openingViolations(spine, beats, scope = null, { reelRanges = [], maxLiveSec = Infinity, cues = null } = {}) {
   const o = spine?.openingStrategy;
   const out = [];
   if (!o || !String(o.chronologicalOption || '').trim() || !String(o.conflictTeaserOption || '').trim() || !OPENING_STRATEGIES.includes(o.chosen)) {
@@ -743,6 +747,77 @@ function openingViolations(spine, beats) {
   }
   if (o.chosen === 'chronological' && first?.chronologyMode === 'teaser') {
     out.push({ code: 'OPENING_STRATEGY_INCONSISTENT', message: `openingStrategy.chosen is chronological but the first beat '${first?.beatId}' is a teaser.`, beatId: first?.beatId });
+  }
+  if (o.chosen === 'conflict_teaser_rewind' && scope) {
+    const spineNodes = Array.isArray(scope.causalSpine) ? scope.causalSpine : [];
+    const climaxNode = spineNodes.find(n =>
+      /climax|breach|takedown|window_break|extraction|force|struggle/i.test(`${n.role || ''} ${n.eventId || ''} ${n.summary || ''}`)
+      && (!reelRanges.length || coveredByReel({ sourceStartSec: n.sourceStartSec, sourceEndSec: n.sourceEndSec }, reelRanges, maxLiveSec) > 0.3)
+    );
+    const blk0 = Array.isArray(spine?.deliveryBlocks) ? spine.deliveryBlocks[0] : null;
+    const hookBeats = [];
+    for (const b of beats) {
+      if (blk0 && Array.isArray(blk0.beatIds) && blk0.beatIds.length && !blk0.beatIds.includes(b.beatId)) break;
+      if (b.chronologyMode === 'teaser' || b.scopeMembership === 'hook' || toV2Role(b.narrativeRole) === 'hook') {
+        hookBeats.push(b);
+      } else {
+        break;
+      }
+    }
+    if (climaxNode && hookBeats.length > 0) {
+      const cStart = num(climaxNode.sourceStartSec);
+      const cEnd = Math.min(maxLiveSec, num(climaxNode.sourceEndSec));
+      const hasClimaxBeat = hookBeats.some(hb =>
+        Math.min(num(hb.sourceEndSec), cEnd) - Math.max(num(hb.sourceStartSec), cStart - 5) >= 1.0
+      );
+      if (!hasClimaxBeat) {
+        out.push({
+          code: 'HOOK_MISSING_CLIMAX_FLASHPOINT',
+          beatId: first?.beatId,
+          message: `The opening block '${blk0?.blockId || 'blk_01'}' (${hookBeats.map(b => `${b.beatId}:${b.sourceStartSec}-${b.sourceEndSec}s`).join(', ')}) only plays verbal pre-climax build-up and omits the physical climax flashpoint (${climaxNode.eventId || climaxNode.role}: ${round2(cStart)}-${round2(cEnd)}s). Use a 2-Beat Smash-Cut Cold-Open Hook inside '${blk0?.blockId || 'blk_01'}': trim '${first?.beatId}' tightly to 2.0-3.8s around the sharpest verbal ultimatum/dare (zero dead air), and add a second teaser beat (2.5-4.5s, chronologyMode='teaser', narrativeRole='cold_open_hook', scopeMembership='hook') cutting directly to the peak physical climax impact inside ${round2(cStart)}-${round2(cEnd)}s before rewinding in the next block.`
+        });
+      }
+    }
+    if (hookBeats.length >= 2) {
+      const b0 = hookBeats[0];
+      const len0 = num(b0.sourceEndSec) - num(b0.sourceStartSec);
+      if (len0 > 4.8) {
+        out.push({
+          code: 'HOOK_TRIGGER_BEAT_TOO_SLOW',
+          beatId: b0.beatId,
+          message: `In the 2-beat smash-cut hook, the verbal trigger beat '${b0.beatId}' (${b0.sourceStartSec}-${b0.sourceEndSec}s, ${round2(len0)}s) is too long and delays the smash-cut to the climax impact. Trim '${b0.beatId}.sourceStartSec' forward so '${b0.beatId}' is 2.0-4.2s and starts immediately on the sharpest ultimatum/dare with zero dead air.`
+        });
+      }
+    }
+    if (hookBeats.length > 0 && Array.isArray(cues) && cues.length) {
+      const b0 = hookBeats[0];
+      const s0 = num(b0.sourceStartSec), e0 = num(b0.sourceEndSec);
+      const len0 = e0 - s0;
+      if (len0 > 4.5) {
+        const overlappingCues = cues
+          .map(c => ({ startSec: Math.max(s0, num(c.startSec)), endSec: Math.min(e0, num(c.endSec)), rawStartSec: num(c.startSec), text: String(c.text || '').trim() }))
+          .filter(c => c.endSec - c.startSec > 0.15 && c.text)
+          .sort((a, b) => a.startSec - b.startSec);
+        const leadingGap = overlappingCues.length ? (overlappingCues[0].startSec - s0) : 0;
+        let maxInternalGap = 0;
+        let afterGapStartSec = null;
+        for (let k = 1; k < overlappingCues.length; k++) {
+          const gap = overlappingCues[k].startSec - overlappingCues[k - 1].endSec;
+          if (gap > maxInternalGap) {
+            maxInternalGap = gap;
+            afterGapStartSec = overlappingCues[k].rawStartSec;
+          }
+        }
+        if (leadingGap >= 1.8 || maxInternalGap >= 1.8) {
+          const suggestedStart = afterGapStartSec ? round2(Math.max(s0, afterGapStartSec - 0.2)) : round2(overlappingCues[0]?.startSec || s0);
+          out.push({
+            code: 'HOOK_HAS_DEAD_AIR_PREAMBLE',
+            beatId: b0.beatId,
+            message: `Hook beat '${b0.beatId}' (${s0}-${e0}s) contains ${round2(Math.max(leadingGap, maxInternalGap))}s of dead-air silence/preamble in the opening seconds before the hook line lands. Trim '${b0.beatId}.sourceStartSec' forward (e.g. to ~${suggestedStart}s) so the video opens immediately on the high-tension verbal trigger.`
+          });
+        }
+      }
+    }
   }
   return out;
 }
@@ -838,7 +913,9 @@ function modelContextForReel(model, reel, liveActionEndSec = Infinity) {
     .map(e => ({ id: e.id, startSec: e.startSec, endSec: Math.min(num(e.endSec), round2(cap)), type: e.type, summary: e.summary, location: e.location, peopleIds: e.peopleIds, tension: e.tension, dialogueImpact: e.dialogueImpact, isReveal: e.isReveal }));
   const quotes = (model?.quotes || []).filter(q => inReel(num(q.startSec), num(q.endSec)))
     .map(q => ({ id: q.id, eventId: q.eventId, speaker: q.speaker, startSec: q.startSec, endSec: Math.min(num(q.endSec), round2(cap)), text: q.text, epistemic: q.epistemic, editorialValue: q.editorialValue }));
-  return { people: model?.people || [], events, quotes };
+  const audioEvents = (model?.audioEvents || []).filter(a => inReel(num(a.startSec), num(a.endSec)))
+    .map(a => ({ id: a.id, startSec: a.startSec, endSec: Math.min(num(a.endSec), round2(cap)), type: a.type, description: a.description, intensity: a.intensity }));
+  return { people: model?.people || [], events, quotes, audioEvents };
 }
 
 // ---------------------------------------------------------------- output fuse

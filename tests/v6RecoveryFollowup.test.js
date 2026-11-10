@@ -1187,3 +1187,147 @@ test('Stage A (16): Resolves NARRATED_BLOCK_ACTIVE_DIALOGUE <-> NARRATIVE_PLAN_I
   assert.equal(attempt1Res.valid, true, `Expected Attempt 1 (237.97-240.97s, 3.0s) to pass, got ${JSON.stringify(attempt1Res.violations)}`);
 });
 
+test('Stage A (17): Universal Option B 2-Beat Smash-Cut Cold-Open Hook, StoryScope mustWithhold sanitation, and NarrationGate scope_start_state grounding', () => {
+  const StoryScope = require('../electron/services/storyScopeService.js');
+  const NarrationGate = require('../electron/services/narrationGate.js');
+
+  // 17A: validateStoryScope strips anti-viral mustWithhold entries ("window-shattering moment during the cold open")
+  // and ensures the physical climax window carries 'hook_material'
+  const rawScope = {
+    accessGranted: true,
+    storyScopeId: 'scope_standoff_to_station_reckoning',
+    whyThisIsOneStory: 'Full arc from refusal to breach to station suspension',
+    scopeEndTarget: 'payoff',
+    explicitScopeBoundary: { startSec: 227, endSec: 940 },
+    centralConflict: 'Driver refuses lawful order to exit vehicle',
+    centralViewerQuestion: 'Will officers breach the window and what charges follow?',
+    storyStartState: 'Traffic stop on highway for reckless driving',
+    causalSpine: [
+      { role: 'initial_refusal', eventId: 'evt_05', sourceStartSec: 227, sourceEndSec: 301, summary: 'Driver refuses exit order', causalLinkToNext: 'Supervisor called' },
+      { role: 'final_warning_ultimatum', eventId: 'evt_10', sourceStartSec: 506, sourceEndSec: 547, summary: 'Sergeant warns window will be broken; driver says Let us do it', causalLinkToNext: 'Breach' },
+      { role: 'physical_climax', eventId: 'evt_11', sourceStartSec: 581, sourceEndSec: 606, summary: 'Officers shatter window and extract driver', causalLinkToNext: 'Station' }
+    ],
+    candidateEndingEvents: [
+      { eventId: 'evt_16', sourceStartSec: 881, sourceEndSec: 940, endingRole: 'payoff', whyValidEnding: '12-month license suspension' }
+    ],
+    scopeWindows: [
+      { windowId: 'win_refusal', startSec: 227, endSec: 301, purposes: ['core'], reason: 'Refusal' },
+      { windowId: 'win_breach', startSec: 500, endSec: 641, purposes: ['core'], reason: 'Warning and window breach' },
+      { windowId: 'win_station', startSec: 881, endSec: 940, purposes: ['ending_material'], reason: 'Suspension' }
+    ],
+    hookCandidates: [
+      { hookId: 'hook_dare', sourceStartSec: 511.8, sourceEndSec: 514.2, hookType: 'defiant_dare_trigger', whyCuriosity: 'Let us do it dare' },
+      { hookId: 'hook_breach', sourceStartSec: 581.5, sourceEndSec: 585.5, hookType: 'kinetic_climax_flashpoint', whyCuriosity: 'Glass shatters' }
+    ],
+    mustInclude: ['evt_05', 'evt_10', 'evt_11', 'evt_16'],
+    mustWithhold: [
+      'The window-shattering moment during the cold open',
+      'The 12-month license suspension revealed at the station'
+    ],
+    excludedOutOfScopeRanges: []
+  };
+  const scopeValidation = StoryScope.validateStoryScope(rawScope, { durationSec: 1275.02, liveActionEndSec: 1275.02 });
+  assert.equal(scopeValidation.valid, true, `Expected scope to validate cleanly, got ${JSON.stringify(scopeValidation.violations)}`);
+  assert.deepEqual(scopeValidation.normalizedScope.mustWithhold, ['The 12-month license suspension revealed at the station']);
+  const breachWin = scopeValidation.normalizedScope.scopeWindows.find(w => w.windowId === 'win_breach');
+  assert.ok(breachWin.purposes.includes('hook_material'), 'Climax window must automatically include hook_material purpose');
+
+  // 17B: NarrationGate accepts scope_start_state and scope_support_1 in newInformationRefs
+  const gateRes = NarrationGate.inspect(
+    [{
+      beatId: 'blk_02',
+      sourceStartSec: 237.97,
+      sourceEndSec: 243.5,
+      speaks: true,
+      narratorText: 'Earlier that afternoon, troopers pulled over a Jeep after clocking it at 87 in a 55 zone.',
+      narratorFunction: 'CONTEXT',
+      newInformation: ['Pulled over for 87 in a 55 zone'],
+      newInformationRefs: ['scope_start_state', 'scope_support_1']
+    }],
+    { events: [{ id: 'evt_05', startSec: 227, endSec: 301, summary: 'Refusal' }], quotes: [] }
+  );
+  assert.ok(!gateRes.issues.some(i => i.code === 'ungrounded'), `Expected scope_start_state to be accepted as grounded, got ${JSON.stringify(gateRes.issues)}`);
+
+  // 17C: validateDirectorEdl flags HOOK_MISSING_CLIMAX_FLASHPOINT and HOOK_HAS_DEAD_AIR_PREAMBLE on a sluggish 1-beat 506.13-514s hook,
+  // and passes cleanly on the universal Option B 2-Beat Smash-Cut Hook (beat_01: 511.8-514.2s Dare + beat_02: 581.5-585.5s Breach)
+  const hookCues = [
+    { startSec: 504.4, endSec: 509.28, text: "that and it's a lawful order." },
+    { startSec: 512.0, endSec: 513.52, text: "Your window's going to end up getting broken. Let's do it." },
+    { startSec: 581.0, endSec: 584.5, text: 'Watch your eyes. Here we go!' }
+  ];
+  const reel = {
+    ranges: [
+      { scopeWindowId: 'win_refusal', sourceStartSec: 227, sourceEndSec: 301, windowStartSec: 227, windowEndSec: 301 },
+      { scopeWindowId: 'win_breach', sourceStartSec: 500, sourceEndSec: 641, windowStartSec: 500, windowEndSec: 641 },
+      { scopeWindowId: 'win_station', sourceStartSec: 881, sourceEndSec: 940, windowStartSec: 881, windowEndSec: 940 }
+    ]
+  };
+  const sluggishSpine = {
+    openingStrategy: {
+      chronologicalOption: 'Start at 227s',
+      conflictTeaserOption: 'Smash-cut dare + breach',
+      chosen: 'conflict_teaser_rewind'
+    },
+    beats: [
+      { beatId: 'beat_01', sourceStartSec: 506.13, sourceEndSec: 514.0, chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook', observedInFootage: 'Sergeant warns window will be broken; driver dares him.', whyNecessaryNow: 'hook' },
+      { beatId: 'beat_02', sourceStartSec: 235.0, sourceEndSec: 241.0, chronologyMode: 'rewind', narrativeRole: 'setup', scopeMembership: 'core', observedInFootage: 'Officer stands by Jeep window.', whyNecessaryNow: 'rewind intro' },
+      { beatId: 'beat_03', sourceStartSec: 241.0, sourceEndSec: 261.0, chronologyMode: 'chronological', narrativeRole: 'confrontation', scopeMembership: 'core', observedInFootage: 'Officer cites Pennsylvania v. Mimms', whyNecessaryNow: 'escalation' },
+      { beatId: 'beat_04', sourceStartSec: 581.0, sourceEndSec: 601.0, chronologyMode: 'chronological', narrativeRole: 'climax', scopeMembership: 'core', observedInFootage: 'Officers shatter window and extract driver', whyNecessaryNow: 'climax' },
+      { beatId: 'beat_05', sourceStartSec: 881.0, sourceEndSec: 901.0, chronologyMode: 'chronological', narrativeRole: 'payoff', scopeMembership: 'ending', observedInFootage: 'Officer announces 12-month suspension', whyNecessaryNow: 'payoff' }
+    ],
+    deliveryBlocks: [
+      { blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['beat_01'], ownershipReason: 'Raw hook', evidenceFunction: 'CONFLICT', footageFunction: 'CONFLICT', viewerStateChanges: 1, blockSummary: 'Hook' },
+      { blockId: 'blk_02', mode: 'narrated_story', beatIds: ['beat_02'], ownershipReason: 'Narrator rewind', narratorFunction: 'CONTEXT', sourceAudioTreatment: 'voiceover_with_ambient', narrationIntent: 'Case rewind intro', commentaryValue: 'Context', viewerKnows: 'Hook', viewerWantsToKnow: 'Why', viewerStateChanges: 1, blockSummary: 'Intro' },
+      { blockId: 'blk_03', mode: 'raw_evidence', beatIds: ['beat_03', 'beat_04', 'beat_05'], ownershipReason: 'Raw story', evidenceFunction: 'PAYOFF', footageFunction: 'PAYOFF', viewerStateChanges: 2, blockSummary: 'Story' }
+    ],
+    transitionChecks: [
+      { fromBlockId: 'blk_01', toBlockId: 'blk_02', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Rewind intro' },
+      { fromBlockId: 'blk_02', toBlockId: 'blk_03', coldViewerUnderstandsWhy: true, howTheViewerKnows: 'Handoff' }
+    ]
+  };
+  const sluggishRes = Director.validateDirectorEdl(sluggishSpine, rawScope, {
+    durationSec: 1275.02,
+    targetDurationMinSec: 50,
+    targetDurationMaxSec: 90,
+    reel,
+    narrationEnabled: true,
+    requireDeliveryBlocks: true,
+    cues: hookCues,
+    liveActionEndSec: 1275.02
+  });
+  assert.equal(sluggishRes.valid, false);
+  const vCodes = sluggishRes.violations.map(v => v.code);
+  assert.ok(vCodes.includes('HOOK_MISSING_CLIMAX_FLASHPOINT'), `Expected HOOK_MISSING_CLIMAX_FLASHPOINT in ${vCodes.join(', ')}`);
+  assert.ok(vCodes.includes('HOOK_HAS_DEAD_AIR_PREAMBLE'), `Expected HOOK_HAS_DEAD_AIR_PREAMBLE in ${vCodes.join(', ')}`);
+
+  // Option B 2-Beat Smash-Cut Hook (beat_01: 511.8-514.2s Dare + beat_02: 581.5-585.5s Breach Peak, Split-Climax Continuation at 585.0-601.0s)
+  const smashCutSpine = {
+    ...sluggishSpine,
+    beats: [
+      { beatId: 'beat_01', sourceStartSec: 511.8, sourceEndSec: 514.2, chronologyMode: 'teaser', narrativeRole: 'teaser_conflict', scopeMembership: 'hook', observedInFootage: 'Sergeant warns window will be broken; driver dares Let us do it.', whyNecessaryNow: 'verbal dare trigger' },
+      { beatId: 'beat_02', sourceStartSec: 581.5, sourceEndSec: 585.5, chronologyMode: 'teaser', narrativeRole: 'cold_open_hook', scopeMembership: 'hook', observedInFootage: 'Sergeant strikes window with tool and glass shatters explosively.', whyNecessaryNow: 'climax flashpoint impact' },
+      { beatId: 'beat_03', sourceStartSec: 235.0, sourceEndSec: 241.0, chronologyMode: 'rewind', narrativeRole: 'setup', scopeMembership: 'core', observedInFootage: 'Officer stands by Jeep window.', whyNecessaryNow: 'rewind intro' },
+      { beatId: 'beat_04', sourceStartSec: 241.0, sourceEndSec: 261.0, chronologyMode: 'chronological', narrativeRole: 'confrontation', scopeMembership: 'core', observedInFootage: 'Officer cites Pennsylvania v. Mimms', whyNecessaryNow: 'escalation' },
+      { beatId: 'beat_05', sourceStartSec: 585.0, sourceEndSec: 601.0, chronologyMode: 'chronological', narrativeRole: 'climax', scopeMembership: 'core', observedInFootage: 'Officers clear shattered glass, unlock door, and pull driver out', whyNecessaryNow: 'split-climax continuation' },
+      { beatId: 'beat_06', sourceStartSec: 881.0, sourceEndSec: 901.0, chronologyMode: 'chronological', narrativeRole: 'payoff', scopeMembership: 'ending', observedInFootage: 'Officer announces 12-month suspension', whyNecessaryNow: 'payoff' }
+    ],
+    deliveryBlocks: [
+      { blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['beat_01', 'beat_02'], ownershipReason: '2-beat smash-cut cold open', evidenceFunction: 'CONFLICT', footageFunction: 'CONFLICT', viewerStateChanges: 2, blockSummary: 'Dare + glass shatter smash-cut hook' },
+      { blockId: 'blk_02', mode: 'narrated_story', beatIds: ['beat_03'], ownershipReason: 'Narrator rewind', narratorFunction: 'CONTEXT', sourceAudioTreatment: 'voiceover_with_ambient', narrationIntent: 'Case rewind intro', commentaryValue: 'Context', viewerKnows: 'Hook', viewerWantsToKnow: 'Why', viewerStateChanges: 1, blockSummary: 'Intro' },
+      { blockId: 'blk_03', mode: 'raw_evidence', beatIds: ['beat_04', 'beat_05', 'beat_06'], ownershipReason: 'Raw story', evidenceFunction: 'PAYOFF', footageFunction: 'PAYOFF', viewerStateChanges: 2, blockSummary: 'Story' }
+    ]
+  };
+  const smashCutRes = Director.validateDirectorEdl(smashCutSpine, rawScope, {
+    durationSec: 1275.02,
+    targetDurationMinSec: 50,
+    targetDurationMaxSec: 90,
+    reel,
+    narrationEnabled: true,
+    requireDeliveryBlocks: true,
+    cues: hookCues,
+    liveActionEndSec: 1275.02
+  });
+  assert.equal(smashCutRes.valid, true, `Expected Option B 2-Beat Smash-Cut Hook to pass cleanly, got ${JSON.stringify(smashCutRes.violations)}`);
+});
+
+
