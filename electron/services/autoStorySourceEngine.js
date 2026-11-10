@@ -41,7 +41,7 @@ class Engine {
     const planKey = crypto.createHash('sha256').update(promptText).update(JSON.stringify(schema || {})).digest('hex');
     return this.service.stage(this.cache, key, { planKey, sourceHash: this.sourceHash, ...input }, {
       ...options, sourceContract: true, localRepair: true, filePaths: evidence.map(e => e.file).filter(Boolean), videoFps: 2, mediaResolution: 'MEDIA_RESOLUTION_LOW',
-      taskType: task, temperature: .1, responseSchema: schema,
+      taskType: task, temperature: options?.temperature ?? .1, responseSchema: schema,
       prompt: promptText
     }, async value => {
       require('./autoStorySchemaBoundary').validate(value, schema);

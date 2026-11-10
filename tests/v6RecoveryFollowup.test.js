@@ -1323,11 +1323,168 @@ test('Stage A (17): Universal Option B 2-Beat Smash-Cut Cold-Open Hook, StorySco
     targetDurationMaxSec: 90,
     reel,
     narrationEnabled: true,
+    narrationEnabled: true,
     requireDeliveryBlocks: true,
     cues: hookCues,
     liveActionEndSec: 1275.02
   });
   assert.equal(smashCutRes.valid, true, `Expected Option B 2-Beat Smash-Cut Hook to pass cleanly, got ${JSON.stringify(smashCutRes.violations)}`);
 });
+
+test('Stage A (18): MAX_TOKENS prevention, oversized repetition loop guard, compact single-candidate recovery, and graphics-screen outro boundary detection', async () => {
+  const StoryScope = require('../electron/services/storyScopeService.js');
+  const BlockNarration = require('../electron/services/blockNarrationService.js');
+  const ScopeCritic = require('../electron/services/scopeMediaCriticService.js');
+  const BoundaryService = require('../electron/services/sourceEndingBoundaryService.js');
+
+  // 18A: Explicit generation limits exported across services
+  assert.deepEqual(StoryScope.SCOPE_GENERATION, { maxOutputTokens: 16384, thinkingBudget: 0 });
+  assert.deepEqual(BlockNarration.NARRATION_GENERATION, { maxOutputTokens: 8192, thinkingBudget: 0 });
+  assert.equal(ScopeCritic.CRITIC_MAX_OUTPUT_TOKENS, 8192);
+  assert.equal(ScopeCritic.CRITIC_THINKING_BUDGET, 0);
+
+  // 18B: validateSelectionShape rejects degenerate token-repetition strings (> 1500 chars) like windowId digit loops
+  const repeatedWindowId = `win_teaser_screaming_hookPartA${'8392102148'.repeat(180)}`;
+  assert.throws(
+    () => StoryScope.validateSelectionShape({
+      chosenStoryScopeId: 'scope_01',
+      selectionReasoning: 'ok',
+      candidates: [{ storyScopeId: 'scope_01', scopeWindows: [{ windowId: repeatedWindowId }] }]
+    }),
+    /degenerate oversized text.*windowId/i
+  );
+
+  // 18C: selectStoryScope passes SCOPE_GENERATION and automatically recovers via v5-story-scope_compact on MAX_TOKENS
+  const askCalls = [];
+  const validScopeCandidate = {
+    accessGranted: true,
+    storyScopeId: 'scope_01',
+    whyThisIsOneStory: 'Single coherent arrest escalation arc from refusal to jail transport.',
+    scopeEndTarget: 'payoff',
+    explicitScopeBoundary: { startSec: 25, endSec: 810 },
+    centralConflict: 'Suspect refuses dispersal order and kicks deputy during arrest.',
+    centralViewerQuestion: 'What happens after the suspect kicks a deputy in the chest?',
+    storyStartState: 'Deputies respond to a 3:55 AM disturbance outside a bar.',
+    causalSpine: [
+      { role: 'inciting_incident', eventId: 'evt_1', sourceStartSec: 25, sourceEndSec: 70, summary: 'Deputies order group to disperse.', causalLinkToNext: 'Refusal' },
+      { role: 'physical_climax', eventId: 'evt_2', sourceStartSec: 170, sourceEndSec: 215, summary: 'Suspect kicks deputy and is carried to cruiser.', causalLinkToNext: 'Booking' },
+      { role: 'payoff', eventId: 'evt_3', sourceStartSec: 750, sourceEndSec: 805, summary: 'Suspect booked into jail on felony battery charges.', causalLinkToNext: 'End' }
+    ],
+    candidateEndingEvents: [
+      { eventId: 'evt_3', sourceStartSec: 750, sourceEndSec: 805, endingRole: 'payoff', whyValidEnding: 'Completed jail booking consequence.' }
+    ],
+    scopeWindows: [
+      { windowId: 'win_01', startSec: 25, endSec: 70, purposes: ['context'], reason: 'Initial dispersal order.' },
+      { windowId: 'win_02', startSec: 165, endSec: 220, purposes: ['hook_material', 'core'], reason: 'Physical struggle and kick.' },
+      { windowId: 'win_03', startSec: 745, endSec: 808, purposes: ['ending_material'], reason: 'Jail booking consequence.' }
+    ],
+    hookCandidates: [
+      { hookId: 'hook_01', sourceStartSec: 170, sourceEndSec: 174, hookType: 'kinetic_climax_flashpoint', whyCuriosity: 'Suspect kicks deputy during struggle.' }
+    ],
+    mustInclude: ['evt_1', 'evt_2', 'evt_3'],
+    mustWithhold: ['Felony battery on a law enforcement officer charge at booking'],
+    excludedOutOfScopeRanges: []
+  };
+
+  const mockEngine = {
+    duration: 906.84,
+    config: { targetDurationMinSec: 65, targetDurationMaxSec: 90, maxScopeReelSec: 210 },
+    async ask(name, input, schema, instr, files, check, task, options) {
+      askCalls.push({ name, instr, options });
+      if (name === 'v5-story-scope') {
+        throw new Error('Vertex AI đã chạm giới hạn sinh nội dung (MAX_TOKENS — giới hạn mặc định của model; Auto Story không đặt trần token riêng).');
+      }
+      const res = {
+        chosenStoryScopeId: 'scope_01',
+        selectionReasoning: 'Strongest single-conflict arc with clear felony consequence.',
+        candidates: [validScopeCandidate]
+      };
+      return check ? check(res) : res;
+    }
+  };
+  const mockModel = {
+    durationSec: 906.84,
+    events: [
+      { id: 'evt_1', startSec: 25, endSec: 70, type: 'confrontation', summary: 'Deputies order group to disperse.' },
+      { id: 'evt_2', startSec: 170, endSec: 215, type: 'physical_climax', summary: 'Suspect kicks deputy and is carried to cruiser.' },
+      { id: 'evt_3', startSec: 750, endSec: 805, type: 'payoff', summary: 'Suspect booked into jail.' }
+    ],
+    quotes: []
+  };
+
+  const scopeOut = await StoryScope.selectStoryScope(mockEngine, mockModel, { liveActionEndSec: 810.8 });
+  assert.equal(askCalls.length, 2, 'Expected initial call + 1 compact anti-repetition recovery call');
+  assert.equal(askCalls[0].name, 'v5-story-scope');
+  assert.deepEqual(askCalls[0].options, { maxOutputTokens: 16384, thinkingBudget: 0 });
+  assert.equal(askCalls[1].name, 'v5-story-scope_compact');
+  assert.deepEqual(askCalls[1].options, { maxOutputTokens: 16384, thinkingBudget: 0, noCache: true, temperature: 0.25 });
+  assert.match(askCalls[1].instr, /COMPACT SINGLE-CANDIDATE RECOVERY MODE/);
+  assert.equal(scopeOut.scope.storyScopeId, 'scope_01');
+
+  // 18D: CritiqueScopedRender retries with compact mode on MAX_TOKENS
+  let criticCalls = 0;
+  const criticRes = await ScopeCritic.critiqueScopedRender(
+    {
+      centralViewerQuestion: 'What happens next?',
+      hookPromise: 'Arrest escalation',
+      beats: [{ beatId: 'beat_01', sourceStartSec: 10, sourceEndSec: 20, narrativeRole: 'hook' }],
+      deliveryBlocks: [{ blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['beat_01'] }]
+    },
+    {
+      mp4Path: 'dummy.mp4',
+      actualMp4DurationSec: 10,
+      aiService: {
+        async generateJsonFromFiles(args) {
+          criticCalls += 1;
+          if (criticCalls === 1) {
+            assert.equal(args.maxOutputTokens, 8192);
+            assert.equal(args.thinkingBudget, 0);
+            throw new Error('Vertex AI đã chạm giới hạn sinh nội dung (MAX_TOKENS)');
+          }
+          assert.equal(args.maxOutputTokens, 12288);
+          assert.equal(args.temperature, 0.25);
+          return {
+            accessGranted: true,
+            isCompliant: true,
+            openingEarnsRetention: true,
+            storyCoherent: true,
+            payoffFulfillsOpeningPromise: true,
+            coldViewerCanFollow: true,
+            observedStory: 'Clear progression.',
+            summary: 'Clean render.',
+            issues: [],
+            weakRegions: []
+          };
+        }
+      }
+    }
+  );
+  assert.equal(criticCalls, 2);
+  assert.equal(criticRes.status, 'SCOPED_MEDIA_CRITIC_OK');
+  assert.equal(criticRes.isCompliant, true);
+
+  // 18E: sourceEndingBoundaryService detects trailing Graphics Screen / external_narrator charges_reveal outro (like J5zy6yVUSEg at 811s)
+  const boundary = await BoundaryService.detectSourceEndingBoundary({
+    sourcePath: '',
+    durationSec: 906.84,
+    skipMediaProbe: true,
+    sceneManifest: {
+      scenes: [
+        { startSec: 745.0, endSec: 811.0 },
+        { startSec: 811.0, endSec: 906.84 }
+      ]
+    },
+    model: {
+      events: [
+        { id: 'evt_booking', startSec: 745, endSec: 811, type: 'booking', location: 'County Jail', audioType: 'dialogue', summary: 'Officers escort suspect into jail.' },
+        { id: 'evt_jail_battery_charges', startSec: 811, endSec: 834, type: 'charges_reveal', location: 'Graphics Screen', audioType: 'external_narrator', summary: 'Narrator reveals charges and bond on graphics screen.' }
+      ]
+    }
+  });
+  assert.equal(boundary.hasOutro, true);
+  assert.equal(boundary.outroStartSec, 811);
+  assert.equal(boundary.liveActionEndSec, 810.8);
+});
+
 
 

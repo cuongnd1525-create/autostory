@@ -23,6 +23,10 @@ const SCOPE_CONTRACT_VERSION = 'story-scope-v1';
 const DEFAULT_MAX_SCOPE_REEL_SEC = 360;   // cost budget for the director's media reel
 const DEFAULT_REEL_PADDING_SEC = 2;       // context around each declared window
 const TIME_EPS = 0.5;
+const SCOPE_MAX_OUTPUT_TOKENS = 16384;
+const SCOPE_THINKING_BUDGET = 0;
+const SCOPE_GENERATION = Object.freeze({ maxOutputTokens: SCOPE_MAX_OUTPUT_TOKENS, thinkingBudget: SCOPE_THINKING_BUDGET });
+const MAX_SCOPE_TEXT_CHARS = 1500;
 
 // ONE source of truth for every Story Scope count limit. The same object renders
 // into the Gemini instruction, drives the deterministic validator (with explicit
@@ -128,9 +132,10 @@ PRINCIPLES
 7. IDENTIFY NARRATOR-LED COMMENTARY & SCENE-TRANSITION BRIDGE OPPORTUNITIES (commentaryOpportunities): List 3-6 source moments inside the scope where a true-crime narrator acts as a connective bridge between scenes rather than describing visible screen action: (a) a POST-HOOK CASE-FILE REWIND INTRO right after the cold open that rewinds to introduce when, where, and how the incident began before handing off to the first raw exchange, (b) SCENE-TRANSITION BRIDGES across omitted time or location shifts (e.g., compressing minutes of roadside refusal into the arrival of a supervisor/tactical breach, or bridging from the roadside arrest into the police station booking room), (c) building anticipation for an upcoming high-value quote without spoiling its punchline, (d) delivering a mid-story REHOOK / interpretation when the encounter shifts from physical action to legal consequence, and (e) synthesizing the central contradiction at the close.
 
 OUTPUT
-- Propose 2-4 candidate scopes (different mini-stories or scope framings the source could support). For each, fill every field with absolute source seconds.
+- Propose 1-2 candidate scopes (prefer 1 strong candidate scope when the primary conflict arc is clear; at most 2 unless multiple distinct stories are needed). For each, fill every field with absolute source seconds.
 - Choose ONE (chosenStoryScopeId) and explain why in selectionRationale. Judge by: clear conflict, full-arc causal completeness (inciting premise -> contradiction -> confrontation/detention -> verbal/legal reckoning), quote and footage strength, commentary richness, support for the requested duration, a decisive in-scope payoff, and minimal dependency on unrelated branches.
 - scopeWindows are UNIQUE, NON-OVERLAPPING source ranges, each listed ONCE with a windowId and a purposes array (core | hook_material | ending_material | supporting_context). If one range is both core and hook or ending material, it is ONE window with purposes ['core','hook_material'] — never repeat a range for a second role. Reference hook material in hookCandidates (windowId + exact sub-range) and endings in candidateEndingEvents. supporting_context windows are only for allowedSupportingContext items with treatment='footage'.
+- OUTPUT HYGIENE & ANTI-REPETITION (CRITICAL — PREVENTS MAX_TOKENS): Every identifier (storyScopeId, windowId, eventId) MUST be a short ASCII snake_case code <= 20 chars using simple sequential numbering (e.g., 'scope_01', 'w_01', 'w_02', 'w_03') — NEVER concatenate long descriptive words, camelCase phrases, or random digit sequences into an ID. Keep every text field (centralConflict, centralViewerQuestion, why, whyInScope, curiosityQuestion, whyNarratorNeeded, rationale, selectionRationale) to ONE concise sentence (<= 25 words). Never repeat characters, digits, or phrases.
 - COUNT LIMITS (hard; "candidates" is per selection, all others per candidate): ${limitsText()}.
 - explicitScopeBoundary.startSec/endSec must contain every core, hook_material and ending_material window, and must NOT exceed input.liveActionEndSec when provided.
 - Never invent events. Reference real event ids and real source seconds from the model. Set accessGranted=true after reading the model.`;
@@ -141,6 +146,8 @@ function limitsText() {
 const repairInstruction = (violations, failing = null) => `REPAIR — your previous Story Scope selection (input.previousSelection) failed validation${failing ? ` in candidate '${failing}'` : ''}. Keep the same story if it is sound. Fix ONLY what these violations require and return the COMPLETE selection again. Returning the same object unchanged will fail again.
 ${violations.map((v, i) => `${i + 1}. [${v.code}] ${v.message}`).join('\n')}
 Count limits (per candidate): ${limitsText()}. scopeWindows must be unique non-overlapping ranges (one window per range, several purposes allowed).`;
+
+const COMPACT_SCOPE_RECOVERY_INSTRUCTION = `COMPACT ANTI-REPETITION RECOVERY: Your previous attempt hit MAX_TOKENS or truncated JSON due to overly verbose output or a token repetition loop. Return ONLY 1 candidate in candidates[] (the single strongest Story Scope). Use strictly short sequential IDs ('scope_01', 'w_01', 'w_02', 'w_03') <= 12 chars, and keep every string field to ONE short sentence (<= 18 words). Never repeat characters or digits.`;
 
 // ---------------------------------------------------------------- pure helpers
 function mergeRanges(ranges) {
@@ -393,8 +400,32 @@ function validateStoryScope(scope, { durationSec, targetDurationMinSec = 65, max
   return { valid: violations.length === 0, violations, reel, normalizedScope, normalization: { declaredCount: normalization.declaredCount, uniqueCount: enrichedWindows.length, merges: normalization.notes, liveActionEndSec: Number.isFinite(maxEndingSec) ? round2(maxEndingSec) : null } };
 }
 
+function oversizedScopeText(v, pathPrefix = 'selection') {
+  if (typeof v === 'string') {
+    return v.length > MAX_SCOPE_TEXT_CHARS
+      ? `${pathPrefix} length ${v.length} exceeds ${MAX_SCOPE_TEXT_CHARS} chars (likely token repetition loop)`
+      : null;
+  }
+  if (Array.isArray(v)) {
+    for (let i = 0; i < v.length; i++) {
+      const hit = oversizedScopeText(v[i], `${pathPrefix}[${i}]`);
+      if (hit) return hit;
+    }
+    return null;
+  }
+  if (v && typeof v === 'object') {
+    for (const [k, val] of Object.entries(v)) {
+      const hit = oversizedScopeText(val, `${pathPrefix}.${k}`);
+      if (hit) return hit;
+    }
+  }
+  return null;
+}
+
 function validateSelectionShape(v) {
   if (!v || !Array.isArray(v.candidates) || !v.candidates.length) throw new StoryError('INVALID_RESPONSE', 'Story Scope selection returned no candidates.');
+  const oversized = oversizedScopeText(v);
+  if (oversized) throw new StoryError('INVALID_RESPONSE', `Story Scope response contains degenerate oversized text: ${oversized}.`);
   if (!chosenScope(v)) throw new StoryError('INVALID_RESPONSE', 'chosenStoryScopeId does not match any candidate.');
   return v;
 }
@@ -468,20 +499,46 @@ async function selectStoryScope(engine, model, { root = null, write = null, emit
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
     const repair = attempt > 0;
     let selection = null, schemaError = null;
+    const stageName = `v5-story-scope${repair ? `_repair${attempt}` : ''}`;
+    const stageInput = repair ? { ...input, previousSelection: previous, failingStoryScopeId: failingId, violations } : input;
+    const stageInstruction = repair ? `${instruction}\n\n${repairInstruction(violations, failingId)}` : instruction;
     try {
       selection = await engine.ask(
-        `v5-story-scope${repair ? `_repair${attempt}` : ''}`,
-        repair ? { ...input, previousSelection: previous, failingStoryScopeId: failingId, violations } : input,
+        stageName,
+        stageInput,
         schemas.storyScopeSelection,
-        repair ? `${instruction}\n\n${repairInstruction(violations, failingId)}` : instruction,
+        stageInstruction,
         [],
         validateSelectionShape,
         'auto_story_edit',
-        {}
+        { ...SCOPE_GENERATION }
       );
     } catch (e) {
-      if (e?.invalidArtifact === undefined && e?.kind !== 'INVALID_RESPONSE') throw e;
-      selection = e.invalidArtifact || null; schemaError = e.message;
+      const msg = String(e?.message || '');
+      const isTokenOrTruncation = /MAX_TOKENS|JSON root bị cắt|không hoàn tất response|degenerate oversized text/i.test(msg);
+      if (isTokenOrTruncation) {
+        emit('design', `[Scope] Story Scope hit MAX_TOKENS/truncation; retrying with compact single-candidate anti-repetition mode...`, 'WARNING');
+        try {
+          selection = await engine.ask(
+            `${stageName}_compact`,
+            stageInput,
+            schemas.storyScopeSelection,
+            `${stageInstruction}\n\n${COMPACT_SCOPE_RECOVERY_INSTRUCTION}`,
+            [],
+            validateSelectionShape,
+            'auto_story_edit',
+            { ...SCOPE_GENERATION, noCache: true, temperature: 0.25 }
+          );
+        } catch (retryErr) {
+          if (retryErr?.invalidArtifact === undefined && retryErr?.kind !== 'INVALID_RESPONSE') throw retryErr;
+          selection = retryErr.invalidArtifact || null;
+          schemaError = retryErr.message;
+        }
+      } else {
+        if (e?.invalidArtifact === undefined && e?.kind !== 'INVALID_RESPONSE') throw e;
+        selection = e.invalidArtifact || null;
+        schemaError = e.message;
+      }
     }
     const scope = schemaError ? null : chosenScope(selection);
     const nCandidates = Array.isArray(selection?.candidates) ? selection.candidates.length : 0;
@@ -522,7 +579,9 @@ function alternateScopes(selection, chosenId, opts) {
 }
 
 module.exports = {
-  SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC, SCOPE_LIMITS, normalizeScopeWindows, limitsText,
-  resolveMaxLiveActionSec, schemas, instruction, selectStoryScope, validateStoryScope, planScopeReel, mergeRanges,
-  chosenScope, alternateScopes, modelForScope
+  SCOPE_CONTRACT_VERSION, DEFAULT_MAX_SCOPE_REEL_SEC, DEFAULT_REEL_PADDING_SEC, SCOPE_LIMITS,
+  SCOPE_MAX_OUTPUT_TOKENS, SCOPE_THINKING_BUDGET, SCOPE_GENERATION, MAX_SCOPE_TEXT_CHARS,
+  normalizeScopeWindows, limitsText, resolveMaxLiveActionSec, schemas, instruction, selectStoryScope,
+  validateStoryScope, validateSelectionShape, planScopeReel, mergeRanges, chosenScope, alternateScopes, modelForScope
 };
+

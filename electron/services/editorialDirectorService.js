@@ -227,6 +227,9 @@ ENDING = AUTHORITATIVE CONSEQUENCE + CLEAN NARRATOR CLOSING SYNTHESIS.
 - Let the raw_evidence payoff show the authoritative rebuttal/charge explanation and the subject's final reaction first, then conclude with a 4.5-7.0s narrated_story CLOSING/PAYOFF block over clean live-action closure footage (up to input.liveActionEndSec, before any outro graphics) delivering a grounded 1-sentence takeaway + 1-sentence viewer debate question.
 
 DURATION: aim the total at input.targetDurationSec — inside the preferred band input.targetBandMinSec..input.targetBandMaxSec. input.targetDurationMinSec..input.targetDurationMaxSec is only the hard acceptance range; do NOT aim at its minimum. FINAL TIMELINE DURATION = sum(sourceEndSec - sourceStartSec) over every selected beat. The returned EDL must land inside the preferred band whenever suitable footage allows it, and MUST NOT exceed input.targetDurationMaxSec. The JSON you return is final: no arithmetic, drafts, corrections or repeated text inside any field. Choose beat lengths editorially (a beat may be short or long), and every beat is at least 1 second.
+OUTPUT HYGIENE & ANTI-REPETITION (CRITICAL — PREVENTS MAX_TOKENS):
+- Every beatId and blockId MUST be a short sequential ASCII token <= 16 characters ('beat_01', 'beat_02', 'blk_01', 'blk_02'). NEVER concatenate long descriptive words or digit strings into any ID.
+- Keep every summary, whySelected, viewerLearns, narrationIntent, commentaryValue, and check field concise (1 sentence, <= 25 words) with zero repeated digits or phrases.
 Set accessGranted=true only after watching the attached reel. reelObservations: 2-4 sentences on what the reel actually shows.`;
 
 function repairInstruction(kind, payload) {

@@ -182,6 +182,12 @@ function blockPayload(timeline, k, model, wordsPerSecond, storyScope = null) {
 }
 
 const MAX_NARRATION_EVIDENCE_FILES = 10;
+const NARRATION_MAX_OUTPUT_TOKENS = 8192;
+const NARRATION_THINKING_BUDGET = 0;
+const NARRATION_GENERATION = Object.freeze({
+  maxOutputTokens: NARRATION_MAX_OUTPUT_TOKENS,
+  thinkingBudget: NARRATION_THINKING_BUDGET
+});
 
 function selectNarrationEvidence(evidence, payloads) {
   if (!Array.isArray(evidence) || evidence.length <= MAX_NARRATION_EVIDENCE_FILES) return evidence || [];
@@ -213,13 +219,41 @@ async function askBlockNarration(engine, story, payloads, evidence, repair = nul
     ? `${INSTRUCTION}\nREWRITE: the previous passage for each block in input.blocks failed a deterministic narration check (input.blocks[].rewriteReason). Return a complete, corrected passage for that block that still serves its narrationIntent and commentaryValue. If rewriteTargetWords is present, stay at or below that many words. If rewriteMinWords is present, expand into a complete grounded two-part takeaway + discussion question of at least rewriteMinWords words (while staying <= safeWords) so the closing block does not leave dead-air silence. If rewriteReason contains "epistemic", narrationText MUST explicitly attribute the non-fact claim (for example "the caller said...", "the caller reported...", or "according to her..."); changing only newInformationRefs is not a fix. If rewriteReason contains "punchline_spoiler", DO NOT paraphrase or quote the subject's upcoming defense or dialogue; frame only the situation and anticipation. If rewriteReason contains "judgmental_framing", remove loaded or derogatory terms ("pure entitlement", etc.) and state the observable behavioral contrast and legal cause-and-effect objectively. Do not drop the block's purpose; do not cut mid-thought. This rewrite is text-only because the block was already media-grounded upstream and input.blocks[].sourceContext contains the allowed facts/quotes.`
     : INSTRUCTION;
   const attachedEvidence = repair ? [] : selectNarrationEvidence(evidence, payloads);
-  const result = await engine.ask(`v5-block-narration${repair ? `_rewrite${attempt}` : ''}-${story.scriptId}`,
-    { spine: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise },
-      mustWithhold: story.storyScope?.mustWithhold || [], blocks: payloads },
-    schema, instruction, attachedEvidence, v => {
-      if (!v || !Array.isArray(v.narrations)) throw new StoryError('INVALID_RESPONSE', 'Missing block narrations.');
-      return v;
-    }, 'auto_story_edit');
+  const stageName = `v5-block-narration${repair ? `_rewrite${attempt}` : ''}-${story.scriptId}`;
+  const stageInput = {
+    spine: { centralViewerQuestion: story.centralViewerQuestion, hookPromise: story.hookPromise },
+    mustWithhold: story.storyScope?.mustWithhold || [],
+    blocks: payloads
+  };
+  const checkShape = v => {
+    if (!v || !Array.isArray(v.narrations)) throw new StoryError('INVALID_RESPONSE', 'Missing block narrations.');
+    return v;
+  };
+  let result;
+  try {
+    result = await engine.ask(
+      stageName,
+      stageInput,
+      schema,
+      instruction,
+      attachedEvidence,
+      checkShape,
+      'auto_story_edit',
+      { ...NARRATION_GENERATION }
+    );
+  } catch (e) {
+    if (!/MAX_TOKENS|JSON root bị cắt|không hoàn tất response/i.test(String(e?.message || ''))) throw e;
+    result = await engine.ask(
+      `${stageName}_compact`,
+      stageInput,
+      schema,
+      `${instruction}\n\nCOMPACT ANTI-REPETITION RECOVERY: Return concise narrations only. Keep blockId exact ('blk_02', etc.), never repeat digits or phrases, and keep each newInformation item <= 12 words.`,
+      attachedEvidence,
+      checkShape,
+      'auto_story_edit',
+      { ...NARRATION_GENERATION, noCache: true, temperature: 0.25 }
+    );
+  }
   return new Map(result.narrations.map(n => [n.blockId, n]));
 }
 
@@ -377,5 +411,8 @@ async function narrateBlocks({ engine, service, story, model, beats, blocks, evi
   return { blocks: out, audit };
 }
 
-module.exports = { INSTRUCTION, schema, blockPayload, gateBlocks, narrateBlocks, cadenceForNarratorFunction, selectNarrationEvidence, BLOCK_MAX_SPEEDUP };
+module.exports = {
+  INSTRUCTION, schema, blockPayload, gateBlocks, narrateBlocks, cadenceForNarratorFunction,
+  selectNarrationEvidence, BLOCK_MAX_SPEEDUP, NARRATION_MAX_OUTPUT_TOKENS, NARRATION_THINKING_BUDGET, NARRATION_GENERATION
+};
 

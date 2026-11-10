@@ -18,7 +18,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
 
-const BOUNDARY_CACHE_VERSION = 2;
+const BOUNDARY_CACHE_VERSION = 3;
 const SAFETY_MARGIN_SEC = 0.20; // 6 frames at 30fps before exact outro transition cut
 
 const OUTRO_TEXT_PATTERNS = [
@@ -525,9 +525,10 @@ async function detectSourceEndingBoundary({
   if (Array.isArray(model?.events)) {
     const trailingEvents = model.events.filter(e => Number(e.startSec) >= inspectStartSec);
     const outroEvent = trailingEvents.find(e =>
-      /outro|recap|end[\s_-]*screen|credits|promo|epilogue|sentenc(?:e|ing)\s+card|split[\s_-]*screen/i.test(
+      /outro|recap|end[\s_-]*screen|credits|promo|epilogue|sentenc(?:e|ing)\s+card|split[\s_-]*screen|graphics\s+screen|charges_reveal|retrospective|studio\s*\/?\s*archive|past\s+viral\s+video|narrator\s+reveals/i.test(
         `${e.type || ''} ${e.summary || ''} ${e.label || ''} ${e.location || ''}`
-      )
+      ) ||
+      (String(e.audioType || '').toLowerCase() === 'external_narrator' && /graphics|archive|studio|epilogue|outro|recap|charge|sentenc|viral/i.test(`${e.type || ''} ${e.summary || ''} ${e.location || ''}`))
     );
     if (outroEvent && Number.isFinite(Number(outroEvent.startSec))) {
       modelOutroStartSec = Number(outroEvent.startSec);

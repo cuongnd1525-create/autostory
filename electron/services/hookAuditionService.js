@@ -441,7 +441,9 @@ Return JSON matching the schema.`;
         filePaths: [],
         prompt: planPrompt,
         responseSchema: TITLE_PLAN_SCHEMA,
-        taskType: 'analysis'
+        taskType: 'analysis',
+        maxOutputTokens: 4096,
+        thinkingBudget: 0
       });
       if (Array.isArray(planRes?.candidates)) plannedCandidates = planRes.candidates;
     } catch (_) {}
@@ -540,7 +542,9 @@ Select the strongest opening preview as selectedCandidateId and explain why base
         filePaths: verifiedCandidates.map(c => c.mp4Path),
         prompt: evalPrompt,
         responseSchema: MULTIMODAL_AUDITION_SCHEMA,
-        taskType: 'analysis'
+        taskType: 'analysis',
+        maxOutputTokens: 4096,
+        thinkingBudget: 0
       });
     } catch (err) {
       multimodalDecision = {

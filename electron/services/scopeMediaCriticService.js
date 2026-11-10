@@ -328,6 +328,9 @@ function normalizeCritique(raw, { durationSec, timeline, deliveryAware = false, 
   };
 }
 
+const CRITIC_MAX_OUTPUT_TOKENS = 8192;
+const CRITIC_THINKING_BUDGET = 0;
+
 async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4DurationSec, script = null } = {}) {
   if (!aiService || !mp4Path || !actualMp4DurationSec) throw new Error('Scope media critic requires aiService, mp4Path, and actualMp4DurationSec');
   const timeline = outputTimeline(spine, script);
@@ -337,9 +340,32 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   const prompt = buildPrompt(spine, timeline, actualMp4DurationSec, delivery);
   let raw;
   try {
-    raw = await aiService.generateJsonFromFiles({ filePaths: [mp4Path], prompt, responseSchema, taskType: 'analysis' });
+    raw = await aiService.generateJsonFromFiles({
+      filePaths: [mp4Path],
+      prompt,
+      responseSchema,
+      taskType: 'analysis',
+      maxOutputTokens: CRITIC_MAX_OUTPUT_TOKENS,
+      thinkingBudget: CRITIC_THINKING_BUDGET
+    });
   } catch (error) {
-    return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${error.message}`, issues: [], weakWindows: [], weakRegions: [] };
+    if (/MAX_TOKENS|JSON root bị cắt|không hoàn tất response/i.test(String(error?.message || ''))) {
+      try {
+        raw = await aiService.generateJsonFromFiles({
+          filePaths: [mp4Path],
+          prompt: `${prompt}\n\nCOMPACT ANTI-REPETITION MODE: Keep observedStory, summary, coldViewerNotes, and each issue description to 1 short sentence (<= 22 words). Never repeat tokens or digits.`,
+          responseSchema,
+          taskType: 'analysis',
+          temperature: 0.25,
+          maxOutputTokens: 12288,
+          thinkingBudget: CRITIC_THINKING_BUDGET
+        });
+      } catch (retryError) {
+        return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${retryError.message}`, issues: [], weakWindows: [], weakRegions: [] };
+      }
+    } else {
+      return { status: 'MEDIA_CRITIC_INVALID', isCompliant: false, summary: `Critic call failed: ${error.message}`, issues: [], weakWindows: [], weakRegions: [] };
+    }
   }
   const narrationActive = Boolean(delivery?.some(d => d.mode === 'narrated_story') || script?.narration_enabled);
   const out = normalizeCritique(raw, { durationSec: actualMp4DurationSec, timeline, deliveryAware: Boolean(delivery), deliveryBlocks: delivery, narrationActive });
@@ -351,4 +377,8 @@ async function critiqueScopedRender(spine = {}, { aiService, mp4Path, actualMp4D
   return out;
 }
 
-module.exports = { ISSUE_TYPES, DELIVERY_ISSUES, responseSchema, outputTimeline, deliveryTimeline, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender };
+module.exports = {
+  ISSUE_TYPES, DELIVERY_ISSUES, CRITIC_MAX_OUTPUT_TOKENS, CRITIC_THINKING_BUDGET,
+  responseSchema, outputTimeline, deliveryTimeline, beatsInRegion, buildPrompt, normalizeCritique, critiqueScopedRender
+};
+
