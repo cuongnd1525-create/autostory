@@ -1374,7 +1374,7 @@ test('Stage A (18): MAX_TOKENS prevention, oversized repetition loop guard, comp
       { eventId: 'evt_3', sourceStartSec: 750, sourceEndSec: 805, endingRole: 'payoff', whyValidEnding: 'Completed jail booking consequence.' }
     ],
     scopeWindows: [
-      { windowId: 'win_01', startSec: 25, endSec: 70, purposes: ['context'], reason: 'Initial dispersal order.' },
+      { windowId: 'win_01', startSec: 25, endSec: 70, purposes: ['core'], reason: 'Initial dispersal order.' },
       { windowId: 'win_02', startSec: 165, endSec: 220, purposes: ['hook_material', 'core'], reason: 'Physical struggle and kick.' },
       { windowId: 'win_03', startSec: 745, endSec: 808, purposes: ['ending_material'], reason: 'Jail booking consequence.' }
     ],
@@ -1418,7 +1418,7 @@ test('Stage A (18): MAX_TOKENS prevention, oversized repetition loop guard, comp
   assert.deepEqual(askCalls[0].options, { maxOutputTokens: 16384, thinkingBudget: 0 });
   assert.equal(askCalls[1].name, 'v5-story-scope_compact');
   assert.deepEqual(askCalls[1].options, { maxOutputTokens: 16384, thinkingBudget: 0, noCache: true, temperature: 0.25 });
-  assert.match(askCalls[1].instr, /COMPACT SINGLE-CANDIDATE RECOVERY MODE/);
+  assert.match(askCalls[1].instr, /COMPACT ANTI-REPETITION RECOVERY/);
   assert.equal(scopeOut.scope.storyScopeId, 'scope_01');
 
   // 18D: CritiqueScopedRender retries with compact mode on MAX_TOKENS
@@ -1446,6 +1446,13 @@ test('Stage A (18): MAX_TOKENS prevention, oversized repetition loop guard, comp
           return {
             accessGranted: true,
             isCompliant: true,
+            scopeSurvived: true,
+            centralQuestionActiveThroughout: true,
+            endingIsConsequenceOfCentralConflict: true,
+            finalFootageUsable: true,
+            finalSeconds: { subjectClearlyVisible: true, endsAtCompleteBoundary: true, lastWordsHeard: 'Okay.', visualDescription: 'Deputy closes cruiser door.' },
+            openingCuriosity: { createsCuriosity: true },
+            transitions: [],
             openingEarnsRetention: true,
             storyCoherent: true,
             payoffFulfillsOpeningPromise: true,
@@ -1516,7 +1523,8 @@ test('Stage A (19): Editorial Director resolves raw-wall repair without false NA
       { blockId: 'blk_08', mode: 'narrated_story', beatIds: ['b6'], narratorFunction: 'CLOSING' }
     ]
   };
-  const planViolations = Director.narrativePlanViolations(edlWith3Narrated4Planned, scopeWith3Ops, { narrationEnabled: true });
+  const planBeats = ['b1', 'b2', 'b3', 'b4', 'b5', 'b6'].map((beatId, i) => ({ beatId, sourceStartSec: 40 + i * 20, sourceEndSec: 50 + i * 20 }));
+  const planViolations = Director.narrativePlanViolations(edlWith3Narrated4Planned, planBeats, scopeWith3Ops, { narrationEnabled: true });
   assert.equal(planViolations.length, 0, `Expected 0 narrativePlanViolations when 3 narrated blocks satisfy minForCommentaryLed=3, got ${JSON.stringify(planViolations)}`);
 
   // 19B: When repairing UNINTERRUPTED_RAW_WALL replaces 2 secondary officer warnings (q08, q09) with a narrated bridge
@@ -1584,9 +1592,12 @@ test('Stage A (19): Editorial Director resolves raw-wall repair without false NA
     attempt0Edl,
     attempt1Edl,
     modelWithAllHighQuotes,
-    [{ code: 'UNINTERRUPTED_RAW_WALL' }, { code: 'NARRATIVE_PLAN_INCONSISTENT' }]
+    { priorViolations: [{ code: 'UNINTERRUPTED_RAW_WALL' }, { code: 'NARRATIVE_PLAN_INCONSISTENT' }] }
   );
   assert.equal(punchlineViolations.length, 0, `Expected 0 punchline violations when breaking up UNINTERRUPTED_RAW_WALL while keeping 6/8 quotes, got ${JSON.stringify(punchlineViolations)}`);
+  // An explicit quote array (ownership-map contract) still protects every listed quote
+  const strictViolations = Director.punchlinePreservationViolations(attempt0Edl, attempt1Edl, modelWithAllHighQuotes.quotes);
+  assert.deepEqual(strictViolations.map(v => v.quoteId).sort(), ['q08', 'q09']);
 
   // 19C: Post-structural-repair technicalDurationAdjustment (maxDeficitSec = 3.0) reconciles a 63.55s timeline (-1.45s below 65.0s)
   // to 65.0s inside watched scope windows, while default maxDeficitSec (1.0s) leaves it untouched.
@@ -1607,22 +1618,34 @@ test('Stage A (19): Editorial Director resolves raw-wall repair without false NA
     ]
   };
   const defaultAdjust = Director.technicalDurationAdjustment(underMin63p55Spine, reel, {
-    targetDurationMinSec: 65,
-    targetDurationMaxSec: 90,
+    hardMinSec: 65,
     durationSec: 906.84,
     liveActionEndSec: 810
   });
   assert.equal(defaultAdjust.applied, false, 'Default maxDeficitSec (1.0s) must remain unchanged for unit test contracts');
 
   const postRepairAdjust = Director.technicalDurationAdjustment(underMin63p55Spine, reel, {
-    targetDurationMinSec: 65,
-    targetDurationMaxSec: 90,
+    hardMinSec: 65,
     durationSec: 906.84,
     liveActionEndSec: 810,
     maxDeficitSec: Director.POST_STRUCTURAL_REPAIR_MAX_DEFICIT_SEC
   });
-  assert.equal(postRepairAdjust.applied, true, 'Post-structural-repair maxDeficitSec (3.0s) should reconcile -1.45s deficit');
-  assert.equal(postRepairAdjust.afterSec, 65.0);
+  assert.equal(postRepairAdjust.applied, true, `Post-structural-repair maxDeficitSec (3.0s) should reconcile -1.45s deficit, got ${postRepairAdjust.reason}`);
+  assert.ok(Math.abs(Director.timelineSec(postRepairAdjust.spine.beats) - 65.0) < 0.01, `Expected ~65.0s, got ${Director.timelineSec(postRepairAdjust.spine.beats)}`);
+  // Every adjusted beat stays inside its watched window and below liveActionEndSec
+  for (const b of postRepairAdjust.spine.beats) {
+    assert.ok(reel.ranges.some(r => b.sourceStartSec >= r.windowStartSec - 1e-6 && b.sourceEndSec <= r.windowEndSec + 1e-6), `${b.beatId} left its watched window`);
+    assert.ok(b.sourceEndSec <= 810);
+  }
+
+  // 19D: A deficit beyond 3.0s still goes back to the media-grounded Director (no silent padding)
+  const bigDeficit = Director.technicalDurationAdjustment(underMin63p55Spine, reel, {
+    hardMinSec: 70,
+    durationSec: 906.84,
+    liveActionEndSec: 810,
+    maxDeficitSec: Director.POST_STRUCTURAL_REPAIR_MAX_DEFICIT_SEC
+  });
+  assert.equal(bigDeficit.applied, false);
 });
 
 

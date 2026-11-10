@@ -1822,5 +1822,6 @@ module.exports = {
   durationTargets, durationDelta, technicalDurationAdjustment, technicalWindowPaddingAdjustment, onlyDurationViolations, storyPreservationViolations, DURATION_REPAIR_INSTRUCTION,
   DURATION_COMPRESSION_INSTRUCTION, UNDER_MIN_REPAIR_INSTRUCTION, extensionOpportunities, underMinStall, extensionOverlapViolations, beatBudget, compressionViolations, compressionReminder,
   acceptanceReport, ACCEPTANCE, ACCEPTANCE_CONTRACT, RENDER_DURATION_TOLERANCE_SEC, endingMaterialRanges, endingBoundary, editorialReadiness, presentationReadiness,
-  deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape
+  deliveryBeats, openingViolations, OPENING_STRATEGIES, DELIVERY_ONLY_REPAIR_INSTRUCTION, DIRECTOR_MAX_OUTPUT_TOKENS, DIRECTOR_THINKING_BUDGET, DIRECTOR_GENERATION, MAX_DIRECTOR_TEXT_CHARS, diagnoseDirectorOutput, validateShape,
+  narrativePlanViolations, POST_STRUCTURAL_REPAIR_MAX_DEFICIT_SEC
 };
