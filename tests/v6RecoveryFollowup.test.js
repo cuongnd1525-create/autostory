@@ -1486,5 +1486,145 @@ test('Stage A (18): MAX_TOKENS prevention, oversized repetition loop guard, comp
   assert.equal(boundary.liveActionEndSec, 810.8);
 });
 
+test('Stage A (19): Editorial Director resolves raw-wall repair without false NARRATIVE_PLAN_INCONSISTENT, HIGH_VALUE_QUOTE_LOST_IN_REPAIR, or -1.45s TOTAL_DURATION_UNDER_MIN failure', () => {
+  // 19A: When commentaryOpportunities >= 3 (minForCommentaryLed = 3) and EDL already has 3 narrated_story blocks,
+  // listing 4 items in plannedNarratedMoments does NOT trigger NARRATIVE_PLAN_INCONSISTENT.
+  const scopeWith3Ops = {
+    liveActionEndSec: 810,
+    commentaryOpportunities: [
+      { sourceStartSec: 36, sourceEndSec: 46, editorialAngle: 'Rewind setup' },
+      { sourceStartSec: 120, sourceEndSec: 130, editorialAngle: 'Escalation bridge' },
+      { sourceStartSec: 309, sourceEndSec: 315, editorialAngle: 'Mid-story bridge' },
+      { sourceStartSec: 800, sourceEndSec: 808, editorialAngle: 'Closing takeaway' }
+    ]
+  };
+  const edlWith3Narrated4Planned = {
+    narrativePlan: {
+      plannedNarratedMoments: [
+        { targetBlockId: 'blk_02', role: 'CONTEXT' },
+        { targetBlockId: 'blk_04', role: 'CAUSAL_BRIDGE' },
+        { targetBlockId: 'blk_06', role: 'ESCALATION_FRAMING' },
+        { targetBlockId: 'blk_08', role: 'CLOSING' }
+      ]
+    },
+    deliveryBlocks: [
+      { blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['b1'] },
+      { blockId: 'blk_02', mode: 'narrated_story', beatIds: ['b2'], narratorFunction: 'CONTEXT' },
+      { blockId: 'blk_03', mode: 'raw_evidence', beatIds: ['b3'] },
+      { blockId: 'blk_04', mode: 'narrated_story', beatIds: ['b4'], narratorFunction: 'CAUSAL_BRIDGE' },
+      { blockId: 'blk_05', mode: 'raw_evidence', beatIds: ['b5'] },
+      { blockId: 'blk_08', mode: 'narrated_story', beatIds: ['b6'], narratorFunction: 'CLOSING' }
+    ]
+  };
+  const planViolations = Director.narrativePlanViolations(edlWith3Narrated4Planned, scopeWith3Ops, { narrationEnabled: true });
+  assert.equal(planViolations.length, 0, `Expected 0 narrativePlanViolations when 3 narrated blocks satisfy minForCommentaryLed=3, got ${JSON.stringify(planViolations)}`);
+
+  // 19B: When repairing UNINTERRUPTED_RAW_WALL replaces 2 secondary officer warnings (q08, q09) with a narrated bridge
+  // while preserving 6 core raw quotes (including hook and climax quotes), punchlinePreservationViolations returns 0 violations.
+  const modelWithAllHighQuotes = {
+    quotes: [
+      { id: 'q03', startSec: 168.4, endSec: 171.75, text: 'Stop pulling away from me!', editorialValue: 0.85, spokenWordCount: 5 },
+      { id: 'q04', startSec: 190.87, endSec: 195.8, text: 'Get in the car right now!', editorialValue: 0.9, spokenWordCount: 6 },
+      { id: 'q05', startSec: 53.05, endSec: 57.6, text: 'We are not giving you the keys.', editorialValue: 0.85, spokenWordCount: 7 },
+      { id: 'q06', startSec: 108.56, endSec: 112.9, text: 'You need to leave the property now.', editorialValue: 0.8, spokenWordCount: 7 },
+      { id: 'q07', startSec: 256.8, endSec: 266.0, text: 'Wait until I get out of these cuffs.', editorialValue: 0.9, spokenWordCount: 8 },
+      { id: 'q08', startSec: 299.16, endSec: 303.5, text: 'Stop kicking the door right now.', editorialValue: 0.8, spokenWordCount: 6 },
+      { id: 'q09', startSec: 366.16, endSec: 371.27, text: 'Put your seatbelt on or stay back.', editorialValue: 0.8, spokenWordCount: 7 },
+      { id: 'q10', startSec: 405.84, endSec: 416.0, text: 'Look what you did to my leg!', editorialValue: 0.9, spokenWordCount: 7 }
+    ]
+  };
+  const attempt0Edl = {
+    beats: [
+      { beatId: 'beat_01', sourceStartSec: 168.4, sourceEndSec: 171.75 },
+      { beatId: 'beat_02', sourceStartSec: 190.87, sourceEndSec: 195.8 },
+      { beatId: 'beat_03', sourceStartSec: 36.0, sourceEndSec: 42.0 },
+      { beatId: 'beat_04', sourceStartSec: 53.05, sourceEndSec: 57.6 },
+      { beatId: 'beat_05', sourceStartSec: 108.56, sourceEndSec: 112.9 },
+      { beatId: 'beat_06', sourceStartSec: 120.0, sourceEndSec: 126.0 },
+      { beatId: 'beat_07', sourceStartSec: 256.8, sourceEndSec: 266.0 },
+      { beatId: 'beat_08', sourceStartSec: 299.16, sourceEndSec: 303.5 },
+      { beatId: 'beat_09', sourceStartSec: 366.16, sourceEndSec: 371.27 },
+      { beatId: 'beat_10', sourceStartSec: 405.84, sourceEndSec: 416.0 },
+      { beatId: 'beat_11', sourceStartSec: 800.0, sourceEndSec: 806.0 }
+    ],
+    deliveryBlocks: [
+      { blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['beat_01', 'beat_02'] },
+      { blockId: 'blk_02', mode: 'narrated_story', beatIds: ['beat_03'] },
+      { blockId: 'blk_03', mode: 'raw_evidence', beatIds: ['beat_04', 'beat_05'] },
+      { blockId: 'blk_04', mode: 'narrated_story', beatIds: ['beat_06'] },
+      { blockId: 'blk_05', mode: 'raw_evidence', beatIds: ['beat_07', 'beat_08', 'beat_09', 'beat_10'] },
+      { blockId: 'blk_06', mode: 'narrated_story', beatIds: ['beat_11'] }
+    ]
+  };
+  const attempt1Edl = {
+    beats: [
+      { beatId: 'beat_01', sourceStartSec: 168.4, sourceEndSec: 171.75 },
+      { beatId: 'beat_02', sourceStartSec: 190.87, sourceEndSec: 195.8 },
+      { beatId: 'beat_03', sourceStartSec: 36.0, sourceEndSec: 42.0 },
+      { beatId: 'beat_04', sourceStartSec: 53.05, sourceEndSec: 57.6 },
+      { beatId: 'beat_05', sourceStartSec: 108.56, sourceEndSec: 112.9 },
+      { beatId: 'beat_06', sourceStartSec: 120.0, sourceEndSec: 126.0 },
+      { beatId: 'beat_07', sourceStartSec: 256.8, sourceEndSec: 266.0 },
+      { beatId: 'beat_08', sourceStartSec: 309.0, sourceEndSec: 315.0 },
+      { beatId: 'beat_09', sourceStartSec: 405.84, sourceEndSec: 416.0 },
+      { beatId: 'beat_10', sourceStartSec: 800.0, sourceEndSec: 806.0 }
+    ],
+    deliveryBlocks: [
+      { blockId: 'blk_01', mode: 'raw_evidence', beatIds: ['beat_01', 'beat_02'] },
+      { blockId: 'blk_02', mode: 'narrated_story', beatIds: ['beat_03'] },
+      { blockId: 'blk_03', mode: 'raw_evidence', beatIds: ['beat_04', 'beat_05'] },
+      { blockId: 'blk_04', mode: 'narrated_story', beatIds: ['beat_06'] },
+      { blockId: 'blk_05', mode: 'raw_evidence', beatIds: ['beat_07'] },
+      { blockId: 'blk_06', mode: 'narrated_story', beatIds: ['beat_08'] },
+      { blockId: 'blk_07', mode: 'raw_evidence', beatIds: ['beat_09'] },
+      { blockId: 'blk_08', mode: 'narrated_story', beatIds: ['beat_10'] }
+    ]
+  };
+  const punchlineViolations = Director.punchlinePreservationViolations(
+    attempt0Edl,
+    attempt1Edl,
+    modelWithAllHighQuotes,
+    [{ code: 'UNINTERRUPTED_RAW_WALL' }, { code: 'NARRATIVE_PLAN_INCONSISTENT' }]
+  );
+  assert.equal(punchlineViolations.length, 0, `Expected 0 punchline violations when breaking up UNINTERRUPTED_RAW_WALL while keeping 6/8 quotes, got ${JSON.stringify(punchlineViolations)}`);
+
+  // 19C: Post-structural-repair technicalDurationAdjustment (maxDeficitSec = 3.0) reconciles a 63.55s timeline (-1.45s below 65.0s)
+  // to 65.0s inside watched scope windows, while default maxDeficitSec (1.0s) leaves it untouched.
+  const reel = {
+    ranges: [
+      { scopeWindowId: 'win_01', sourceStartSec: 30, sourceEndSec: 120, windowStartSec: 30, windowEndSec: 120 },
+      { scopeWindowId: 'win_02', sourceStartSec: 165, sourceEndSec: 225, windowStartSec: 165, windowEndSec: 225 },
+      { scopeWindowId: 'win_06', sourceStartSec: 745, sourceEndSec: 810, windowStartSec: 745, windowEndSec: 810 }
+    ]
+  };
+  const underMin63p55Spine = {
+    beats: [
+      { beatId: 'beat_01', sourceStartSec: 168.4, sourceEndSec: 171.75 }, // 3.35s
+      { beatId: 'beat_02', sourceStartSec: 190.87, sourceEndSec: 195.8 }, // 4.93s
+      { beatId: 'beat_03', sourceStartSec: 36.0, sourceEndSec: 66.0 },    // 30.00s
+      { beatId: 'beat_04', sourceStartSec: 750.0, sourceEndSec: 770.0 },  // 20.00s
+      { beatId: 'beat_05', sourceStartSec: 800.0, sourceEndSec: 805.27 }  // 5.27s -> total 63.55s
+    ]
+  };
+  const defaultAdjust = Director.technicalDurationAdjustment(underMin63p55Spine, reel, {
+    targetDurationMinSec: 65,
+    targetDurationMaxSec: 90,
+    durationSec: 906.84,
+    liveActionEndSec: 810
+  });
+  assert.equal(defaultAdjust.applied, false, 'Default maxDeficitSec (1.0s) must remain unchanged for unit test contracts');
+
+  const postRepairAdjust = Director.technicalDurationAdjustment(underMin63p55Spine, reel, {
+    targetDurationMinSec: 65,
+    targetDurationMaxSec: 90,
+    durationSec: 906.84,
+    liveActionEndSec: 810,
+    maxDeficitSec: Director.POST_STRUCTURAL_REPAIR_MAX_DEFICIT_SEC
+  });
+  assert.equal(postRepairAdjust.applied, true, 'Post-structural-repair maxDeficitSec (3.0s) should reconcile -1.45s deficit');
+  assert.equal(postRepairAdjust.afterSec, 65.0);
+});
+
+
 
 

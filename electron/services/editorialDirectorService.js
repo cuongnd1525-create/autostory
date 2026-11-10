@@ -257,6 +257,7 @@ function timelineSec(beats) { return (beats || []).reduce((n, b) => n + beatLen(
 const BAND_HALF_WIDTH_SEC = 3;
 const BAND_EDGE_MARGIN_SEC = 2;
 const TECHNICAL_ADJUST_MAX_DEFICIT_SEC = 1.0;
+const POST_STRUCTURAL_REPAIR_MAX_DEFICIT_SEC = 3.0;
 function durationTargets(scope, cfg = {}) {
   const hardMinSec = cfg.targetDurationMinSec || 65;
   const hardMaxSec = Math.max(hardMinSec, cfg.targetDurationMaxSec || 90);
@@ -311,29 +312,72 @@ function technicalDurationAdjustment(spine, reel, { hardMinSec, durationSec = In
     lo: Math.max(num(r.sourceStartSec), Number.isFinite(num(r.windowStartSec)) ? num(r.windowStartSec) : -Infinity, 0),
     hi: Math.min(num(r.sourceEndSec), Number.isFinite(num(r.windowEndSec)) ? num(r.windowEndSec) : Infinity, durationSec, maxLive)
   })).filter(r => r.hi > r.lo);
-  const others = i => beats.filter((_, j) => j !== i).map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
-  const free = (i, a, z) => others(i).every(([s, e]) => Math.min(e, z) - Math.max(s, a) <= 1e-6);
+  const others = (list, i) => list.filter((_, j) => j !== i).map(b => [num(b.sourceStartSec), num(b.sourceEndSec)]);
+  const free = (list, i, a, z) => others(list, i).every(([s, e]) => Math.min(e, z) - Math.max(s, a) <= 1e-6);
   const options = [];
   beats.forEach((b, i) => {
     const s = num(b.sourceStartSec), e = num(b.sourceEndSec);
     const home = rows.find(r => s >= r.lo - 1e-6 && e <= r.hi + 1e-6);
     if (!home) return;
-    if (e + need <= home.hi + 1e-6 && free(i, e, e + need)) options.push({ i, side: 'end', room: home.hi - e, home });
-    if (s - need >= home.lo - 1e-6 && free(i, s - need, s)) options.push({ i, side: 'start', room: s - home.lo, home });
+    if (e + need <= home.hi + 1e-6 && free(beats, i, e, e + need)) options.push({ i, side: 'end', room: home.hi - e, home });
+    if (s - need >= home.lo - 1e-6 && free(beats, i, s - need, s)) options.push({ i, side: 'start', room: s - home.lo, home });
   });
-  if (!options.length) return { applied: false, reason: 'no contiguous watched footage inside the same scope window without overlapping another beat' };
-  options.sort((a, b) => (a.side === b.side ? 0 : a.side === 'end' ? -1 : 1) || (b.room - a.room) || (a.i - b.i));
-  const o = options[0];
-  const b = beats[o.i];
-  const newStart = o.side === 'start' ? round2(num(b.sourceStartSec) - need) : num(b.sourceStartSec);
-  const newEnd = o.side === 'end' ? round2(num(b.sourceEndSec) + need) : num(b.sourceEndSec);
-  const adjustment = {
-    beatId: b.beatId, side: o.side, oldStartSec: num(b.sourceStartSec), oldEndSec: num(b.sourceEndSec), newStartSec: newStart, newEndSec: newEnd,
-    addedSec: need, sourceWindowId: o.home.row.scopeWindowId || null, segmentId: o.home.row.segmentId || null,
-    reason: `technical range reconciliation: ${round2(total)}s -> ${round2(total + need)}s (hard minimum ${hardMinSec}s)`
-  };
-  const adjusted = { ...spine, beats: beats.map((x, j) => (j === o.i ? { ...x, sourceStartSec: newStart, sourceEndSec: newEnd } : x)) };
-  return { applied: true, spine: adjusted, adjustment };
+  if (options.length) {
+    options.sort((a, b) => (a.side === b.side ? 0 : a.side === 'end' ? -1 : 1) || (b.room - a.room) || (a.i - b.i));
+    const o = options[0];
+    const b = beats[o.i];
+    const newStart = o.side === 'start' ? round2(num(b.sourceStartSec) - need) : num(b.sourceStartSec);
+    const newEnd = o.side === 'end' ? round2(num(b.sourceEndSec) + need) : num(b.sourceEndSec);
+    const adjustment = {
+      beatId: b.beatId, side: o.side, oldStartSec: num(b.sourceStartSec), oldEndSec: num(b.sourceEndSec), newStartSec: newStart, newEndSec: newEnd,
+      addedSec: need, sourceWindowId: o.home.row.scopeWindowId || null, segmentId: o.home.row.segmentId || null,
+      reason: `technical range reconciliation: ${round2(total)}s -> ${round2(total + need)}s (hard minimum ${hardMinSec}s)`
+    };
+    const adjusted = { ...spine, beats: beats.map((x, j) => (j === o.i ? { ...x, sourceStartSec: newStart, sourceEndSec: newEnd } : x)) };
+    return { applied: true, spine: adjusted, adjustment };
+  }
+  if (maxDeficitSec > TECHNICAL_ADJUST_MAX_DEFICIT_SEC) {
+    let remaining = need;
+    const working = beats.map(b => ({ ...b }));
+    const steps = [];
+    for (let pass = 0; pass < 4 && remaining > 1e-6; pass++) {
+      const partial = [];
+      working.forEach((b, i) => {
+        const s = num(b.sourceStartSec), e = num(b.sourceEndSec);
+        const home = rows.find(r => s >= r.lo - 1e-6 && e <= r.hi + 1e-6);
+        if (!home) return;
+        const maxEndStep = round2(Math.min(remaining, Math.max(0, home.hi - e)));
+        if (maxEndStep >= 0.25 && free(working, i, e, e + maxEndStep)) partial.push({ i, side: 'end', step: maxEndStep, room: home.hi - e, home });
+        const maxStartStep = round2(Math.min(remaining, Math.max(0, s - home.lo)));
+        if (maxStartStep >= 0.25 && free(working, i, s - maxStartStep, s)) partial.push({ i, side: 'start', step: maxStartStep, room: s - home.lo, home });
+      });
+      if (!partial.length) break;
+      partial.sort((a, b) => (b.step - a.step) || (a.side === b.side ? 0 : a.side === 'end' ? -1 : 1) || (b.room - a.room) || (a.i - b.i));
+      const pick = partial[0];
+      const target = working[pick.i];
+      const oldStart = num(target.sourceStartSec), oldEnd = num(target.sourceEndSec);
+      if (pick.side === 'end') target.sourceEndSec = round2(oldEnd + pick.step);
+      else target.sourceStartSec = round2(oldStart - pick.step);
+      remaining = round2(Math.max(0, remaining - pick.step));
+      steps.push({ beatId: target.beatId, side: pick.side, addedSec: pick.step, oldStartSec: oldStart, oldEndSec: oldEnd, newStartSec: target.sourceStartSec, newEndSec: target.sourceEndSec });
+    }
+    if (remaining <= 1e-6 && steps.length) {
+      const first = steps[0];
+      const adjustment = {
+        beatId: steps.map(s => s.beatId).join('+'),
+        side: first.side,
+        oldStartSec: first.oldStartSec,
+        oldEndSec: first.oldEndSec,
+        newStartSec: first.newStartSec,
+        newEndSec: first.newEndSec,
+        addedSec: need,
+        steps,
+        reason: `technical multi-beat range reconciliation: ${round2(total)}s -> ${round2(timelineSec(working))}s (hard minimum ${hardMinSec}s)`
+      };
+      return { applied: true, spine: { ...spine, beats: working }, adjustment };
+    }
+  }
+  return { applied: false, reason: 'no contiguous watched footage inside the same scope window without overlapping another beat' };
 }
 
 function cuttableRanges(reelRanges, maxEndSec = Infinity) {
@@ -841,7 +885,7 @@ function narrativePlanViolations(spine, beats, scope, { narrationEnabled = true,
   }
   const blocks = Array.isArray(spine?.deliveryBlocks) ? spine.deliveryBlocks : [];
   const narratedBlocks = blocks.filter(b => b.mode === 'narrated_story');
-  const requiredNarratedCount = Math.max(moments.length, minForCommentaryLed);
+  const requiredNarratedCount = minForCommentaryLed > 0 ? minForCommentaryLed : moments.length;
   if (requiredNarratedCount > 0 && narratedBlocks.length < requiredNarratedCount) {
     out.push({
       code: 'NARRATIVE_PLAN_INCONSISTENT',
@@ -1124,17 +1168,23 @@ function compareNarratorPlans(beforeSpine, afterSpine, { pacingMode = 'commentar
 
 /**
  * Ensures repairs do not strip high-value raw quotes/punchlines that were already present in `beforeSpine`.
+ * When `modelOrQuotes` is a full model inside `runDirector` (not an explicit quote array) and the repair
+ * is breaking up an `UNINTERRUPTED_RAW_WALL`, realizing a `NARRATIVE_PLAN_INCONSISTENT` narrator bridge,
+ * or compressing `TOTAL_DURATION_OVER_MAX`, replacing secondary raw beats with a narrated bridge is allowed
+ * as long as the core raw punchlines (majority of prior high-value quotes or >= 3 quotes) remain intact.
  */
-function punchlinePreservationViolations(beforeSpine, afterSpine, modelOrQuotes = null) {
+function punchlinePreservationViolations(beforeSpine, afterSpine, modelOrQuotes = null, { priorViolations = [] } = {}) {
   const explicitArray = Array.isArray(modelOrQuotes);
   const quotes = explicitArray ? modelOrQuotes : (Array.isArray(modelOrQuotes?.quotes) ? modelOrQuotes.quotes : []);
   if (!quotes.length || !beforeSpine?.beats?.length || !afterSpine?.beats?.length) return [];
   const beforeRaw = deliveryBeats(beforeSpine).filter(b => (b.audioMode || 'original_audio') === 'original_audio');
   const afterRaw = deliveryBeats(afterSpine).filter(b => (b.audioMode || 'original_audio') === 'original_audio');
-  const isHighValue = q => explicitArray
-    || num(q.editorialValue) >= 0.7
-    || /^(high|critical|iconic|key|strong)$/i.test(String(q.editorialValue || q.epistemic || ''))
-    || spokenWordCount(q.text) >= 5;
+  const isHighValue = q => {
+    if (explicitArray) return true;
+    const ev = num(q.editorialValue);
+    if (Number.isFinite(ev)) return ev > 1 ? ev >= 4 : ev >= 0.75;
+    return /^(high|critical|iconic|key|strong)$/i.test(String(q.editorialValue || q.epistemic || ''));
+  };
   const coversQuote = (rawBeats, q) => {
     const qs = num(q.sourceStartSec ?? q.startSec), qe = num(q.sourceEndSec ?? q.endSec);
     if (!(qe > qs)) return false;
@@ -1144,10 +1194,25 @@ function punchlinePreservationViolations(beforeSpine, afterSpine, modelOrQuotes 
       return ov >= Math.min(1.2, span * 0.65);
     });
   };
+  const highValuePool = quotes.filter(isHighValue);
+  const coveredBefore = highValuePool.filter(q => coversQuote(beforeRaw, q));
+  const coveredAfter = coveredBefore.filter(q => coversQuote(afterRaw, q));
+  if (!explicitArray && coveredBefore.length > 0) {
+    const priorCodes = new Set((priorViolations || []).map(v => v?.code).filter(Boolean));
+    const isBreakingRawWallOrCompressing = priorCodes.has('UNINTERRUPTED_RAW_WALL')
+      || priorCodes.has('NARRATIVE_PLAN_INCONSISTENT')
+      || priorCodes.has('TOTAL_DURATION_OVER_MAX');
+    if (isBreakingRawWallOrCompressing && (coveredAfter.length >= 3 || coveredAfter.length >= Math.ceil(coveredBefore.length * 0.55))) {
+      return [];
+    }
+    if (coveredAfter.length >= Math.ceil(coveredBefore.length * 0.75)) {
+      return [];
+    }
+  }
   const out = [];
-  for (const q of quotes.filter(isHighValue)) {
+  for (const q of coveredBefore) {
     const qs = num(q.sourceStartSec ?? q.startSec), qe = num(q.sourceEndSec ?? q.endSec);
-    if (coversQuote(beforeRaw, q) && !coversQuote(afterRaw, q)) {
+    if (!coversQuote(afterRaw, q)) {
       out.push({
         code: 'HIGH_VALUE_QUOTE_LOST_IN_REPAIR',
         quoteId: q.quoteId || q.id || null,
@@ -1324,7 +1389,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     const referencePriorSpine = baselineRepairSpine || (technical ? current : null);
     if (!schemaError && spine && referencePriorSpine) {
       narratorComparison = compareNarratorPlans(referencePriorSpine, spine, { pacingMode: resolvedPacingMode, narrationEnabled: baseInput.narrationEnabled });
-      const lostQuotes = punchlinePreservationViolations(referencePriorSpine, spine, model);
+      const lostQuotes = punchlinePreservationViolations(referencePriorSpine, spine, model, { priorViolations: violations });
       const extraRepairViolations = [...narratorComparison.violations, ...lostQuotes];
       if (extraRepairViolations.length) {
         report = { ...report, valid: false, violations: [...report.violations, ...extraRepairViolations] };
@@ -1420,7 +1485,10 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     }
 
     if (spine && onlyDurationViolations(report.violations) && report.violations.every(v => v.code === 'TOTAL_DURATION_UNDER_MIN')) {
-      const tech = technicalDurationAdjustment(spine, reel, { hardMinSec: targets.hardMinSec, durationSec: engine.duration, liveActionEndSec: maxLiveSec });
+      const maxDeficitSec = (technical && mode === 'multimodal_technical')
+        ? POST_STRUCTURAL_REPAIR_MAX_DEFICIT_SEC
+        : TECHNICAL_ADJUST_MAX_DEFICIT_SEC;
+      const tech = technicalDurationAdjustment(spine, reel, { hardMinSec: targets.hardMinSec, durationSec: engine.duration, liveActionEndSec: maxLiveSec, maxDeficitSec });
       entry.technicalDurationAdjustment = tech.applied ? tech.adjustment : { applied: false, reason: tech.reason };
       if (tech.applied) {
         const recheck = validateDirectorEdl(tech.spine, scope, valOpts);
@@ -1435,8 +1503,7 @@ async function runDirector(engine, { model, scope, reel, evidence, key, extraInp
     const nextKind = !onlyDurationViolations(report.violations) ? 'multimodal technical'
       : report.violations.some(v => v.code === 'TOTAL_DURATION_OVER_MAX') ? 'text-only compression' : 'multimodal under-minimum';
     if (attempt === effectiveMaxRepairs && effectiveMaxRepairs === maxTechnicalRepairs && structurallyValid
-      && !previousCompression && report.violations.every(v => v.code === 'TOTAL_DURATION_OVER_MAX')
-      && Array.isArray(scope?.commentaryOpportunities) && scope.commentaryOpportunities.length > 0) {
+      && (mode === 'multimodal_technical' || (!previousCompression && report.violations.every(v => v.code === 'TOTAL_DURATION_OVER_MAX') && Array.isArray(scope?.commentaryOpportunities) && scope.commentaryOpportunities.length > 0))) {
       effectiveMaxRepairs = maxTechnicalRepairs + 1;
     }
     if (attempt < effectiveMaxRepairs) emit('design', `[Director] EDL needs repair #${attempt + 1} (${nextKind}): ${report.violations.map(v => v.code).join(', ')}`, 'WARNING');
