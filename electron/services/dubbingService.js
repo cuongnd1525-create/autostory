@@ -131,7 +131,7 @@ function buildVoiceBatchGroups(segments = [], { maxDurationSec = 45, maxGapSec =
   for (const [index, segment] of segments.entries()) {
     const startSec = Math.max(0, safeNumber(segment.startSec, 0));
     const endSec = Math.max(startSec + 0.2, safeNumber(segment.endSec, startSec + safeNumber(segment.duration, 1)));
-    const text = safeText(segment.dubbingLine || segment.text || segment.translatedText || segment.caption || "");
+    const text = safeText(segment.dubbingLine || segment.storyText || segment.translatedText || segment.caption || segment.text || "");
     if (!current) {
       current = { startSec, endSec, items: [{ index, segment, startSec, endSec, text }] };
       continue;
@@ -3529,9 +3529,16 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 #overlay-root{width:${targetWidth}px;height:${targetHeight}px;transform:scale(${raster.scaleX},${raster.scaleY});transform-origin:0 0}
 </style><div id="overlay-root">${svg}</div>`;
       await window.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-      const image = await window.webContents.capturePage({ x: 0, y: 0, width: renderWidth, height: renderHeight });
+      await window.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))').catch(() => null);
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      let image = await window.webContents.capturePage({ x: 0, y: 0, width: renderWidth, height: renderHeight });
+      let png = image.toPNG();
+      if (!png?.length || png.length < 3500) {
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        image = await window.webContents.capturePage({ x: 0, y: 0, width: renderWidth, height: renderHeight });
+        png = image.toPNG();
+      }
       if (image.isEmpty()) throw new Error("Chromium returned an empty title image");
-      const png = image.toPNG();
       if (!png?.length) throw new Error("Chromium returned an invalid title image");
       await fs.writeFile(outputPath, png);
       return outputPath;
@@ -4090,14 +4097,18 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 12, message: "Đang đọc video và kịch bản JSON" });
       raw = await fs.readFile(project.storyScriptPath, "utf8");
     } else {
-      await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 15, message: "AI đang tự tạo kịch bản Modular Story Matrix..." });
+      await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "storytime", percent: 15, message: "AI đang tự tạo kịch bản theo Story Blueprint..." });
       const StorytimeScriptService = require("./storytime/storytimeScriptService");
       const scriptService = new StorytimeScriptService(settings);
       const generated = await scriptService.generateStory({
         videoPath: project.sourceVideoPath,
         targetDurationSec: media.duration,
-        persona: project.storytimePersona || settings.storytimePersona || "contractor",
-        conflict: project.storytimeConflict || settings.storytimeConflict || "contract_dispute",
+        durationMode: project.storytimeDurationMode || settings.storytimeDurationMode || "preserve_full",
+        localeFlavor: project.storytimeLocaleFlavor || settings.storytimeLocaleFlavor || "uk_craftsman",
+        blueprintId: project.storytimeBlueprintId || settings.storytimeBlueprintId || "artisan_fair_price",
+        customBlueprint: project.storytimeCustomBlueprint || settings.storytimeCustomBlueprint || null,
+        persona: project.storytimePersona || settings.storytimePersona || "artisan_craftsman",
+        conflict: project.storytimeConflict || settings.storytimeConflict || "craft_vs_diy",
         controversyLevel: project.storytimeControversyLevel || settings.storytimeControversyLevel || 2,
         customIdea: project.storytimeCustomIdea || settings.storytimeCustomIdea || "",
         sourceText: project.storytimeSourceText || settings.storytimeSourceText || "",
@@ -4108,6 +4119,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await fs.writeFile(generatedScriptPath, raw, "utf8");
       await this.projectStore.updateProject(workspaceRoot, projectId, {
         storyScriptPath: generatedScriptPath,
+        headerSticker: generated.headerSticker,
         headerCard: generated.headerCard
       });
     }
@@ -4144,13 +4156,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
 
     const storySegments = script.segments.map((segment) => {
       const sourceText = getOverlappingTranscriptText(sourceTranscriptSegments, segment.startSec, segment.endSec);
+      const narrativeLine = segment.dubbingLine || segment.storyText || segment.caption || segment.text || "";
       return {
         ...segment,
-        storyText: segment.dubbingLine || segment.text || "",
+        storyText: narrativeLine,
         originalText: sourceText,
-        text: sourceText,
-        translatedText: segment.caption || segment.dubbingLine || segment.text || "",
-        dubbingLine: segment.dubbingLine || segment.storyText || segment.text || ""
+        text: narrativeLine,
+        translatedText: segment.caption || narrativeLine,
+        dubbingLine: narrativeLine
       };
     });
     if (!sourceTranscriptSegments.length) {
@@ -4902,9 +4915,15 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
   async synthesizeDubbingVoice({ settings, project, text, outputPath, durationSec, onProgress, voiceRenderOptions = {} }) {
     const provider = project.voiceProvider || settings.defaultVoiceProvider || "edge_neural";
     const voiceId = project.voiceId || "";
-    const language = inferFastDraftLanguage(text, project);
+    const isStorytimeMode = project.mode === "satisfying_storytime";
+    let effectiveText = text;
+    if (isStorytimeMode && project.storytimeInjectPauses !== false) {
+      const StorytimeAudioService = require("./storytime/storytimeAudioService");
+      effectiveText = StorytimeAudioService.injectDramaticPauses(text, { provider, pauseMs: 300 }).ttsInputText || text;
+    }
+    const language = inferFastDraftLanguage(effectiveText, project);
     const useCache = settings.voiceCacheEnabled !== false;
-    const cache = getVoiceCacheInfo({ settings, project, text, outputPath, voiceRenderOptions });
+    const cache = getVoiceCacheInfo({ settings, project, text: effectiveText, outputPath, voiceRenderOptions });
     // AutoStory v3 (Phase 12): resolve storytelling intent once; null for v2 (no emotionTag) so behavior is unchanged.
     const ttsIntentValue = voiceRenderOptions.emotionTag
       ? require("./ttsIntent").resolveTtsIntent({ emotionTag: voiceRenderOptions.emotionTag, prosody: voiceRenderOptions.prosody })
@@ -4927,7 +4946,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       const omniVoice = new OmniVoiceService(settings);
       const omniVoiceName = getOmniVoiceVoiceName(project, settings);
       await omniVoice.synthesizeSpeech({
-        text,
+        text: effectiveText,
         voiceName: omniVoiceName,
         outputPath,
         language,
@@ -4950,7 +4969,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       await this.synthesizeKokoroWithDelivery({
         settings,
         project,
-        text,
+        text: effectiveText,
         outputPath,
         language,
         voiceRenderOptions: kokoroOptions,
@@ -4965,7 +4984,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     if (provider === "windows_local") {
       const windowsVoice = new WindowsVoiceService();
       await windowsVoice.synthesizeSpeech({
-        text,
+        text: effectiveText,
         voiceName: voiceId || settings.defaultWindowsVoice || "",
         outputPath,
         rate: 0
@@ -4979,11 +4998,14 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
     if (provider === "elevenlabs") {
       const elevenLabs = new ElevenLabsService(settings.elevenLabsApiKey, settings.elevenLabsModel, settings);
       await elevenLabs.synthesizeSpeech({
-        text,
+        text: effectiveText,
         voiceId: voiceId || settings.defaultVoiceId,
         outputPath,
         languageCode: language === "vi" || language === "auto" ? "vi" : language,
-        performanceMode: ttsIntentValue ? require("./ttsIntent").applyToEngine("elevenlabs", ttsIntentValue).performanceMode : "story",
+        performanceMode: isStorytimeMode
+          ? "storytime"
+          : (ttsIntentValue ? require("./ttsIntent").applyToEngine("elevenlabs", ttsIntentValue).performanceMode : "story"),
+        stability: isStorytimeMode ? Number(project.storytimeTtsStability ?? settings.storytimeTtsStability ?? 0.40) : undefined,
         genreMode: project.genreMode || "drama"
       });
       if (useCache) {
@@ -5004,7 +5026,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       edgeVolume = Math.max(0, Math.min(100, safeNumber(edgeVolume, 100) + Math.round(p.volumeDelta * 100)));
     }
     const edgeResult = await edgeTts.synthesizeSpeech({
-      text,
+      text: effectiveText,
       voiceName: voiceId,
       outputPath,
       language,
@@ -8433,6 +8455,12 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       useContinuousStorytimeVoice
     });
     const useVoiceDrivenVisuals = project.storytimeVoiceDrivenVisuals !== false && !useOmniVoiceBatch;
+    const rawStorytimeSourceVol = project.storytimeSourceVolumePercent !== undefined
+      ? Number(project.storytimeSourceVolumePercent)
+      : Number(project.mixer?.sourceVolume ?? 16);
+    const storytimeSourceVolume = project.storytimeEnableFoley === false
+      ? 0
+      : Math.max(0, Math.min(1, rawStorytimeSourceVol / 100));
 
     if (useContinuousStorytimeVoice) {
       const baseText = segments.map(getStorytimeVoiceText).filter(Boolean).join(" ");
@@ -8532,7 +8560,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
           videoPath: rawClipPath,
           voicePath: fittedVoicePath,
           outputPath: voicedClipPath,
-          sourceVolume: Math.max(0, Number(project.mixer?.sourceVolume ?? 12) / 100),
+          sourceVolume: storytimeSourceVolume,
           voiceVolume: Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100),
           limiter: true
         });
@@ -8821,7 +8849,7 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         videoPath: rawClipPath,
         voicePath: fittedVoicePath,
         outputPath: voicedClipPath,
-        sourceVolume: Math.max(0, Number(project.mixer?.sourceVolume ?? 12) / 100),
+        sourceVolume: storytimeSourceVolume,
         voiceVolume: Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100),
         limiter: true
       });
@@ -8883,13 +8911,13 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
         videoPath: sourceForFinalMix,
         voicePath: narrationTrackPath,
         outputPath: voicedPath,
-        sourceVolume: Math.max(0, Number(project.mixer?.sourceVolume ?? 12) / 100),
+        sourceVolume: storytimeSourceVolume,
         voiceVolume: Math.max(0.2, Number(project.mixer?.voiceVolume ?? 100) / 100),
         limiter: true
       });
     }
 
-    await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "rendering", percent: 92, message: "Đang xuất video Storytime không kèm caption" });
+    await this.emitProgress({ workspaceRoot, projectId, onProgress, step: "rendering", percent: 90, message: "Đang xử lý khung hình và phủ Header Sticker / Phụ đề Kinetic..." });
     await this.applyProjectVideoDecoration({
       ffmpeg,
       project,
@@ -8898,7 +8926,83 @@ html,body{margin:0;width:${renderWidth}px;height:${renderHeight}px;background:tr
       outputPath: undecoratedOutputPath,
       name: "storytime-final"
     });
-    await ffmpeg.copyMedia({ inputPath: undecoratedOutputPath, outputPath });
+    const enableHeader = project.storytimeEnableHeaderCard !== false;
+    const enableSubtitles = project.mode === "satisfying_storytime"
+      ? (project.storytimeDisableSubtitles !== true)
+      : (project.showSubtitles !== false);
+    if (enableHeader || enableSubtitles) {
+      const StorytimeOverlayService = require("./storytime/storytimeOverlayService");
+      const overlayService = new StorytimeOverlayService(settings);
+      const renderMeta = await ffmpeg.probeVideo(undecoratedOutputPath).catch(() => sourceMeta);
+      const renderW = Number(renderMeta?.width) || Number(sourceMeta?.width) || 1080;
+      const renderH = Number(renderMeta?.height) || Number(sourceMeta?.height) || 1920;
+      const scaleH = renderH / 1920;
+      const headerStyle = !enableHeader ? "none" : (project.storytimeHeaderStyle || "native_pill");
+      const stickerText = safeText(project.headerSticker || project.analysis?.topHeader || project.headerCard?.line1 || "Why does NOBODY do this ? 🙄");
+      let cardPngPath = null;
+      if (headerStyle === "native_pill") {
+        const pillSvg = overlayService.generateNativePillSvg({ stickerText, width: renderW, height: renderH });
+        cardPngPath = await overlayService.renderCardToPng({ svgContent: pillSvg, outputPath: path.join(paths.tempDir, "storytime-header-pill.png"), width: renderW, height: renderH });
+      } else if (headerStyle === "white_box" && project.headerCard) {
+        const cardSvg = overlayService.generateHeaderCardSvg({ headerCard: project.headerCard, width: renderW, height: renderH });
+        cardPngPath = await overlayService.renderCardToPng({ svgContent: cardSvg, outputPath: path.join(paths.tempDir, "storytime-header-card.png"), width: renderW, height: renderH });
+      }
+      const hasPngCard = Boolean(cardPngPath && cardPngPath.endsWith(".png"));
+      let assPath = null;
+      if (enableSubtitles || (headerStyle !== "none" && !hasPngCard)) {
+        let cursorTiming = 0;
+        let timedForAss = segments.map((seg, idx) => {
+          const directFit = fitReport.find((item) => Number(item.index) === idx);
+          const dur = Number(directFit?.outputDuration || seg.duration || (seg.endSec - seg.startSec) || 3);
+          const sStart = cursorTiming;
+          const sEnd = cursorTiming + dur;
+          cursorTiming = sEnd;
+          return {
+            ...seg,
+            startSec: Number(sStart.toFixed(3)),
+            endSec: Number(sEnd.toFixed(3)),
+            durationSec: Number(dur.toFixed(3)),
+            text: enableSubtitles ? (seg.dubbingLine || seg.storyText || seg.translatedText || seg.caption || seg.text || "") : ""
+          };
+        });
+        if (enableSubtitles && narrationTrackPath) {
+          const StorytimeAudioService = require("./storytime/storytimeAudioService");
+          const storyAudioService = new StorytimeAudioService(settings);
+          timedForAss = await storyAudioService.extractWordTimestamps({
+            audioPath: narrationTrackPath,
+            segments: timedForAss,
+            outputDir: paths.tempDir
+          });
+        }
+        const assContent = overlayService.generateKineticAssSubtitles({
+          segments: timedForAss,
+          headerCard: headerStyle === "white_box" ? project.headerCard : null,
+          headerSticker: headerStyle === "native_pill" ? stickerText : "",
+          headerStyle,
+          includeAssHeader: headerStyle !== "none" && !hasPngCard,
+          selectiveHighlight: project.storytimeSelectiveHighlight !== false,
+          durationSec: cursorTiming || sourceMeta.duration,
+          width: renderW,
+          height: renderH,
+          highlightColor: project.storytimeHighlightColor || "yellow",
+          wordsPerGroup: Number(project.storytimeWordsPerGroup || 3),
+          fontSize: 72,
+          outline: 6.5,
+          shadow: 3.5,
+          marginV: 445
+        });
+        assPath = path.join(paths.outputDir, "satisfying-storytime-kinetic.ass");
+        await this.projectStore.writeText(assPath, assContent);
+      }
+      await overlayService.burnVideoOverlays({
+        videoPath: undecoratedOutputPath,
+        cardImagePath: hasPngCard ? cardPngPath : null,
+        assSubtitlePath: assPath,
+        outputPath
+      });
+    } else {
+      await ffmpeg.copyMedia({ inputPath: undecoratedOutputPath, outputPath });
+    }
     const finalVoiceReports = segments.map((segment, index) => {
       const direct = fitReport.find((item) => Number(item.index) === index);
       if (direct) {

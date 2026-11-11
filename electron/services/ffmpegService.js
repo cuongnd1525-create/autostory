@@ -770,6 +770,7 @@ class FfmpegService {
       buildAtempoFilterChain(rate),
       `apad=pad_dur=${formatSeconds(Math.max(0.2, safeTargetDuration))}`,
       `atrim=0:${formatSeconds(safeTargetDuration)}`,
+      "aresample=44100",
       "asetpts=N/SR/TB"
     ].join(",");
 
@@ -779,6 +780,10 @@ class FfmpegService {
       inputPath,
       "-filter:a",
       narrationFilter,
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
       "-c:a",
       "aac",
       "-b:a",
@@ -925,6 +930,7 @@ class FfmpegService {
       filters.push("alimiter=limit=0.85");
       if (shortClip) filters.push(`atrim=0:${formatSeconds(fittedSec)}`);
     }
+    filters.push("aresample=44100");
     filters.push("asetpts=N/SR/TB");
 
     await this.run(this.ffmpegPath, [
@@ -933,6 +939,10 @@ class FfmpegService {
       inputPath,
       "-filter:a",
       filters.join(","),
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
       "-c:a",
       "aac",
       "-b:a",
@@ -1285,20 +1295,49 @@ class FfmpegService {
       throw new Error("No audio segments were provided for narration composition.");
     }
 
-    const listPath = require("path").join(require("os").tmpdir(), `concat-audio-${Date.now()}.txt`);
-    const content = audioPaths
-      .map((audioPath) => `file '${audioPath.replace(/'/g, "'\\''")}'`)
-      .join("\n");
-    await require("fs/promises").writeFile(listPath, content, "utf8");
+    if (audioPaths.length === 1) {
+      await this.run(this.ffmpegPath, [
+        "-y",
+        "-i",
+        audioPaths[0],
+        "-vn",
+        "-af",
+        "aresample=44100,asetpts=N/SR/TB",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        outputPath
+      ], { captureStdout: false });
+      return;
+    }
+
+    const inputArgs = [];
+    const filterParts = [];
+    const concatInputs = [];
+    audioPaths.forEach((audioPath, idx) => {
+      inputArgs.push("-i", audioPath);
+      filterParts.push(`[${idx}:a]aresample=44100,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=N/SR/TB[a${idx}]`);
+      concatInputs.push(`[a${idx}]`);
+    });
+    const filterComplex = `${filterParts.join(";")};${concatInputs.join("")}concat=n=${audioPaths.length}:v=0:a=1[aout]`;
+
     await this.run(this.ffmpegPath, [
       "-y",
-      "-f",
-      "concat",
-      "-safe",
-      "0",
-      "-i",
-      listPath,
+      ...inputArgs,
+      "-filter_complex",
+      filterComplex,
+      "-map",
+      "[aout]",
       "-vn",
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
       "-c:a",
       "aac",
       "-b:a",

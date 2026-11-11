@@ -24,8 +24,9 @@ function normalizeStorytimeScript(rawScript, videoDuration = 0) {
     throw new Error("File JSON không có mảng segments.");
   }
 
+  let fallbackCursor = 0;
   const segments = sourceSegments.map((segment, index) => {
-    const startSec = safeNumber(
+    let startSec = safeNumber(
       segment.sourceStartSec ?? segment.inputStartSec ?? segment.videoStartSec ?? segment.startSec ?? segment.start ?? segment.from,
       -1
     );
@@ -33,6 +34,14 @@ function normalizeStorytimeScript(rawScript, videoDuration = 0) {
       segment.sourceEndSec ?? segment.inputEndSec ?? segment.videoEndSec ?? segment.endSec ?? segment.end ?? segment.to,
       -1
     );
+    const segDur = safeNumber(segment.durationSec ?? segment.duration, 0);
+    if (startSec < 0 && segDur > 0) {
+      startSec = fallbackCursor;
+      endSec = fallbackCursor + segDur;
+    }
+    if (endSec > startSec) {
+      fallbackCursor = endSec;
+    }
     const text = safeText(
       segment.text ||
       segment.voiceover_text ||
@@ -71,6 +80,7 @@ function normalizeStorytimeScript(rawScript, videoDuration = 0) {
       translatedText: caption,
       dubbingLine: text,
       caption,
+      emphasisWords: Array.isArray(segment.emphasisWords) ? segment.emphasisWords : [],
       speaker: segment.speaker || "STORYTELLER",
       emotion: segment.emotion || "curious",
       pace: segment.pace || "normal",
@@ -102,7 +112,10 @@ function normalizeStorytimeScript(rawScript, videoDuration = 0) {
 
   return {
     title: parsed.title || "Oddly Satisfying Storytime",
-    topHeader: safeText(parsed.top_banner_text || parsed.top_header || parsed.topHeader || ""),
+    blueprintId: safeText(parsed.blueprintId || ""),
+    headerSticker: safeText(parsed.headerSticker || parsed.top_banner_text || parsed.top_header || parsed.topHeader || ""),
+    headerCard: parsed.headerCard || null,
+    topHeader: safeText(parsed.headerSticker || parsed.top_banner_text || parsed.top_header || parsed.topHeader || ""),
     language: parsed.language || "auto",
     style: parsed.style || "storytime_engagement_bait",
     segments,

@@ -277,6 +277,8 @@ function resolveSuggestedTopCaption(project = {}) {
   const firstVariant = variants[0] || {};
   return safeText(
     project.videoDecoration?.topCaptionText
+    || firstVariant.suggestedTitle
+    || analysis.suggestedTitle
     || spine.hookPromise
     || project.hookPromise
     || analysis.hookHeadline

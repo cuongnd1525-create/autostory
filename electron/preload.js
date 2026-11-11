@@ -90,6 +90,7 @@ contextBridge.exposeInMainWorld("cineviral", {
   generateStorytimeScript: (options) => ipcRenderer.invoke("storytime:generateScript", options),
   runSatisfyingStorytime: (options) => ipcRenderer.invoke("storytime:run", options),
   getStorytimeMatrixOptions: () => ipcRenderer.invoke("storytime:getMatrixOptions"),
+  extractStorytimeBlueprint: (options) => ipcRenderer.invoke("storytime:extractBlueprint", options),
   listVoices: (provider) => ipcRenderer.invoke("voice:list", provider),
   testVoice: (payload) => ipcRenderer.invoke("voice:test", payload),
   calibrateVoice: (payload) => ipcRenderer.invoke("voice:calibrate", payload),

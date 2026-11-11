@@ -8,6 +8,8 @@
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
   --cyan: #00d4ff;
+  --accent: #00d4ff;
+  --accent-color: #00d4ff;
   --amber: #f59e0b;
   --danger: #ef4444;
   --radius-panel: 14px;
@@ -8609,7 +8611,7 @@ body.is-dragging-splitter .timeline-grid {
   .recap-guided > #setup-activity-panel { grid-column: 2; grid-row: 2; height: 100%; }
   .recap-guided > #setup-activity-panel { grid-template-rows: 90px minmax(0, 1fr); }
   .recap-guided #setup-activity-panel .log-title { flex-wrap: wrap; gap: 8px; height: auto; padding: 12px 16px; }
-  .recap-guided #setup-activity-panel .log-title > span { flex-basis: 100%; white-space: nowrap; }
+  .recap-guided #setup-activity-panel .log-title > .log-title-label { flex-basis: auto; white-space: nowrap; }
   .recap-guided #setup-activity-panel .log-actions { width: 100%; justify-content: flex-end; }
   .recap-frame-layout { grid-template-columns: 1fr; }
   .recap-layout-preview { display: none; }
@@ -8746,10 +8748,10 @@ body.is-dragging-splitter .timeline-grid {
   backdrop-filter: blur(16px) !important;
 }
 
-#setup-activity-panel.collapsed {
-  width: 52px !important;
-  min-width: 52px !important;
-  max-width: 52px !important;
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed {
+  width: 54px !important;
+  min-width: 54px !important;
+  max-width: 54px !important;
   padding: 0 !important;
   cursor: pointer;
   overflow: hidden;
@@ -8757,33 +8759,34 @@ body.is-dragging-splitter .timeline-grid {
   background: rgba(14, 19, 28, 0.95) !important;
 }
 
-#setup-activity-panel.collapsed .log-title {
-  padding: 14px 0 !important;
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed .log-title {
+  padding: 16px 0 !important;
   border-bottom: none !important;
   flex-direction: column !important;
   align-items: center !important;
   justify-content: flex-start !important;
   height: 100% !important;
-  gap: 16px !important;
+  gap: 14px !important;
 }
 
-#setup-activity-panel.collapsed .log-title > span {
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed .log-title > .log-title-label {
   writing-mode: vertical-rl;
   text-orientation: mixed;
   transform: rotate(180deg);
-  letter-spacing: 2.5px;
+  letter-spacing: 2px;
   font-size: 11px;
   font-weight: 700;
   color: var(--text-muted);
   text-transform: uppercase;
+  gap: 10px;
 }
 
-#setup-activity-panel.collapsed .log-actions button:not(#toggle-setup-log) {
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed .log-actions button:not(#toggle-setup-log) {
   display: none !important;
 }
 
-#setup-activity-panel.collapsed .activity-feed,
-#setup-activity-panel.collapsed #system-log {
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed .activity-feed,
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed #system-log {
   display: none !important;
 }
 
@@ -9133,3 +9136,582 @@ body.is-dragging-splitter .timeline-grid {
   color: var(--muted);
 }
 
+
+/* Quick Hook Title Variants in Video Decoration */
+.btn-hook-variant {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  color: #e2e8f0;
+  transition: all 0.15s ease-out;
+  text-align: left;
+}
+.btn-hook-variant:hover {
+  background: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.4);
+}
+.btn-hook-variant.active {
+  background: rgba(34, 211, 238, 0.2);
+  border-color: #22d3ee;
+  box-shadow: 0 0 8px rgba(34, 211, 238, 0.25);
+}
+.btn-hook-variant .variant-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.2px;
+}
+.btn-hook-variant.escalation .variant-badge {
+  background: rgba(239, 68, 68, 0.22);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+.btn-hook-variant.absurdity .variant-badge {
+  background: rgba(6, 182, 212, 0.22);
+  color: #22d3ee;
+  border: 1px solid rgba(6, 182, 212, 0.35);
+}
+.btn-hook-variant.regret .variant-badge {
+  background: rgba(245, 158, 11, 0.22);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+.btn-hook-variant .variant-text {
+  font-weight: 700;
+  color: #f8fafc;
+  letter-spacing: 0.2px;
+}
+
+/* ==========================================================================
+   UI POLISH PACK 2.1 — VISUAL HIERARCHY, BLUEPRINT CARD & BUG FIXES
+   ========================================================================== */
+
+/* A. Fix Mode Category Tabs: never leak hidden Podcast tab, keep single row */
+.mode-category-tabs {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 5px !important;
+  border-radius: 999px !important;
+  background: rgba(10, 14, 22, 0.78) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  width: 100%;
+}
+
+.mode-category-tabs button {
+  display: inline-flex !important;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 36px !important;
+  padding: 7px 14px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #94a3b8;
+  font-size: 12.5px !important;
+  font-weight: 700 !important;
+  box-shadow: none;
+}
+
+.mode-category-tabs button:not(.active) {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.mode-category-tabs button.hidden,
+.mode-category-tabs button[data-mode-category-tab="podcast"],
+[data-mode="highlight_cut"],
+[data-mode="podcast_viral_cut"],
+[data-mode-category-tab="podcast"] {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .mode-category-tabs {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    border-radius: 14px !important;
+  }
+}
+
+/* B. Fix Wizard Stepper scrollbar & button chrome (preserve recap-guided 6-col grid) */
+.setup-layout:not(.recap-guided) .wizard-steps {
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  margin: 10px 0 14px !important;
+  padding: 4px 8px !important;
+  background: rgba(10, 14, 22, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.065) !important;
+  border-radius: 999px !important;
+}
+
+.setup-layout:not(.recap-guided) .wizard-step {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 30px !important;
+  grid-template-columns: auto auto minmax(10px, 1fr);
+  gap: 6px;
+  padding: 4px 8px !important;
+  border-radius: 999px !important;
+  font-weight: 700;
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.setup-layout:not(.recap-guided) .wizard-step:last-child {
+  flex: 0 0 auto;
+  grid-template-columns: auto auto;
+}
+
+.setup-layout:not(.recap-guided) .wizard-step::after {
+  min-width: 10px;
+}
+
+.wizard-step:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wizard-step.active {
+  background: rgba(0, 212, 255, 0.1) !important;
+  border-color: rgba(0, 212, 255, 0.34) !important;
+  color: #f8fafc !important;
+}
+
+.recap-guided .wizard-step {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+}
+
+.recap-guided .wizard-step.active {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+@media (max-width: 720px) {
+  .setup-layout:not(.recap-guided) .wizard-steps {
+    overflow-x: auto !important;
+    scrollbar-width: none;
+  }
+  .setup-layout:not(.recap-guided) .wizard-steps::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* C. Setup Workspace & Collapsible Activity Rail (non-recap modes only) */
+.setup-layout:not(.recap-guided) {
+  padding: 12px clamp(16px, 2.2vw, 32px) !important;
+  scrollbar-gutter: auto !important;
+  overflow-x: hidden;
+  align-items: stretch;
+}
+
+.setup-layout:not(.recap-guided) > .setup-card {
+  width: 100%;
+  max-width: 1240px;
+  justify-self: center;
+  height: min(860px, calc(100dvh - 82px));
+  min-height: 0 !important;
+  padding: 16px 22px !important;
+  overflow: hidden;
+}
+
+.setup-layout:not(.recap-guided) .setup-footer {
+  position: static !important;
+  margin-top: 8px !important;
+  padding-top: 10px !important;
+  background: transparent !important;
+}
+
+@media (min-width: 1050px) {
+  .setup-layout:not(.recap-guided) {
+    grid-template-columns: minmax(0, 1fr) clamp(335px, 24vw, 430px) !important;
+  }
+  .setup-layout.log-collapsed:not(.recap-guided) {
+    grid-template-columns: minmax(0, 1fr) 54px !important;
+  }
+}
+
+.setup-layout:not(.recap-guided) #setup-activity-panel {
+  height: min(860px, calc(100dvh - 82px));
+}
+
+.recap-guided .log-collapse-btn {
+  display: none !important;
+}
+
+#setup-activity-panel .log-title {
+  gap: 8px;
+  padding: 0 14px;
+  min-height: 50px;
+}
+
+.log-title-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+#setup-activity-panel .log-actions {
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+#setup-activity-panel .log-actions .ghost-button {
+  min-height: 28px !important;
+  padding: 4px 8px !important;
+  font-size: 11px !important;
+  white-space: nowrap;
+}
+
+#setup-activity-panel .log-collapse-btn {
+  min-height: 28px !important;
+  width: 28px !important;
+  height: 28px !important;
+}
+
+.log-status-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.65);
+  flex: 0 0 auto;
+}
+
+#setup-activity-panel.is-busy .log-status-led {
+  background: #f59e0b;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.75);
+  animation: activityPulse 1.4s infinite ease-in-out;
+}
+
+#setup-activity-panel.has-error .log-status-led {
+  background: #ef4444;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.8);
+}
+
+.setup-log-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(0, 212, 255, 0.14);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  color: #7ee8ff;
+  font-size: 11px;
+  font-weight: 800;
+  margin-right: auto;
+}
+
+#setup-activity-panel.has-error .setup-log-badge {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+}
+
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed .setup-log-badge {
+  margin-right: 0;
+  order: -1;
+}
+
+.setup-layout:not(.recap-guided) #setup-activity-panel.collapsed .log-actions {
+  order: -2;
+}
+
+/* D. Unify Color Tokens & Clean Surface Nesting on Step 2 */
+.mode-step-shell {
+  gap: 8px !important;
+}
+
+.mode-workspace {
+  min-height: 0 !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  border-radius: 12px !important;
+  background: rgba(10, 14, 22, 0.65) !important;
+}
+
+.mode-picker-panel {
+  padding: 12px 14px !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: rgba(8, 11, 18, 0.72) !important;
+}
+
+.mode-selection-heading {
+  padding: 12px 16px 10px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
+}
+
+.mode-config-panel {
+  background: rgba(13, 18, 28, 0.55) !important;
+}
+
+.mode-config-body {
+  padding: 12px 16px 12px !important;
+  gap: 8px !important;
+}
+
+.mode-config-body .prompt-options-card {
+  gap: 8px !important;
+}
+
+.mode-config-body .prompt-options-heading small {
+  display: none;
+}
+
+.mode-selection-footer {
+  min-height: 38px !important;
+  padding: 7px 14px !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: rgba(9, 13, 21, 0.78) !important;
+  border-radius: 10px !important;
+}
+
+.mode-selection-footer > div {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-selection-footer > div span::after {
+  content: ":";
+}
+
+.manual-gemini-mode-card {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: #10151f;
+}
+
+.manual-gemini-mode-card::after {
+  display: none !important;
+}
+
+.mode-card.active,
+.manual-gemini-mode-card.active {
+  border-color: rgba(0, 212, 255, 0.72) !important;
+  background: linear-gradient(135deg, rgba(0, 212, 255, 0.14), rgba(0, 114, 255, 0.06) 60%, #0f1726) !important;
+  box-shadow: inset 3px 0 0 #00d4ff, 0 8px 24px rgba(0, 212, 255, 0.1) !important;
+}
+
+.mode-card.active span b,
+.manual-gemini-mode-card.active span b {
+  border-color: rgba(0, 212, 255, 0.4);
+  background: rgba(0, 212, 255, 0.12);
+  color: #7ee8ff;
+}
+
+/* E. Script Blueprint Card (Mức 2 - Eliminates Dead Space in Step 2) */
+.script-blueprint-card {
+  display: grid;
+  gap: 7px;
+  margin-top: 2px;
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 212, 255, 0.2);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(0, 212, 255, 0.05) 0%, rgba(11, 16, 26, 0.85) 100%);
+}
+
+.blueprint-head {
+  display: grid;
+  gap: 2px;
+}
+
+.blueprint-kicker {
+  color: var(--cyan);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.07em;
+}
+
+.blueprint-head strong {
+  color: #f1f5f9;
+  font-size: 13px;
+}
+
+.blueprint-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.blueprint-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  background: rgba(0, 212, 255, 0.08);
+  color: #bfefff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.blueprint-beats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.blueprint-beat {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: rgba(8, 12, 20, 0.72);
+  min-width: 0;
+}
+
+.beat-step {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(0, 212, 255, 0.14);
+  border: 1px solid rgba(0, 212, 255, 0.35);
+  color: #5ee7ff;
+  font-size: 10.5px;
+  font-weight: 900;
+}
+
+.beat-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.beat-copy strong {
+  color: #e2e8f0;
+  font-size: 11.5px;
+  line-height: 1.25;
+}
+
+.beat-copy small {
+  color: #8ea0b8;
+  font-size: 10.5px;
+  line-height: 1.3;
+}
+
+.blueprint-highlights {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.blueprint-note {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(15, 22, 34, 0.65);
+}
+
+.blueprint-note b {
+  color: #cbd5e1;
+  font-size: 11px;
+}
+
+.blueprint-note span {
+  color: #8ea0b8;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+/* Upgraded non-configurable workflow overview card */
+.mode-config-empty {
+  place-content: start !important;
+  text-align: left !important;
+  min-height: 0 !important;
+  gap: 12px !important;
+}
+
+.mode-overview-header {
+  display: grid;
+  gap: 4px;
+}
+
+.mode-overview-header strong {
+  color: #f1f5f9;
+  font-size: 14px;
+}
+
+.mode-overview-header p {
+  max-width: none !important;
+  color: #8d9bb0;
+  font-size: 12px;
+}
+
+.mode-overview-steps {
+  display: grid;
+  gap: 8px;
+}
+
+.mode-overview-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background: rgba(9, 13, 21, 0.72);
+}
+
+.overview-step-num {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: rgba(0, 212, 255, 0.14);
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  color: #67eaff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.mode-overview-step > div {
+  display: grid;
+  gap: 2px;
+}
+
+.mode-overview-step strong {
+  color: #e2e8f0;
+  font-size: 12.5px;
+}
+
+.mode-overview-step small {
+  color: #8ea0b8;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+@media (max-width: 920px) {
+  .blueprint-beats,
+  .blueprint-highlights {
+    grid-template-columns: 1fr;
+  }
+}

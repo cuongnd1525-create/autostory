@@ -29,7 +29,10 @@ const US_ENGLISH_VOICES = [
   ["am_echo", "Echo - nam, rõ"],
   ["am_eric", "Eric - nam, cân bằng"],
   ["am_fenrir", "Fenrir - nam, mạnh"],
-  ["am_puck", "Puck - nam, năng lượng"]
+  ["am_puck", "Puck - nam, năng lượng"],
+  ["bm_george", "George (UK) - nam Anh, thợ thủ công bậc thầy"],
+  ["bm_lewis", "Lewis (UK) - nam Anh, kể chuyện trầm"],
+  ["bf_emma", "Emma (UK) - nữ Anh, tự nhiên"]
 ];
 
 function fileExists(filePath) {
@@ -274,11 +277,13 @@ class KokoroVoiceService {
     }
 
     try {
+      const resolvedVoice = String(voiceName || DEFAULT_VOICE);
+      const isBritishVoice = /^b[fm]_/i.test(resolvedVoice);
       await worker.enqueue({
         text: String(text),
-        voice: String(voiceName || DEFAULT_VOICE),
+        voice: resolvedVoice,
         outputPath,
-        langCode: normalizeLanguage(language),
+        langCode: isBritishVoice ? "b" : normalizeLanguage(language),
         speed: Math.max(0.5, Math.min(2, Number(speed || this.speed) * speedMod))
       }, { onProgress, timeoutMs });
     } catch (error) {

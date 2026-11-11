@@ -121,6 +121,9 @@ const state = {
   logLines: [],
   activities: [],
   rawLogVisible: false,
+  setupLogCollapsed: true,
+  setupLogUserToggled: false,
+  maxVisitedStep: 1,
   activeOperation: "",
   reviewingSegmentIndex: -1,
   presetVoices: [],
@@ -267,7 +270,34 @@ function syncModeSelectionUi() {
       .map((badge) => `<span>${escapeHtml(badge)}</span>`)
       .join("");
   }
-  if (el.modeConfigEmpty) el.modeConfigEmpty.classList.toggle("hidden", presentation.configurable);
+  if (el.modeConfigEmpty) {
+    el.modeConfigEmpty.classList.toggle("hidden", presentation.configurable);
+    if (!presentation.configurable) {
+      const overviewMap = {
+        dubbing: [
+          { num: "01", title: "Giọng đọc & Tốc độ", detail: "Chọn voice AI (Edge / Kokoro / ElevenLabs) hoặc clone giọng mẫu." },
+          { num: "02", title: "Nguồn & Whisper ASR", detail: "Nhận diện lời thoại gốc tự động hoặc nạp tệp phụ đề SRT." },
+          { num: "03", title: "Dịch ngữ cảnh & Xuất", detail: "Dịch tự nhiên, tự ép nhịp đọc khớp khung hình và render." }
+        ],
+        story_recut: [
+          { num: "01", title: "Giữ 100% Âm thanh gốc", detail: "Không dùng TTS, bảo toàn thoại, hiện trường và nhạc gốc." },
+          { num: "02", title: "Khóa Scene Evidence", detail: "AI phân tích bối cảnh để gom các khối cảnh đắt giá." },
+          { num: "03", title: "Dựng phi tuyến tính", detail: "Đảo Hook lên đầu và sắp xếp mạch truyện hoàn chỉnh." }
+        ]
+      };
+      const flow = overviewMap[state.selectedMode] || [
+        { num: "01", title: "Thiết lập giọng & nguồn", detail: presentation.nextHint },
+        { num: "02", title: "Phân tích & Dựng draft", detail: "Hệ thống tự động kiểm tra timeline và cảnh nguồn." },
+        { num: "03", title: "Kiểm tra & Xuất bản", detail: "Tinh chỉnh tiêu đề, safe-zone và xuất video master." }
+      ];
+      if (el.modeConfigEmptySummary) el.modeConfigEmptySummary.textContent = presentation.nextHint;
+      if (el.modeConfigEmptySteps) {
+        el.modeConfigEmptySteps.innerHTML = flow
+          .map((item) => `<div class="mode-overview-step"><span class="overview-step-num">${escapeHtml(item.num)}</span><div><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.detail)}</small></div></div>`)
+          .join("");
+      }
+    }
+  }
   if (el.modeSelectionSummary) el.modeSelectionSummary.textContent = presentation.title;
   if (el.modeSelectionNextHint) el.modeSelectionNextHint.textContent = presentation.nextHint;
 }
@@ -277,6 +307,9 @@ function selectSetupMode(mode, { persist = true, invalidate = true } = {}) {
   if (!MODE_PRESENTATION[mode]) return;
   const previousMode = state.selectedMode;
   state.selectedMode = mode;
+  if (previousMode !== state.selectedMode) {
+    state.maxVisitedStep = Math.min(state.maxVisitedStep || 1, Math.max(2, state.currentStep));
+  }
   modeCategoryMemory[getModePresentation(mode).category] = mode;
   if (invalidate
     && previousMode !== state.selectedMode
@@ -403,8 +436,22 @@ function queryElements() {
     stage1AiModelBadge: $("stage1-ai-model-badge"),
     storyRecutRightsConfirmed: $("story-recut-rights-confirmed"),
     diyStoryAngle: $("diy-story-angle"),
+    storytimeBlueprint: $("storytime-blueprint"),
+    storytimeBlueprintHint: $("storytime-blueprint-hint"),
+    storytimeToggleCustomBlueprint: $("storytime-toggle-custom-blueprint"),
+    storytimeExtractBlueprintBtn: $("storytime-extract-blueprint-btn"),
+    storytimeCustomBlueprintPanel: $("storytime-custom-blueprint-panel"),
+    storytimeVisualSyncMode: $("storytime-visual-sync-mode"),
+    storytimeCustomHookFormula: $("storytime-custom-hook-formula"),
+    storytimeCustomBeatsText: $("storytime-custom-beats-text"),
+    storytimeCustomEndingFormula: $("storytime-custom-ending-formula"),
+    storytimeCustomStyleNotes: $("storytime-custom-style-notes"),
     storytimePersona: $("storytime-persona"),
     storytimeConflict: $("storytime-conflict"),
+    storytimeDurationMode: $("storytime-duration-mode"),
+    storytimeLocaleFlavor: $("storytime-locale-flavor"),
+    storytimeTtsStability: $("storytime-tts-stability"),
+    storytimeWordsPerGroup: $("storytime-words-per-group"),
     storytimeControversyLevel: $("storytime-controversy-level"),
     storytimeHighlightColor: $("storytime-highlight-color"),
     storytimeHeaderCardToggle: $("storytime-header-card-toggle"),
@@ -516,6 +563,9 @@ function queryElements() {
     recapCaptionStyle: $("recap-caption-style"),
     manualPromptCustomization: $("manual-prompt-customization"),
     manualPromptProfile: $("manual-prompt-profile"),
+    manualPromptBlueprint: $("manual-prompt-blueprint"),
+    modeConfigEmptySummary: $("mode-config-empty-summary"),
+    modeConfigEmptySteps: $("mode-config-empty-steps"),
     manualSeriesNarratorStyleLabel: $("manual-series-narrator-style-label"),
     manualIndependentOptions: $("manual-independent-options"),
     manualIndependentScriptCount: $("manual-independent-script-count"),
@@ -564,6 +614,7 @@ function queryElements() {
     activityFeed: $("activity-feed"),
     toggleSetupLog: $("toggle-setup-log"),
     setupActivityPanel: $("setup-activity-panel"),
+    setupLogBadge: $("setup-log-badge"),
     toggleRawLog: $("toggle-raw-log"),
     copyLog: $("copy-log"),
     exportProgress: $("export-progress"),
@@ -2391,6 +2442,10 @@ function addActivity(message, level = "INFO") {
   };
   state.activities.push(item);
   state.activities = state.activities.slice(-80);
+  if (level === "ERROR" && state.setupLogCollapsed && !state.setupLogUserToggled) {
+    state.setupLogCollapsed = false;
+    syncSetupLogPanelState();
+  }
   renderActivity();
 }
 
@@ -2419,6 +2474,15 @@ function renderActivity() {
 
   if (el.activityFeed) el.activityFeed.innerHTML = html;
   if (el.studioActivityFeed) el.studioActivityFeed.innerHTML = html;
+  if (el.setupLogBadge) {
+    el.setupLogBadge.textContent = String(state.activities.length);
+    el.setupLogBadge.classList.toggle("hidden", state.activities.length === 0);
+  }
+  if (el.setupActivityPanel) {
+    const hasError = state.activities.some((item) => item.status === "error");
+    el.setupActivityPanel.classList.toggle("has-error", hasError);
+    el.setupActivityPanel.classList.toggle("is-busy", Boolean(state.busy));
+  }
 }
 
 let exportProgressFadeTimer = null;
@@ -2944,6 +3008,7 @@ function setBusy(isBusy) {
     el.cancelRender.classList.add("hidden");
     el.cancelRender.disabled = false;
   }
+  syncSetupLogPanelState();
   recapSetupUi?.sync({ active: isRecapMode(), step: state.currentStep, busy: state.busy });
 }
 
@@ -3538,6 +3603,117 @@ function getManualPromptProfileLabel(options = readManualGeminiPromptOptions()) 
   return `${options.independent?.scriptCount || 2} kịch bản độc lập · Hook ${hookLabel}`;
 }
 
+function renderManualPromptBlueprint(options = readManualGeminiPromptOptions()) {
+  if (!el.manualPromptBlueprint) return;
+  const profile = options.profile || "viral_tiktok_crime_part1";
+  const presets = {
+    viral_tiktok_crime_part1: {
+      title: "Cấu trúc TikTok Viral Bodycam (8 nhịp xen kẽ)",
+      pills: [
+        "⏱ 110–125 giây / Part",
+        "🎬 3 Parts (Part 1, 2, 3)",
+        "🎙 4 Raw Audio + 4 Voiceover",
+        "📱 9:16 TikTok Safe"
+      ],
+      beats: [
+        { step: "01", label: "Cold Open Hook (0–3s)", sub: "Âm thanh hiện trường gây sốc nhất, giữ 100% âm gốc" },
+        { step: "02", label: "Nhịp 2–7 Xen Kẽ", sub: "Voiceover US đẩy kịch tính xen kẽ đối thoại & va chạm thật" },
+        { step: "03", label: "Cliffhanger Part 2", sub: "Chốt câu hỏi mở buộc khán giả bấm xem tập tiếp theo" }
+      ],
+      hookTip: "Tự động tạo Top Banner 4–7 từ IN HOA gây tò mò chuẩn US + 3 biến thể chọn nhanh trong Studio.",
+      reviewTip: "AI tạo kịch bản V1 → Render draft → Gemini xem video MP4 thật & nâng cấp lên V2."
+    },
+    viral_police_blotter: {
+      title: "Cấu trúc Viral Police Blotter (Nhanh & Gọn)",
+      pills: [
+        "⏱ 70–95 giây / Video",
+        "🎬 3 biến thể độc lập",
+        "🎙 Hook + 4 khối Narrator",
+        "📱 TikTok / Reels 9:16"
+      ],
+      beats: [
+        { step: "01", label: "Shock Visual Hook", sub: "Cảnh bắt giữ / tranh cãi đắt giá nhất ở 3 giây đầu" },
+        { step: "02", label: "4 Khối Tường Thuật", sub: "Dẫn dắt nhanh nguyên nhân, chứng cứ và lời khai" },
+        { step: "03", label: "Payoff / Kết Quả", sub: "Chốt bản án hoặc hậu quả thực tế từ nguồn" }
+      ],
+      hookTip: "Tối ưu tiêu đề 2 dòng viền đen trắng/vàng nổi bật trong TikTok Safe-Zone.",
+      reviewTip: "Hợp với clip điều tra ngắn dưới 95 giây, nhịp cắt dứt khoát và ít ngắt quãng."
+    },
+    serialized_interleaved: {
+      title: "Series True Crime 3 Phần (Điện ảnh)",
+      pills: [
+        `⏱ ${options.minDuration || 75}–${options.maxDuration || 110}s / Part`,
+        "🎬 3 Parts nối tiếp",
+        "🎙 Voiceover True-Crime",
+        options.interleavedAudio ? "🔄 Xen kẽ âm gốc" : "🎙 Giữ thoại chính"
+      ],
+      beats: [
+        { step: "01", label: "Shared Action Hook", sub: "Mở đầu hành động đồng nhất cho cả 3 phần" },
+        { step: "02", label: "Leo Thang & Thẩm Vấn", sub: "Part 1 đối đầu → Part 2 mâu thuẫn lời khai" },
+        { step: "03", label: "Bản Án & Kết Cục", sub: "Part 3 bóc trần sự thật và hậu quả pháp lý" }
+      ],
+      hookTip: "Giữ chung một Top Banner nhất quán suốt cả 3 tập để tăng tỷ lệ xem trọn series.",
+      reviewTip: "Chỉnh thời lượng từng tập và nhịp cắt chi tiết trong mục Cấu hình nâng cao bên dưới."
+    },
+    serialized_genz: {
+      title: "Series True Crime Gen Z (Kể Chuyện Đời Thường)",
+      pills: [
+        `⏱ ${options.minDuration || 75}–${options.maxDuration || 110}s / Part`,
+        "🎬 3 Parts",
+        "💬 Ngôn ngữ Gen Z / US Slang",
+        "🔥 Curiosity Gap"
+      ],
+      beats: [
+        { step: "01", label: "Instant Drama Hook", sub: "Mở đầu phơi bày sự vô lý / phản ứng gây phẫn nộ" },
+        { step: "02", label: "Reaction Narration", sub: "Giọng kể gần gũi như đang bình luận trực tiếp" },
+        { step: "03", label: "Instant Karma Payoff", sub: "Tạo nút thắt bình luận ở cuối mỗi tập" }
+      ],
+      hookTip: "Cấm văn phong báo chí khô khan; ưu tiên góc nhìn nghịch lý & mỉa mai dễ gây bình luận.",
+      reviewTip: "Kiểm tra lại bản draft V1 bằng AI để loại bỏ đoạn thuyết minh bị sượng hoặc thừa."
+    },
+    independent: {
+      title: `Gói ${options.independent?.scriptCount || 2} Kịch Bản Độc Lập`,
+      pills: [
+        `🎬 ${options.independent?.scriptCount || 2} kịch bản riêng`,
+        "⚡ Chọn góc Hook ưu tiên",
+        options.independent?.audioBalance === "original_first" ? "🔊 Ưu tiên âm gốc" : "🎙 Narrator dẫn dắt",
+        "📱 9:16 Shorts/TikTok"
+      ],
+      beats: [
+        { step: "01", label: "Hook theo thứ tự ưu tiên", sub: "AI dò tìm điểm hành động, lời thoại hoặc twist mạnh nhất" },
+        { step: "02", label: "Độc lập từng Variant", sub: "Mỗi kịch bản tự hoàn chỉnh đầu–thân–kết, không cần Part 2" },
+        { step: "03", label: "Review AI song song", sub: "Chấm điểm & so sánh từng variant ngay trong Studio" }
+      ],
+      hookTip: "Mỗi variant nhận 3 phương án tiêu đề US Viral (Escalation, Absurdity, Regret).",
+      reviewTip: "Tùy chỉnh thời lượng tối thiểu/tối đa riêng cho từng Script 1–5 bên dưới."
+    }
+  };
+  const cfg = presets[profile] || presets.viral_tiktok_crime_part1;
+  el.manualPromptBlueprint.innerHTML = `
+    <div class="blueprint-head">
+      <span class="blueprint-kicker">BẢN ĐỒ KỊCH BẢN (BLUEPRINT)</span>
+      <strong>${escapeHtml(cfg.title)}</strong>
+    </div>
+    <div class="blueprint-pills">
+      ${cfg.pills.map((pill) => `<span class="blueprint-pill">${escapeHtml(pill)}</span>`).join("")}
+    </div>
+    <div class="blueprint-beats">
+      ${cfg.beats.map((b) => `
+        <div class="blueprint-beat">
+          <span class="beat-step">${escapeHtml(b.step)}</span>
+          <div class="beat-copy">
+            <strong>${escapeHtml(b.label)}</strong>
+            <small>${escapeHtml(b.sub)}</small>
+          </div>
+        </div>`).join("")}
+    </div>
+    <div class="blueprint-highlights">
+      <div class="blueprint-note"><b>🔥 Hook & Banner US</b><span>${escapeHtml(cfg.hookTip)}</span></div>
+      <div class="blueprint-note"><b>🔄 Quy trình 2 Lượt</b><span>${escapeHtml(cfg.reviewTip)}</span></div>
+    </div>
+  `;
+}
+
 function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
   const options = readManualGeminiPromptOptions();
   const isSerialized = ["serialized_interleaved", "serialized_genz"].includes(options.profile);
@@ -3561,6 +3737,7 @@ function syncManualGeminiPromptOptionsUi({ rerenderPrompt = true } = {}) {
   }
   if (el.manualPromptOptionSummary) el.manualPromptOptionSummary.textContent = getManualPromptProfileLabel(options);
   if (el.reviewPromptProfile) el.reviewPromptProfile.textContent = getManualPromptProfileLabel(options);
+  renderManualPromptBlueprint(options);
   if (rerenderPrompt) renderHighlightPromptTemplate();
 }
 
@@ -3871,7 +4048,24 @@ Analyze the uploaded source video, scene-manifest.json, source-transcript.srt, a
 - Target total duration: 110 to 125 seconds (average 117 seconds; must NOT be under 110.0s or over 125.0s).
 - Return exactly 3 scripts: Script 1 (Part 1 - The Confrontation), Script 3 (Part 2 - The Interrogation), Script 4 (Part 3 - The Verdict & Arrest). Never return Script 2.
 - Every script must follow the exact 8-beat formula and use 9:16 vertical framing.
-- TOP HOOK CAPTION: suggestedTitle/title must be a concise 4-8 word cold-viewer hook, ideally <= 42 characters, grounded in the actual conflict/action. Create curiosity without generic clickbait, hashtags, "PART 1/2/3", or spoiling the final payoff.
+- TOP HOOK BANNER (CRITICAL SCROLL-STOPPING RETENTION HOOK FOR US TIKTOK):
+  suggestedTitle/title must be a concise 4-8 word cold-viewer hook — aggressive, high-friction, scroll-stopping English copy designed to immediately interrupt viewers within 0.5s.
+  DO NOT write a boring, dry news summary or factual police blotter (e.g. NEVER write "DISPUTE OVER CAR KEYS EXPLODES" or "OFFICER ARRIVES AT SCENE").
+  Instead, use one of the 4 proven high-retention US Bodycam viral hook archetypes:
+    1. [Escalation / Goes Wrong]: e.g., "ARGUING OVER KEYS GOES TERRIBLY WRONG" or "LOST CAR KEYS TURNED INTO A FELONY"
+    2. [Absurdity & Irony]: e.g., "DEMANDED HER MOM TO SAVE HER FROM DEPUTIES" or "CALLED A TOW TRUCK, GOT ARRESTED INSTEAD"
+    3. [Defiance & Instant Regret]: e.g., "REFUSED TO SHOW ID, REGRETTED IT IMMEDIATELY" or "SHE THOUGHT SHE COULD WALK AWAY FROM COPS"
+    4. [High-Stakes Curiosity Gap]: e.g., "WHY DID A SIMPLE DISPUTE END IN HANDCUFFS?"
+  Strict Hook Title Rules:
+  * Length: Strictly 4 to 7 punchy words, <= 38 characters (must fit neatly on 2 lines on TikTok mobile screen without clipping).
+  * ALL-CAPS uppercase.
+  * Zero spoilers of the final charges or outcome, zero hashtags, zero generic filler ("MUST WATCH", "WAIT FOR IT").
+  * In addition to suggestedTitle, provide "hookTitleVariants": an array of 3 distinct hook title variants for the editor to audition:
+    [
+      { "style": "escalation", "label": "Leo thang", "text": "<4-7 word Escalation hook in UPPERCASE>" },
+      { "style": "absurdity", "label": "Nghịch lý", "text": "<4-7 word Absurdity hook in UPPERCASE>" },
+      { "style": "regret", "label": "Hối hận", "text": "<4-7 word Defiance/Regret hook in UPPERCASE>" }
+    ]
 - titleStyle must be "tiktok_hook". The renderer uses a clean two-line TikTok hook treatment (white/yellow text with black outline) instead of a large green box.
 - Keep partBadge/part_number as story metadata only. Do not depend on a burned-in PART badge for comprehension.
 - The three scripts are PART 1, PART 2 and PART 3 of ONE continuous story (one central viewer question), in source chronology:
@@ -3941,7 +4135,7 @@ For Script 3, set partBadge to "PART 2". For Script 4, set partBadge to "PART 3"
 ### NON-NEGOTIABLE EDITORIAL RULES
 1. ZERO THIRD-PARTY SOURCE NARRATORS: Completely mute or eliminate any YouTube host, television reporter, or narrator from original_audio. Only involved officers, suspects, victims, 911 dispatchers, or raw ambient sounds may be heard.
 2. STRICT EVIDENCE GROUNDING: Every claim in narration must be strictly supported by what is visible in the video frames or audible in the source transcript. Do not hallucinate charges, deaths, convictions, or motives.
-3. MATHEMATICAL TIMELINE DELEGATION: Do NOT calculate or output startSec, endSec, outputStartSec, outputEndSec, duration, or playbackSpeed math. Only output sourceStartSec and sourceEndSec (or sceneId). The local compiler will automatically calculate all timeline math and playback speeds.
+3. MATHEMATICAL TIMELINE DELEGATION (OUTPUT TIMELINE IS DERIVED, NOT EDITORIAL): Do NOT calculate or output startSec, endSec, outputStartSec, outputEndSec, duration, or playbackSpeed math. Only output sourceStartSec and sourceEndSec (or sceneId). The local tool will reflow the output timeline and its calculation is authoritative.
 4. Total source duration of the 8 segments should aim to be between 110.0 and 125.0 seconds.
 
 ${voiceBlock}
@@ -6811,18 +7005,19 @@ function renderSteps() {
       "Ch\u1ebf \u0111\u1ed9",
       isPodcastViralMode() ? "\u00c2m thanh g\u1ed1c" : "Gi\u1ecdng",
       "Ngu\u1ed3n",
-      isAutoStoryMode() ? "T\u1ef1 \u0111\u1ed9ng" : isScriptRewriteMode() ? "Vi\u1ebft l\u1ea1i" : isSatisfyingStorytimeMode() ? "Storytime" : isHighlightCutMode() ? "Highlight Cut" : "Ng\u00f4n ng\u1eef",
+      isAutoStoryMode() ? "T\u1ef1 \u0111\u1ed9ng" : isManualGeminiProMode() ? "X\u00e1c nh\u1eadn AI" : isScriptRewriteMode() ? "Vi\u1ebft l\u1ea1i" : isSatisfyingStorytimeMode() ? "Storytime" : isHighlightCutMode() ? "Highlight Cut" : "Ng\u00f4n ng\u1eef",
       "Xem tr\u01b0\u1edbc"
     ];
+  state.maxVisitedStep = Math.max(state.maxVisitedStep || 1, state.currentStep);
   el.wizardSteps.innerHTML = labels.map((label, index) => {
     const step = index + 1;
     const className = step === state.currentStep ? "active" : step < state.currentStep ? "done" : "";
-    const tag = isRecapMode() ? "button" : "div";
+    const reachable = isRecapMode() || step <= state.maxVisitedStep || step === state.currentStep + 1;
     return `
-      <${tag} ${isRecapMode() ? 'type="button"' : ""} class="wizard-step ${className}" data-wizard-step="${step}" ${state.busy ? "disabled" : ""} ${step === state.currentStep ? 'aria-current="step"' : ""}>
+      <button type="button" class="wizard-step ${className}" data-wizard-step="${step}" ${(state.busy || !reachable) ? "disabled" : ""} ${step === state.currentStep ? 'aria-current="step"' : ""}>
         <span class="step-number">${step < state.currentStep ? "✓" : step}</span>
         <span class="step-label">${escapeHtml(label)}</span>
-      </${tag}>
+      </button>
     `;
   }).join("");
 
@@ -6907,13 +7102,14 @@ function renderSteps() {
     ]
     : [
       "Tạo mới hoặc mở dự án cũ",
-      "Recap hoặc Dubbing",
-      "Video, phụ đề, đầu ra",
+      "Thuyết minh & dịch đa ngôn ngữ",
       "Thiết kế / Clone / Giọng mẫu",
+      "Video nguồn, phụ đề và đầu ra",
       "Nhận diện lời thoại và dịch ngữ cảnh",
       "Kiểm tra & bắt đầu"
     ];
   el.setupSubtitle.textContent = subtitles[state.currentStep - 1];
+  syncSetupLogPanelState();
   recapSetupUi?.sync({ active: isRecapMode(), step: state.currentStep, busy: state.busy });
   updateReview();
 }
@@ -7425,6 +7621,156 @@ function renderProjectPicker() {
     : `<option value="">-- Chưa có dự án --</option>`;
 }
 
+const STORYTIME_BLUEPRINT_PRESETS = {
+  artisan_fair_price: {
+    hint: "Cấu trúc 5 bước chuẩn Viral: Shocking Price Hook ➔ DIY Rivalry (Cà khịa thợ mạng 10 phút) ➔ Technical Stakes (Rủi ro kỹ thuật & đục bỏ) ➔ Mastercraft Steps (Chuỗi thao tác bậc thầy theo hình) ➔ Polarizing Outro (Kết quả tàng hình & câu hỏi chia 2 phe).",
+    visualSyncMode: "visual_grounded",
+    hookFormula: "Open in the first 3 seconds with a shocking price-to-size contrast and a direct question (e.g., '$1,200 / £1,200 for a 50-centimeter piece of rotted wood — is that daylight robbery, or the real price of proper master craftsmanship?').",
+    beatsText: [
+      "Bước 1 (0–12% - Shocking Price Hook): Cú sốc giá tiền đối lập với kích thước nhỏ của vết hỏng.",
+      "Bước 2 (12–26% - DIY Rivalry): Cà khịa cách làm ẩu 10 phút của thợ mạng (bả rẻ tiền + quét sơn đè lên).",
+      "Bước 3 (26–46% - Technical Stakes): Phân tích rủi ro kỹ thuật ngầm & phá dỡ phẫu thuật bám sát cảnh đục/cắt trên màn hình.",
+      "Bước 4 (46–84% - Mastercraft Steps): Chuỗi thao tác bậc thầy theo đúng tiến trình hình ảnh (đo cắt, quét lót 2 lớp, khoan âm vít, bả keo 2 thành phần, xả nhám).",
+      "Bước 5 (84–100% - Polarizing Outro): Kết quả tàng hình hoàn hảo & câu hỏi chia 2 phe tranh luận dưới bình luận."
+    ].join("\n"),
+    endingFormula: "Conclude right on the finished reveal shot: state the total time and exact invoice price, then ask viewers directly if it's a rip-off or worth every penny.",
+    styleNotes: "Confident master craftsman tone, preserve local idioms (graft, bespoke, period house, sorted, daylight robbery), place — before price figures, highlight money, tools, and action verbs."
+  },
+  botched_diy_rescue: {
+    hint: "Khách thuê thợ rẻ tiền hoặc tự sửa làm hỏng nặng hơn ➔ Bóc lớp ngụy trang phơi bày phần mục nát bên dưới ➔ Phục chế chuẩn kỹ thuật từng bước ➔ Báo giá gấp đôi và bài học đắt giá.",
+    visualSyncMode: "visual_grounded",
+    hookFormula: "Open immediately with the cost of a cheap shortcut: 'The homeowner hired a $150 handyman to fix this first — and that cheap shortcut just cost them $1,400 to undo.'",
+    beatsText: [
+      "Nhịp 1 (0–18%): Cái giá của thợ rẻ tiền và lớp ngụy trang ẩu.",
+      "Nhịp 2 (18–45%): Bóc lớp vỏ ngoài & phơi bày hư hỏng thật trên màn hình.",
+      "Nhịp 3 (45–83%): Quy trình phục chế chuẩn kỹ thuật từng bước theo hình.",
+      "Nhịp 4 (83–100%): Màn lột xác hoàn hảo & Tranh luận tiền công."
+    ].join("\n"),
+    endingFormula: "End on the pristine final shot: 'I charged $1,400 to fix what a $150 shortcut ruined — am I wrong for charging extra to clean up someone else's mess?'",
+    styleNotes: "Sharp restoration specialist tone combining Reddit r/Contractor karma with real visual actions."
+  },
+  micro_detail_mystery: {
+    hint: "Mở bằng chi tiết kỹ thuật ngược đời trên hình ('Tại sao 99% thợ bỏ qua bước này?') ➔ Giải mã cơ chế vật lý/độ ẩm ➔ Chuỗi thao tác chính xác từng milimet ➔ Thử thách người xem tìm vết nối.",
+    visualSyncMode: "visual_grounded",
+    hookFormula: "Open with a counter-intuitive technical hook tied to the visual: 'Why do 99% of builders skip this one step — when it's the only thing keeping this from rotting in two winters?'",
+    beatsText: [
+      "Nhịp 1 (0–15%): Câu hỏi kỹ thuật gây tò mò từ chi tiết mở đầu.",
+      "Nhịp 2 (15–50%): Giải mã nguyên nhân vật lý & chuẩn bị phôi theo hình.",
+      "Nhịp 3 (50–85%): Tuyệt chiêu xử lý bề mặt, âm vít, keo 2 thành phần & xả nhám.",
+      "Nhịp 4 (85–100%): Bề mặt liền khối & Thử thách người xem tìm vết ghép."
+    ].join("\n"),
+    endingFormula: "Challenge the viewer on the final frame: 'Look closely at the finished surface — can you even spot where the splice begins?'",
+    styleNotes: "Authoritative insider tone, fast rhythmic pacing for maximum retention."
+  },
+  reddit_aita_confession: {
+    hint: "Khuôn kinh điển US TikTok: Mở bằng con số hợp đồng lớn ➔ Kể chuyện kịch tính với khách hàng oái oăm trên nền video thỏa mãn ➔ Cao trào đối chất ➔ Câu hỏi phán xét đạo đức (AITA).",
+    visualSyncMode: "free_flow",
+    hookFormula: "Open immediately with a high-stakes contract figure or outrageous client demand in sentence one.",
+    beatsText: [
+      "Nhịp 1 (0–15%): Báo giá hợp đồng lớn & điều kiện khắc nghiệt.",
+      "Nhịp 2 (15–50%): Thực tế công việc nặng nhọc & sự cố phát sinh.",
+      "Nhịp 3 (50–82%): Cao trào đối chất khách hàng ép giá hoặc hách dịch.",
+      "Nhịp 4 (82–100%): Chốt hạ & hỏi ý kiến cộng đồng xem ai đúng ai sai."
+    ].join("\n"),
+    endingFormula: "End with a polarizing moral question: 'They paid the bill but threatened to blacklist us — would you have stood your ground?'",
+    styleNotes: "First-person American blue-collar storyteller, high-drama narrative flow."
+  },
+  custom_blueprint: {
+    hint: "Tự định nghĩa hoàn toàn công thức Hook, các nhịp dẫn chuyện, câu kết và quy tắc LLM để thích ứng ngay lập tức khi xu hướng TikTok thay đổi.",
+    visualSyncMode: "visual_grounded",
+    hookFormula: "",
+    beatsText: "",
+    endingFormula: "",
+    styleNotes: ""
+  }
+};
+
+function syncStorytimeBlueprintUi({ forcePopulate = false } = {}) {
+  const bpId = el.storytimeBlueprint?.value || "artisan_fair_price";
+  const preset = STORYTIME_BLUEPRINT_PRESETS[bpId] || STORYTIME_BLUEPRINT_PRESETS.artisan_fair_price;
+  if (el.storytimeBlueprintHint && preset.hint) {
+    el.storytimeBlueprintHint.textContent = preset.hint;
+  }
+  if (bpId === "custom_blueprint" && el.storytimeCustomBlueprintPanel) {
+    el.storytimeCustomBlueprintPanel.classList.remove("hidden");
+  }
+  if (forcePopulate || (el.storytimeCustomHookFormula && !el.storytimeCustomHookFormula.value.trim())) {
+    if (el.storytimeVisualSyncMode && preset.visualSyncMode) el.storytimeVisualSyncMode.value = preset.visualSyncMode;
+    if (el.storytimeCustomHookFormula && preset.hookFormula) el.storytimeCustomHookFormula.value = preset.hookFormula;
+    if (el.storytimeCustomBeatsText && preset.beatsText) el.storytimeCustomBeatsText.value = preset.beatsText;
+    if (el.storytimeCustomEndingFormula && preset.endingFormula) el.storytimeCustomEndingFormula.value = preset.endingFormula;
+    if (el.storytimeCustomStyleNotes && preset.styleNotes) el.storytimeCustomStyleNotes.value = preset.styleNotes;
+  }
+}
+
+function readStorytimeCustomBlueprint() {
+  const hookFormula = el.storytimeCustomHookFormula?.value?.trim() || "";
+  const beatsText = el.storytimeCustomBeatsText?.value?.trim() || "";
+  const endingFormula = el.storytimeCustomEndingFormula?.value?.trim() || "";
+  const styleNotes = el.storytimeCustomStyleNotes?.value?.trim() || "";
+  const visualSyncMode = el.storytimeVisualSyncMode?.value || "visual_grounded";
+  const isPanelOpen = el.storytimeCustomBlueprintPanel && !el.storytimeCustomBlueprintPanel.classList.contains("hidden");
+  if (!isPanelOpen && el.storytimeBlueprint?.value !== "custom_blueprint") {
+    return null;
+  }
+  if (!hookFormula && !beatsText && !endingFormula && !styleNotes) {
+    return null;
+  }
+  return {
+    visualSyncMode,
+    hookFormula,
+    beatsText,
+    endingFormula,
+    styleNotes
+  };
+}
+
+async function extractStorytimeBlueprintFromReferenceVideo() {
+  const videoPath = el.sourceVideoPath?.value?.trim() || await window.cineviral.pickVideo();
+  if (!videoPath) {
+    showToast("Hãy chọn video mẫu để AI học khuôn câu chuyện.");
+    return;
+  }
+  if (el.storytimeExtractBlueprintBtn) {
+    el.storytimeExtractBlueprintBtn.disabled = true;
+    el.storytimeExtractBlueprintBtn.textContent = "⏳ AI đang phân tích video mẫu...";
+  }
+  try {
+    addLog(`Đang phân tích cấu trúc Story Blueprint từ video mẫu: ${videoPath}`);
+    const bp = await window.cineviral.extractStorytimeBlueprint({ videoPath });
+    if (el.storytimeBlueprint && bp?.id) {
+      const opt = document.createElement("option");
+      opt.value = bp.id;
+      opt.textContent = `✨ ${bp.name} (${bp.badge || "Learned"})`;
+      el.storytimeBlueprint.appendChild(opt);
+      el.storytimeBlueprint.value = bp.id;
+    }
+    if (el.storytimeBlueprintHint && bp?.description) {
+      el.storytimeBlueprintHint.textContent = bp.description;
+    }
+    if (el.storytimeCustomBlueprintPanel) {
+      el.storytimeCustomBlueprintPanel.classList.remove("hidden");
+    }
+    if (el.storytimeVisualSyncMode && bp?.visualSyncMode) el.storytimeVisualSyncMode.value = bp.visualSyncMode;
+    if (el.storytimeCustomHookFormula && bp?.hookFormula) el.storytimeCustomHookFormula.value = bp.hookFormula;
+    if (el.storytimeCustomBeatsText && Array.isArray(bp?.beats)) {
+      el.storytimeCustomBeatsText.value = bp.beats.map((b) => `${b.label || b.id}: ${b.directive}`).join("\n");
+    }
+    if (el.storytimeCustomEndingFormula && bp?.endingFormula) el.storytimeCustomEndingFormula.value = bp.endingFormula;
+    if (el.storytimeCustomStyleNotes && bp?.styleNotes) el.storytimeCustomStyleNotes.value = bp.styleNotes;
+    addLog(`Đã học thành công khuôn mới: "${bp.name}"`, "SUCCESS");
+    showToast(`Đã học khuôn mới: ${bp.name}`);
+  } catch (error) {
+    addLog(`Không thể trích xuất khuôn từ video: ${error.message}`, "ERROR");
+    showToast(error.message);
+  } finally {
+    if (el.storytimeExtractBlueprintBtn) {
+      el.storytimeExtractBlueprintBtn.disabled = false;
+      el.storytimeExtractBlueprintBtn.textContent = "✨ Học khuôn từ video mẫu";
+    }
+  }
+}
+
 function updateAutoStoryEngineHint() {
   if (!el.autoStoryEngineHint) return;
   el.autoStoryEngineHint.textContent = window.AutoStoryEngine.engine(el.autoStoryEngineVersion?.value).hint;
@@ -7517,12 +7863,26 @@ function readProjectPayload() {
     subtitleSourcePath: el.subtitlePath.value.trim(),
     storyScriptPath: storyScriptPaths[0] || el.storyScriptPath?.value.trim() || "",
     storyScriptPaths,
-    storytimePersona: el.storytimePersona?.value || "contractor",
-    storytimeConflict: el.storytimeConflict?.value || "contract_dispute",
+    storytimeBlueprintId: el.storytimeBlueprint?.value || "artisan_fair_price",
+    storytimeCustomBlueprint: readStorytimeCustomBlueprint(),
+    storytimePersona: el.storytimePersona?.value || "artisan_craftsman",
+    storytimeConflict: el.storytimeConflict?.value || "craft_vs_diy",
+    storytimeDurationMode: el.storytimeDurationMode?.value || "preserve_full",
+    storytimeLocaleFlavor: el.storytimeLocaleFlavor?.value || "uk_craftsman",
+    storytimeTtsStability: Number(el.storytimeTtsStability?.value || 0.40),
+    storytimeInjectPauses: true,
     storytimeControversyLevel: Number(el.storytimeControversyLevel?.value || 2),
-    storytimeHighlightColor: el.storytimeHighlightColor?.value || "cyan",
+    storytimeHighlightColor: el.storytimeHighlightColor?.value || "yellow",
     storytimeEnableHeaderCard: el.storytimeHeaderCardToggle?.value !== "false",
-    storytimeEnableFoley: el.storytimeFoleyToggle?.value !== "false",
+    storytimeHeaderStyle: el.storytimeHeaderCardToggle?.value === "true"
+      ? "white_box"
+      : (el.storytimeHeaderCardToggle?.value === "false" ? "none" : "native_pill"),
+    storytimeWordsPerGroup: Math.max(1, Math.min(3, Number(el.storytimeWordsPerGroup?.value || 3))),
+    storytimeSelectiveHighlight: true,
+    storytimeEnableFoley: el.storytimeFoleyToggle?.value !== "false" && Number(el.storytimeFoleyToggle?.value) !== 0,
+    storytimeSourceVolumePercent: el.storytimeFoleyToggle?.value === "false"
+      ? 0
+      : (el.storytimeFoleyToggle?.value === "true" ? 16 : Number(el.storytimeFoleyToggle?.value || 0)),
     storytimeCustomIdea: el.storytimeCustomIdea?.value?.trim() || "",
     storytimeSourceText: el.storytimeSourceText?.value?.trim() || "",
     autoWhisper: el.autoWhisper.checked,
@@ -7591,7 +7951,7 @@ function validateCurrentStep() {
     showToast("Hãy chọn video nguồn trước.");
     return false;
   }
-  if (state.currentStep === 4 && isJsonPlanMode() && !el.storyScriptPath?.value.trim()) {
+  if (state.currentStep === 4 && isJsonPlanMode() && !isSatisfyingStorytimeMode() && !el.storyScriptPath?.value.trim()) {
     showToast(isStoryRecutMode()
       ? "Hãy tạo gói phân tích, gửi Gemini và chọn story-recut.json trước."
       : isManualGeminiProMode()
@@ -11284,8 +11644,27 @@ function bindEvents() {
   });
   el.wizardSteps.addEventListener("click", (event) => {
     const button = event.target.closest("[data-wizard-step]");
-    if (!button || state.busy || !isRecapMode()) return;
-    state.currentStep = Number(button.dataset.wizardStep); renderSteps();
+    if (!button || state.busy) return;
+    const targetStep = Number(button.dataset.wizardStep);
+    if (!Number.isFinite(targetStep) || targetStep === state.currentStep) return;
+    if (isRecapMode()) {
+      state.currentStep = targetStep;
+      renderSteps();
+      return;
+    }
+    if (targetStep < state.currentStep || targetStep <= (state.maxVisitedStep || 1)) {
+      state.currentStep = targetStep;
+      renderSteps();
+      return;
+    }
+    if (targetStep === state.currentStep + 1) {
+      if (!validateCurrentStep()) return;
+      state.currentStep = targetStep;
+      renderSteps();
+      return;
+    }
+    showToast("Hãy hoàn tất các bước trước theo thứ tự.");
+    return;
   });
   el.nextStep.addEventListener("click", async () => {
     if (isRecapMode()) return recapSetupUi.next(state.currentStep);
@@ -11296,6 +11675,15 @@ function bindEvents() {
     renderSteps();
   });
   el.startIngest.addEventListener("click", createAndIngestProject);
+  el.storytimeBlueprint?.addEventListener("change", () => syncStorytimeBlueprintUi({ forcePopulate: true }));
+  el.storytimeToggleCustomBlueprint?.addEventListener("click", () => {
+    if (!el.storytimeCustomBlueprintPanel) return;
+    const willOpen = el.storytimeCustomBlueprintPanel.classList.contains("hidden");
+    el.storytimeCustomBlueprintPanel.classList.toggle("hidden", !willOpen);
+    if (willOpen) syncStorytimeBlueprintUi({ forcePopulate: false });
+  });
+  el.storytimeExtractBlueprintBtn?.addEventListener("click", extractStorytimeBlueprintFromReferenceVideo);
+  syncStorytimeBlueprintUi({ forcePopulate: true });
   el.mirrorPickVideo?.addEventListener("click", selectMirrorVideo);
   el.mirrorRun?.addEventListener("click", runMirrorTool);
   el.confirmProject.addEventListener("click", confirmProjectFolder);
@@ -12651,23 +13039,15 @@ function bindEvents() {
   });
 
   el.toggleSetupLog?.addEventListener("click", () => {
+    state.setupLogUserToggled = true;
     state.setupLogCollapsed = !state.setupLogCollapsed;
-    el.setupActivityPanel?.classList.toggle("collapsed", state.setupLogCollapsed);
-    el.setupView?.classList.toggle("log-collapsed", state.setupLogCollapsed);
-    if (el.toggleSetupLog) {
-      el.toggleSetupLog.title = state.setupLogCollapsed ? "Mở rộng bảng hoạt động" : "Thu gọn bảng hoạt động";
-      el.toggleSetupLog.textContent = state.setupLogCollapsed ? "◨" : "◧";
-    }
+    syncSetupLogPanelState();
   });
   el.setupActivityPanel?.addEventListener("click", (event) => {
     if (state.setupLogCollapsed && !event.target.closest("button")) {
+      state.setupLogUserToggled = true;
       state.setupLogCollapsed = false;
-      el.setupActivityPanel?.classList.remove("collapsed");
-      el.setupView?.classList.remove("log-collapsed");
-      if (el.toggleSetupLog) {
-        el.toggleSetupLog.title = "Thu gọn bảng hoạt động";
-        el.toggleSetupLog.textContent = "◧";
-      }
+      syncSetupLogPanelState();
     }
   });
 
@@ -12712,6 +13092,16 @@ function bindEvents() {
   el.toggleStudioRawLog?.addEventListener("click", () => switchStudioLogTab(!state.studioRawLogVisible));
 }
 
+function syncSetupLogPanelState() {
+  const collapsed = !isRecapMode() && Boolean(state.setupLogCollapsed);
+  el.setupActivityPanel?.classList.toggle("collapsed", collapsed);
+  el.setupView?.classList.toggle("log-collapsed", collapsed);
+  if (el.toggleSetupLog) {
+    el.toggleSetupLog.title = collapsed ? "Mở rộng bảng hoạt động" : "Thu gọn bảng hoạt động";
+    el.toggleSetupLog.textContent = collapsed ? "◨" : "◧";
+  }
+}
+
 async function bootstrap() {
   queryElements();
   renderSteps();
@@ -12725,6 +13115,7 @@ async function bootstrap() {
   $("refresh-antigravity-models")?.addEventListener("click", () => refreshAntigravityModels({ force: true }));
   if (state.settings.aiProvider === "antigravity_cli") refreshAntigravityModels({ silent: true });
   initStudioSplitters();
+  syncSetupLogPanelState();
   renderActivity();
   if (el.ollamaVisionAssist?.checked) {
     loadOllamaModels({ silent: true });
@@ -12736,7 +13127,7 @@ async function bootstrap() {
     loadDraftVoices();
   }
   syncHeroVoiceCard();
-  addLog("Đã khởi tạo RecapTool Studio.");
+  addLog("Đã khởi tạo Cineviral Studio.");
   addLog(`AI provider mặc định: ${getAiProviderLabel(state.settings.aiProvider)}.`);
   if (payload.recoverableRenderJobs?.length) {
     addLog(`Phát hiện ${payload.recoverableRenderJobs.length} lần xuất bị gián đoạn. Mở dự án tương ứng và bấm Tiếp tục xuất.`, "WARNING");

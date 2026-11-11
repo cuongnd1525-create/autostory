@@ -1900,14 +1900,13 @@ class ManualAntigravityStage1Service {
 
   killChild(child) {
     if (!child) return false;
+    try {
+      if (typeof child.kill === "function") child.kill("SIGKILL");
+    } catch (_error) {}
     if (process.platform === "win32" && child.pid) {
       try {
         spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { windowsHide: true, stdio: "ignore" });
-      } catch (_error) {
-        child.kill("SIGKILL");
-      }
-    } else {
-      child.kill("SIGKILL");
+      } catch (_error) {}
     }
     return true;
   }
@@ -2251,13 +2250,16 @@ class ManualAntigravityStage1Service {
         const source = outcome.ok ? outcome.result : outcome.error;
         stdoutA += `\n--- PHASE_A_SERIALIZE ---\n${source?.stdout || ""}`;
         await fs.writeFile(path.join(resultDir, "antigravity-output-phaseA.log"), stdoutA, "utf8");
-        if (!outcome.ok) diagnostics.failureKinds.push(outcome.kind);
-        if (!outcome.ok && outcome.kind === "auth") {
-          const error = new Error(`[PHASE_A] ${describeAgyFailure("auth", outcome.error)}`);
-          error.kind = "auth";
-          throw error;
+        if (!outcome.ok) {
+          diagnostics.failureKinds.push(outcome.kind);
+          if (outcome.kind === "auth") {
+            const error = new Error(`[PHASE_A] ${describeAgyFailure("auth", outcome.error)}`);
+            error.kind = "auth";
+            throw error;
+          }
+        } else {
+          parsed = await parseFrom(source?.stdout || "");
         }
-        parsed = await parseFrom(source?.stdout || "");
       } catch (error) {
         if (error.kind === "auth") throw error;
         diagnostics.failureKinds.push(error.kind || "serialization_error");

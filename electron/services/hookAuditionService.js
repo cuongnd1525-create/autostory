@@ -138,7 +138,7 @@ function verifyHookTitle(title, { model = {}, cues = [], mustWithhold = [], refe
 
   // 6. Word count sanity check for 9:16 top banner readability
   const words = cleanTitle.split(/\s+/).filter(Boolean);
-  if (words.length < 5 || words.length > 16) {
+  if (words.length < 4 || words.length > 16) {
     issues.push({
       code: 'TITLE_LENGTH_SUBOPTIMAL',
       severity: words.length < 3 || words.length > 20 ? 'blocking' : 'minor',

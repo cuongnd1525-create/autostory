@@ -412,6 +412,18 @@ class OmniVoiceService {
         labels: { mode: "auto" }
       },
       {
+        voice_id: "male, middle-aged, low pitch, british accent",
+        name: "British Master Craftsman (UK Storytime)",
+        provider: "omnivoice",
+        labels: { mode: "voice design" }
+      },
+      {
+        voice_id: "male, middle-aged, low pitch, american accent",
+        name: "US Veteran Contractor (US Storytime)",
+        provider: "omnivoice",
+        labels: { mode: "voice design" }
+      },
+      {
         voice_id: "male, young adult, low pitch, american accent",
         name: "Cinematic Male TikTok",
         provider: "omnivoice",

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>RecapTool Studio</title>
+    <title>Cineviral Studio</title>
     <link rel="stylesheet" href="./styles.css" />
     <link rel="stylesheet" href="./productionQueue.css" />
     <link rel="stylesheet" href="./previewLog.css" />
@@ -173,8 +173,12 @@
                   </header>
                   <div class="mode-config-body">
                     <div id="mode-config-empty" class="mode-config-empty">
-                      <strong>Không cần cấu hình thêm ở bước này</strong>
-                      <p>Chọn Tiếp tục để thiết lập giọng đọc và nguồn video.</p>
+                      <div class="mode-overview-header">
+                        <span class="section-kicker">QUY TRÌNH XỬ LÝ TỰ ĐỘNG</span>
+                        <strong>Không cần cấu hình thêm ở bước này</strong>
+                        <p id="mode-config-empty-summary">Chọn Tiếp tục để thiết lập giọng đọc và nguồn video.</p>
+                      </div>
+                      <div id="mode-config-empty-steps" class="mode-overview-steps"></div>
                     </div>
             <div id="anime-lore-options" class="field-card prompt-options-card hidden">
               <div class="prompt-options-heading">
@@ -300,6 +304,7 @@
                 <option value="serialized_genz">Series Part 1-3 - Gen Z đời thường</option>
                 <option value="viral_police_blotter">Viral Police Blotter (Hook + 4 khối narrator)</option>
               </select>
+              <div id="manual-prompt-blueprint" class="script-blueprint-card" aria-live="polite"></div>
               <div id="manual-independent-options" class="prompt-options-body">
                 <label>Số kịch bản muốn tạo</label>
                 <select id="manual-independent-script-count">
@@ -498,16 +503,78 @@
               <div class="prompt-options-heading">
                 <div>
                   <span class="section-kicker">ODDLY SATISFYING STORYTELLER</span>
-                  <strong>Modular Story Matrix & Foley ASMR</strong>
-                  <small>Kết hợp video B-roll thỏa mãn với kịch bản First-Person US Contractor, Header Hook Card và Foley ASMR Ducking.</small>
+                  <strong>Configurable Story Blueprint & Modular Matrix</strong>
+                  <small>Linh hoạt đổi khuôn dựng câu chuyện (Story Blueprint) theo xu hướng TikTok UK/US, tự đồng bộ thao tác trên hình hoặc học khuôn mới từ video mẫu.</small>
                 </div>
-                <span class="prompt-profile-badge">Viral TikTok US</span>
+                <span class="prompt-profile-badge">Adaptive Blueprint</span>
+              </div>
+              <div style="margin-bottom: 12px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;">
+                  <label style="margin: 0;">Khuôn dựng câu chuyện (Story Blueprint — Thay đổi linh hoạt theo trend)</label>
+                  <div style="display: flex; gap: 6px;">
+                    <button id="storytime-toggle-custom-blueprint" type="button" class="ghost small">🛠️ Sửa cấu trúc khuôn & Prompt LLM</button>
+                    <button id="storytime-extract-blueprint-btn" type="button" class="ghost small">✨ Học khuôn từ video mẫu</button>
+                  </div>
+                </div>
+                <select id="storytime-blueprint">
+                  <option value="artisan_fair_price" selected>1. Tranh cãi Giá Thợ Lành Nghề vs. DIY Rẻ Tiền (Artisan Fair-Price Debate - Đang Hot)</option>
+                  <option value="botched_diy_rescue">2. Giải cứu Thảm họa Sửa Ẩu / Thợ Vườn (Reddit Contractor Karma)</option>
+                  <option value="micro_detail_mystery">3. Bí ẩn Kỹ thuật 3 Giây ("Why Nobody Does This" - Giữ chân 100%)</option>
+                  <option value="reddit_aita_confession">4. Tâm sự & Tranh chấp Khách hàng (Classic US Reddit AITA Storytime)</option>
+                  <option value="custom_blueprint">5. Khuôn Tự Định Nghĩa (Custom Story Blueprint - Tùy biến hoàn toàn)</option>
+                </select>
+                <small id="storytime-blueprint-hint" style="display: block; margin-top: 6px; color: #94a3b8;">
+                  Mở bằng mức giá gây tranh cãi + kích thước công việc nhỏ ➔ Cà khịa cách làm ẩu 10 phút của thợ mạng ➔ Thuyết minh chuyên sâu khớp từng thao tác thật trên hình ➔ Kết quả tàng hình & câu hỏi chia 2 phe bình luận.
+                </small>
+              </div>
+              <div id="storytime-custom-blueprint-panel" class="hidden" style="margin-bottom: 14px; padding: 12px; border-radius: 10px; background: rgba(15, 23, 42, 0.65); border: 1px solid rgba(56, 189, 248, 0.25);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                  <strong style="font-size: 12px; color: #38bdf8;">Cấu trúc Khuôn Câu Chuyện & Chỉ dẫn LLM (Có thể sửa trực tiếp khi đổi trend)</strong>
+                  <select id="storytime-visual-sync-mode" style="width: auto; font-size: 12px; padding: 4px 8px;">
+                    <option value="visual_grounded" selected>Bám sát thao tác thật trên video (Visual-Grounded)</option>
+                    <option value="free_flow">Kể chuyện tự do trên nền B-roll (Free-Flow)</option>
+                  </select>
+                </div>
+                <div style="margin-bottom: 8px;">
+                  <label>Công thức Mở đầu 3 giây (Hook Formula):</label>
+                  <input id="storytime-custom-hook-formula" type="text" placeholder="Ví dụ: Mở ngay bằng con số tiền công gây sốc đặt cạnh kích thước công việc nhỏ và đặt câu hỏi tranh luận..." />
+                </div>
+                <div style="margin-bottom: 8px;">
+                  <label>Các nhịp dẫn chuyện (Mỗi dòng 1 nhịp — AI tự chia tỷ lệ thời lượng):</label>
+                  <textarea id="storytime-custom-beats-text" rows="4" placeholder="Nhịp 1: Báo giá gây sốc & phản bác cách làm 10 phút của thợ mạng&#10;Nhịp 2: Chẩn đoán hư hỏng ngầm & phá dỡ phẫu thuật theo hình&#10;Nhịp 3: Phân tích kỹ thuật chuyên sâu từng bước trên màn hình&#10;Nhịp 4: Kết quả hoàn thiện tàng hình & câu hỏi kích hoạt bình luận"></textarea>
+                </div>
+                <div class="prompt-options-grid">
+                  <div>
+                    <label>Công thức Câu chốt & Kích comment (Ending Formula):</label>
+                    <input id="storytime-custom-ending-formula" type="text" placeholder="Ví dụ: Chốt đúng cảnh hoàn thiện và hỏi khán giả mức giá đó là đắt hay xứng đáng..." />
+                  </div>
+                  <div>
+                    <label>Quy tắc giọng văn & Từ khóa nhấn (LLM Style Notes):</label>
+                    <input id="storytime-custom-style-notes" type="text" placeholder="Ví dụ: Câu ngắn 10-16 từ, giọng thợ kỳ cựu, nhấn mạnh số tiền và thuật ngữ..." />
+                  </div>
+                </div>
               </div>
               <div class="prompt-options-grid">
                 <div>
+                  <label>Chế độ Thời lượng & Cắt cảnh (Module 1)</label>
+                  <select id="storytime-duration-mode">
+                    <option value="preserve_full" selected>Giữ nguyên 100% thời lượng gốc (Cấm tóm tắt — Paraphrase đủ 5 bước)</option>
+                    <option value="smart_trim">Cho phép LLM tự cắt gọn cảnh thừa thãi (Smart Scene Trim)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Thành ngữ & Từ lóng địa phương (Module 1)</label>
+                  <select id="storytime-locale-flavor">
+                    <option value="uk_craftsman" selected>Anh Quốc / UK Craftsman (graft, bespoke, period house, sorted, daylight robbery)</option>
+                    <option value="us_tradesman">Mỹ / US Tradesman (highway robbery, hack job, up to code, worth every penny)</option>
+                    <option value="auto_preserve">Tự động giữ thành ngữ & từ lóng theo bối cảnh nguồn</option>
+                  </select>
+                </div>
+                <div>
                   <label>Narrator Persona (Nhân vật)</label>
                   <select id="storytime-persona">
-                    <option value="contractor" selected>Thầu xây dựng (Veteran Contractor)</option>
+                    <option value="artisan_craftsman" selected>Nghệ nhân phục chế / Thợ lành nghề (Master Craftsman)</option>
+                    <option value="contractor">Thầu xây dựng (Veteran Contractor)</option>
                     <option value="cinema_cleaner">Nhân viên dọn rạp phim (Cinema Cleaner)</option>
                     <option value="deep_sea_diver">Thợ lặn cạo hà đáy tàu (Hull Diver)</option>
                     <option value="excavator_operator">Thợ lái máy xúc nạo mương (Excavator)</option>
@@ -519,7 +586,9 @@
                 <div>
                   <label>Drama / Xung đột chính</label>
                   <select id="storytime-conflict">
-                    <option value="contract_dispute" selected>Tranh chấp hợp đồng & tiền nong ($3k vs $5k, $12k)</option>
+                    <option value="craft_vs_diy" selected>Đẳng cấp thợ thật vs. Thợ mạng 10 phút (Craft vs. DIY)</option>
+                    <option value="botched_job_rescue">Giải cứu thảm họa sửa ẩu giá rẻ (Botched DIY Rescue)</option>
+                    <option value="contract_dispute">Tranh chấp hợp đồng & tiền nong ($3k vs $5k, $12k)</option>
                     <option value="disgusting_karen">Khách hàng hách dịch / Karen bẩn thỉu</option>
                     <option value="unsettling_discovery">Phát hiện rùng mình / kỳ lạ dưới bùn rỉ</option>
                     <option value="impossible_deadline">Thời hạn khẩn cấp / Hư hỏng đắt giá</option>
@@ -535,31 +604,53 @@
                   </select>
                 </div>
                 <div>
-                  <label>Màu Highlight phụ đề Kinetic</label>
-                  <select id="storytime-highlight-color">
-                    <option value="cyan" selected>Xanh Cyan Neon (Avatar cleaner style)</option>
-                    <option value="yellow">Vàng Neon (Contractor / Hull diver style)</option>
-                    <option value="neon_green">Xanh lá Dollar ($ Payout style)</option>
+                  <label>Tham số Cảm xúc & Nhịp lấy hơi TTS (Module 2)</label>
+                  <select id="storytime-tts-stability">
+                    <option value="0.40" selected>Stability 0.40 + Auto &lt;break 300ms/&gt; (Độ nẩy tự nhiên — Khuyên dùng)</option>
+                    <option value="0.35">Stability 0.35 + Auto &lt;break 300ms/&gt; (Nhấn nhá mạnh, giàu cảm xúc)</option>
+                    <option value="0.45">Stability 0.45 + Auto &lt;break 300ms/&gt; (Trầm ấm, đĩnh đạc)</option>
                   </select>
                 </div>
                 <div>
-                  <label>Thẻ ghim Header Card trên đỉnh</label>
+                  <label>Xử lý Âm thanh nền & ASMR (Module 3)</label>
+                  <select id="storytime-foley-toggle">
+                    <option value="false" selected>Tắt hẳn âm gốc 100% (Chỉ giữ Voice TTS mới)</option>
+                    <option value="10">Giảm sâu âm gốc 10% (-20dB ASMR nền nhẹ)</option>
+                    <option value="true">Giảm vừa âm gốc 16% (-16dB Chuẩn Auto-Ducking ASMR)</option>
+                    <option value="25">Giữ rõ tiếng công cụ ASMR 25% (-12dB)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Phụ đề Kinetic 1–3 từ & Tô màu Từ khóa (Module 4)</label>
+                  <select id="storytime-highlight-color">
+                    <option value="yellow" selected>Vàng Neon + Viền đen dày (Tô màu Tiền / Công cụ / Động từ)</option>
+                    <option value="cyan">Xanh Cyan Neon + Viền đen dày (Tô màu Tiền / Công cụ / Động từ)</option>
+                    <option value="neon_green">Xanh lá Dollar + Viền đen dày ($ Payout style)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Số từ mỗi cụm Phụ đề (Word-level WhisperX)</label>
+                  <select id="storytime-words-per-group">
+                    <option value="3" selected>1 đến 3 từ / cụm (Chuẩn nhịp Audio thực + Đổ bóng sâu)</option>
+                    <option value="2">1 đến 2 từ / cụm (Nhịp nhanh dồn dập)</option>
+                    <option value="1">1 từ / cụm (Single-Word Punch)</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Kiểu Sticker / Header trên đỉnh</label>
                   <select id="storytime-header-card-toggle">
-                    <option value="true" selected>Bật thẻ Header 3 dòng (Khuyên dùng)</option>
+                    <option value="native_pill" selected>TikTok Native Pill 1 dòng + Emoji (Why does NOBODY do this? 🙄)</option>
+                    <option value="true">Thẻ Header 3 dòng cổ điển (White Box 3 Lines)</option>
                     <option value="false">Tắt (Chỉ dùng video + phụ đề)</option>
                   </select>
                 </div>
-                <div>
-                  <label>Hòa âm Foley ASMR Video gốc</label>
-                  <select id="storytime-foley-toggle">
-                    <option value="true" selected>Bật Auto-Ducking (-16dB dưới voice)</option>
-                    <option value="false">Tắt tiếng gốc (Chỉ giữ Voice TTS)</option>
-                  </select>
-                </div>
+              </div>
+              <div style="margin-top: 10px; padding: 8px 12px; border-radius: 8px; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); font-size: 12px; color: #fcd34d;">
+                💡 <strong>Gợi ý Voice TTS xịn (Module 2):</strong> Sang Bước 3, nên chọn <strong>ElevenLabs</strong> (Stability tự động hạ về <code>0.35–0.45</code> kèm thẻ nghỉ <code>&lt;break time="300ms"/&gt;</code> trước câu đinh giá tiền) hoặc <strong>OmniVoice</strong> (<em>British Master Craftsman / US Veteran Contractor</em>) để giọng có độ nẩy chân thực nhất.
               </div>
               <div style="margin-top: 12px;">
                 <label>Ý tưởng mở rộng / 1 câu prompt (Tùy chọn):</label>
-                <input id="storytime-custom-idea" type="text" placeholder="Ví dụ: Khách bảo dọn bãi rác $500 nhưng phát hiện két sắt khóa dưới đống rác..." />
+                <input id="storytime-custom-idea" type="text" placeholder="Ví dụ: Báo giá £1,200 phục chế bệ cửa sổ gỗ 100 năm tuổi bị mục nát hoàn toàn..." />
               </div>
               <div style="margin-top: 10px;">
                 <label>Dán bài viết Reddit / ghi chú nguồn (Tùy chọn):</label>
@@ -756,10 +847,22 @@
                       </button>
                     </div>
                   </div>
+                  <div class="voice-chip-category">
+                    <span class="chip-cat-label">🛠️ Storytime / Reddit / Craftsman (Khuyên dùng ElevenLabs &amp; OmniVoice)</span>
+                    <div class="chip-row">
+                      <button type="button" class="btn-voice-chip" data-quick-provider="elevenlabs" data-quick-voice="pNInz6obpgDQGcFmaJgB" data-quick-name="Adam (ElevenLabs · Stability 0.40 + Break 300ms)" data-quick-detail="ElevenLabs · Giọng nam có độ nẩy tự nhiên (Stability 0.35-0.45), tự ngắt nhịp trước câu đinh giá tiền">
+                        <b>Adam ElevenLabs</b> <small>(Stability 0.40 - Khuyên dùng)</small>
+                      </button>
+                      <button type="button" class="btn-voice-chip" data-quick-provider="omnivoice" data-quick-voice="male, middle-aged, low pitch, british accent" data-quick-name="British Master Craftsman (OmniVoice UK)" data-quick-detail="OmniVoice · Giọng nghệ nhân Anh Quốc (UK Accent) trầm ấm, chuẩn video DIY/Restoration">
+                        <b>UK Craftsman</b> <small>(OmniVoice - Giọng Anh)</small>
+                      </button>
+                      <button type="button" class="btn-voice-chip" data-quick-provider="omnivoice" data-quick-voice="male, middle-aged, low pitch, american accent" data-quick-name="US Veteran Contractor (OmniVoice US)" data-quick-detail="OmniVoice · Giọng thầu xây dựng Mỹ (US Accent) tự nhiên, dày dặn">
+                        <b>US Contractor</b> <small>(OmniVoice - Giọng Mỹ)</small>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
-
-              <!-- VOICE CONFIG TABS -->
               <div class="voice-tabs-container">
                 <div class="voice-tabs" role="tablist">
                   <button class="voice-tab active" data-voice-tab="preset" type="button" role="tab">Giọng mẫu sẵn có (Khuyên dùng)</button>
@@ -1318,6 +1421,10 @@
               <strong>True Crime Auto Story dùng tiếng Anh</strong>
               <small>Vertex xác minh hình ảnh, âm thanh và transcript rồi tự tạo timeline. Phụ đề Việt vẫn được tạo cho bản preview sau khi dựng.</small>
             </div>
+            <div class="field-card manual-draft-review-only hidden">
+              <strong>Gemini Draft Review · Quy trình 2 Lượt (English US)</strong>
+              <small>Ngôn ngữ và cấu trúc kịch bản được áp theo hồ sơ prompt bạn đã chọn ở Bước 2 (mặc định English US chuẩn TikTok Bodycam). Bấm Tiếp tục để rà soát toàn bộ cấu hình trước khi phân tích.</small>
+            </div>
           </section>
 
           <section class="wizard-panel hidden" data-step-panel="6">
@@ -1357,9 +1464,10 @@
 
         <aside id="setup-activity-panel" class="log-panel">
           <div class="log-title">
-            <span>Hoạt động</span>
+            <span class="log-title-label"><i class="log-status-led" aria-hidden="true"></i>Hoạt động</span>
+            <span id="setup-log-badge" class="setup-log-badge" title="Số sự kiện hoạt động">0</span>
             <div class="log-actions">
-              <button id="toggle-setup-log" class="icon-button log-collapse-btn" title="Thu gọn / Mở rộng bảng hoạt động" type="button">◧</button>
+              <button id="toggle-setup-log" class="icon-button log-collapse-btn" title="Mở rộng bảng hoạt động" type="button">◨</button>
               <button id="toggle-raw-log" class="ghost-button">Hiện log thô</button>
               <button id="copy-log" class="ghost-button">Sao chép</button>
             </div>
@@ -1578,6 +1686,12 @@
                   <div class="form-row">
                     <label for="top-caption-text" class="field-label">Nội dung tiêu đề</label>
                     <textarea id="top-caption-text" rows="2" maxlength="180" placeholder="Nhập tiêu đề hiển thị trên video..." class="sleek-textarea"></textarea>
+                    <div id="top-caption-variants-container" class="hook-variants-row" style="display: none; margin-top: 8px;">
+                      <div style="font-size: 11px; color: var(--muted, #94a3b8); margin-bottom: 5px; display: flex; align-items: center; justify-content: space-between;">
+                        <span>⚡ Gợi ý Hook US Viral (Click để đổi):</span>
+                      </div>
+                      <div id="top-caption-variants-list" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+                    </div>
                   </div>
 
                   <div class="form-row">

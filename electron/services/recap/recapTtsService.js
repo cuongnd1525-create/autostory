@@ -140,11 +140,11 @@ class RecapTtsService {
   /**
    * Synthesize raw audio for a single text block.
    */
-  async synthesizeRaw({ text, outputPath, provider, voiceId, signal }) {
+  async synthesizeRaw({ text, outputPath, provider, voiceId, signal, options = {} }) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    const language = this.settings.recapNarrationLanguage || "en";
-    const speed = Math.max(0.85, Math.min(1.3, Number(this.settings.voiceSpeed || 1)));
+    const language = options.language || this.settings.recapNarrationLanguage || "en";
+    const speed = Math.max(0.85, Math.min(1.3, Number(options.speed ?? this.settings.voiceSpeed ?? 1)));
 
     if (provider === "elevenlabs") {
       const service = this.providers.elevenlabs || new ElevenLabsService(this.settings.elevenLabsApiKey, this.settings.elevenLabsModel, this.settings);
@@ -154,10 +154,11 @@ class RecapTtsService {
         languageCode: language,
         outputPath,
         model: this.settings.elevenLabsModel,
-        stability: this.settings.elevenLabsStability,
-        similarityBoost: this.settings.elevenLabsSimilarityBoost,
-        style: this.settings.elevenLabsStyle,
-        speakerBoost: this.settings.elevenLabsSpeakerBoost
+        performanceMode: options.performanceMode || "narration",
+        stability: options.stability ?? this.settings.elevenLabsStability,
+        similarityBoost: options.similarityBoost ?? this.settings.elevenLabsSimilarityBoost,
+        style: options.style ?? this.settings.elevenLabsStyle,
+        speakerBoost: options.speakerBoost ?? this.settings.elevenLabsSpeakerBoost
       });
       return outputPath;
     }
@@ -178,10 +179,10 @@ class RecapTtsService {
       const service = this.providers.omnivoice || new OmniVoiceService(this.settings);
       await service.synthesizeSpeech({
         text,
-        voiceName: voiceId,
+        voiceName: voiceId || options.instruct || this.settings.omniVoiceInstruct || "male, middle-aged, low pitch, british accent",
         language,
         outputPath,
-        instruct: this.settings.omniVoiceInstruct || ""
+        instruct: options.instruct || this.settings.omniVoiceInstruct || ""
       });
       return outputPath;
     }

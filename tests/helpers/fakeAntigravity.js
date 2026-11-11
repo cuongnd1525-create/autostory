@@ -170,8 +170,14 @@ function classifyPrompt(prompt = "") {
 function createPhaseAwareSpawn({ calls, respond }) {
   let conversationCounter = 0;
   return (command, args, options) => {
-    const printArg = args.find((arg) => arg.startsWith("--print=")) || "";
-    const prompt = printArg.slice("--print=".length);
+    let prompt = "";
+    const printEqual = args.find((arg) => arg.startsWith("--print=") || arg.startsWith("-p="));
+    if (printEqual) {
+      prompt = printEqual.slice(printEqual.indexOf("=") + 1);
+    } else {
+      const pIdx = args.findIndex((arg) => arg === "--print" || arg === "-p" || arg === "--prompt");
+      if (pIdx >= 0 && pIdx + 1 < args.length) prompt = args[pIdx + 1];
+    }
     const kind = classifyPrompt(prompt);
     const conversationIndex = args.indexOf("--conversation");
     const conversationId = conversationIndex >= 0 ? args[conversationIndex + 1] : `conv-${++conversationCounter}`;

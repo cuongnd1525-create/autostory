@@ -19,12 +19,34 @@ function clampSetting(value) {
   return Math.max(0, Math.min(1, Number(value)));
 }
 
+const DEFAULT_PREMADE_VOICES = [
+  { voice_id: "JBFqnCBsd6RMkjVDRZzb", name: "George - Nam Anh (UK Warm / Storytime Craftsman)", labels: { accent: "british", gender: "male" } },
+  { voice_id: "onwK4e9ZLuTAKqWW03F9", name: "Daniel - Nam Anh (UK Authoritative / Documentary)", labels: { accent: "british", gender: "male" } },
+  { voice_id: "pNInz6obpgDQGcFmaJgB", name: "Adam - Nam Mỹ (US Deep Narrator / Reddit Storytime)", labels: { accent: "american", gender: "male" } },
+  { voice_id: "nPczCjzI2devNBz1zQrb", name: "Brian - Nam Mỹ (US Deep Resonant / Contractor)", labels: { accent: "american", gender: "male" } },
+  { voice_id: "N2lVS1w4EtoT3dr4eOWO", name: "Callum - Nam (Intense / Character Storyteller)", labels: { accent: "transatlantic", gender: "male" } },
+  { voice_id: "CwhRBWXzGAHq8TQ4Fs17", name: "Roger - Nam Mỹ (Confident / Casual)", labels: { accent: "american", gender: "male" } },
+  { voice_id: "EXAVITQu4vr4xnSDxMaL", name: "Sarah - Nữ Mỹ (Natural / Clear)", labels: { accent: "american", gender: "female" } }
+];
+
+function formatElevenLabsError(label, rawMessage = "") {
+  const text = String(rawMessage || "").trim();
+  if (text.includes("api_key_id_used_as_api_key")) {
+    return `${label} thất bại: Bạn đang dán nhầm "API Key ID" (mã định danh hiển thị ngoài bảng) thay vì "API Key" thực tế. API Key hợp lệ của ElevenLabs bắt buộc phải bắt đầu bằng "sk_..." (chỉ hiển thị 1 lần lúc bấm Create API Key hoặc Rotate Key trên trang ElevenLabs).`;
+  }
+  if (text.includes("invalid_api_key")) {
+    return `${label} thất bại: API Key ElevenLabs không hợp lệ hoặc đã bị thu hồi. Hãy kiểm tra lại mã bắt đầu bằng "sk_..." trong Cài đặt.`;
+  }
+  return `${label} failed: ${text}`;
+}
+
 class ElevenLabsService {
   constructor(apiKey, modelId, settings = {}) {
-    if (!apiKey) {
-      throw new Error("ElevenLabs API key is missing. Add it in Settings first.");
+    const cleanKey = String(apiKey || "").trim().replace(/^["']+|["']+$/g, "");
+    if (!cleanKey) {
+      throw new Error("Chưa có ElevenLabs API Key. Hãy nhập mã bắt đầu bằng 'sk_...' trong Cài đặt.");
     }
-    this.apiKey = apiKey;
+    this.apiKey = cleanKey;
     this.modelId = modelId || "eleven_multilingual_v2";
     this.baseUrl = "https://api.elevenlabs.io/v1";
     this.settings = settings || {};
@@ -46,7 +68,8 @@ class ElevenLabsService {
         }
 
         const message = await response.text();
-        const error = new Error(`${label} failed: ${message}`);
+        const error = new Error(formatElevenLabsError(label, message));
+        error.rawDetail = message;
         error.status = response.status;
         if (!isTransientStatus(response.status) || attempt === RETRY_DELAYS_MS.length) {
           throw error;
@@ -87,20 +110,38 @@ class ElevenLabsService {
   }
 
   async listVoices() {
-    const response = await this.fetchWithRetry((signal) => fetch(`${this.baseUrl}/voices`, {
-      signal,
-      headers: {
-        "xi-api-key": this.apiKey
+    try {
+      const response = await this.fetchWithRetry((signal) => fetch(`${this.baseUrl}/voices`, {
+        signal,
+        headers: {
+          "xi-api-key": this.apiKey
+        }
+      }), "ElevenLabs voice list");
+      const payload = await response.json();
+      return payload.voices?.length ? payload.voices : DEFAULT_PREMADE_VOICES;
+    } catch (error) {
+      if (String(error?.rawDetail || error?.message || "").includes("missing_permissions")) {
+        return DEFAULT_PREMADE_VOICES;
       }
-    }), "ElevenLabs voice list");
-    const payload = await response.json();
-    return payload.voices || [];
+      throw error;
+    }
   }
 
-  buildVoiceSettings(performanceMode = "narration", genreMode = "thriller", emotionTag = "") {
+  buildVoiceSettings(performanceMode = "narration", genreMode = "thriller", emotionTag = "", overrides = {}) {
+    if (Number.isFinite(Number(overrides?.stability))) {
+      return {
+        stability: clampSetting(overrides.stability),
+        similarity_boost: clampSetting(overrides.similarityBoost ?? this.settings.elevenLabsSimilarityBoost ?? 0.78),
+        style: clampSetting(overrides.style ?? this.settings.elevenLabsStyle ?? 0.62),
+        use_speaker_boost: overrides.speakerBoost !== undefined
+          ? Boolean(overrides.speakerBoost)
+          : (this.settings.elevenLabsSpeakerBoost !== false)
+      };
+    }
+
     if (this.settings.elevenLabsVoiceSettingsMode === "custom") {
       return {
-        stability: clampSetting(this.settings.elevenLabsStability ?? 0.32),
+        stability: clampSetting(this.settings.elevenLabsStability ?? 0.40),
         similarity_boost: clampSetting(this.settings.elevenLabsSimilarityBoost ?? 0.78),
         style: clampSetting(this.settings.elevenLabsStyle ?? 0.58),
         use_speaker_boost: this.settings.elevenLabsSpeakerBoost !== false
@@ -115,6 +156,15 @@ class ElevenLabsService {
       performanceMode = "panic";
     } else if (e === "SAD" || e === "WHISPER") {
       performanceMode = "narration";
+    }
+
+    if (performanceMode === "storytime") {
+      return {
+        stability: clampSetting(this.settings.storytimeTtsStability ?? 0.40),
+        similarity_boost: clampSetting(this.settings.elevenLabsSimilarityBoost ?? 0.78),
+        style: clampSetting(this.settings.elevenLabsStyle ?? 0.62),
+        use_speaker_boost: true
+      };
     }
 
     if (performanceMode === "hook") {
@@ -185,11 +235,22 @@ class ElevenLabsService {
     languageCode,
     performanceMode,
     genreMode,
-    emotionTag
+    emotionTag,
+    stability,
+    similarityBoost,
+    style,
+    speakerBoost
   }) {
     if (!voiceId) {
       throw new Error("Voice ID is missing. Select or paste an ElevenLabs voice ID.");
     }
+
+    const voiceSettings = this.buildVoiceSettings(performanceMode, genreMode, emotionTag, {
+      stability,
+      similarityBoost,
+      style,
+      speakerBoost
+    });
 
     const audioBuffer = await this.runWithRetry(async () => {
       const response = await this.fetchWithRetry((signal) => fetch(`${this.baseUrl}/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
@@ -203,7 +264,7 @@ class ElevenLabsService {
         body: JSON.stringify({
           text,
           model_id: this.modelId,
-          voice_settings: this.buildVoiceSettings(performanceMode, genreMode, emotionTag)
+          voice_settings: voiceSettings
         })
       }), "ElevenLabs TTS");
       return Buffer.from(await response.arrayBuffer());

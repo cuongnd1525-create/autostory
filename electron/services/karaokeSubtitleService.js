@@ -92,10 +92,11 @@ function buildTikTokKaraokeAssEvents(words = [], options = {}) {
 function buildTikTokKaraokeAssContent(wordsOrEvents = [], options = {}) {
   const width = Math.max(320, Number(options.width || 1080));
   const height = Math.max(320, Number(options.height || 1920));
-  const fontSize = Math.max(24, Math.round((Number(options.fontSize || 54) * (width / 1080))));
-  const outline = Math.max(1, Math.round((Number(options.outline || 3.5) * (width / 1080))));
-  const shadow = Math.max(0, Math.round((Number(options.shadow || 1) * (width / 1080))));
-  const marginV = Math.max(50, Math.round(Number(options.marginV || 620) * (height / 1920)));
+  const fontSize = Math.max(24, Math.round((Number(options.fontSize || 68) * (width / 1080))));
+  const outline = Math.max(2, Number((Number(options.outline || 6.5) * (width / 1080)).toFixed(1)));
+  const shadow = Math.max(0, Number((Number(options.shadow ?? 3.5) * (width / 1080)).toFixed(1)));
+  const marginV = Math.max(50, Math.round(Number(options.marginV || 445) * (height / 1920)));
+  const marginH = Math.max(30, Math.round(Number(options.marginH || 65) * (width / 1080)));
   const fontName = options.fontName || "Arial Black";
 
   const header = `[Script Info]
@@ -107,7 +108,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: TikTokKaraoke,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,${outline},${shadow},2,30,30,${marginV},1
+Style: TikTokKaraoke,${fontName},${fontSize},&H00FFFFFF,&H000000FF,&H00000000,&HC0000000,-1,0,0,0,100,100,0.5,0,1,${outline},${shadow},2,${marginH},${marginH},${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text

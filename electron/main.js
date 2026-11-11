@@ -419,7 +419,8 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     backgroundColor: "#09090b",
-    title: "RecapTool Studio",
+    title: "Cineviral Studio",
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -1244,7 +1245,7 @@ app.whenReady().then(async () => {
       const omniVoice = new OmniVoiceService(settings);
       sendVoiceProgress("Đang thử giọng OmniVoice. Lần chạy đầu có thể mất vài phút để tải mô hình.");
       await omniVoice.synthesizeSpeech({
-        text: payload?.text || "Đây là đoạn thử giọng ngắn của RecapTool Studio.",
+        text: payload?.text || "Đây là đoạn thử giọng ngắn của Cineviral Studio.",
         voiceName: payload?.voiceId || settings.omniVoiceInstruct || "",
         outputPath,
         language: payload?.language || "auto",
@@ -1503,11 +1504,34 @@ app.whenReady().then(async () => {
   });
 
   handleIpc("storytime:getMatrixOptions", async () => {
+    const StorytimeBlueprintService = require("./services/storytime/storytimeBlueprintService");
+    const bpService = new StorytimeBlueprintService(configStore.getSettings());
     return {
+      blueprints: bpService.listBlueprints(),
       personas: StorytimeScriptService.PERSONAS,
       conflicts: StorytimeScriptService.CONFLICTS,
       controversyLevels: StorytimeScriptService.CONTROVERSY_LEVELS
     };
+  });
+
+  handleIpc("storytime:extractBlueprint", async (event, options = {}) => {
+    const settings = { ...configStore.getSettings(), ...options };
+    const StorytimeBlueprintService = require("./services/storytime/storytimeBlueprintService");
+    const bpService = new StorytimeBlueprintService(settings);
+    const scriptService = new StorytimeScriptService(settings);
+    const onProgress = createPipelineProgressSender(event);
+    const blueprint = await bpService.extractBlueprintFromVideo({
+      videoPath: options.videoPath,
+      scriptService,
+      onProgress
+    });
+    if (options.persist !== false) {
+      const currentList = Array.isArray(settings.storytimeCustomBlueprints) ? settings.storytimeCustomBlueprints : [];
+      await configStore.saveSettings({
+        storytimeCustomBlueprints: [blueprint, ...currentList.filter((item) => item.id !== blueprint.id)].slice(0, 20)
+      });
+    }
+    return blueprint;
   });
 
   handleIpc("storytime:generateScript", async (event, options = {}) => {
