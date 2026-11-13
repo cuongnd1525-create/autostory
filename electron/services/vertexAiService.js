@@ -196,14 +196,24 @@ function formatVertexApiError(status, rawBody, projectId) {
   }
   const detailStr = payload?.error?.details ? ` - ${JSON.stringify(payload.error.details)}` : '';
   const message = safeText(payload?.error?.message || rawBody || `HTTP ${status}`) + detailStr;
-  if (status === 403 && message.includes("aiplatform.endpoints.predict")) {
-    return new Error(
-      `Vertex AI đã xác thực nhưng service account chưa có quyền chạy model trong project "${projectId}". `
-      + "Hãy vào Google Cloud Console > IAM, cấp role Vertex AI User (roles/aiplatform.user) cho client_email trong file service account JSON, đợi 1-2 phút rồi kiểm tra lại."
-    );
+  const reasons = (payload?.error?.details || []).map(detail => detail.reason).filter(Boolean);
+  const failure = (text, reason, actionUrl) => Object.assign(new Error(text), {
+    httpStatus: status, kind: "auth", reason, projectId, ...(actionUrl ? { actionUrl } : {})
+  });
+  if (status === 403 && (reasons.includes("BILLING_DISABLED") || /BILLING_DISABLED|requires billing to be enabled|enable billing/i.test(payload?.error?.message || rawBody))) {
+    const url = `https://console.cloud.google.com/billing/linkedaccount?project=${encodeURIComponent(projectId)}`;
+    return failure(`Vertex AI: project "${projectId}" chưa bật Billing hoặc tài khoản thanh toán đã bị vô hiệu hóa. `
+      + `Kiểm tra/liên kết Billing cho đúng project rồi thử lại: ${url}. Đổi model hoặc bật lại API không xử lý được lỗi thanh toán này.`, "BILLING_DISABLED", url);
   }
-  if (status === 403 && /SERVICE_DISABLED|has not been used|API.*disabled/i.test(message)) {
-    return new Error(`Vertex AI API chưa được bật trong project "${projectId}". Hãy bật aiplatform.googleapis.com rồi thử lại.`);
+  if (status === 403 && (reasons.includes("SERVICE_DISABLED") || /SERVICE_DISABLED|has not been used|API (?:is )?disabled/i.test(payload?.error?.message || rawBody))) {
+    const url = `https://console.cloud.google.com/apis/library/aiplatform.googleapis.com?project=${encodeURIComponent(projectId)}`;
+    return failure(`Vertex AI API chưa được bật trong project "${projectId}". Bật aiplatform.googleapis.com tại ${url} rồi thử lại.`, "SERVICE_DISABLED", url);
+  }
+  if (status === 403 && message.includes("aiplatform.endpoints.predict")) {
+    return failure(
+      `Vertex AI đã xác thực nhưng service account chưa có quyền chạy model trong project "${projectId}". `
+      + "Hãy vào Google Cloud Console > IAM, cấp role Vertex AI User (roles/aiplatform.user) cho client_email trong file service account JSON, đợi 1-2 phút rồi kiểm tra lại.", "IAM_PERMISSION_DENIED"
+    );
   }
   return Object.assign(new Error(`Vertex AI request failed (${status}): ${message}`), { httpStatus: status });
 }
@@ -351,6 +361,37 @@ class VertexAiService {
     this.accessTokenExpiresAt = Date.now() + (Number(tokenPayload.expires_in || 3000) * 1000);
     if (!this.accessToken) throw new Error("Vertex authentication không trả về access token.");
     return this.accessToken;
+  }
+
+  async checkAccess({ model = this.getModel("video_analysis"), signal } = {}) {
+    signal?.throwIfAborted();
+    const token = await this.getAccessToken();
+    this.validateSettings();
+    const endpoint = vertexEndpoint(this.projectId, this.location, model).replace(":generateContent", ":countTokens");
+    this.accessChecks ||= new Map();
+    if (this.accessChecks.get(endpoint) > Date.now()) return { ok: true, projectId: this.projectId, model, cached: true };
+    const controller = new AbortController(), abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => controller.abort(), 30000);
+    try {
+      // Count a tiny text input: no media upload and no generated-model output.
+      const response = await fetchWithRetry(endpoint, () => ({ method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "Connection check." }] }] }),
+        signal: controller.signal, dispatcher: this.dispatcher
+      }), { label: "Kiểm tra cấu hình Vertex", attempts: 1 });
+      if (!response.ok) throw formatVertexApiError(response.status, await response.text(), this.projectId);
+      const result = await response.json();
+      if (!Number.isFinite(result.totalTokens) || result.totalTokens < 0) throw new Error("Vertex countTokens trả kết quả kiểm tra không hợp lệ.");
+      signal?.throwIfAborted();
+      this.accessChecks.set(endpoint, Date.now() + 300000);
+      return { ok: true, projectId: this.projectId, model };
+    } catch (error) {
+      signal?.throwIfAborted();
+      if (controller.signal.aborted) throw Object.assign(new Error("Kiểm tra cấu hình Vertex quá 30 giây; chưa chuẩn bị hoặc upload video."), { kind: "request_timeout" });
+      throw error;
+    } finally { clearTimeout(timer); signal?.removeEventListener("abort", abort); }
   }
 
   ledgerPath() {

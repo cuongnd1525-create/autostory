@@ -157,6 +157,12 @@ class RecapPipelineService {
     }
     this._log("Stage 1", `Source video validated: ${sourceMeta.duration}s, ${sourceMeta.width}x${sourceMeta.height}`);
 
+    if (!state.visualEvents?.length || !state.storyModel) {
+      await aiService.providerService?.preflight?.({ signal: cancelToken?.signal,
+        onProgress: value => onProgress({ ...value, stage: "validate_inputs", percent: 4 }) });
+      throwIfCancelled(cancelToken);
+    }
+
     // ----------------------------------------------------
     // STAGE 2: Proxy Generation
     // ----------------------------------------------------
@@ -167,6 +173,7 @@ class RecapPipelineService {
       this._log("Stage 2", "Generating lightweight analysis proxy with burned timecode...");
       proxyPath = await mediaService.ensureAnalysisProxy({
         sourceVideoPath: project.sourceVideoPath,
+        sourceMeta,
         outputDir: projectPaths.analysisDir,
         onProgress: (p) => onProgress({ ...p, stage: "proxy_generation", percent: 8 + Math.min(100, Math.max(0, Number(p.percent) || 0)) * 0.09 })
       });

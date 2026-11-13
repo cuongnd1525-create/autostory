@@ -90,6 +90,21 @@ class RecapProviderService {
     return configured;
   }
 
+  async preflight({ signal, onProgress } = {}) {
+    if (this.provider !== "vertex_ai") return;
+    this.vertex ||= this.dependencies.vertex || new VertexAiService(this.settings);
+    onProgress?.({ message: "Đang kiểm tra project, Billing và quyền truy cập model Vertex trước khi xử lý video..." });
+    const models = this.getFallbackModels(this.getModel());
+    for (let index = 0; index < models.length; index++) {
+      try { await this.vertex.checkAccess({ model: models[index], signal }); return; }
+      catch (error) {
+        signal?.throwIfAborted();
+        if (![404, 429, 503].includes(error.httpStatus) || index + 1 === models.length) throw error;
+        onProgress?.({ level: "WARNING", message: `Kiểm tra ${models[index]} chưa khả dụng; đang kiểm tra ${models[index + 1]} trước khi xử lý video...` });
+      }
+    }
+  }
+
   getFallbackModels(initialModel = "") {
     if (this.provider === "vertex_ai") {
       const configured = [this.getModel(false), this.getModel(true)];

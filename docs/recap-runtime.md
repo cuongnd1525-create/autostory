@@ -627,3 +627,22 @@ fixed-range audit covers the exact rendered source interval. This helps resolve
 ambiguous identities in the small portrait analysis preview. Unverified labels,
 changed/outgrown ranges and clips outside the excerpt cannot supply that
 context; the model must still assess the rendered timing and visible defects.
+
+### Startup configuration and native proxy failures
+
+Before an unfinished source analysis starts proxy creation, scene indexing or
+media upload, Vertex checks the selected model with a tiny text-only countTokens
+request. Only successful checks are cached briefly. Billing, service activation
+and IAM errors are classified from structured Google error reasons and stop
+immediately; model availability/capacity checks retain the configured fallback.
+Completed analysis/review checkpoints do not acquire a new startup AI dependency.
+
+Proxy creation bounds decoder/filter/encoder threads and supplies a concrete
+font file where available. A Windows 0xC0000005 exit never counts as success by
+itself. Recovery requires the complete expected video/audio duration, H.264 at
+8fps with valid dimensions, and a successful full decode. Incomplete native-crash
+output gets one retry with fewer threads. Corruption, disk failures, ordinary
+nonzero exits and failed retries remain errors. Verified proxies have a
+source/file-signature manifest; changed or legacy cache files are checked again.
+Full proxy diagnostics are written beside project analysis instead of flooding
+the activity log with the entire FFmpeg transcript.

@@ -26,6 +26,25 @@ const Media = require("../electron/services/recap/recapMediaService");
     await media.extractProxyChunk({ proxyPath: source, chunk: { ...chunk, durationSec: 2 }, outputDir: root });
     assert.ok(Math.abs((await media.probeVideo(cut)).duration - 2) <= .125, "changed interval must invalidate cache");
     console.log("recapProxyCut: real long-GOP timing, first frame and cache invalidation passed");
+    if (process.platform === "win32") {
+      // A real completed FFmpeg output followed by the exact Windows native
+      // exit code from the incident. Validation must decode it before recovery.
+      const shim = path.join(root, "crash-after-encode.cjs"), countFile = path.join(root, "encode-count.txt");
+      await fs.writeFile(shim, `const {spawnSync}=require('node:child_process'); const fs=require('node:fs');
+const args=process.argv.slice(2), result=spawnSync(${JSON.stringify(media.ffmpegPath)},args,{stdio:'inherit',windowsHide:true});
+if(result.error){console.error(result.error.message);process.exit(1);}
+if(result.status===0&&args.some(arg=>arg.includes('drawtext='))){fs.appendFileSync(${JSON.stringify(countFile)},'encode\\n');process.exit(-1073741819);}
+process.exit(result.status||0);`);
+      const recovery = new Media(), run = recovery.runCommand.bind(recovery), notices = [];
+      recovery.ffmpegPath = process.execPath;
+      recovery.runCommand = (binary, args, timeout) => run(binary, binary === process.execPath ? [shim, ...args] : args, timeout);
+      const proxy = await recovery.ensureAnalysisProxy({ sourceVideoPath: source, outputDir: path.join(root, "recovered"), onProgress: value => notices.push(value) });
+      assert.ok(Math.abs((await media.probeVideo(proxy)).duration - 16) <= .125);
+      assert.ok(notices.some(value => value.level === "WARNING" && /giải mã toàn bộ/.test(value.message)));
+      await recovery.ensureAnalysisProxy({ sourceVideoPath: source, outputDir: path.join(root, "recovered") });
+      assert.equal((await fs.readFile(countFile, "utf8")).trim(), "encode", "complete valid output is recovered without a second encode");
+      console.log("recapProxyCut: real media recovered from Windows 0xC0000005 after complete decode; cache reused");
+    }
   } finally {
     // Only remove the workspace-owned fixture directory created above.
     assert.ok(root.startsWith(path.resolve(__dirname, "../.tmp") + path.sep));
