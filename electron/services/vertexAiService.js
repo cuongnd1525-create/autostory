@@ -208,10 +208,125 @@ function formatVertexApiError(status, rawBody, projectId) {
   return Object.assign(new Error(`Vertex AI request failed (${status}): ${message}`), { httpStatus: status });
 }
 
+const VERTEX_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const vertexModelDiscoveryCache = new Map();
+const EXCLUDED_GENERATIVE_MODEL_RE = /(embedding|tts|transcribe|image|nano-banana|live|robotics|computer-use|aqa|omni-)/i;
+const THINKING_LEVEL_BUDGETS = {
+  low: 1024,
+  medium: 8192,
+  high: 24576
+};
+
+function normalizeThinkingLevel(value = "") {
+  const clean = safeText(value).toLowerCase();
+  if (clean === "low" || clean === "medium" || clean === "high") return clean;
+  return "";
+}
+
+function usesThinkingLevelApi(model = "") {
+  const id = safeText(model).toLowerCase();
+  if (!id || /gemini-(?:1\.|2\.|pro-vision)/i.test(id)) return false;
+  return /gemini-(?:(?:[3-9]|\d{2,})(?:[.\-]|$)|(?:pro|flash|flash-lite)-latest)/i.test(id);
+}
+
+function budgetToThinkingLevel(budget) {
+  const num = Number(budget);
+  if (num <= 2048) return "LOW";
+  if (num <= 8192) return "MEDIUM";
+  return "HIGH";
+}
+
+function buildThinkingConfig({ model = "", thinkingLevel = "", thinkingBudget = null } = {}) {
+  const normalizedLevel = normalizeThinkingLevel(thinkingLevel);
+  const hasCallerBudget = thinkingBudget !== null && thinkingBudget !== undefined && thinkingBudget !== ""
+    && Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0;
+  const isLevelModel = usesThinkingLevelApi(model);
+
+  if (normalizedLevel) {
+    if (isLevelModel) {
+      return { thinkingLevel: normalizedLevel.toUpperCase() };
+    }
+    const rawBudget = THINKING_LEVEL_BUDGETS[normalizedLevel];
+    return {
+      thinkingBudget: /gemini-2\.5-pro/i.test(model) ? Math.max(128, rawBudget) : rawBudget
+    };
+  }
+
+  if (hasCallerBudget) {
+    if (isLevelModel) {
+      return { thinkingLevel: budgetToThinkingLevel(Number(thinkingBudget)) };
+    }
+    const rounded = Math.round(Number(thinkingBudget));
+    return {
+      thinkingBudget: /gemini-2\.5-pro/i.test(model) ? Math.max(128, rounded) : rounded
+    };
+  }
+
+  return null;
+}
+
+function vertexHost(location) {
+  const region = safeText(location || "global");
+  return region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+}
+
+function parseGeminiVersionTuple(modelId) {
+  const match = safeText(modelId).match(/gemini-(?:omni-)?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i);
+  if (!match) return [0, 0, 0];
+  return [Number(match[1] || 0), Number(match[2] || 0), Number(match[3] || 0)];
+}
+
+function compareGenerativeModelIds(a, b) {
+  const idA = safeText(typeof a === "string" ? a : a?.value || a?.id);
+  const idB = safeText(typeof b === "string" ? b : b?.value || b?.id);
+  const verA = parseGeminiVersionTuple(idA);
+  const verB = parseGeminiVersionTuple(idB);
+  for (let i = 0; i < 3; i += 1) {
+    if (verA[i] !== verB[i]) return verB[i] - verA[i];
+  }
+  const stageRank = (stage) => (stage === "GA" ? 0 : stage === "PUBLIC_PREVIEW" ? 1 : 2);
+  const rankA = stageRank(safeText(a?.launchStage || "GA"));
+  const rankB = stageRank(safeText(b?.launchStage || "GA"));
+  if (rankA !== rankB) return rankA - rankB;
+  const omniA = idA.includes("omni") ? 1 : 0;
+  const omniB = idB.includes("omni") ? 1 : 0;
+  if (omniA !== omniB) return omniA - omniB;
+  return idA.localeCompare(idB);
+}
+
+function filterVertexPublisherModels(publisherModels = []) {
+  const seen = new Set();
+  const out = [];
+  for (const item of publisherModels || []) {
+    const id = safeText(item?.name).replace(/^publishers\/google\/models\//, "");
+    if (!id || seen.has(id)) continue;
+    if (!/^gemini-/i.test(id) || EXCLUDED_GENERATIVE_MODEL_RE.test(id)) continue;
+    seen.add(id);
+    out.push({
+      id,
+      launchStage: safeText(item?.launchStage || "GA"),
+      versionId: safeText(item?.versionId)
+    });
+  }
+  return out;
+}
+
+function formatVertexModelLabel(id, launchStage) {
+  if (launchStage === "PUBLIC_PREVIEW" && !/preview/i.test(id)) return `${id} (Preview)`;
+  if (launchStage === "EXPERIMENTAL" && !/exp/i.test(id)) return `${id} (Experimental)`;
+  return id;
+}
+
 function vertexEndpoint(projectId, location, model) {
   const region = safeText(location || "global");
-  const host = region === "global" ? "aiplatform.googleapis.com" : `${region}-aiplatform.googleapis.com`;
+  const host = vertexHost(region);
   return `https://${host}/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(region)}/publishers/google/models/${encodeURIComponent(model)}:generateContent`;
+}
+
+function vertexCountTokensEndpoint(projectId, location, model) {
+  const region = safeText(location || "global");
+  const host = vertexHost(region);
+  return `https://${host}/v1/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(region)}/publishers/google/models/${encodeURIComponent(model)}:countTokens`;
 }
 
 function pricingForModel(model = "", inputTokens = 0) {
@@ -299,6 +414,23 @@ class VertexAiService {
       return safeText(this.settings.vertexAnalysisModel || "gemini-2.5-flash");
     }
     return safeText(this.settings.vertexQualityModel || "gemini-2.5-pro");
+  }
+
+  getThinkingLevel(taskType = "quality") {
+    const fields = require("./autoStoryCostPolicy").modelFields[taskType];
+    if (fields) {
+      if (fields[1] === "vertexAnalysisModel") {
+        return normalizeThinkingLevel(this.settings.vertexAnalysisThinkingLevel || this.settings.vertexThinkingLevel || "");
+      }
+      return normalizeThinkingLevel(this.settings.vertexQualityThinkingLevel || this.settings.vertexThinkingLevel || "");
+    }
+    if (taskType === "economy" || taskType === "text_utility") {
+      return normalizeThinkingLevel(this.settings.vertexEconomyThinkingLevel || this.settings.vertexThinkingLevel || "");
+    }
+    if (taskType === "stage1" || taskType === "video_analysis") {
+      return normalizeThinkingLevel(this.settings.vertexAnalysisThinkingLevel || this.settings.vertexThinkingLevel || "");
+    }
+    return normalizeThinkingLevel(this.settings.vertexQualityThinkingLevel || this.settings.vertexThinkingLevel || "");
   }
 
   validateSettings() {
@@ -475,6 +607,7 @@ class VertexAiService {
     responseSchema = null,
     maxOutputTokens = null,
     thinkingBudget = null,
+    thinkingLevel = "",
     strictRootJson = false,
     videoFps = null,
     videoFpsByPath = {},
@@ -541,6 +674,12 @@ class VertexAiService {
     }
     try {
       const endpoint = vertexEndpoint(this.projectId, this.location, model);
+      const effectiveThinkingLevel = normalizeThinkingLevel(thinkingLevel) || this.getThinkingLevel(taskType);
+      const thinkingConfig = buildThinkingConfig({
+        model,
+        thinkingLevel: effectiveThinkingLevel,
+        thinkingBudget
+      });
       const response = await fetchWithRetry(endpoint, () => ({
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -552,14 +691,7 @@ class VertexAiService {
             responseMimeType: "application/json",
             ...(["MEDIA_RESOLUTION_LOW", "MEDIA_RESOLUTION_MEDIUM", "MEDIA_RESOLUTION_HIGH"].includes(mediaResolution) ? { mediaResolution } : {}),
             ...(Number(maxOutputTokens) > 0 ? { maxOutputTokens: Math.round(Number(maxOutputTokens)) } : {}),
-            // Gemini 2.5 "thinking" tokens are drawn from maxOutputTokens; for bounded
-            // JSON extraction (Source Story Model) we cap/disable them so reasoning can't
-            // starve the JSON output and cause a false MAX_TOKENS truncation. Only sent
-            // when the caller opts in (thinkingBudget >= 0), so other tasks are unchanged.
-            ...(thinkingBudget !== null && thinkingBudget !== undefined && thinkingBudget !== ""
-              && Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0
-              ? { thinkingConfig: { thinkingBudget: /gemini-2\.5-pro/i.test(model)
-                ? Math.max(128, Math.round(Number(thinkingBudget))) : Math.round(Number(thinkingBudget)) } } : {}),
+            ...(thinkingConfig ? { thinkingConfig } : {}),
             ...(responseSchema ? { responseSchema: sourceContract
               ? (hookSchema || relaxedSchema ? require('./autoStorySchemaBoundary').hookTransport(responseSchema)
                 : require('./autoStorySchemaBoundary').transport(responseSchema)) : responseSchema } : {})
@@ -597,7 +729,8 @@ class VertexAiService {
         finishReason: payload.candidates?.[0]?.finishReason || "",
         usage: payload.usageMetadata || {}, model,
         requestedMaxOutputTokens: Number(maxOutputTokens) > 0 ? Math.round(Number(maxOutputTokens)) : null,
-        requestedThinkingBudget: thinkingBudget !== null && thinkingBudget !== undefined && thinkingBudget !== "" && Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0 ? Math.round(Number(thinkingBudget)) : null,
+        requestedThinkingLevel: thinkingConfig?.thinkingLevel || (effectiveThinkingLevel ? effectiveThinkingLevel.toUpperCase() : null),
+        requestedThinkingBudget: thinkingConfig?.thinkingBudget ?? (thinkingBudget !== null && thinkingBudget !== undefined && thinkingBudget !== "" && Number.isFinite(Number(thinkingBudget)) && Number(thinkingBudget) >= 0 ? Math.round(Number(thinkingBudget)) : null),
         prepareMs: preparedAt - startedAt, modelMs: completedAt - preparedAt
       };
       const responseText = extractResponseText(payload);
@@ -678,9 +811,117 @@ class VertexAiService {
     return this.generateJsonFromFiles({ filePaths: [], prompt, temperature, taskType });
   }
 
+  static clearModelDiscoveryCache() {
+    vertexModelDiscoveryCache.clear();
+  }
+
+  static filterPublisherModels(publisherModels = []) {
+    return filterVertexPublisherModels(publisherModels);
+  }
+
+  async listAvailableModels({ force = false, signal } = {}) {
+    const token = await this.getAccessToken();
+    this.validateSettings();
+
+    const region = safeText(this.location || "global");
+    const cacheKey = `${this.projectId}|${region}|${this.credentialPath}|${safeText(this.settings.vertexGcloudCommand || "gcloud")}`;
+    const cached = !force ? vertexModelDiscoveryCache.get(cacheKey) : null;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const host = vertexHost(region);
+    const publisherModels = [];
+    let pageToken = "";
+    for (let page = 0; page < 5; page += 1) {
+      const qs = new URLSearchParams({ pageSize: "200" });
+      if (pageToken) qs.set("pageToken", pageToken);
+      const listUrl = `https://${host}/v1beta1/publishers/google/models?${qs.toString()}`;
+      const listRes = await fetch(listUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal,
+        dispatcher: this.dispatcher
+      });
+      const rawBody = await listRes.text();
+      if (!listRes.ok) {
+        throw formatVertexApiError(listRes.status, rawBody, this.projectId);
+      }
+      const payload = rawBody ? JSON.parse(rawBody) : {};
+      if (Array.isArray(payload.publisherModels)) {
+        publisherModels.push(...payload.publisherModels);
+      }
+      pageToken = safeText(payload.nextPageToken);
+      if (!pageToken) break;
+    }
+
+    const candidates = filterVertexPublisherModels(publisherModels);
+    if (!candidates.length) {
+      return { projectId: this.projectId, location: region, models: [] };
+    }
+
+    let firstNonNotFoundError = null;
+    const probeResults = await mapWithConcurrency(candidates, 6, async (candidate) => {
+      const endpoint = vertexCountTokensEndpoint(this.projectId, region, candidate.id);
+      try {
+        const probeRes = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "ok" }] }]
+          }),
+          signal,
+          dispatcher: this.dispatcher
+        });
+        if (probeRes.ok) {
+          return {
+            value: candidate.id,
+            label: formatVertexModelLabel(candidate.id, candidate.launchStage),
+            launchStage: candidate.launchStage
+          };
+        }
+        if (probeRes.status !== 404 && probeRes.status !== 400 && !firstNonNotFoundError) {
+          const errText = await probeRes.text().catch(() => "");
+          firstNonNotFoundError = formatVertexApiError(probeRes.status, errText, this.projectId);
+        }
+        return null;
+      } catch (err) {
+        if (signal?.aborted) throw err;
+        if (!firstNonNotFoundError) firstNonNotFoundError = err;
+        return null;
+      }
+    });
+
+    const available = probeResults.filter(Boolean).sort(compareGenerativeModelIds);
+    if (!available.length && firstNonNotFoundError) {
+      throw firstNonNotFoundError;
+    }
+
+    const result = {
+      projectId: this.projectId,
+      location: region,
+      models: available
+    };
+    vertexModelDiscoveryCache.set(cacheKey, {
+      expiresAt: Date.now() + VERTEX_MODEL_CACHE_TTL_MS,
+      value: result
+    });
+    return result;
+  }
+
   async testConnection() {
     const result = await this.generateJson("Return exactly this JSON object: {\"ok\":true}", 0, "economy");
-    return { ok: result?.ok === true, projectId: this.projectId, location: this.location, model: this.getModel("economy"), usage: this.lastUsage, budget: await this.budgetStatus() };
+    return {
+      ok: result?.ok === true,
+      projectId: this.projectId,
+      location: this.location,
+      model: this.getModel("economy"),
+      thinkingLevel: this.getThinkingLevel("economy"),
+      usage: this.lastUsage,
+      budget: await this.budgetStatus()
+    };
   }
 }
 
@@ -696,5 +937,8 @@ VertexAiService.mapWithConcurrency = mapWithConcurrency;
 VertexAiService.buildDispatcherOptions = buildDispatcherOptions;
 VertexAiService.fetchErrorCode = fetchErrorCode;
 VertexAiService.shouldRetryFetchError = shouldRetryFetchError;
+VertexAiService.normalizeThinkingLevel = normalizeThinkingLevel;
+VertexAiService.usesThinkingLevelApi = usesThinkingLevelApi;
+VertexAiService.buildThinkingConfig = buildThinkingConfig;
 
 module.exports = VertexAiService;

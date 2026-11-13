@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { DEFAULT_WORDS_PER_SECOND } = require("./voiceTimingPolicy");
+const { normalizeThinkingLevel, buildThinkingConfig } = require("./vertexAiService");
 
 function inferMimeType(filePath) {
   const extension = path.extname(filePath).toLowerCase();
@@ -371,14 +372,117 @@ function getNarrationWordTargets(targetDuration, voiceSpeed = 1) {
   return { targetWords, minWords, maxWords, voiceSpeed: speed };
 }
 
+const GEMINI_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
+const geminiModelDiscoveryCache = new Map();
+const EXCLUDED_GEMINI_MODEL_RE = /(embedding|tts|transcribe|image|nano-banana|live|robotics|computer-use|aqa|customtools|omni-)/i;
+
+function parseGeminiListVersion(modelId) {
+  const match = String(modelId || "").match(/gemini-(?:omni-)?(\d+)(?:\.(\d+))?(?:\.(\d+))?/i);
+  if (!match) return [0, 0, 0];
+  return [Number(match[1] || 0), Number(match[2] || 0), Number(match[3] || 0)];
+}
+
+function compareGeminiApiModels(a, b) {
+  const verA = parseGeminiListVersion(a.value);
+  const verB = parseGeminiListVersion(b.value);
+  for (let i = 0; i < 3; i += 1) {
+    if (verA[i] !== verB[i]) return verB[i] - verA[i];
+  }
+  const latestA = /latest$/i.test(a.value) ? 1 : 0;
+  const latestB = /latest$/i.test(b.value) ? 1 : 0;
+  if (latestA !== latestB) return latestA - latestB;
+  const previewA = /preview|exp/i.test(a.value) ? 1 : 0;
+  const previewB = /preview|exp/i.test(b.value) ? 1 : 0;
+  if (previewA !== previewB) return previewA - previewB;
+  return a.value.localeCompare(b.value);
+}
+
 class GeminiService {
-  constructor(apiKey, model) {
+  constructor(apiKey, model, options = {}) {
     if (!apiKey) {
       throw new Error("Gemini API key is missing. Add it in Settings first.");
     }
     this.apiKey = apiKey;
     this.model = model || "gemini-2.5-pro";
+    this.thinkingLevel = normalizeThinkingLevel(options?.thinkingLevel || "");
     this.baseUrl = "https://generativelanguage.googleapis.com";
+  }
+
+  buildGenerationConfig({ temperature = 0.2, thinkingLevel = this.thinkingLevel } = {}) {
+    const thinkingConfig = buildThinkingConfig({
+      model: this.model,
+      thinkingLevel: thinkingLevel || this.thinkingLevel
+    });
+    return {
+      temperature,
+      responseMimeType: "application/json",
+      ...(thinkingConfig ? { thinkingConfig } : {})
+    };
+  }
+
+  static clearModelDiscoveryCache() {
+    geminiModelDiscoveryCache.clear();
+  }
+
+  static async listAvailableModels(apiKey, { force = false, signal, baseUrl = "https://generativelanguage.googleapis.com" } = {}) {
+    const cleanKey = String(apiKey || "").trim();
+    if (!cleanKey) {
+      throw new Error("Gemini API key is missing. Add it in Settings first.");
+    }
+
+    const cacheKey = require("crypto").createHash("sha256").update(`${baseUrl}|${cleanKey}`).digest("hex");
+    const cached = !force ? geminiModelDiscoveryCache.get(cacheKey) : null;
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.value;
+    }
+
+    const rawModels = [];
+    let pageToken = "";
+    for (let page = 0; page < 5; page += 1) {
+      const qs = new URLSearchParams({ pageSize: "200", key: cleanKey });
+      if (pageToken) qs.set("pageToken", pageToken);
+      const response = await fetch(`${baseUrl}/v1beta/models?${qs.toString()}`, { signal });
+      const rawBody = await response.text();
+      let payload = null;
+      try { payload = rawBody ? JSON.parse(rawBody) : null; } catch {}
+      if (!response.ok) {
+        const message = payload?.error?.message || rawBody || `HTTP ${response.status}`;
+        throw new Error(`Không tải được danh sách model Gemini (${response.status}): ${message}`);
+      }
+      if (Array.isArray(payload?.models)) {
+        rawModels.push(...payload.models);
+      }
+      pageToken = String(payload?.nextPageToken || "").trim();
+      if (!pageToken) break;
+    }
+
+    const seen = new Set();
+    const models = [];
+    for (const item of rawModels) {
+      const methods = Array.isArray(item?.supportedGenerationMethods) ? item.supportedGenerationMethods : [];
+      if (!methods.includes("generateContent")) continue;
+      const id = String(item?.name || "").replace(/^models\//, "").trim();
+      if (!id || seen.has(id)) continue;
+      if (!/^gemini-/i.test(id) || EXCLUDED_GEMINI_MODEL_RE.test(id)) continue;
+      seen.add(id);
+      models.push({
+        value: id,
+        label: id,
+        displayName: String(item?.displayName || id).trim()
+      });
+    }
+    models.sort(compareGeminiApiModels);
+
+    const result = { models };
+    geminiModelDiscoveryCache.set(cacheKey, {
+      expiresAt: Date.now() + GEMINI_MODEL_CACHE_TTL_MS,
+      value: result
+    });
+    return result;
+  }
+
+  async listAvailableModels(options = {}) {
+    return GeminiService.listAvailableModels(this.apiKey, { ...options, baseUrl: this.baseUrl });
   }
 
   async fetchWithRetry(makeRequest, label) {
@@ -477,7 +581,7 @@ class GeminiService {
     throw new Error("Gemini file processing timed out.");
   }
 
-  async generateJsonFromFiles({ filePaths = [], prompt, temperature = 0.2, onProgress, signal } = {}) {
+  async generateJsonFromFiles({ filePaths = [], prompt, temperature = 0.2, thinkingLevel = "", onProgress, signal } = {}) {
     const paths = [...new Set(filePaths.filter(Boolean))];
     const uploadedFiles = [];
     try {
@@ -505,10 +609,7 @@ class GeminiService {
         headers: { "Content-Type": "application/json" },
         signal,
         body: JSON.stringify({
-          generationConfig: {
-            temperature,
-            responseMimeType: "application/json"
-          },
+          generationConfig: this.buildGenerationConfig({ temperature, thinkingLevel }),
           contents: [{ role: "user", parts }]
         })
       }), "Gemini package analysis");
@@ -760,10 +861,7 @@ class GeminiService {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        generationConfig: {
-          temperature: 0.50,
-          responseMimeType: "application/json"
-        },
+        generationConfig: this.buildGenerationConfig({ temperature: 0.50 }),
         contents: [{ role: "user", parts: [{ text: hookPrompt }] }]
       })
     }), "Gemini TikTok hook options");
@@ -855,10 +953,7 @@ class GeminiService {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        generationConfig: {
-          temperature: 0.35,
-          responseMimeType: "application/json"
-        },
+        generationConfig: this.buildGenerationConfig({ temperature: 0.35 }),
         contents: [
           {
             role: "user",
@@ -1059,10 +1154,7 @@ class GeminiService {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        generationConfig: {
-          temperature: 0.25,
-          responseMimeType: "application/json"
-        },
+        generationConfig: this.buildGenerationConfig({ temperature: 0.25 }),
         contents: [{ role: "user", parts: [{ text: prompt }] }]
       })
     }), "Gemini narration duration rewrite");
@@ -1227,7 +1319,7 @@ class GeminiService {
     ].join("\n");
   }
 
-  async generateTextJson({ prompt, temperature = 0.35, promptLogPath, rawResponsePath, parsedResponsePath, label = "Gemini text JSON" }) {
+  async generateTextJson({ prompt, temperature = 0.35, thinkingLevel = "", promptLogPath, rawResponsePath, parsedResponsePath, label = "Gemini text JSON" }) {
     if (promptLogPath) {
       await fs.promises.writeFile(promptLogPath, prompt, "utf8");
     }
@@ -1237,10 +1329,7 @@ class GeminiService {
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        generationConfig: {
-          temperature,
-          responseMimeType: "application/json"
-        },
+        generationConfig: this.buildGenerationConfig({ temperature, thinkingLevel }),
         contents: [
           {
             role: "user",
@@ -1696,10 +1785,7 @@ class GeminiService {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          generationConfig: {
-            temperature: 0.25,
-            responseMimeType: "application/json"
-          },
+          generationConfig: this.buildGenerationConfig({ temperature: 0.25 }),
           contents: [
             {
               role: "user",
@@ -1977,10 +2063,7 @@ class GeminiService {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          generationConfig: {
-            temperature: 0.40,
-            responseMimeType: "application/json"
-          },
+          generationConfig: this.buildGenerationConfig({ temperature: 0.40 }),
           contents: [
             {
               role: "user",
@@ -2055,10 +2138,7 @@ class GeminiService {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          generationConfig: {
-            temperature: 0.45,
-            responseMimeType: "application/json"
-          },
+          generationConfig: this.buildGenerationConfig({ temperature: 0.45 }),
           contents: [
             {
               role: "user",

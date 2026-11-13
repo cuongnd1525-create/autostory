@@ -624,10 +624,15 @@ class GeminiTextProvider {
     }
     this.apiKey = settings.geminiApiKey;
     this.model = settings.geminiModel || "gemini-2.5-pro";
+    this.thinkingLevel = VertexAiService.normalizeThinkingLevel(settings.geminiThinkingLevel || "");
     this.baseUrl = "https://generativelanguage.googleapis.com";
   }
 
   async generateJson(prompt, temperature = 0.25) {
+    const thinkingConfig = VertexAiService.buildThinkingConfig({
+      model: this.model,
+      thinkingLevel: this.thinkingLevel
+    });
     const response = await fetch(`${this.baseUrl}/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`, {
       method: "POST",
       headers: {
@@ -636,7 +641,8 @@ class GeminiTextProvider {
       body: JSON.stringify({
         generationConfig: {
           temperature,
-          responseMimeType: "application/json"
+          responseMimeType: "application/json",
+          ...(thinkingConfig ? { thinkingConfig } : {})
         },
         contents: [
           {
