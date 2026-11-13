@@ -632,6 +632,19 @@ app.whenReady().then(async () => {
     return checkConfiguration(settings);
   });
 
+  handleIpc("gemini:listModels", async (_event, payload = {}) => {
+    const { force = false, ...overrideSettings } = payload || {};
+    const settings = { ...configStore.getSettings(), ...overrideSettings };
+    const GeminiService = require("./services/geminiService");
+    return GeminiService.listAvailableModels(settings.geminiApiKey, { force: Boolean(force) });
+  });
+
+  handleIpc("vertex:listModels", async (_event, payload = {}) => {
+    const { force = false, ...overrideSettings } = payload || {};
+    const settings = { ...configStore.getSettings(), ...overrideSettings };
+    return new VertexAiService(settings).listAvailableModels({ force: Boolean(force) });
+  });
+
   handleIpc("vertex:test", async (_event, payload) => {
     const settings = { ...configStore.getSettings(), ...(payload || {}) };
     return new VertexAiService(settings).testConnection();

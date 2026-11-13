@@ -646,15 +646,23 @@ function queryElements() {
     pickGeminiAnalysisRoot: $("pick-gemini-analysis-root"),
     geminiApiKey: $("gemini-api-key"),
     geminiModel: $("gemini-model"),
+    geminiThinkingLevel: $("gemini-thinking-level"),
+    refreshGeminiModels: $("refresh-gemini-models"),
+    geminiModelsStatus: $("gemini-models-status"),
     vertexProjectId: $("vertex-project-id"),
     vertexLocation: $("vertex-location"),
     vertexCredentialPath: $("vertex-credential-path"),
     pickVertexCredential: $("pick-vertex-credential"),
     vertexGcloudCommand: $("vertex-gcloud-command"),
     vertexBucket: $("vertex-bucket"),
+    refreshVertexModels: $("refresh-vertex-models"),
+    vertexModelsStatus: $("vertex-models-status"),
     vertexEconomyModel: $("vertex-economy-model"),
+    vertexEconomyThinkingLevel: $("vertex-economy-thinking-level"),
     vertexAnalysisModel: $("vertex-analysis-model"),
+    vertexAnalysisThinkingLevel: $("vertex-analysis-thinking-level"),
     vertexQualityModel: $("vertex-quality-model"),
+    vertexQualityThinkingLevel: $("vertex-quality-thinking-level"),
     vertexBudgetUsd: $("vertex-budget-usd"),
     vertexDailyLimitUsd: $("vertex-daily-limit-usd"),
     vertexTimeoutMs: $("vertex-timeout-ms"),
@@ -7374,6 +7382,231 @@ function closeSettingsModal({ restore = true } = {}) {
   el.settingsModal.classList.add("hidden");
 }
 
+const VERTEX_AUTO_STORY_FIELDS = [
+  { key: "Plan", id: "vertex-auto-story-plan-model", inheritLabel: "Kế thừa model phân tích gói" },
+  { key: "Edit", id: "vertex-auto-story-edit-model", inheritLabel: "Kế thừa model chất lượng" },
+  { key: "Review", id: "vertex-auto-story-review-model", inheritLabel: "Kế thừa model chất lượng" },
+  { key: "Repair", id: "vertex-auto-story-repair-model", inheritLabel: "Kế thừa model phân tích gói" },
+  { key: "Final", id: "vertex-auto-story-final-model", inheritLabel: "Kế thừa model phân tích gói" }
+];
+
+const modelDiscoveryState = {
+  gemini: { models: [], loaded: false, keyHint: "", requestId: 0 },
+  vertex: { models: [], loaded: false, projectId: "", location: "", requestId: 0 }
+};
+
+function setModelStatus(statusEl, message, tone = "") {
+  if (!statusEl) return;
+  statusEl.textContent = message || "";
+  statusEl.classList.toggle("is-warning", tone === "warning");
+  statusEl.classList.toggle("is-error", tone === "error");
+}
+
+function pickRecommendedModel(models = [], role = "default") {
+  if (!models.length) return "";
+  const ids = models.map((item) => item.value);
+  if (role === "economy") {
+    return ids.find((id) => /flash-lite/i.test(id)) || ids.find((id) => /flash/i.test(id)) || ids[0];
+  }
+  if (role === "analysis") {
+    return ids.find((id) => /flash/i.test(id) && !/lite/i.test(id)) || ids.find((id) => /flash/i.test(id)) || ids[0];
+  }
+  if (role === "quality" || role === "gemini") {
+    return ids.find((id) => /pro/i.test(id)) || ids.find((id) => /flash/i.test(id) && !/lite/i.test(id)) || ids[0];
+  }
+  return ids[0];
+}
+
+function populateModelSelectElement(select, models = [], currentValue = "", { allowInherit = false, inheritLabel = "", role = "default", hasDiscoveredList = false } = {}) {
+  if (!select) return false;
+  const trimmed = String(currentValue || "").trim();
+  const inList = Boolean(trimmed) && models.some((item) => item.value === trimmed);
+  const options = [];
+  if (allowInherit) {
+    options.push({ value: "", label: inheritLabel || "Kế thừa mặc định" });
+  }
+  for (const item of models) {
+    options.push({ value: item.value, label: item.label || item.value });
+  }
+  if (trimmed && !inList) {
+    options.push({
+      value: trimmed,
+      label: hasDiscoveredList ? `${trimmed} (không có trên tài khoản/vùng này)` : trimmed
+    });
+  }
+  select.innerHTML = "";
+  for (const opt of options) {
+    const node = document.createElement("option");
+    node.value = opt.value;
+    node.textContent = opt.label;
+    select.appendChild(node);
+  }
+  if (allowInherit) {
+    select.value = trimmed;
+    return Boolean(trimmed) && hasDiscoveredList && !inList;
+  }
+  if (trimmed) {
+    select.value = trimmed;
+    return hasDiscoveredList && !inList;
+  }
+  select.value = pickRecommendedModel(models, role);
+  return false;
+}
+
+function fillGeminiModelSelect(savedModel) {
+  const { models, loaded } = modelDiscoveryState.gemini;
+  const current = savedModel !== undefined ? savedModel : (el.geminiModel?.value || "");
+  return populateModelSelectElement(el.geminiModel, models, current, {
+    role: "gemini",
+    hasDiscoveredList: loaded
+  });
+}
+
+function fillVertexModelSelects(saved = {}) {
+  const { models, loaded } = modelDiscoveryState.vertex;
+  const missing = [];
+  const baseFields = [
+    { el: el.vertexEconomyModel, key: "vertexEconomyModel", role: "economy" },
+    { el: el.vertexAnalysisModel, key: "vertexAnalysisModel", role: "analysis" },
+    { el: el.vertexQualityModel, key: "vertexQualityModel", role: "quality" }
+  ];
+  for (const field of baseFields) {
+    const val = saved[field.key] !== undefined ? saved[field.key] : (field.el?.value || "");
+    if (populateModelSelectElement(field.el, models, val, { role: field.role, hasDiscoveredList: loaded })) {
+      missing.push(String(val).trim());
+    }
+  }
+  for (const item of VERTEX_AUTO_STORY_FIELDS) {
+    const node = $(item.id);
+    const settingsKey = `vertexAutoStory${item.key}Model`;
+    const val = saved[settingsKey] !== undefined ? saved[settingsKey] : (node?.value || "");
+    if (populateModelSelectElement(node, models, val, { allowInherit: true, inheritLabel: item.inheritLabel, hasDiscoveredList: loaded })) {
+      missing.push(String(val).trim());
+    }
+  }
+  return [...new Set(missing)];
+}
+
+async function refreshGeminiModels({ force = false, silent = false } = {}) {
+  if (!window.cineviral.listGeminiModels) return;
+  const apiKey = el.geminiApiKey?.value.trim() || "";
+  if (!apiKey) {
+    modelDiscoveryState.gemini = { models: [], loaded: false, keyHint: "", requestId: modelDiscoveryState.gemini.requestId + 1 };
+    fillGeminiModelSelect();
+    setModelStatus(el.geminiModelsStatus, silent ? "Nhập API key để tải danh sách model khả dụng." : "Chưa nhập Khóa API Gemini.", silent ? "" : "error");
+    if (!silent) showToast("Chưa nhập Khóa API Gemini.");
+    return;
+  }
+  const requestId = modelDiscoveryState.gemini.requestId + 1;
+  modelDiscoveryState.gemini.requestId = requestId;
+  if (el.refreshGeminiModels) el.refreshGeminiModels.disabled = true;
+  if (el.geminiModel) el.geminiModel.disabled = true;
+  setModelStatus(el.geminiModelsStatus, "Đang tải danh sách model từ Gemini API...");
+  const selected = el.geminiModel?.value || state.settings.geminiModel || "";
+  try {
+    const result = await window.cineviral.listGeminiModels({ force, geminiApiKey: apiKey });
+    if (modelDiscoveryState.gemini.requestId !== requestId) return;
+    const models = Array.isArray(result?.models) ? result.models : [];
+    modelDiscoveryState.gemini = { models, loaded: true, keyHint: apiKey.slice(-6), requestId };
+    const isMissing = fillGeminiModelSelect(selected);
+    if (!models.length) {
+      setModelStatus(el.geminiModelsStatus, "Không tìm thấy model generateContent nào cho API key này.", "warning");
+    } else if (isMissing) {
+      setModelStatus(
+        el.geminiModelsStatus,
+        `Đã tải ${models.length} model. Lưu ý: "${selected}" không khả dụng với API key này — hãy chọn model khác.`,
+        "warning"
+      );
+    } else {
+      setModelStatus(el.geminiModelsStatus, `Có ${models.length} model khả dụng cho API key hiện tại.`);
+    }
+    if (!silent && models.length) showToast(`Đã tải ${models.length} model Gemini.`);
+  } catch (error) {
+    if (modelDiscoveryState.gemini.requestId !== requestId) return;
+    setModelStatus(el.geminiModelsStatus, `Lỗi tải model: ${error.message}`, "error");
+    if (!silent) showToast(error.message);
+  } finally {
+    if (modelDiscoveryState.gemini.requestId === requestId) {
+      if (el.refreshGeminiModels) el.refreshGeminiModels.disabled = false;
+      if (el.geminiModel) el.geminiModel.disabled = false;
+    }
+  }
+}
+
+async function refreshVertexModels({ force = false, silent = false } = {}) {
+  if (!window.cineviral.listVertexModels) return;
+  const vertexProjectId = el.vertexProjectId?.value.trim() || "";
+  const vertexLocation = el.vertexLocation?.value.trim() || "global";
+  const vertexCredentialPath = el.vertexCredentialPath?.value.trim() || "";
+  const vertexGcloudCommand = el.vertexGcloudCommand?.value.trim() || "gcloud";
+  if (silent && !vertexProjectId && !vertexCredentialPath) {
+    setModelStatus(el.vertexModelsStatus, "Nhập Project ID hoặc chọn file service account JSON để tải model.");
+    return;
+  }
+  const requestId = modelDiscoveryState.vertex.requestId + 1;
+  modelDiscoveryState.vertex.requestId = requestId;
+  if (el.refreshVertexModels) el.refreshVertexModels.disabled = true;
+  const vertexSelects = [el.vertexEconomyModel, el.vertexAnalysisModel, el.vertexQualityModel, ...VERTEX_AUTO_STORY_FIELDS.map((item) => $(item.id))];
+  vertexSelects.forEach((node) => { if (node) node.disabled = true; });
+  setModelStatus(el.vertexModelsStatus, "Đang kiểm tra model khả dụng trên tài khoản Vertex...");
+  const selectedSnapshot = {
+    vertexEconomyModel: el.vertexEconomyModel?.value || state.settings.vertexEconomyModel || "",
+    vertexAnalysisModel: el.vertexAnalysisModel?.value || state.settings.vertexAnalysisModel || "",
+    vertexQualityModel: el.vertexQualityModel?.value || state.settings.vertexQualityModel || "",
+    ...Object.fromEntries(VERTEX_AUTO_STORY_FIELDS.map((item) => {
+      const key = `vertexAutoStory${item.key}Model`;
+      return [key, $(item.id)?.value ?? state.settings[key] ?? ""];
+    }))
+  };
+  try {
+    const result = await window.cineviral.listVertexModels({
+      force,
+      vertexProjectId,
+      vertexLocation,
+      vertexCredentialPath,
+      vertexGcloudCommand
+    });
+    if (modelDiscoveryState.vertex.requestId !== requestId) return;
+    const models = Array.isArray(result?.models) ? result.models : [];
+    const resolvedProject = result?.projectId || vertexProjectId || "project";
+    const resolvedLocation = result?.location || vertexLocation;
+    modelDiscoveryState.vertex = { models, loaded: true, projectId: resolvedProject, location: resolvedLocation, requestId };
+    const missing = fillVertexModelSelects(selectedSnapshot);
+    if (!models.length) {
+      setModelStatus(el.vertexModelsStatus, `Không có model Gemini khả dụng trên ${resolvedProject} (${resolvedLocation}).`, "warning");
+    } else if (missing.length) {
+      setModelStatus(
+        el.vertexModelsStatus,
+        `Có ${models.length} model (${resolvedProject}/${resolvedLocation}). Lưu ý: ${missing.join(", ")} không khả dụng — hãy chọn lại model.`,
+        "warning"
+      );
+    } else {
+      setModelStatus(el.vertexModelsStatus, `Có ${models.length} model khả dụng (${resolvedProject} · ${resolvedLocation}).`);
+    }
+    if (!silent && models.length) showToast(`Đã tải ${models.length} model Vertex AI.`);
+  } catch (error) {
+    if (modelDiscoveryState.vertex.requestId !== requestId) return;
+    setModelStatus(el.vertexModelsStatus, `Lỗi tải model: ${error.message}`, "error");
+    if (!silent) showToast(error.message);
+  } finally {
+    if (modelDiscoveryState.vertex.requestId === requestId) {
+      if (el.refreshVertexModels) el.refreshVertexModels.disabled = false;
+      vertexSelects.forEach((node) => { if (node) node.disabled = false; });
+    }
+  }
+}
+
+function maybeRefreshActiveProviderModels({ silent = true, force = false } = {}) {
+  const provider = el.aiProvider?.value || state.settings.aiProvider || "gemini";
+  if (provider === "vertex_ai") {
+    if (force || !modelDiscoveryState.vertex.loaded) refreshVertexModels({ force, silent });
+  } else if (provider === "gemini") {
+    if (force || !modelDiscoveryState.gemini.loaded) refreshGeminiModels({ force, silent });
+  } else if (provider === "antigravity_cli" && force) {
+    refreshAntigravityModels({ force: false, silent });
+  }
+}
+
 function fillSettings(settings) {
   el.workspaceRoot.value = settings.workspaceRoot || "";
   if (el.exportRoot) el.exportRoot.value = settings.exportRoot || "";
@@ -7382,20 +7615,24 @@ function fillSettings(settings) {
     el.manualGeminiPackStatus.textContent = `Chưa tạo gói. Tool sẽ tự lưu tại: ${settings.geminiAnalysisRoot}`;
   }
   if (el.exportLayout) el.exportLayout.value = settings.exportLayout || "flat";
+
   el.geminiApiKey.value = settings.geminiApiKey || "";
-  el.geminiModel.value = settings.geminiModel || "gemini-2.5-pro";
+  fillGeminiModelSelect(settings.geminiModel || "gemini-2.5-pro");
+  if (el.geminiThinkingLevel) el.geminiThinkingLevel.value = settings.geminiThinkingLevel || "";
   el.vertexProjectId.value = settings.vertexProjectId || "";
   el.vertexLocation.value = settings.vertexLocation || "global";
   el.vertexCredentialPath.value = settings.vertexCredentialPath || "";
   el.vertexGcloudCommand.value = settings.vertexGcloudCommand || "gcloud";
   el.vertexBucket.value = settings.vertexBucket || "";
-  el.vertexEconomyModel.value = settings.vertexEconomyModel || "gemini-2.5-flash-lite";
-  el.vertexAnalysisModel.value = settings.vertexAnalysisModel || "gemini-2.5-flash";
-  el.vertexQualityModel.value = settings.vertexQualityModel || "gemini-2.5-pro";
-  for (const name of ["Plan", "Edit", "Review", "Repair", "Final"]) {
-    const node = $("vertex-auto-story-" + name.toLowerCase() + "-model");
-    if (node) node.value = settings["vertexAutoStory" + name + "Model"] || "";
-  }
+  fillVertexModelSelects({
+    vertexEconomyModel: settings.vertexEconomyModel || "gemini-2.5-flash-lite",
+    vertexAnalysisModel: settings.vertexAnalysisModel || "gemini-2.5-flash",
+    vertexQualityModel: settings.vertexQualityModel || "gemini-2.5-pro",
+    ...Object.fromEntries(VERTEX_AUTO_STORY_FIELDS.map((item) => [`vertexAutoStory${item.key}Model`, settings[`vertexAutoStory${item.key}Model`] || ""]))
+  });
+  if (el.vertexEconomyThinkingLevel) el.vertexEconomyThinkingLevel.value = settings.vertexEconomyThinkingLevel || "";
+  if (el.vertexAnalysisThinkingLevel) el.vertexAnalysisThinkingLevel.value = settings.vertexAnalysisThinkingLevel || "";
+  if (el.vertexQualityThinkingLevel) el.vertexQualityThinkingLevel.value = settings.vertexQualityThinkingLevel || "";
   const maxCallsNode = $("vertex-auto-story-max-calls");
   if (maxCallsNode) maxCallsNode.value = settings.vertexAutoStoryMaxCalls || 16;
   el.vertexBudgetUsd.value = settings.vertexBudgetUsd ?? 240;
@@ -7552,15 +7789,19 @@ function readSettings() {
     exportLayout: el.exportLayout?.value || "flat",
     geminiApiKey: el.geminiApiKey.value.trim(),
     geminiModel: el.geminiModel.value.trim() || "gemini-2.5-pro",
+    geminiThinkingLevel: (el.geminiThinkingLevel?.value || "").trim(),
     vertexProjectId: el.vertexProjectId.value.trim(),
     vertexLocation: el.vertexLocation.value.trim() || "global",
     vertexCredentialPath: el.vertexCredentialPath.value.trim(),
     vertexGcloudCommand: el.vertexGcloudCommand.value.trim() || "gcloud",
     vertexBucket: el.vertexBucket.value.trim(),
     vertexEconomyModel: el.vertexEconomyModel.value.trim() || "gemini-2.5-flash-lite",
+    vertexEconomyThinkingLevel: (el.vertexEconomyThinkingLevel?.value || "").trim(),
     vertexAnalysisModel: el.vertexAnalysisModel.value.trim() || "gemini-2.5-flash",
+    vertexAnalysisThinkingLevel: (el.vertexAnalysisThinkingLevel?.value || "").trim(),
     vertexQualityModel: el.vertexQualityModel.value.trim() || "gemini-2.5-pro",
-    ...Object.fromEntries(["Plan", "Edit", "Review", "Repair", "Final"].map(name => ["vertexAutoStory" + name + "Model", $("vertex-auto-story-" + name.toLowerCase() + "-model").value.trim()])),
+    vertexQualityThinkingLevel: (el.vertexQualityThinkingLevel?.value || "").trim(),
+    ...Object.fromEntries(VERTEX_AUTO_STORY_FIELDS.map((item) => [`vertexAutoStory${item.key}Model`, ($(item.id)?.value || "").trim()])),
     vertexAutoStoryMaxCalls: Math.max(1, Math.min(100, Number($("vertex-auto-story-max-calls").value) || 16)),
     vertexBudgetUsd: Number(el.vertexBudgetUsd.value || 0),
     vertexDailyLimitUsd: Number(el.vertexDailyLimitUsd.value || 0),
@@ -11693,7 +11934,10 @@ function bindEvents() {
       loadOllamaModels();
     }
   });
-  el.aiProvider.addEventListener("change", syncAiProviderSettingsUi);
+  el.aiProvider.addEventListener("change", () => {
+    syncAiProviderSettingsUi();
+    maybeRefreshActiveProviderModels({ silent: true });
+  });
   el.antigravityModel?.addEventListener("change", () => fillAntigravityReasoningSelect(el.antigravityModel.value, el.antigravityReasoning?.value || "high"));
   el.loadProject.addEventListener("click", loadSelectedProject);
   el.backToSetup.addEventListener("click", openBackSetupModal);
@@ -12937,6 +13181,7 @@ function bindEvents() {
     setSettingsTab("ai");
     syncAiProviderSettingsUi();
     el.settingsModal.classList.remove("hidden");
+    maybeRefreshActiveProviderModels({ silent: true });
   });
   el.closeSettings.addEventListener("click", () => closeSettingsModal());
   el.settingsModal.addEventListener("click", (event) => {
@@ -12976,7 +13221,24 @@ function bindEvents() {
   });
   el.pickVertexCredential?.addEventListener("click", async () => {
     const filePath = await window.cineviral.pickJson();
-    if (filePath) el.vertexCredentialPath.value = filePath;
+    if (filePath) {
+      el.vertexCredentialPath.value = filePath;
+      refreshVertexModels({ force: true, silent: true });
+    }
+  });
+  el.refreshGeminiModels?.addEventListener("click", () => refreshGeminiModels({ force: true }));
+  el.geminiApiKey?.addEventListener("input", () => { modelDiscoveryState.gemini.loaded = false; });
+  el.geminiApiKey?.addEventListener("change", () => {
+    if (el.geminiApiKey.value.trim()) refreshGeminiModels({ force: true, silent: true });
+  });
+  el.refreshVertexModels?.addEventListener("click", () => refreshVertexModels({ force: true }));
+  [el.vertexProjectId, el.vertexLocation, el.vertexCredentialPath, el.vertexGcloudCommand].forEach((input) => {
+    input?.addEventListener("input", () => { modelDiscoveryState.vertex.loaded = false; });
+    input?.addEventListener("change", () => {
+      if (el.vertexProjectId?.value.trim() || el.vertexCredentialPath?.value.trim()) {
+        refreshVertexModels({ force: true, silent: true });
+      }
+    });
   });
   el.testVertex?.addEventListener("click", async () => {
     el.testVertex.disabled = true;
@@ -12986,7 +13248,8 @@ function bindEvents() {
       const result = await window.cineviral.testVertex(readSettings());
       const cost = Number(result.usage?.estimatedCostUsd || 0).toFixed(4);
       const spent = Number(result.budget?.totalSpentUsd || 0).toFixed(4);
-      if (el.vertexStatus) el.vertexStatus.textContent = `Kết nối tốt · ${result.model} · lần kiểm tra $${cost} · đã dùng $${spent}.`;
+      const thinkingLabel = result.thinkingLevel ? ` · tư duy ${String(result.thinkingLevel).toUpperCase()}` : "";
+      if (el.vertexStatus) el.vertexStatus.textContent = `Kết nối tốt · ${result.model}${thinkingLabel} · lần kiểm tra $${cost} · đã dùng $${spent}.`;
       showToast("Vertex AI đã sẵn sàng.");
     } catch (error) {
       if (el.vertexStatus) el.vertexStatus.textContent = `Lỗi: ${error.message}`;
@@ -13114,6 +13377,7 @@ async function bootstrap() {
   bindEvents();
   $("refresh-antigravity-models")?.addEventListener("click", () => refreshAntigravityModels({ force: true }));
   if (state.settings.aiProvider === "antigravity_cli") refreshAntigravityModels({ silent: true });
+  maybeRefreshActiveProviderModels({ silent: true });
   initStudioSplitters();
   syncSetupLogPanelState();
   renderActivity();

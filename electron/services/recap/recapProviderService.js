@@ -181,7 +181,11 @@ class RecapProviderService {
       return validateResponse(rawResponse, options.responseSchema);
     }
     if (this.provider === "gemini") {
-      const gemini = this.dependencies.gemini || new GeminiService(this.settings.geminiApiKey, options.modelOverride || this.getModel());
+      const gemini = this.dependencies.gemini || new GeminiService(
+        this.settings.geminiApiKey,
+        options.modelOverride || this.getModel(),
+        { thinkingLevel: options.thinkingLevel || this.settings.geminiThinkingLevel }
+      );
       const prompt = `${options.prompt}\nReturn one complete JSON object matching this schema:\n${JSON.stringify(options.responseSchema)}`;
       return validateResponse(await gemini.generateJsonFromFiles({ ...options, prompt }), options.responseSchema);
     }

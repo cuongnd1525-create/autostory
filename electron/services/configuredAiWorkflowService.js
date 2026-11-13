@@ -216,7 +216,9 @@ class ConfiguredAiWorkflowService {
 
   async runGemini({ files, prompt, onProgress }) {
     this.abortController = new AbortController();
-    const gemini = new GeminiService(this.settings.geminiApiKey, this.settings.geminiModel);
+    const gemini = new GeminiService(this.settings.geminiApiKey, this.settings.geminiModel, {
+      thinkingLevel: this.settings.geminiThinkingLevel
+    });
     try {
       return await gemini.generateJsonFromFiles({
         filePaths: selectFiles(files, 10),

@@ -5060,6 +5060,18 @@ dd {
   gap: 10px;
 }
 
+.settings-subgroup .button-row {
+  flex-wrap: wrap;
+}
+
+.settings-subgroup .button-row [role="status"].is-warning {
+  color: #f5b942;
+}
+
+.settings-subgroup .button-row [role="status"].is-error {
+  color: #ff7b89;
+}
+
 .settings-modal-panel .settings-check-result {
   max-height: 180px;
   overflow: auto;

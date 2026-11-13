@@ -2518,8 +2518,18 @@
               <div class="settings-subgroup" data-ai-provider-settings="gemini">
                 <h4>Gemini</h4>
                 <div class="settings-fields">
-                  <label>Khóa API Gemini<input id="gemini-api-key" type="password" /></label>
-                  <label>Mô hình Gemini<input id="gemini-model" type="text" /></label>
+                  <label class="settings-field-wide">Khóa API Gemini<input id="gemini-api-key" type="password" /></label>
+                  <label>Mô hình Gemini<select id="gemini-model"></select></label>
+                  <label>Mức độ tư duy<select id="gemini-thinking-level">
+                    <option value="">Tự động (mặc định model)</option>
+                    <option value="low">Thấp (Low · nhanh)</option>
+                    <option value="medium">Trung bình (Medium)</option>
+                    <option value="high">Cao (High · suy luận sâu)</option>
+                  </select></label>
+                  <div class="settings-field-wide button-row">
+                    <button id="refresh-gemini-models" class="secondary-button" type="button">Tải model khả dụng</button>
+                    <small id="gemini-models-status" class="muted-text" role="status">Nhập API key để tải danh sách model khả dụng.</small>
+                  </div>
                 </div>
               </div>
               <div class="settings-subgroup hidden" data-ai-provider-settings="vertex_ai">
@@ -2537,18 +2547,41 @@
                     <input id="vertex-bucket" type="text" placeholder="my-cineviral-temp hoặc gs://my-cineviral-temp" />
                     <small>Bắt buộc khi phân tích video/proxy. Service account cần quyền Storage Object User trên bucket.</small>
                   </label>
-                  <label>Model tiết kiệm<input id="vertex-economy-model" type="text" placeholder="gemini-2.5-flash-lite" /></label>
-                  <label>Model phân tích gói<input id="vertex-analysis-model" type="text" placeholder="gemini-2.5-flash" /></label>
-                  <label>Model review chất lượng<input id="vertex-quality-model" type="text" placeholder="gemini-2.5-pro" /></label>
+                  <div class="settings-field-wide button-row">
+                    <button id="refresh-vertex-models" class="secondary-button" type="button">Tải model từ tài khoản Vertex</button>
+                    <small id="vertex-models-status" class="muted-text" role="status">Cấu hình tài khoản để tải danh sách model khả dụng.</small>
+                  </div>
+                  <label>Model tiết kiệm<select id="vertex-economy-model"></select></label>
+                  <label>Mức độ tư duy (Tiết kiệm)<select id="vertex-economy-thinking-level">
+                    <option value="">Tự động theo công đoạn</option>
+                    <option value="low">Thấp (Low · nhanh)</option>
+                    <option value="medium">Trung bình (Medium)</option>
+                    <option value="high">Cao (High · suy luận sâu)</option>
+                  </select></label>
+                  <label>Model phân tích gói<select id="vertex-analysis-model"></select></label>
+                  <label>Mức độ tư duy (Phân tích)<select id="vertex-analysis-thinking-level">
+                    <option value="">Tự động theo công đoạn</option>
+                    <option value="low">Thấp (Low · nhanh)</option>
+                    <option value="medium">Trung bình (Medium)</option>
+                    <option value="high">Cao (High · suy luận sâu)</option>
+                  </select></label>
+                  <label>Model review chất lượng<select id="vertex-quality-model"></select></label>
+                  <label>Mức độ tư duy (Chất lượng)<select id="vertex-quality-thinking-level">
+                    <option value="">Tự động theo công đoạn</option>
+                    <option value="low">Thấp (Low · nhanh)</option>
+                    <option value="medium">Trung bình (Medium)</option>
+                    <option value="high">Cao (High · suy luận sâu)</option>
+                  </select></label>
                   <details class="settings-field-wide">
                     <summary>Model riêng cho Auto Story</summary>
                     <div class="settings-fields">
-                      <label>Lập kế hoạch<input id="vertex-auto-story-plan-model" type="text" placeholder="Kế thừa model phân tích gói" /></label>
-                      <label>Viết kịch bản<input id="vertex-auto-story-edit-model" type="text" placeholder="Kế thừa model chất lượng" /></label>
-                      <label>Review chính<input id="vertex-auto-story-review-model" type="text" placeholder="Kế thừa model chất lượng" /></label>
-                      <label>Sửa voice / thời lượng<input id="vertex-auto-story-repair-model" type="text" placeholder="Kế thừa model phân tích gói" /></label>
-                      <label>Kiểm tra bản cuối<input id="vertex-auto-story-final-model" type="text" placeholder="Kế thừa model phân tích gói" /></label>
+                      <label>Lập kế hoạch<select id="vertex-auto-story-plan-model"><option value="">Kế thừa model phân tích gói</option></select></label>
+                      <label>Viết kịch bản<select id="vertex-auto-story-edit-model"><option value="">Kế thừa model chất lượng</option></select></label>
+                      <label>Review chính<select id="vertex-auto-story-review-model"><option value="">Kế thừa model chất lượng</option></select></label>
+                      <label>Sửa voice / thời lượng<select id="vertex-auto-story-repair-model"><option value="">Kế thừa model phân tích gói</option></select></label>
+                      <label>Kiểm tra bản cuối<select id="vertex-auto-story-final-model"><option value="">Kế thừa model phân tích gói</option></select></label>
                       <label>Số yêu cầu AI tối đa mỗi lượt chạy<input id="vertex-auto-story-max-calls" type="number" min="1" max="100" step="1" /></label>
+                      <small class="settings-field-wide muted-text">Các bước Auto Story dùng mức độ tư duy tương ứng của nhóm Phân tích gói (Lập kế hoạch / Sửa / Kiểm tra cuối) hoặc Chất lượng (Viết / Review).</small>
                     </div>
                   </details>
                   <label>Hard limit tổng (USD)<input id="vertex-budget-usd" type="number" min="0" step="1" /></label>
