@@ -3024,7 +3024,7 @@ class PipelineService {
     };
 
     await emit("analyzing", 15, "�ang hi?u c?t truy?n v� kho?nh kh?c viral");
-    const gemini = new GeminiService(settings.geminiApiKey, settings.geminiModel);
+    const gemini = new GeminiService(settings.geminiApiKey, settings.geminiModel, { thinkingLevel: settings.geminiThinkingLevel });
     const forceVideoUnderstanding = isEvidenceStoreTooWeakForMetadataOnly(evidenceStoreResult.evidenceStore, sceneMetadataResult);
     let filmMemory = await readGeminiAnalysisCache(filmMemoryCachePath, filmMemoryCacheKey);
     if (filmMemory) {
@@ -4257,7 +4257,7 @@ class PipelineService {
         const existingMemory = normalizeFilmMemory(analysis?.filmMemory);
         if (!existingMemory.theBizarreElement && !existingMemory.theInjustice && !existingMemory.curiosityGap) {
           await emit("analyzing", 15, "�ang l�m m?i b? nh? phim TikTok cho b?n d?ng d� duy?t");
-          const gemini = new GeminiService(settings.geminiApiKey, settings.geminiModel);
+          const gemini = new GeminiService(settings.geminiApiKey, settings.geminiModel, { thinkingLevel: settings.geminiThinkingLevel });
           const filmMemoryCacheKey = {
             sourceVideoPath: project.sourceVideoPath,
             targetDuration: Number(project.targetDuration),
@@ -4298,7 +4298,7 @@ class PipelineService {
         await emit("planning", 18, "�ang d�ng k? ho?ch c?nh d� duy?t");
       } else {
         await emit("analyzing", 15, "�ang hi?u c?t truy?n v� kho?nh kh?c viral");
-        const gemini = new GeminiService(settings.geminiApiKey, settings.geminiModel);
+        const gemini = new GeminiService(settings.geminiApiKey, settings.geminiModel, { thinkingLevel: settings.geminiThinkingLevel });
         const filmMemoryCacheKey = {
           sourceVideoPath: project.sourceVideoPath,
           targetDuration: Number(project.targetDuration),
@@ -4678,7 +4678,7 @@ class PipelineService {
           await emit("narrating", 21, `�ang d�ng l?i recap d� ch?nh (${wordTargets.minWords}-${wordTargets.maxWords} t? m?c ti�u, gi?ng ${wordTargets.voiceSpeed.toFixed(2)}x)`);
         } else {
           await emit("narrating", 21, `�ang vi?t l?i thuy?t minh d?ng b? b?ng Gemini (${wordTargets.minWords}-${wordTargets.maxWords} t? n�i, gi?ng ${wordTargets.voiceSpeed.toFixed(2)}x)`);
-          geminiForNarration = new GeminiService(settings.geminiApiKey, settings.geminiModel);
+          geminiForNarration = new GeminiService(settings.geminiApiKey, settings.geminiModel, { thinkingLevel: settings.geminiThinkingLevel });
           polishResult = await geminiForNarration.polishNarrationForDuration({
             title: normalizedAnalysis.title,
             summary: normalizedAnalysis.summary,

@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("cineviral", {
   openMirrorOutput: (outputPath) => ipcRenderer.invoke("video:openOutputFile", outputPath),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   getAntigravityModels: (options = {}) => ipcRenderer.invoke("settings:antigravityModels", options),
+  listGeminiModels: (payload = {}) => ipcRenderer.invoke("gemini:listModels", payload),
+  listVertexModels: (payload = {}) => ipcRenderer.invoke("vertex:listModels", payload),
   saveSettings: (payload) => ipcRenderer.invoke("settings:save", payload),
   checkSettings: (payload) => ipcRenderer.invoke("settings:check", payload),
   testVertex: (payload) => ipcRenderer.invoke("vertex:test", payload),
